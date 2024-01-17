@@ -1,0 +1,324 @@
+procedure "main"."db_pkg_production$post_wip_transaction(bigint, text, character varying, bigint, bigint, bigint, bigint, bigint, bigint, numeric, bigint, bigint, character varying, character varying, character varying, numeric, numeric, numeric, bigint, timestamp without time zone, bigint, bigint, character varying, bigint, bigint)" {
+  text = """
+
+DECLARE
+        V_CODE              PRDWIPTRANS.CODE%TYPE;
+        V_DET_CODE          PRDWIPTRANS.DET_CODE%TYPE;
+        V_SQL               varchar(2000);
+        V_TXN_TYPE          varchar(50);
+        V_ITEM_TYPE         varchar(50);
+        V_JOBBER_LOCCODE    PRDWIPTRANS.JOBBER_LOCCODE%TYPE;
+        V_AMOUNT            PRDWIPTRANS.AMOUNT%TYPE;
+        V_SRV_AMOUNT        PRDWIPTRANS.SRV_AMOUNT%TYPE;
+        V_PRD_WIPTRACK_CODE PRDWIPTRANS.PRD_WIPTRACK_CODE%TYPE;
+
+BEGIN
+        -- Deleting from PRDWIPTRANS
+        IF P_MODE IN ('UPDATING', 'DELETING') THEN
+            IF  P_TXN_TYPE = 'REC' AND P_ITEM_TYPE IN ('COM','ASS') AND P_CICODE IS NOT NULL THEN
+                /*
+                EXECUTE IMMEDIATE
+                'DELETE FROM PRDWIPTRANS WHERE TXN_TYPE=:1 AND ITEM_TYPE=:2 AND DET_CODE=:3 AND COMPONENT_ICODE=:4 RETURNING CODE, DET_CODE INTO :5, :6'
+                USING P_TXN_TYPE, P_ITEM_TYPE, P_OLD_DET_CODE, P_CICODE
+                RETURNING INTO V_CODE, V_DET_CODE;
+                */
+				/*
+                EXECUTE
+                'DELETE FROM PRDWIPTRANS WHERE TXN_TYPE=:1 AND ITEM_TYPE=:2 AND DET_CODE=:3 AND COMPONENT_ICODE=:4 AND JRCCODE=:5 RETURNING CODE, DET_CODE INTO :6, :7'
+                USING P_TXN_TYPE, P_ITEM_TYPE, P_OLD_DET_CODE, P_CICODE, P_JRCCODE,V_CODE,V_DET_CODE;
+				*/
+				DELETE FROM PRDWIPTRANS 
+				WHERE   TXN_TYPE= P_TXN_TYPE 
+					AND ITEM_TYPE= P_ITEM_TYPE 
+					AND DET_CODE= P_OLD_DET_CODE 
+					AND COMPONENT_ICODE= P_CICODE
+					AND JRCCODE= P_JRCCODE
+				RETURNING CODE, DET_CODE INTO V_CODE,V_DET_CODE;
+				
+
+            ELSIF   P_TXN_TYPE = 'WCL' AND P_ITEM_TYPE IN ('FG','PSD') AND P_WIPCLR_CODE IS NOT NULL THEN
+			
+                    /*
+					EXECUTE
+                    'DELETE FROM PRDWIPTRANS WHERE TXN_TYPE=:1 AND ITEM_TYPE=:2 AND DET_CODE=:3 AND WIPCLR_CODE=:4 RETURNING CODE, DET_CODE INTO :5, :6'
+                    USING P_TXN_TYPE, P_ITEM_TYPE, P_OLD_DET_CODE, P_WIPCLR_CODE,V_CODE, V_DET_CODE;
+                   -- RETURNING INTO STRICT V_CODE, V_DET_CODE;
+				   */
+				   DELETE FROM PRDWIPTRANS
+				   WHERE TXN_TYPE=P_TXN_TYPE 
+				   		AND ITEM_TYPE=P_ITEM_TYPE 
+				   		AND DET_CODE=P_OLD_DET_CODE 
+				   		AND WIPCLR_CODE=P_WIPCLR_CODE 
+				   RETURNING CODE, DET_CODE INTO V_CODE, V_DET_CODE;
+
+            ELSIF   P_TXN_TYPE IN ('ISS','RET','WAS') THEN
+                    
+					/*
+					EXECUTE
+                    'DELETE FROM PRDWIPTRANS WHERE TXN_TYPE=:1 AND ITEM_TYPE=:2 AND DET_CODE=:3 AND WIPTXN_CODE=:4 RETURNING CODE, DET_CODE INTO :5, :6'
+                    USING P_TXN_TYPE, P_ITEM_TYPE, P_OLD_DET_CODE, P_WIPTXN_CODE,V_CODE, V_DET_CODE;
+                   -- RETURNING INTO STRICT V_CODE, V_DET_CODE;
+				   */
+				   DELETE FROM PRDWIPTRANS 
+				   WHERE TXN_TYPE=P_TXN_TYPE 
+				   		AND ITEM_TYPE=P_ITEM_TYPE 
+				   		AND DET_CODE=P_OLD_DET_CODE 
+				   		AND WIPTXN_CODE=P_WIPTXN_CODE 
+				   RETURNING CODE, DET_CODE INTO V_CODE, V_DET_CODE;
+
+            ELSIF   P_TXN_TYPE = 'CNL' THEN
+                    
+					/*
+					EXECUTE
+                    'DELETE FROM PRDWIPTRANS WHERE TXN_TYPE=:1 AND ITEM_TYPE=:2 AND DET_CODE=:3 AND CNLCODE=:4 RETURNING CODE, DET_CODE INTO :5, :6'
+                    USING P_TXN_TYPE, P_ITEM_TYPE, P_OLD_DET_CODE, P_CNLCODE,V_CODE, V_DET_CODE;
+                   -- RETURNING INTO STRICT V_CODE, V_DET_CODE;
+				   */
+				   DELETE FROM PRDWIPTRANS 
+				   WHERE TXN_TYPE=P_TXN_TYPE 
+				   		AND ITEM_TYPE=P_ITEM_TYPE 
+				   		AND DET_CODE=P_OLD_DET_CODE 
+				   		AND CNLCODE=P_CNLCODE 
+				   RETURNING CODE, DET_CODE INTO V_CODE, V_DET_CODE;
+
+            ELSE
+			
+                /*
+				EXECUTE
+                'DELETE FROM PRDWIPTRANS WHERE TXN_TYPE=:1 AND ITEM_TYPE=:2 AND DET_CODE=:3 RETURNING CODE, DET_CODE INTO :4, :5'
+                USING P_TXN_TYPE, P_ITEM_TYPE, P_OLD_DET_CODE,V_CODE, V_DET_CODE;
+                --RETURNING INTO STRICT V_CODE, V_DET_CODE;
+				*/
+				DELETE FROM PRDWIPTRANS 
+				WHERE TXN_TYPE=P_TXN_TYPE 
+						AND ITEM_TYPE=P_ITEM_TYPE 
+						AND DET_CODE=P_OLD_DET_CODE 
+				RETURNING CODE, DET_CODE INTO V_CODE, V_DET_CODE;
+				
+            END IF;
+        END IF;
+
+        IF P_MODE IN ('INSERTING','UPDATING') THEN
+            -- Getting Code for new entry
+            IF  V_CODE IS NULL THEN
+                SELECT  nextval('prdwiptrans_code')
+                INTO STRICT    V_CODE
+;
+            END IF;
+
+            IF  P_ITEM_TYPE = 'PSD' THEN
+                V_JOBBER_LOCCODE    := NULL;
+                V_PRD_WIPTRACK_CODE := 0;
+            ELSE
+                V_JOBBER_LOCCODE    := NULL;
+                V_PRD_WIPTRACK_CODE := NULL;
+
+                BEGIN
+                   SELECT  JOBBER_LOCCODE,
+                           PRD_WIPTRACK_CODE
+                   INTO STRICT    V_JOBBER_LOCCODE,
+                           V_PRD_WIPTRACK_CODE
+                   FROM    PRDJOBMAIN
+                   WHERE   CODE = P_JOBCODE;
+                EXCEPTION
+                   WHEN no_data_found THEN
+                   NULL;
+                   WHEN OTHERS THEN
+                   CALL ERRAUDIT(USER, 'DB_PKG_PRODUCTION$POST_WIP_TRANSACTION()', SQLSTATE, SQLERRM || '~'|| P_JOBCODE);
+                END;
+            END IF;
+
+            IF  P_TXN_TYPE = 'REC' AND P_ITEM_TYPE = 'SER' THEN
+                V_SRV_AMOUNT := round((ABS(coalesce(P_WIP_QTY,0))*coalesce(P_RATE,0))::numeric,6);
+            ELSE
+                V_AMOUNT := round((coalesce(P_TXN_QTY,0)*coalesce(P_RATE,0))::numeric,6);
+            END IF;
+
+            -- Inserting from PRDWIPTRANS
+            INSERT INTO PRDWIPTRANS(
+                        CODE, TXN_TYPE, DET_CODE, LOTCODE, JOBCODE, WIPTXN_CODE, JRCCODE,
+                        OPERATION_SEQ, PCODE, PRCODE, ASSEMBLY_ICODE, COMPONENT_ICODE, ITEM_TYPE,
+                        ASSEMBLY_WIP, TXN_QTY, RATE, AMOUNT,SRV_AMOUNT,CNLCODE, JOBBER_LOCCODE, ADMSITE_CODE,
+						ASS_SAITEM_CODE,COM_SAITEM_CODE,WIPCLR_CODE,TXN_DATE,JOB_ASSEMBLY_ICODE,
+						PRD_WIPTRACK_CODE,INVBATCH_SERIAL_CODE
+                    )
+            VALUES (
+                        V_CODE, P_TXN_TYPE, P_NEW_DET_CODE, P_LOTCODE, P_JOBCODE, P_WIPTXN_CODE, P_JRCCODE,
+                        P_OP_SEQ, P_PCODE, P_PRCODE, P_AICODE, P_CICODE, P_ITEM_TYPE,
+                        P_WIP_QTY, P_TXN_QTY, P_RATE,
+                        V_AMOUNT, V_SRV_AMOUNT,
+                        P_CNLCODE,V_JOBBER_LOCCODE,P_ADMSITE_CODE
+                        ,P_ASS_SAITEM_CODE,P_COM_SAITEM_CODE,P_WIPCLR_CODE,P_TXN_DATE,P_JOB_ASSEMBLY_ICODE,
+                       V_PRD_WIPTRACK_CODE
+                       ,P_INVBATCH_SERIAL_CODE
+                    );
+        END IF;
+    EXCEPTION
+        WHEN OTHERS THEN
+             CALL ERRAUDIT(USER, 'DB_PKG_PRODUCTION$POST_WIP_TRANSACTION()', SQLSTATE, SQLERRM);
+             RAISE EXCEPTION '%', 'Error occured while posting WIP. '||SQLERRM USING ERRCODE = '45100';
+    END;
+
+"""
+  arguments = <
+    {
+      name = p_admsite_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_mode
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_txn_type
+      type = character varying
+      mode = IN
+    }
+
+    {
+      name = p_old_det_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_new_det_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_lotcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_jobcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_wiptxn_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_jrccode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_op_seq
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_pcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_prcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_aicode
+      type = character varying
+      mode = IN
+    }
+
+    {
+      name = p_cicode
+      type = character varying
+      mode = IN
+    }
+
+    {
+      name = p_item_type
+      type = character varying
+      mode = IN
+    }
+
+    {
+      name = p_wip_qty
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_txn_qty
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_rate
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_cnlcode
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_txn_date
+      type = timestamp without time zone
+      mode = IN
+      default = NULL::timestamp without time zone
+    }
+
+    {
+      name = p_ass_saitem_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_com_saitem_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_job_assembly_icode
+      type = character varying
+      mode = IN
+      default = NULL::character varying
+    }
+
+    {
+      name = p_wipclr_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_invbatch_serial_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+  >
+  language = plpgsql
+}
+

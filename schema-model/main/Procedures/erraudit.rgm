@@ -1,0 +1,64 @@
+procedure "main"."erraudit(text, text, text, text)" {
+  text = """
+
+DECLARE
+	-- Change this to reflect the dblink connection string
+	--v_conn_str  text := format('port=%s dbname=%s user=%s', current_setting('port'), current_database(), current_user);
+	v_srvname       name;
+    v_connname      text;
+    v_connstr       text;
+    v_conn_result   text;
+	v_query     text;
+
+BEGIN
+
+    v_srvname := 'foreign_pgbase';
+    v_connname := replace(uuid_generate_v4()::text,'-','');
+    v_connstr  := v_srvname;
+	
+    --Open the connection  
+    SELECT dblink_connect(v_connname,v_connstr) 
+    INTO v_conn_result;
+	
+	v_query := 'CALL erraudit_atx ( ' || quote_nullable(ARGUSRNAME) || ',' || quote_nullable(ARGPRCNAME) || ',' || quote_nullable(ARGERRCODE) || ',' || quote_nullable(ARGERRMSG) || ' )';
+	--PERFORM * FROM dblink(v_conn_str, v_query) AS p (ret boolean);
+	--PERFORM * FROM dblink(v_connname, v_query) AS p (ret text);
+	PERFORM dblink_exec (v_connname, v_query);
+	
+	SELECT dblink_disconnect(v_connname) 
+    INTO v_conn_result;
+EXCEPTION 
+   WHEN OTHERS THEN
+    	SELECT dblink_disconnect(v_connname) 
+    	INTO v_conn_result;
+END;
+"""
+  arguments = <
+    {
+      name = argusrname
+      type = text
+      mode = IN
+    }
+
+    {
+      name = argprcname
+      type = text
+      mode = IN
+    }
+
+    {
+      name = argerrcode
+      type = text
+      mode = IN
+    }
+
+    {
+      name = argerrmsg
+      type = text
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

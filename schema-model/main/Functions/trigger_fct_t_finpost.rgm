@@ -1,0 +1,221 @@
+function "main"."trigger_fct_t_finpost()" {
+  text = """
+
+DECLARE
+    ora2pg_rowcount integer;
+-- START REV : 001
+    V_FIN_MONTH_STATUS  ADMOU_MONTH.FIN_MONTH_STATUS%TYPE;
+    
+    V_FIN_MN_CLS        char(1);
+    V_FIN_MN_CLS_DT     char(20);
+    
+    -- END REV : 001
+    -- START REV : 002
+    
+    -- END REV : 002
+    -- START REV : 003
+    V_OLDCOSTAPP  FINGL.COSTAPP%TYPE;
+    V_NEWCOSTAPP  FINGL.COSTAPP%TYPE;
+   -- V_new_COSTAPP  FINGL.COSTAPP%TYPE;
+    -- END REV : 003
+BEGIN
+  BEGIN
+    /*************************************************************************************************************************************************
+          PURPOSE: Cost Calculation
+
+         REV NO         OWNER                   DATE            DESCRIPTION
+         ------------   ----------          -----------     ---------------------------------------------------------------------------------------------
+         REV : 001                            13-JUN-2017     (TFS ID : XXXXX) .
+         REV : 002      DIPTIMAN              07-AUG-2017     (TFS ID : 31107) Exception list created.
+         REV : 003      SIDDHARTHA SEN        07-DEC-2017     (TFS ID : 35315) Fincosttag_Check Column Updation.
+         REV : 004      MOUSUMI BHAUMIK       08-MAY-2018     (TFS ID : 40792) Bank reconciliation module is getting an error when user providing the value for close month entry.
+    *************************************************************************************************************************************************/
+    -- START REV : 002
+    IF  coalesce(NEW.YCODE, OLD.YCODE) = 1 THEN
+        BEGIN
+            SELECT  OM.FIN_MONTH_STATUS
+            INTO STRICT    V_FIN_MONTH_STATUS
+            FROM    ADMOU_MONTH OM,
+                    ADMMONTH    MN
+            WHERE   OM.ADMOU_CODE    = coalesce(NEW.ADMOU_CODE, OLD.ADMOU_CODE)
+            AND     OM.ADMMONTH_CODE = MN.MCODE
+            AND     MN.MCODE = (SELECT MIN(X.MCODE) FROM ADMMONTH X WHERE YCODE = 2);
+        EXCEPTION
+            WHEN no_data_found THEN
+                V_FIN_MONTH_STATUS := 'O';
+        END;
+
+        IF  V_FIN_MONTH_STATUS = 'C' THEN
+            RAISE EXCEPTION 'e_2nd_y_1st_m_stat' USING ERRCODE = '50003';
+        END IF;
+    ELSE
+    -- END REV : 002
+        -- START REV : 001
+        BEGIN
+            SELECT  OM.FIN_MONTH_STATUS
+            INTO STRICT    V_FIN_MONTH_STATUS
+            FROM    ADMOU_MONTH OM,
+                    ADMMONTH    MN
+            WHERE   OM.ADMOU_CODE    = coalesce(NEW.ADMOU_CODE, OLD.ADMOU_CODE)
+            AND     OM.ADMMONTH_CODE = MN.MCODE
+            AND     coalesce(NEW.ENTDT, OLD.ENTDT) BETWEEN MN.DTFR AND MN.DTTO;
+        EXCEPTION
+            WHEN no_data_found THEN
+            V_FIN_MONTH_STATUS := 'O';
+            WHEN too_many_rows THEN
+            V_FIN_MONTH_STATUS := 'O';
+        END;
+
+        -- if finance month is closed then restrict finace entry except adjustment
+      -- START REV : 004
+    IF (OLD.BRSDT = NEW.BRSDT AND OLD.BRSDT IS NOT NULL AND NEW.BRSDT IS NOT NULL)
+         OR  
+        -- (:OLD.BRSDT IS NULL AND :NEW.BRSDT IS NULL) 
+         (OLD.BRSDT = NEW.BRSDT )
+
+    THEN
+    -- END REV : 004
+        IF (coalesce(NEW.ADJAMT,0) = coalesce(OLD.ADJAMT,0)) AND V_FIN_MONTH_STATUS = 'C' THEN
+            RAISE EXCEPTION 'my_fin_mon_exp' USING ERRCODE = '50001';
+        END IF;
+    END IF; -- REV : 004
+        -- chk fin month closing process is started or not
+        -- if started the no entry will allowed at that period of time
+		--*************************************************************************
+		--WILL CONVERT IT LATER
+		--*************************************************************************
+        /*
+		V_FIN_MN_CLS    := DB_PKG_GINESYS_CONTEXT.GET_ATTRIBUTE('FIN_MN_CLS');
+        V_FIN_MN_CLS_DT := DB_PKG_GINESYS_CONTEXT.GET_ATTRIBUTE('FIN_MN_CLS_DT');
+		
+
+        IF  coalesce(V_FIN_MN_CLS,'@') = 'S' AND TO_CHAR(coalesce(OLD.ENTDT, NEW.ENTDT),'YYYYMMDD') <= V_FIN_MN_CLS_DT THEN
+            RAISE EXCEPTION 'my_fin_mon_cls_exp' USING ERRCODE = '50002';
+        END IF;
+		*/
+		--*************************************************************************
+        -- END REV : 001
+        IF  OLD.ENTCODE IS NOT NULL AND OLD.YCODE <> 1 THEN
+            UPDATE  FINPOST_CHECK
+            SET     DAMOUNT = coalesce(DAMOUNT,0) - coalesce(OLD.DAMOUNT,0),
+                    CAMOUNT = coalesce(CAMOUNT,0) - coalesce(OLD.CAMOUNT,0)
+            WHERE   ENTCODE = OLD.ENTCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF  ora2pg_rowcount = 0 THEN
+                NULL;
+            END IF;
+        END IF;
+
+        IF  NEW.ENTCODE IS NOT NULL AND NEW.YCODE <> 1 THEN
+            UPDATE  FINPOST_CHECK
+            SET     DAMOUNT = coalesce(DAMOUNT,0) + coalesce(NEW.DAMOUNT,0),
+                    CAMOUNT = coalesce(CAMOUNT,0) + coalesce(NEW.CAMOUNT,0)
+            WHERE   ENTCODE = NEW.ENTCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+		IF  ora2pg_rowcount = 0 THEN
+                INSERT
+                INTO    FINPOST_CHECK(ENTCODE,DAMOUNT,CAMOUNT)
+                VALUES (NEW.ENTCODE,coalesce(NEW.DAMOUNT,0),coalesce(NEW.CAMOUNT,0));
+            END IF;
+        END IF;
+
+        IF  coalesce(OLD.YCODE, NEW.YCODE) <> 1 THEN
+            DELETE
+            FROM    FINPOST_CHECK
+            WHERE   coalesce(DAMOUNT,0) = 0
+            AND     coalesce(CAMOUNT,0) = 0;
+        END IF;
+    -- START REV : 001
+    -- START REV : 003
+            --MANASH_DA ADDITION START
+            IF  OLD.GLCODE IS NOT NULL THEN
+                SELECT  F.COSTAPP
+                INTO STRICT    V_OLDCOSTAPP
+                FROM    FINGL F
+                WHERE   F.GLCODE = OLD.GLCODE;
+            END IF;
+
+            IF  NEW.GLCODE IS NOT NULL THEN
+                SELECT  F.COSTAPP
+                INTO STRICT    V_NEWCOSTAPP
+                FROM    FINGL F
+                WHERE   F.GLCODE = NEW.GLCODE;
+            END IF;
+            --MANASH_DA ADDITION END
+        
+                IF  OLD.ENTCODE IS NOT NULL AND OLD.YCODE <> 1 AND V_OLDCOSTAPP = 'Y' THEN
+                    -- START REV : 003
+                    /*
+                    UPDATE  FINCOSTTAG_CHECK
+                    SET     FINPOST_DAMOUNT = NVL(FINPOST_DAMOUNT,0) - NVL(:OLD.DAMOUNT,0),
+                            FINPOST_CAMOUNT = NVL(FINPOST_CAMOUNT,0) - NVL(:OLD.CAMOUNT,0)
+                    WHERE   ENTCODE = :OLD.ENTCODE;
+                    */
+                    --MANASH_DA ADDITION START
+                    UPDATE  FINCOSTTAG_CHECK
+                    SET     FINPOST_DAMOUNT = coalesce(FINPOST_DAMOUNT,0) - CASE WHEN coalesce(FINPOST_DAMOUNT,0) =0 THEN 0 ELSE coalesce(OLD.DAMOUNT,0) END,
+                            FINPOST_CAMOUNT = coalesce(FINPOST_CAMOUNT,0) - CASE WHEN coalesce(FINPOST_CAMOUNT,0) =0 THEN 0 ELSE coalesce(OLD.CAMOUNT,0) END
+                    WHERE   ENTCODE = OLD.ENTCODE;
+                    --MANASH_DA ADDITION END
+                    -- END REV : 003
+                END IF;
+                   
+                IF  NEW.ENTCODE IS NOT NULL AND NEW.YCODE <> 1 AND V_NEWCOSTAPP = 'Y' THEN
+                    UPDATE  FINCOSTTAG_CHECK
+                    SET     FINPOST_DAMOUNT = coalesce(FINPOST_DAMOUNT,0) + coalesce(NEW.DAMOUNT,0),
+                            FINPOST_CAMOUNT = coalesce(FINPOST_CAMOUNT,0) + coalesce(NEW.CAMOUNT,0)
+                    WHERE   ENTCODE = NEW.ENTCODE;
+
+                    GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF  ora2pg_rowcount = 0 THEN
+                        INSERT
+                        INTO    FINCOSTTAG_CHECK(ENTCODE,FINPOST_DAMOUNT,FINPOST_CAMOUNT)
+                        VALUES (NEW.ENTCODE,coalesce(NEW.DAMOUNT,0),coalesce(NEW.CAMOUNT,0));
+                    END IF;
+                END IF;
+
+        IF  coalesce(OLD.YCODE, NEW.YCODE) <> 1 THEN
+            DELETE
+            FROM    FINCOSTTAG_CHECK
+            WHERE   coalesce(FINPOST_DAMOUNT,0) = 0
+            AND     coalesce(FINPOST_CAMOUNT,0) = 0
+            AND     coalesce(FINCOSTTAG_DAMOUNT,0) = 0
+            AND     coalesce(FINCOSTTAG_CAMOUNT,0) = 0;
+        END IF;
+    -- END REV : 003
+    -- START REV : 002
+    END IF;
+    -- END REV : 002
+EXCEPTION
+    --*************************************************************************
+	/*
+	WHEN SQLSTATE '50002' THEN
+        RAISE EXCEPTION '%', 'Internal error occured.' || 'Closing process of finance month is going on, uanble to pass entry.' USING ERRCODE = '45111';
+	*/
+	--*************************************************************************
+    WHEN SQLSTATE '50001' THEN
+        RAISE EXCEPTION '%', 'Internal error occured.' || 'Finance Month is already closed, unable to make entry.' USING ERRCODE = '45112';
+    -- START REV : 002
+    WHEN SQLSTATE '50003' THEN
+        RAISE EXCEPTION '%', 'Internal error occured.' || 'Finance Month is already closed for first month of second year, unable to make entry.' USING ERRCODE = '45113';
+    -- END REV : 002
+    WHEN OTHERS THEN
+        CALL ERRAUDIT(USER,'T_FINPOST',SQLSTATE,SQLERRM);
+    -- END REV : 001
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

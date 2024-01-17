@@ -1,0 +1,430 @@
+procedure "main"."db_pro_populate_po(bigint, bigint, bigint, character, bigint, character, bigint, timestamp without time zone, character, bigint, bigint, character, bigint, character, character, character, bigint, bigint, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+/********************************************************************************************************************
+   NAME: DB_PRO_POPULATE_PO
+   PURPOSE:
+
+   REVISIONS:
+   NO.         DATE        AUTHOR       DESCRIPTION
+   --------- ----------  -----------    -------------------------------------------------------------------
+   REV : 000 21/02/2014  MANASH         (BUG ID : 1172) Goods Receive Wizard required in v11.
+   REV : 001 24/04/2014  MANASH         (BUG ID : 1328) CST related changes.
+   REV : 002 28/11/2014  DIPTIMAN       (BUG ID : 1897) Buffer days related changes.
+   REV : 003 24/12/2014  DIPTIMAN       (BUG ID : 2008) Include buffer days check with document date also.
+   REV : 004 30/01/2015  DIPTIMAN       (BUG ID : 2087) Vendor portal related changes.
+   REV : 005 12/01/2015  MOUSUMI        (BUG ID : 13307) PO SET
+   REV : 006 18/01/2015  MOUSUMI        (BUG ID : 11069) Purchase Order/Item Due Date workflow revision
+   REV : 007 17/02/2016  MOUSUMI        (BUG ID : 14227) Expired PO List in GRC Wizard.
+   REV : 008 11/03/2015  MANASH         (TFS ID : 15134) Excise Compatibility in all modules as per new budget 2016 in 11.52.x
+   REV : 009 17/05/2016  MOUSUMI        (TFS ID : 17019) Procurement Rate flow Change
+   REV : 010 17/02/2017  DIPTIMAN       (TFS ID : 25037) PO document selection altered.
+   REV : 011 04/05/2017  MOUSUMI        (TFS ID : 26844) Multiou
+   NOTES:
+********************************************************************************************************************/
+   V_QTY        double precision  := 0;
+   CURR_QTY     double precision  := 0;
+   V_RATE       double precision  := 0;
+   V_DISCOUNT   double precision  := 0;
+   V_TAXAMT     double precision  := 0;
+   VCERRCODE    varchar(50);
+   VCERRMSG     varchar(2000);
+   -- START REV : 005
+   V_EXP            char(1) := 'N';
+   V_EXP_ORDCODE    bigint :=NULL;
+   -- END REV : 005
+   V_SHOW_PARAM_VAL        char(1) := 'N';
+  I RECORD;
+
+BEGIN
+   IF   V_SHOW_PARAM_VAL = 'Y' THEN
+        CALL ERRAUDIT('1X','1','1',
+            'ARGCODE='||ARGCODE||CHR(10)||
+            'ARGENTCODE='||ARGENTCODE||CHR(10)||
+            'ARGICODE='||ARGICODE||CHR(10)||
+            'ARGQTY='||ARGQTY||CHR(10)||
+            'ARGDATE='||ARGDATE||CHR(10)||
+            'ARGGRCBASIS='||ARGGRCBASIS||CHR(10)||
+            'ARGAGCODE='||ARGAGCODE||CHR(10)||
+            'ARGTRPCODE='||ARGTRPCODE||CHR(10)||
+            'ARGCONSIGNMENT='||ARGCONSIGNMENT||CHR(10)||
+            'ARGCURRENCY_CODE='||ARGCURRENCY_CODE||CHR(10)||
+            'ARGALLOW_GRC_AGAINST_PO='||ARGALLOW_GRC_AGAINST_PO||CHR(10)||
+            'ARGPOP_GRC_AGAINST_PO='||ARGPOP_GRC_AGAINST_PO||CHR(10)||
+            'ARGEXCISE_APPL='||ARGEXCISE_APPL||CHR(10)||
+            'ARGOUCODE='||ARGOUCODE||CHR(10)||
+            'ARGSITECODE='||ARGSITECODE||CHR(10)||
+            'ARGTRADEGRPCODE='||ARGTRADEGRPCODE||CHR(10)||
+            'ARGFORMCODE='||ARGFORMCODE||CHR(10)||
+            'ARGBUFFER_DAYS='||ARGBUFFER_DAYS
+            );
+   END IF;
+   V_QTY  := ARGQTY;
+   IF ARGGRCBASIS = 'F' THEN
+      FOR I IN (SELECT   M.ORDCODE                                                          ORDCODE
+                        ,M.ORDDT                                                            ORDDT
+                        ,M.SCHEME_DOCNO                                                     ORDNO
+                        ,D.ICODE                                                            ICODE
+                        ,I.MRP                                                              MRP
+                        ,D.RATE                                                             RATE
+                        -- START REV : 010
+                        -- ,NVL(D.ORDQTY, 0) - NVL(D.CNLQTY, 0) - NVL(D.RCQTY, 0)              ORDQTY
+                        ,coalesce(D.OQTY, D.ORDQTY) - coalesce(D.CNLQTY, 0) - coalesce(D.RCQTY, 0)              ORDQTY
+                        -- END REV : 010
+                        ,D.DISCHGPER                                                        DISCHGPER
+                        ,coalesce(D.DISCOUNT, 0)                                                 DISCOUNT
+                        ,D.TAXCHGPER                                                        TAXCHGPER
+                        ,coalesce(D.TAXAMT, 0)                                                   TAXAMT
+                        ,D.CODE                                                             DET_CODE
+                        ,M.PCODE                                                            PCODE
+                        ,CASE WHEN ARGEXCISE_APPL='Y' THEN D.EXCISEMAIN_CODE  ELSE NULL END                   EXCISEMAIN_CODE
+                        ,CASE WHEN ARGEXCISE_APPL='Y' THEN D.EX_BASIS  ELSE NULL END                         EX_BASIS
+                        ,CASE WHEN ARGEXCISE_APPL='Y' THEN coalesce(D.EX_EFFRATE,0)  ELSE 0 END                    EX_EFFRATE
+                        ,CASE WHEN ARGEXCISE_APPL='Y' THEN coalesce(D.EX_ABTFACTOR,0)  ELSE 0 END                  EX_ABTFACTOR
+                        ,CASE WHEN ARGEXCISE_APPL='Y' THEN coalesce(D.EX_DUTYFACTOR,0)  ELSE 0 END                 EX_DUTYFACTOR
+                        ,CASE WHEN ARGEXCISE_APPL='Y' THEN coalesce(D.EX_CESSFACTOR,0)  ELSE 0 END                 EX_CESSFACTOR
+                        ,CASE WHEN ARGEXCISE_APPL='Y' THEN D.EX_ROUNDOFF  ELSE 0 END                          EX_ROUNDOFF
+                        ,CASE WHEN ARGEXCISE_APPL='Y' THEN (coalesce(D.EX_APPAMT,0) * coalesce(D.ORDQTY,0) / coalesce(D.ORDQTY,0))  ELSE 0 END       EX_APPAMT
+                        ,CASE WHEN ARGEXCISE_APPL='Y' THEN (coalesce(D.EX_DUTYAMT,0) * coalesce(D.ORDQTY,0) / coalesce(D.ORDQTY,0))  ELSE 0 END      EX_DUTYAMT
+                        ,CASE WHEN ARGEXCISE_APPL='Y' THEN (coalesce(D.EX_CESSAMT,0) * coalesce(D.ORDQTY,0) / coalesce(D.ORDQTY,0))  ELSE 0 END      EX_CESSAMT
+                           -- START REV : 007
+                         ,M.DTTO         DTTO
+                         ,A.DUEDATE      DUEDATE
+                           -- END REV : 007
+                        -- START REV : 008
+                        ,D.EX_APPLICABLE_FROM                                                EX_APPLICABLE_FROM
+                        -- END REV : 008
+                FROM purordmain m, invitem i, purorddet d
+LEFT OUTER JOIN purorddet_delivery a ON (D.CODE = A.PURORDDET_CODE)
+WHERE D.ORDCODE = M.ORDCODE AND I.ICODE   = D.ICODE -- START REV : 002
+  -- START REV : 006
+                /*AND      (
+                              A.DUEDATE IS NULL
+                              OR
+                              (ARGDATE <= A.DUEDATE + NVL(ARGBUFFER_DAYS,0))
+                         )*/
+  AND ( ( ARGPOP_GRC_AGAINST_PO = 'Y')
+                        OR (ARGPOP_GRC_AGAINST_PO = 'N'
+                                 AND (
+                                      A.DUEDATE IS NULL
+                                      OR (ARGDATE <= A.DUEDATE + coalesce(ARGBUFFER_DAYS,0))
+                                 )
+                           )
+                       ) -- END REVF : 006
+                -- END REV : 002
+  AND M.ADMCURRENCY_CODE = ARGCURRENCY_CODE AND M.WHETHER_CONSIGNMENT = ARGCONSIGNMENT AND D.ICODE = ARGICODE AND M.PCODE = ARGENTCODE AND M.AUTHORCODE IS NOT NULL -- START REV : 005
+  AND coalesce(SET_APPLICABLE,'N') = 'N' -- END REV : 005
+                -- START REV : 010
+                -- AND      NVL(D.ORDQTY, 0) - NVL(D.CNLQTY, 0) - NVL(D.RCQTY, 0) > 0
+  AND coalesce(D.OQTY, D.ORDQTY) - coalesce(D.CNLQTY, 0) - coalesce(D.RCQTY, 0) > 0 -- END REV : 010
+  AND (ARGAGCODE IS NULL OR M.AGCODE = ARGAGCODE) AND (ARGTRPCODE IS NULL OR M.TRPCODE = ARGTRPCODE) AND M.ORDDT <= ARGDATE -- START REV : 004
+  AND M.ENABLE_LGT_TRACK = 0 AND M.SHIPSTATUS = 0 -- END REV : 004
+                -- START REV : 003
+                -- START REV : 006
+                --AND      ARGDATE BETWEEN M.DTFR AND M.DTTO+NVL(ARGBUFFER_DAYS,0)
+  AND ARGDATE >= M.DTFR AND (  ( ARGPOP_GRC_AGAINST_PO = 'Y')
+                        OR (ARGPOP_GRC_AGAINST_PO = 'N'
+                             AND (ARGDATE <= M.DTTO+coalesce(ARGBUFFER_DAYS,0))
+                        )
+                     ) -- END REV : 006
+                -- END REV : 003
+                -- START REV : 011
+                --AND      M.ADMOU_CODE = ARGOUCODE
+  AND (
+                        ( M.ADMOU_CODE = ARGOUCODE AND M.ADMOU_CODE IS NOT NULL )
+                        OR
+                        M.ADMOU_CODE IS NULL
+                    ) -- END REV : 011
+  AND M.ADMSITE_CODE = ARGSITECODE -- START REV : 001
+  AND M.FINTRADEGRP_CODE = ARGTRADEGRPCODE AND (
+                            ARGFORMCODE IS NULL
+                            OR
+                            M.FORMCODE = ARGFORMCODE
+                         ) -- END REV : 001
+                -- START REV : 003
+                /*
+                AND      (
+                             (ARGALLOW_GRC_AGAINST_PO = 'S' AND (M.DTTO IS NULL OR ARGDATE <= M.DTTO))
+                             OR
+                             (ARGALLOW_GRC_AGAINST_PO = 'W' AND
+                                  (
+                                    (ARGPOP_GRC_AGAINST_PO = 'N' AND (M.DTTO IS NULL OR M.DTTO >= ARGDATE))
+                                    OR
+                                    (ARGPOP_GRC_AGAINST_PO = 'Y' AND (M.DTTO IS NULL OR M.DTTO < ARGDATE))
+                                  )
+                             )
+                             OR
+                             (ARGALLOW_GRC_AGAINST_PO = 'I')
+                         )
+                */
+                -- START REV : 006
+                /*AND      (
+                             (ARGALLOW_GRC_AGAINST_PO = 'S' AND (M.DTTO IS NULL OR ARGDATE <= M.DTTO + NVL(ARGBUFFER_DAYS,0)))
+                             OR
+                             (ARGALLOW_GRC_AGAINST_PO = 'W' AND
+                                  (
+                                    (ARGPOP_GRC_AGAINST_PO = 'Y' AND (M.DTTO IS NULL OR M.DTTO + NVL(ARGBUFFER_DAYS,0) >= ARGDATE))
+                                    OR
+                                    (ARGPOP_GRC_AGAINST_PO = 'N' AND (M.DTTO IS NULL OR M.DTTO + NVL(ARGBUFFER_DAYS,0) < ARGDATE))
+                                  )
+                             )
+                             OR
+                             (ARGALLOW_GRC_AGAINST_PO = 'I')
+                         )*/
+               -- END REV : 006
+                -- END REV : 003
+  AND M.DOCCODE IN (SELECT DOCCODE
+                                      FROM   ADMDOCSCHEME
+                                      WHERE  ISEXCISE = ARGEXCISE_APPL) ORDER BY CASE
+                            WHEN ARGGRCBASIS = 'F' THEN M.ORDDT
+                         END
+                        ,CASE
+                            WHEN ARGGRCBASIS = 'F' THEN M.ORDCODE
+                         END
+                        ,D.RATE DESC)
+      LOOP
+         IF V_QTY > 0 THEN
+            SELECT CASE WHEN SIGN(I.ORDQTY - V_QTY)=1 THEN  V_QTY  ELSE I.ORDQTY END
+            INTO STRICT   CURR_QTY
+;
+            V_DISCOUNT := round((CURR_QTY * I.DISCOUNT / I.ORDQTY)::numeric, 2);
+            IF I.ORDQTY = V_DISCOUNT THEN
+               V_TAXAMT := 0;
+            ELSE
+               V_TAXAMT := round((CURR_QTY * I.TAXAMT / I.ORDQTY)::numeric, 2);
+            END IF;
+            INSERT INTO ITEM_PARTY_PODET(CODE, ENTCODE, ORDCODE, ORDDT, ORDNO, ICODE, MRP, RATE, QTY
+                        ,DISCHGPER, DISCOUNT, GRSAMT, TAXCHGPER, TAX
+                        ,NETAMT, PARTY_CODE, EXCISEMAIN_CODE, EX_BASIS
+                        ,EX_EFFRATE, EX_ABTFACTOR, EX_DUTYFACTOR, EX_CESSFACTOR
+                        ,EX_ROUNDOFF, EX_APPAMT, EX_DUTYAMT, EX_CESSAMT
+                        -- START REV : 008
+                        ,EX_APPLICABLE_FROM
+                        -- END REV : 008
+                       )
+            VALUES      (ARGCODE, I.DET_CODE, I.ORDCODE, I.ORDDT, I.ORDNO, I.ICODE, I.MRP, I.RATE, CURR_QTY
+                        ,I.DISCHGPER, V_DISCOUNT,(CURR_QTY * I.RATE), I.TAXCHGPER, V_TAXAMT
+                        ,(CURR_QTY * I.RATE) - V_DISCOUNT + V_TAXAMT, I.PCODE, I.EXCISEMAIN_CODE, I.EX_BASIS
+                        ,I.EX_EFFRATE, I.EX_ABTFACTOR, I.EX_DUTYFACTOR, I.EX_CESSFACTOR
+                        ,I.EX_ROUNDOFF, I.EX_APPAMT, I.EX_DUTYAMT, I.EX_CESSAMT
+                        -- START REV : 008
+                        ,I.EX_APPLICABLE_FROM
+                        -- END REV : 008
+                       );
+         ELSE
+            EXIT;
+         END IF;
+         V_QTY  := V_QTY - I.ORDQTY;
+      END LOOP;
+   END IF;
+   IF V_QTY > 0 THEN
+      V_RATE :=
+         coalesce((DB_FUN_ITEM_RATE(
+                              ARGDATE
+                              ,coalesce(ARGENTCODE,ARGCMPCODE)
+                              ,ARGICODE
+                              ,'P'
+                              -- START REV  : 009
+                              ,ARG_OU_ADMCMPTAX_CODE
+                              -- END DREV : 009
+                              ))
+            ,0);
+       -- START REV : 007
+       IF  ARGPOP_GRC_AGAINST_PO = 'N' THEN
+              BEGIN
+                    SELECT   M.ORDCODE                                                          ORDCODE
+                    INTO STRICT     V_EXP_ORDCODE
+                        FROM purordmain m, invitem i, purorddet d
+LEFT OUTER JOIN purorddet_delivery a ON (D.CODE = A.PURORDDET_CODE)
+WHERE D.ORDCODE = M.ORDCODE AND I.ICODE   = D.ICODE  AND ( (
+                                              A.DUEDATE IS NOT NULL
+                                              AND (ARGDATE > A.DUEDATE + coalesce(ARGBUFFER_DAYS,0))
+                                  )
+                                  OR (A.DUEDATE IS NULL
+                                   AND (ARGDATE > M.DTTO+coalesce(ARGBUFFER_DAYS,0))
+                                  )
+                                ) AND M.ADMCURRENCY_CODE = ARGCURRENCY_CODE AND M.WHETHER_CONSIGNMENT = ARGCONSIGNMENT AND D.ICODE = ARGICODE AND M.PCODE = ARGENTCODE AND M.AUTHORCODE IS NOT NULL AND coalesce(SET_APPLICABLE,'N') = 'N' -- START REV : 010
+                        -- AND      NVL(D.ORDQTY, 0) - NVL(D.CNLQTY, 0) - NVL(D.RCQTY, 0) > 0
+  AND coalesce(D.OQTY, D.ORDQTY) - coalesce(D.CNLQTY, 0) - coalesce(D.RCQTY, 0) > 0 -- END REV : 010
+  AND (ARGAGCODE IS NULL OR M.AGCODE = ARGAGCODE) AND (ARGTRPCODE IS NULL OR M.TRPCODE = ARGTRPCODE) AND M.ORDDT <= ARGDATE AND M.ENABLE_LGT_TRACK = 0 AND M.SHIPSTATUS = 0 AND ARGDATE >= M.DTFR -- START REV : 011
+                        --AND      M.ADMOU_CODE = ARGOUCODE
+  AND (
+                                ( M.ADMOU_CODE = ARGOUCODE AND M.ADMOU_CODE IS NOT NULL )
+                                OR
+                                M.ADMOU_CODE IS NULL
+                            ) -- END REV : 011
+  AND M.ADMSITE_CODE = ARGSITECODE AND M.FINTRADEGRP_CODE = ARGTRADEGRPCODE AND (
+                                    ARGFORMCODE IS NULL
+                                    OR
+                                    M.FORMCODE = ARGFORMCODE
+                                 ) AND M.DOCCODE IN (SELECT DOCCODE
+                                              FROM   ADMDOCSCHEME
+                                              WHERE  ISEXCISE = ARGEXCISE_APPL) ORDER BY CASE
+                                    WHEN ARGGRCBASIS = 'F' THEN M.ORDDT
+                                 END
+                                ,CASE
+                                    WHEN ARGGRCBASIS = 'F' THEN M.ORDCODE
+                                 END
+                                ,D.RATE DESC;
+              V_EXP := 'Y';
+          EXCEPTION
+          WHEN no_data_found THEN
+            V_EXP := 'N';
+            WHEN too_many_rows THEN
+            V_EXP := 'Y';
+          END;
+       ELSE
+          V_EXP := 'N';
+       END IF;
+       -- END REV : 007
+      INSERT INTO ITEM_PARTY_PODET(CODE, ENTCODE, ORDCODE, ORDDT, ORDNO, ICODE, RATE, QTY, GRSAMT, NETAMT, PARTY_CODE
+                  -- START REV : 007
+                  ,EXP_YN
+                  -- END REV : 007
+                  )
+      VALUES (ARGCODE, 0, 0, ARGDATE, NULL, ARGICODE, V_RATE, V_QTY, V_RATE * V_QTY, V_RATE * V_QTY, ARGENTCODE
+                  -- START REV : 007
+                  ,V_EXP
+                  -- END REV : 007
+                  );
+   END IF;
+EXCEPTION
+   WHEN OTHERS THEN
+      VCERRCODE := SQLSTATE;
+      VCERRMSG := SQLERRM;
+      CALL ERRAUDIT(USER, 'Db_Pro_Populate_PO ', VCERRCODE, VCERRMSG);
+      RAISE EXCEPTION '%', 'Insert Table Error GLOBAL_ITEM_PARTY_PODET ' || VCERRMSG USING ERRCODE = '45205';
+END;
+"""
+  arguments = <
+    {
+      name = argoucode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = argsitecode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = argcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = argentcode
+      type = character
+      mode = IN
+    }
+
+    {
+      name = argcmpcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = argicode
+      type = character
+      mode = IN
+    }
+
+    {
+      name = argqty
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = argdate
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = arggrcbasis
+      type = character
+      mode = IN
+    }
+
+    {
+      name = argagcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = argtrpcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = argconsignment
+      type = character
+      mode = IN
+    }
+
+    {
+      name = argcurrency_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = argallow_grc_against_po
+      type = character
+      mode = IN
+    }
+
+    {
+      name = argpop_grc_against_po
+      type = character
+      mode = IN
+    }
+
+    {
+      name = argexcise_appl
+      type = character
+      mode = IN
+      default = 'N'::bpchar
+    }
+
+    {
+      name = argtradegrpcode
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = argformcode
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = argbuffer_days
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = arg_ou_admcmptax_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+  >
+  language = plpgsql
+}
+

@@ -1,0 +1,215 @@
+function "main"."db_func_get_gst_tax_rate(text, text, timestamp without time zone, text, text, bigint, bigint, bigint, bigint, bigint, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+V_RATE                  double precision :=0;
+V_MAINCODE              INVHSNSACMAIN.CODE%TYPE;
+V_SLAB_APPL             INVHSNSACDET.SLAB_APPL%TYPE;
+V_SLAB_BASIS            INVHSNSACDET.SLAB_BASIS%TYPE;
+V_DETCODE               INVHSNSACDET.CODE%TYPE;
+V_RANGEFROM             bigint;
+V_FLAG                  char(1);
+DUP_RATE                double precision :=0;
+V_APPAMT                double precision := 0;
+V_INVGSTRATE_CODE       INVGSTRATE.CODE%TYPE;
+
+BEGIN
+   /************************************************************************************************************
+
+      PURPOSE: GST
+
+      REVISIONS:
+      No     Date           Author                   Description
+      ----   ----------    ----------------------   -------------------------------------------------------------
+      001    31-MAY-2017   MOUSUMI                  (BUG ID : 29081)  GST
+      002    13-12-2017   MOUSUMI                  (BUG ID : 31941)  PDNCN&SDNCN
+      NOTES:
+   *************************************************************************************************************/
+    IF P_ICODE IS NOT NULL THEN
+        BEGIN
+            SELECT	    INVHSNSACMAIN_CODE
+            INTO STRICT		V_MAINCODE
+            FROM		INVITEM
+            WHERE		ICODE = P_ICODE;
+        EXCEPTION WHEN no_data_found THEN
+           V_MAINCODE := NULL;
+        END;
+    ELSIF P_SERVICECODE IS NOT NULL THEN
+        BEGIN
+            SELECT	    INVHSNSACMAIN_CODE
+            INTO STRICT		V_MAINCODE
+            FROM		PURSERVICE
+            WHERE		SERVICECODE = P_SERVICECODE;
+        EXCEPTION WHEN no_data_found THEN
+           V_MAINCODE := NULL;
+        END;
+    END IF;
+   -- ERRAUDIT(11,11,11,V_TAXCODE||'*'||P_ENTDT||'*'||P_GST_COMPONENT);
+    IF 	V_MAINCODE IS NOT NULL THEN
+        BEGIN
+            SELECT	SLAB_APPL, SLAB_BASIS,CODE,INVGSTRATE_CODE
+            INTO STRICT    V_SLAB_APPL, V_SLAB_BASIS,V_DETCODE,V_INVGSTRATE_CODE
+            FROM	 INVHSNSACDET D
+            WHERE		D.INVHSNSACMAIN_CODE = V_MAINCODE
+            AND     	D.CODE = (  SELECT D1.CODE
+                                    FROM   INVHSNSACDET D1
+                                    WHERE  D1.INVHSNSACMAIN_CODE = V_MAINCODE
+                                    AND    EFFECTIVE_DATE = ( SELECT MAX(EFFECTIVE_DATE)
+                                                                   FROM   INVHSNSACDET D3
+                                                                   WHERE  D3.INVHSNSACMAIN_CODE = V_MAINCODE
+                                                                   AND    D3.EFFECTIVE_DATE 	<=  P_ENTDT
+                                                            )
+                                 )	;
+        EXCEPTION
+        WHEN no_data_found THEN
+            V_RATE       := 0;
+        WHEN OTHERS  THEN
+            V_RATE       := 0;
+        END;
+         IF	coalesce(V_SLAB_APPL,'N') = 'Y' THEN
+                        IF P_ICODE IS NULL THEN
+                                V_APPAMT := round((P_APPAMT)::numeric,2);
+                        ELSE
+                            IF V_SLAB_BASIS = 'R' THEN
+                                V_APPAMT := round((P_RSP)::numeric,2);
+                           ELSE
+                             -- START REV : 002
+                               IF  coalesce(P_APPAMT,0) <> 0 THEN
+                               -- V_APPAMT := ROUND((P_APPAMT / P_QTY),2);
+                                  V_APPAMT := round((P_APPAMT / P_QTY)::numeric,2);
+                                ELSE
+                                    V_APPAMT := 0;
+                                END IF;
+                               -- END REV : 002
+                           END IF;
+                        END IF;
+                            /*
+                           IF V_SLAB_BASIS = 'R' AND P_ICODE IS NOT NULL THEN
+                                V_APPAMT := P_RSP;
+                           ELSE
+                                V_APPAMT := ROUND((P_APPAMT / P_QTY),2);
+                           END IF;
+                           */
+                        BEGIN
+                                SELECT	INVGSTRATE_CODE
+                                INTO STRICT    V_INVGSTRATE_CODE
+                                FROM	 INVHSNSACSLAB D
+                                WHERE		D.INVHSNSACDET_CODE = V_DETCODE
+                                AND     	D.CODE = (  SELECT D1.CODE
+                                                        FROM   INVHSNSACSLAB D1
+                                                        WHERE  D1.INVHSNSACDET_CODE = V_DETCODE
+                                                        AND    AMOUNT_FROM= ( SELECT MAX(AMOUNT_FROM)
+                                                                                       FROM   INVHSNSACSLAB D3
+                                                                                       WHERE  D3.INVHSNSACDET_CODE = V_DETCODE
+                                                                                       AND    D3.AMOUNT_FROM 	<=  coalesce(V_APPAMT,0)
+                                                                                )
+                                                     )	;
+                    EXCEPTION
+                    WHEN no_data_found THEN
+                        V_INVGSTRATE_CODE       := NULL;
+                    WHEN OTHERS  THEN
+                        V_INVGSTRATE_CODE       := 0;
+                    END;
+        END IF;
+        BEGIN
+                    SELECT	CASE WHEN P_GST_COMPONENT='CGST' THEN R.CGST_RATE WHEN P_GST_COMPONENT='IGST' THEN R.IGST_RATE WHEN P_GST_COMPONENT='SGST' THEN SGST_RATE WHEN P_GST_COMPONENT='CESS' THEN CESS_RATE END
+                    INTO STRICT    V_RATE
+                    FROM	INVGSTRATE  R
+                    WHERE	CODE = V_INVGSTRATE_CODE;
+        EXCEPTION
+        WHEN no_data_found THEN
+            V_RATE       := 0;
+        END;
+   ELSE
+      V_RATE       := 0;
+   END IF;
+    RETURN(V_RATE);
+END;
+"""
+  returnType = numeric
+  arguments = <
+    {
+      name = p_icode
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_gst_component
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_entdt
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_istax
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_call_formname
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_servicecode
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_rsp
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_appamt
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_qty
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_conn_doc_site_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_cp_site_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_cp_slcode
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+  >
+  language = plpgsql
+  volatility = STABLE
+}
+

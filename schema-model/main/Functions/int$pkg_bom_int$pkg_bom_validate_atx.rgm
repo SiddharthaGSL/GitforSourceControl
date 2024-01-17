@@ -1,0 +1,569 @@
+function "main"."int$pkg_bom_int$pkg_bom_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status      char(1);
+      errmsg        varchar(200);
+      errcode       text;
+BEGIN
+
+    -- updating assembly icode
+   	UPDATE int$stg_BOM a  SET DERIVED_ASSEMBLY_ICODE = icode
+	from (SELECT  coalesce(a.lineno, 0) lineno, i.icode
+             FROM    int$stg_BOM a, invitem i
+             WHERE   ((UPPER(a.ASSEMBLY_ICODE_BARCODE) = i.icode) or (UPPER(a.ASSEMBLY_ICODE_BARCODE) = i.barcode))
+             AND     a.userid = p_userid) b
+	where (a.lineno = b.lineno);
+
+    -- updating component icode
+	UPDATE int$stg_BOM a SET DERIVED_COMP_ICODE = icode
+	from (SELECT  coalesce(a.lineno, 0) lineno, i.icode
+             FROM    int$stg_BOM a, invitem i
+             WHERE   ((UPPER(a.COMP_ICODE_BARCODE) = i.icode) or (UPPER(a.COMP_ICODE_BARCODE) = i.barcode))
+             AND     a.userid = p_userid) b
+	where (a.lineno = b.lineno);
+
+    -- updating route code
+    UPDATE int$stg_BOM a SET DERIVED_ROUTECODE = route_code
+    from(SELECT  coalesce(a.lineno, 0) lineno, r.CODE route_code
+             FROM    int$stg_BOM a, prdroutemain r
+             where   UPPER(a.ROUTE_ID) = UPPER(r.NAME)
+             AND     a.userid = p_userid) b
+    where (a.lineno = b.lineno);
+
+    -- updating process code
+    UPDATE int$stg_BOM a SET DERIVED_PROCESSCODE = prcode
+    FROM(SELECT  coalesce(a.lineno, 0) lineno, p.PRCODE
+             FROM    int$stg_BOM a, prdpr p
+             where   UPPER(a.process_name) = UPPER(p.prname)
+             AND     a.userid = p_userid) b
+    WHERE (a.lineno = b.lineno);
+
+    -- updating BOM main code
+    UPDATE int$stg_BOM a SET DERIVED_PRDBOMMAIN_CODE = bommain_code
+    FROM(SELECT  coalesce(a.lineno, 0) lineno, bom.CODE bommain_code
+             FROM    int$stg_BOM a, prdbommain bom
+             where   bom.ASSEMBLY_ICODE = a.DERIVED_ASSEMBLY_ICODE
+             AND     bom.ROUTECODE = a.DERIVED_ROUTECODE
+             AND     a.userid = p_userid) b
+    WHERE (a.lineno = b.lineno);
+
+    -- updating component division code
+    UPDATE int$stg_BOM a  SET DERIVED_ALTDIVISIONCODE = div_code
+    FROM (SELECT  coalesce(a.lineno, 0) lineno, sec.PARCODE div_code
+             FROM    int$stg_BOM a, invitem i, invgrp dept, invgrp sec
+             WHERE   ((UPPER(a.COMP_ICODE_BARCODE) = i.icode) or (UPPER(a.COMP_ICODE_BARCODE) = i.barcode))
+             AND     i.GRPCODE = dept.GRPCODE
+             AND     dept.PARCODE = sec.grpcode
+             AND     a.COMP_ALTERNATE_ALLOWED IS NOT NULL
+             AND     a.userid = p_userid) b
+    WHERE (a.lineno = b.lineno);
+
+    -- updating component's alternate section code
+    UPDATE int$stg_BOM a SET DERIVED_ALTSECTIONCODE = sec_code
+    FROM(SELECT  coalesce(a.lineno, 0) lineno, sec.grpcode sec_code
+             FROM    int$stg_BOM a, invgrp sec
+             WHERE   UPPER(a.COMP_ALTERNATE_SECTNAME) = UPPER(sec.grpname)
+             AND     a.DERIVED_ALTDIVISIONCODE IS NOT NULL
+             AND     a.COMP_ALTERNATE_SECTNAME IS NOT NULL
+             AND     sec.PARCODE = a.DERIVED_ALTDIVISIONCODE
+             AND     a.userid = p_userid) b
+    WHERE (a.lineno = b.lineno);
+
+  -- updating component's alternate department code
+    UPDATE int$stg_BOM a SET DERIVED_ALTDEPARTMENTCODE = dept_code
+    FROM(SELECT  coalesce(a.lineno, 0) lineno, dept.grpcode dept_code
+             FROM    int$stg_BOM a, invgrp dept
+             WHERE   UPPER(a.COMP_ALTERNATE_DEPTNAME) = UPPER(dept.grpname)
+             AND     a.DERIVED_ALTSECTIONCODE IS NOT NULL
+             AND     a.COMP_ALTERNATE_DEPTNAME IS NOT NULL
+             AND     dept.PARCODE = a.DERIVED_ALTSECTIONCODE
+             AND     a.userid = p_userid) b
+    WHERE (a.lineno = b.lineno);
+
+  -- updating OPERATION SEQ (FOR ROUTES WHERE SAME PROCESS DOESN'T EXIST MULTIPLE TIMES)
+    UPDATE int$stg_BOM a SET DERIVED_OPERATION_SEQ = b.OPERATION_SEQ
+    FROM (SELECT  coalesce(a.lineno, 0) lineno, Y.OPERATION_SEQ
+             FROM    int$stg_BOM a, ( SELECT PRD.ROUTECODE, PRD.PRCODE, OPERATION_SEQ
+                                        FROM PRDROUTEDET PRD, (
+                                            SELECT ROUTECODE, PRCODE
+                                            FROM PRDROUTEDET
+                                            GROUP BY ROUTECODE, PRCODE
+                                            HAVING COUNT(*) < 2) X
+                                        WHERE PRD.ROUTECODE = X.ROUTECODE
+                                        AND   PRD.PRCODE = X.PRCODE ) Y
+             WHERE   a.DERIVED_ROUTECODE = Y.ROUTECODE
+             AND     a.DERIVED_PROCESSCODE = Y.PRCODE
+             AND     a.OPERATION_SEQ is NULL
+             AND     a.userid = p_userid) b
+    WHERE (a.lineno = b.lineno);
+
+    -- updating OPERATION SEQ into derived where operation seq is specified
+    UPDATE int$stg_BOM 
+    SET    DERIVED_OPERATION_SEQ = OPERATION_SEQ
+    WHERE  OPERATION_SEQ is NOT NULL;
+
+     -- Validing ASSEMBLY_ICODE_BARCODE
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Assembly item not found against specified barcode.', clock_timestamp()
+        from   int$stg_BOM a
+        where  a.DERIVED_ASSEMBLY_ICODE IS NULL
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Assembly item should be non-extinct, inventory item and type should be other than Raw Materials.', clock_timestamp()
+        from   int$stg_BOM a
+        where  a.lineno not in (
+                        SELECT  coalesce(b.lineno,0) lineno
+                        from    int$stg_BOM b, invitem i
+                        where   b.DERIVED_ASSEMBLY_ICODE = i.ICODE
+                        and     coalesce(i.EXT,'N') = 'N'
+                        and     coalesce(i.NONINVENTORY,'N') = 'N'
+                        and     coalesce(i.MATERIAL_TYPE, 'F') != 'R'
+                        and     b.userid = p_userid
+                    )
+        and   a.DERIVED_ASSEMBLY_ICODE IS NOT NULL
+        and   a.userid = p_userid;
+
+     -- Validating ROUTE_ID
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Route Id should be valid.', clock_timestamp()
+        from   int$stg_BOM a
+        where  a.DERIVED_ROUTECODE IS NULL
+        and    a.userid = p_userid;
+
+     -- Validating ROUTE_ID and ASSEMBLY_ICODE_BARCODE combination should exist in atleast 1 route group
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Assembly item not found in any route group for the specified route ID.', clock_timestamp()
+        from   int$stg_BOM a
+        where a.lineno not in (
+                        SELECT  coalesce(b.lineno,0) lineno
+                        from    int$stg_BOM b, prdroutegrpdet rgdet
+                        where   rgdet.routecode = a.DERIVED_ROUTECODE
+                        and     rgdet.icode = a.DERIVED_ASSEMBLY_ICODE
+                        and     b.userid = p_userid
+                    )
+        and   DERIVED_ASSEMBLY_ICODE IS NOT NULL
+        and   DERIVED_ROUTECODE is NOT NULL
+        and   a.userid = p_userid;
+
+     -- Validating if no unapproved bom version exist
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Unapproved BOM exists for Assembly Item, Route combination. Please approve the same to proceed.', clock_timestamp()
+        from   int$stg_BOM a
+        where a.lineno in (
+                        SELECT  coalesce(b.lineno,0) lineno
+                        from    int$stg_BOM b, prdbomver bomver
+                        where   bomver.BOMCODE = a.DERIVED_PRDBOMMAIN_CODE
+                        and     coalesce(bomver.STATUS, 'N') = 'N'
+                        and     b.userid = p_userid
+                    )
+        and   DERIVED_PRDBOMMAIN_CODE IS NOT NULL
+        and   a.userid = p_userid;
+
+     -- Validating PROCESS_NAME
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Process Name should be valid.', clock_timestamp()
+        from   int$stg_BOM a
+        where  a.DERIVED_PROCESSCODE IS NULL
+        and    a.userid = p_userid;
+
+     -- Validating PROCESS_NAME (without OPERATION_SEQ) and ROUTE_ID combination
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Cannot determine operation seq. Either process-route combination doesnt exist or same process is there multiple times in the given route (specify seq manually in such cases).', clock_timestamp()
+        from   int$stg_BOM a
+        where  a.DERIVED_OPERATION_SEQ IS NULL
+        and    a.userid = p_userid;
+
+     -- Validating PROCESS_NAME (with OPERATION_SEQ) and ROUTE_ID combination
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Process (with operation seq) not found in the route specified.', clock_timestamp()
+        from   int$stg_BOM a
+        WHERE   a.lineno not in (
+                        SELECT  coalesce(b.lineno,0) lineno
+                        from    int$stg_BOM b, prdroutedet rdet
+                        where   rdet.routecode = b.DERIVED_ROUTECODE
+                        and     rdet.PRCODE = b.DERIVED_PRocessCODE
+                        and     rdet.OPERATION_SEQ = a.OPERATION_SEQ
+                        and     b.userid = p_userid
+                    )
+        and   a.DERIVED_PROCESSCODE is not null
+        and   a.DERIVED_ROUTECODE is not null
+        and   a.OPERATION_SEQ is not null
+        and   a.userid = p_userid;
+
+     -- Validating ASSEMBLY_SUPPLY_TYPE
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'ASSEMBLY_SUPPLY_TYPE Should be either PUSH, PULL ON ORDER.', clock_timestamp()
+        from   int$stg_BOM a
+        where  UPPER(ASSEMBLY_SUPPLY_TYPE) NOT IN ('PUSH', 'PULL ON ORDER')
+        and    ASSEMBLY_SUPPLY_TYPE is not null
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'ASSEMBLY_SUPPLY_TYPE cannot be specified for first process of the route.', clock_timestamp()
+        from   int$stg_BOM a
+        WHERE   a.ASSEMBLY_SUPPLY_TYPE IS NOT NULL
+        and   a.DERIVED_OPERATION_SEQ = 1
+        and   a.userid = p_userid;
+
+     -- Validing COMP_ICODE_BARCODE
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Component item not found against specified barcode.', clock_timestamp()
+        from   int$stg_BOM a
+        where  a.DERIVED_COMP_ICODE IS NULL
+        and    a.COMP_ICODE_BARCODE IS NOT NULL
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Component item should be non-extinct, inventory item and type should be other than Finished Goods.', clock_timestamp()
+        from   int$stg_BOM a
+        where  a.lineno not in (
+                        SELECT  coalesce(b.lineno,0) lineno
+                        from    int$stg_BOM b, invitem i
+                        where   b.DERIVED_COMP_ICODE = i.ICODE
+                        and     coalesce(i.EXT,'N') = 'N'
+                        and     coalesce(i.NONINVENTORY,'N') = 'N'
+                        and     coalesce(i.MATERIAL_TYPE, 'F') != 'F'
+                        and     b.userid = p_userid
+                    )
+        and   a.DERIVED_COMP_ICODE IS NOT NULL
+        and   a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Assembly Item cannot be consumed as a Component in the same item.', clock_timestamp()
+        from   int$stg_BOM a
+        where  a.DERIVED_ASSEMBLY_ICODE = a.DERIVED_COMP_ICODE
+        and   a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'COMP_ICODE_BARCODE not provided, so other component details cannot be provided.', clock_timestamp()
+        from   int$stg_BOM a
+        where  COMP_ICODE_BARCODE IS NULL
+        AND ( 
+                    COMP_QTY IS NOT NULL OR
+                    COMP_SUPPLY_TYPE IS NOT NULL OR
+                    COMP_SHRINKAGE_FACTOR IS NOT NULL OR
+                    COMP_TOLERANCE_FACTOR IS NOT NULL OR
+                    COMP_IS_MANDATORY IS NOT NULL OR
+                    COMP_ALTERNATE_ALLOWED IS NOT NULL OR
+                    COMP_ALTERNATE_SECTNAME IS NOT NULL OR
+                    COMP_ALTERNATE_DEPTNAME IS NOT NULL
+                )
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'COMP_QTY, COMP_SUPPLY_TYPE, COMP_IS_MANDATORY required for component items.', clock_timestamp()
+        from   int$stg_BOM a
+        where  COMP_ICODE_BARCODE IS NOT NULL
+        AND ( 
+                    COMP_QTY IS NULL OR
+                    COMP_SUPPLY_TYPE IS NULL OR
+                    COMP_IS_MANDATORY IS NULL
+                )
+        and    a.userid = p_userid;
+
+     -- Validating COMP_QTY
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Component qty. can not be Zero/Negative.', clock_timestamp()
+        from   int$stg_BOM a
+        where  a.COMP_QTY <= 0
+        and    a.COMP_QTY IS NOT NULL
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Component qty. can be provided up to 7 decimal places only.', clock_timestamp()
+        from   int$stg_BOM a
+        where  length(abs((COMP_QTY) - round(COMP_QTY)) :: text) > 9
+        and    a.COMP_QTY IS NOT NULL
+        and    a.userid = p_userid;
+
+      -- Validating COMP_SHRINKAGE_FACTOR
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Shrinkage factor should be between 0 - 90.', clock_timestamp()
+        from   int$stg_BOM a
+        where ( 
+                    coalesce(a.COMP_SHRINKAGE_FACTOR, 0) < 0
+                    OR
+                    coalesce(a.COMP_SHRINKAGE_FACTOR, 0) > 90
+                )
+        and    a.COMP_SHRINKAGE_FACTOR IS NOT NULL
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Shrinkage factor can be provided up to 2 decimal places only.', clock_timestamp()
+        from   int$stg_BOM a
+        where  length(abs((coalesce(COMP_SHRINKAGE_FACTOR, 0)) - round(coalesce(COMP_SHRINKAGE_FACTOR, 0))) :: text) > 3
+        and    a.COMP_SHRINKAGE_FACTOR IS NOT NULL
+        and    a.userid = p_userid;
+
+      -- Validating COMP_TOLERANCE_FACTOR
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Tolerance factor should be between 0 - 999.', clock_timestamp()
+        from   int$stg_BOM a
+        where ( 
+                    coalesce(a.COMP_TOLERANCE_FACTOR, 0) < 0
+                    OR
+                    coalesce(a.COMP_TOLERANCE_FACTOR, 0) > 999
+                )
+        and    a.COMP_TOLERANCE_FACTOR IS NOT NULL
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Tolerance factor cannot be in decimal.', clock_timestamp()
+        from   int$stg_BOM a
+        where  length(abs((coalesce(COMP_TOLERANCE_FACTOR, 0)) - round(coalesce(COMP_TOLERANCE_FACTOR, 0))) :: text) > 1
+        and    a.COMP_TOLERANCE_FACTOR IS NOT NULL
+        and    a.userid = p_userid;
+
+      -- Validating combination of COMP_TOLERANCE_FACTOR and COMP_SHRINKAGE_FACTOR
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Tolerance is required when shrinkage is provided.', clock_timestamp()
+        from   int$stg_BOM a
+        where  COMP_SHRINKAGE_FACTOR is not null
+        and    COMP_SHRINKAGE_FACTOR > 0
+        and    COMP_TOLERANCE_FACTOR is null
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Tolerance should be minimum ' || CEIL((COMP_SHRINKAGE_FACTOR*100)/(100-COMP_SHRINKAGE_FACTOR)) :: text || ' as per shrinkage provided.', clock_timestamp()
+        from   int$stg_BOM a
+        where  coalesce(COMP_SHRINKAGE_FACTOR, 0) > 0
+        and    COMP_TOLERANCE_FACTOR is not null
+        and    COMP_TOLERANCE_FACTOR < CEIL((COMP_SHRINKAGE_FACTOR*100)/(100-COMP_SHRINKAGE_FACTOR))
+        and    a.userid = p_userid;
+
+      -- Validating COMP_SUPPLY_TYPE
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'COMP_SUPPLY_TYPE Should be either PUSH, PULL ON ORDER or PULL ON COMPLETION.', clock_timestamp()
+        from   int$stg_BOM a
+        where  UPPER(COMP_SUPPLY_TYPE) NOT IN ('PUSH', 'PULL ON ORDER', 'PULL ON COMPLETION')
+        and    COMP_SUPPLY_TYPE is not null
+        and    a.userid = p_userid;
+
+      -- Validating COMP_IS_MANDATORY
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'COMP_IS_MANDATORY Should be either YES or NO.', clock_timestamp()
+        from   int$stg_BOM a
+        where  UPPER(COMP_IS_MANDATORY) NOT IN ('YES', 'NO')
+        and    COMP_IS_MANDATORY is not null
+        and    a.userid = p_userid;
+
+      -- Validating COMP_ALTERNATE_ALLOWED
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'COMP_ALTERNATE_ALLOWED can either be YES or NO.', clock_timestamp()
+        from   int$stg_BOM a
+        where  UPPER(coalesce(COMP_ALTERNATE_ALLOWED, 'NO')) NOT IN ('YES', 'NO')
+        and    COMP_ALTERNATE_ALLOWED IS NOT NULL
+        and    a.userid = p_userid;
+
+      -- Validating COMP_ALTERNATE_SECTNAME AND COMP_ALTERNATE_DEPTNAME
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Alternate group section/department name can be provided only when COMP_ALTERNATE_ALLOWED is set to YES.', clock_timestamp()
+        from   int$stg_BOM a
+        where (COMP_ALTERNATE_SECTNAME is not null or COMP_ALTERNATE_DEPTNAME is not null)
+        and    UPPER(coalesce(COMP_ALTERNATE_ALLOWED, 'NO')) = 'NO'
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Alternate group department can be provided only when section is specified.', clock_timestamp()
+        from   int$stg_BOM a
+        where  COMP_ALTERNATE_DEPTNAME is not null
+        and    COMP_ALTERNATE_SECTNAME is null
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Section not found under component item division.', clock_timestamp()
+        from   int$stg_BOM a
+        WHERE  a.DERIVED_ALTSECTIONCODE is null
+        and   a.COMP_ALTERNATE_SECTNAME is not null
+        and   a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Department not found under component item division.', clock_timestamp()
+        from   int$stg_BOM a
+        WHERE  a.DERIVED_ALTDEPARTMENTCODE is null
+        and   a.COMP_ALTERNATE_DEPTNAME is not null
+        and   a.userid = p_userid;
+
+      -- Atleast ASSEMBLY_SUPPLY_TYPE or COMPONENT should be provided
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Either ASSEMBLY_SUPPLY_TYPE or COMP_ICODE_BARCODE is required.', clock_timestamp()
+        from   int$stg_BOM a
+        WHERE a.COMP_ICODE_BARCODE is null
+        and   a.ASSEMBLY_SUPPLY_TYPE is  null
+        and   a.userid = p_userid;
+
+      -- Combination cheques for uniqueness
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Multiple ASSEMBLY_SUPPLY_TYPE found against Assembly ICODE, Route, Operation Seq, Process combination.', clock_timestamp()
+        from   int$stg_BOM a
+        where  a.lineno in
+                    (
+                        SELECT  coalesce(b.lineno,0) lineno
+                        from    int$stg_BOM b, (SELECT  DERIVED_ASSEMBLY_ICODE, DERIVED_ROUTECODE, DERIVED_OPERATION_SEQ, DERIVED_PROCESSCODE
+                                                    FROM ( select   DISTINCT DERIVED_ASSEMBLY_ICODE, DERIVED_ROUTECODE, DERIVED_OPERATION_SEQ, DERIVED_PROCESSCODE, ASSEMBLY_SUPPLY_TYPE
+                                                            from     int$stg_BOM
+                                                            where   userid = p_userid ) alias4
+                                                    GROUP BY DERIVED_ASSEMBLY_ICODE, DERIVED_ROUTECODE, DERIVED_OPERATION_SEQ, DERIVED_PROCESSCODE
+                                                    HAVING COUNT(*) > 1) y
+                        where   b.DERIVED_ASSEMBLY_ICODE = y.DERIVED_ASSEMBLY_ICODE
+                        and     b.DERIVED_ROUTECODE = y.DERIVED_ROUTECODE
+                        and     b.DERIVED_OPERATION_SEQ = y.DERIVED_OPERATION_SEQ
+                        and     b.DERIVED_PROCESSCODE = y.DERIVED_PROCESSCODE
+                        and     b.userid = p_userid
+                    )
+        and   a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Same COMP_ICODE_BARCODE found in multiple rows against Assembly ICODE, Route, Operation Seq, Process combination.', clock_timestamp()
+        from   int$stg_BOM a
+        where  a.lineno in
+                    (
+                        SELECT  coalesce(b.lineno,0) lineno
+                        from    int$stg_BOM b, (SELECT  DERIVED_ASSEMBLY_ICODE, DERIVED_ROUTECODE, DERIVED_OPERATION_SEQ, DERIVED_PROCESSCODE, ASSEMBLY_SUPPLY_TYPE, DERIVED_COMP_ICODE
+                                                FROM    int$stg_BOM
+                                                where   userid = p_userid 
+                                                GROUP BY DERIVED_ASSEMBLY_ICODE, DERIVED_ROUTECODE, DERIVED_OPERATION_SEQ, DERIVED_PROCESSCODE, ASSEMBLY_SUPPLY_TYPE, DERIVED_COMP_ICODE
+                                                HAVING COUNT(*) > 1) y
+                        where   b.DERIVED_ASSEMBLY_ICODE = y.DERIVED_ASSEMBLY_ICODE
+                        and     b.DERIVED_ROUTECODE = y.DERIVED_ROUTECODE
+                        and     b.DERIVED_OPERATION_SEQ = y.DERIVED_OPERATION_SEQ
+                        and     b.DERIVED_PROCESSCODE = y.DERIVED_PROCESSCODE
+                        and     b.ASSEMBLY_SUPPLY_TYPE = y.ASSEMBLY_SUPPLY_TYPE
+                        and     b.DERIVED_COMP_ICODE = y.DERIVED_COMP_ICODE
+                        and     b.userid = p_userid
+                    )
+        and   a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Atleast one component is required against Assembly ICODE, Route combination.', clock_timestamp()
+        from   int$stg_BOM a
+        where  a.lineno in
+                    (
+                        SELECT  coalesce(b.lineno,0) lineno
+                        from    int$stg_BOM b, (SELECT   DERIVED_ASSEMBLY_ICODE, DERIVED_ROUTECODE
+                                                    FROM     int$stg_BOM
+                                                    where    DERIVED_COMP_ICODE is not null
+                                                    and      userid = p_userid
+                                                    GROUP BY DERIVED_ASSEMBLY_ICODE, DERIVED_ROUTECODE
+                                                    HAVING COUNT(*) = 0) y
+                        where   b.DERIVED_ASSEMBLY_ICODE = y.DERIVED_ASSEMBLY_ICODE
+                        and     b.DERIVED_ROUTECODE = y.DERIVED_ROUTECODE
+                        and     b.userid = p_userid
+                    )
+        and   a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Component is required (if specified in one row) for all rows against Assembly ICODE, Route, Operation Seq, Process combination.', clock_timestamp()
+        from   int$stg_BOM a
+        where  a.lineno in
+                    (
+                        SELECT  coalesce(b.lineno,0) lineno
+                        from    int$stg_BOM b, (SELECT * FROM ( SELECT DERIVED_ASSEMBLY_ICODE, DERIVED_ROUTECODE, 
+                                                                       DERIVED_OPERATION_SEQ, DERIVED_PROCESSCODE, 
+                                                                       SUM(CASE WHEN DERIVED_COMP_ICODE IS NOT NULL THEN 1 ELSE 0 END) COMP_ICODE_EXIST_COUNT,
+                                                                       SUM(CASE WHEN DERIVED_COMP_ICODE IS NULL THEN 1 ELSE 0 END) COMP_ICODE_NULL_COUNT
+                                                                FROM   int$stg_BOM
+                                                                group by DERIVED_ASSEMBLY_ICODE, DERIVED_ROUTECODE, DERIVED_OPERATION_SEQ, DERIVED_PROCESSCODE) alias6
+                                                WHERE coalesce(COMP_ICODE_EXIST_COUNT, 0) > 0
+                                                AND   coalesce(COMP_ICODE_NULL_COUNT, 0) > 0) y
+                        where   b.DERIVED_ASSEMBLY_ICODE = y.DERIVED_ASSEMBLY_ICODE
+                        and     b.DERIVED_ROUTECODE = y.DERIVED_ROUTECODE
+                        AND     b.DERIVED_OPERATION_SEQ = y.DERIVED_OPERATION_SEQ
+                        AND     b.DERIVED_PROCESSCODE  = y.DERIVED_PROCESSCODE
+                        and     b.userid = p_userid
+                    )
+        and   a.userid = p_userid;
+		
+insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'BOM', userid, 'Data Validation', 'Same component item exists multiple times in same process.', clock_timestamp()
+        from   int$stg_bom a
+        where  a.userid = p_userid
+        and (a.derived_assembly_icode,a.derived_processcode,a.operation_seq,a.derived_comp_icode) in (
+                    SELECT  distinct
+                            z1.derived_assembly_icode,z1.derived_processcode,z1.operation_seq,z1.derived_comp_icode
+                    from (
+                    select  derived_assembly_icode,derived_processcode,operation_seq,derived_comp_icode,
+                            row_number() over (partition by derived_assembly_icode,derived_processcode,operation_seq,derived_comp_icode order by derived_assembly_icode,derived_processcode,operation_seq,derived_comp_icode) cnt
+                    from    int$stg_bom t1
+                    where   t1.userid = p_userid
+                            ) z1
+                    where   z1.cnt > 1 
+                );
+
+      
+
+      -- Check whether records are valid or not
+      BEGIN
+         SELECT 'S'
+           INTO STRICT v_status
+           
+          WHERE EXISTS (SELECT 'S'
+                      FROM int$error_log
+                     WHERE userid = p_userid);
+
+         RETURN('0');
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            RETURN('1');
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'BOM',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

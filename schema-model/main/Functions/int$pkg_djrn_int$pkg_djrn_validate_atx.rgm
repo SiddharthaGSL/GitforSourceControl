@@ -1,0 +1,849 @@
+function "main"."int$pkg_djrn_int$pkg_djrn_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        v_status        char(1);
+        errmsg          varchar(200);
+        g_mark          varchar(100);
+        errcode         bigint;
+BEGIN
+        CALL erraudit(USER, 'DJRN', p_userid,'1 - Web import Debit Journal creation start');
+
+        g_mark := 'V22';
+        -- scheme_doc_format chking
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation', a.scheme_doc_format||': Scheme_doc_format, should be valid and non-extinct.',clock_timestamp()
+        from    int$stg_djrn a
+        where   upper(a.scheme_doc_format) not in
+                (
+                    SELECT upper(a.docname)
+                    from   admdocscheme a, admmenu_docscheme b
+                    where  a.doccode = b.doccode
+                    --and    b.menucode = 26
+                    AND b.MDMENUSHORTCODE = 'FinanceDebtJournal'
+                    and    coalesce(a.ext, 'N') = 'N'
+                    and    (   0 =
+                                    (select count(*)
+                                     from   admdocscheme c, admou_docscheme d
+                                     where  c.doccode = d.doccode
+                                     and    d.admsite_code = p_connect_site
+                                     and    coalesce(c.ext, 'N') = 'N')
+                               or a.doccode in (
+                                     select e.doccode
+                                     from   admdocscheme e, admou_docscheme f
+                                     where  e.doccode = f.doccode
+                                     and    f.admsite_code = p_connect_site
+                                     and    coalesce(e.ext, 'N') = 'N')
+                           )
+                )
+        and     a.userid = p_userid;
+
+        g_mark := 'V23';
+        -- scheme_docno chking
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation',
+                a.scheme_docno||': Scheme_docno, can not be blank if scheme_doc_format is manual.',clock_timestamp()
+        from    int$stg_djrn a
+        where (upper(a.scheme_doc_format) in ('MANUAL (GENERAL)','MANUAL (EXCISE)') and a.scheme_docno is null)
+        and     a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation', a.scheme_doc_format||': SCHEME_DOCNO, maximum length allowed is 100 characters.', clock_timestamp()
+        from   int$stg_djrn a
+        where  length(a.scheme_doc_format) > 100
+        and    a.userid = p_userid;
+        -- END REV : 003
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation',
+                a.scheme_docno||': Scheme_docno, should be null, as it would be auto generated',clock_timestamp()
+        from    int$stg_djrn a
+        where (upper(a.scheme_doc_format) not in ('MANUAL (GENERAL)', 'MANUAL (EXCISE)') and a.scheme_docno is not null)
+        and     a.userid = p_userid;
+
+        --v_mark := 11;
+        -- scheme_docno unique chking
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'),
+                -- start rev : 004
+                --0,
+                a.lineno, 
+                -- end rev : 004
+                'DJRN', p_userid, 'Data Validation', a.scheme_doc_format||': SCHEME_DOCNO, duplicate number not allowed.',clock_timestamp()
+        from    int$stg_djrn a, finjrnmain b
+        where   upper(a.scheme_docno) = upper(b.scheme_docno)
+        and     b.ycode = (SELECT ycode from admyear where a.jrn_date between dtfr and dtto)
+        and     a.userid = p_userid;
+
+        declare
+            c1 CURSOR FOR
+                SELECT  distinct a.scheme_docno, a.scheme_doc_format
+                from    int$stg_djrn a
+                where   upper(a.scheme_doc_format) in ('MANUAL (GENERAL)','MANUAL (EXCISE)')
+                and     a.scheme_docno is not null
+                and     a.userid = p_userid;
+        begin
+            for i in c1 loop
+                insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                SELECT  nextval('int$error_log_code'), 0, 'DJRN', p_userid, 'Data Validation', i.scheme_doc_format||': SCHEME_DOCNO, duplicate number not allowed.', clock_timestamp()
+                where   exists (
+                                    SELECT count(*)
+                                    from (
+                                                select  distinct
+                                                        upper(scheme_doc_format),
+                                                        upper(scheme_docno),
+                                                        jrn_date,
+                                                        upper(slid),
+                                                        upper(ref_site_short_name),
+                                                        reference,
+                                                        a.header_narration
+                                                from    int$stg_djrn s
+                                                where   upper(a.scheme_docno) = upper(i.scheme_docno)
+                                                and     a.userid = p_userid
+                                            ) a
+                                    having count(*) > 1
+                               );
+            end loop;
+        end;
+
+        declare
+            c1 CURSOR FOR
+                SELECT distinct UPPER(a.scheme_doc_format) scheme_doc_format1, b.doccode
+                FROM   int$stg_djrn a, admdocscheme b
+                WHERE  UPPER(a.scheme_doc_format) = UPPER(b.docname)
+                and    a.userid = p_userid;
+        begin
+            for i in c1 loop
+                update int$stg_djrn
+                set    doccode = i.doccode
+                where  UPPER(scheme_doc_format) = i.scheme_doc_format1
+                and    userid = p_userid;
+            end loop;
+        end;
+
+        g_mark := 'D1001';
+        -- jrn_date > sysdate
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation',a.jrn_date||': Jrn_date, future journal date not allowed.',clock_timestamp()
+        from    int$stg_djrn a
+        where   date_trunc('day', jrn_date) > date_trunc('day', clock_timestamp())
+        and     a.userid = p_userid;
+
+        g_mark := 'V21';
+        -- jrn_date checking for the following -
+        -- Year extinct,
+        declare
+            v_dtfr          timestamp;
+            v_dtto          timestamp;
+            v_ycode         integer;
+            v_yr_ext        char(1);
+            v_day_status    char(1);
+            v_locdays       hrdemp.locdays%type;
+            v_last_dt_lock  char(1);
+
+            c1 CURSOR FOR
+                SELECT distinct date_trunc('day', jrn_date) jrn_date1
+                from   int$stg_djrn
+                where  userid = p_userid;
+        begin
+            for i in c1 loop
+                -- Ycode related checking, min trans date checking, lockday checking, Year exists or not, Day status related checking
+                begin
+                    select ext, dtfr, dtto, ycode
+                    into STRICT   v_yr_ext, v_dtfr, v_dtto, v_ycode
+                    from   admyear
+                    where  i.jrn_date1 between dtfr and dtto;
+
+                    update int$stg_djrn
+                    set    ycode = v_ycode
+                    where  date_trunc('day', jrn_date) = i.jrn_date1;
+
+                    if  coalesce(v_yr_ext,'N') = 'Y' then
+                        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                        SELECT  nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation',
+                                a.jrn_date||': Jrn_date, Year of the Date is not open / extinct', clock_timestamp()
+                        from    int$stg_djrn a
+                        where   date_trunc('day', jrn_date) = i.jrn_date1
+                        and     userid = p_userid;
+                    else
+                        if  i.jrn_date1 < v_dtfr then
+                            insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                            SELECT  nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation',
+                                    a.jrn_date||': Jrn_date, can not be less than start date of current accounting year date '||TO_CHAR(v_dtfr,'DD/MM/YYYY'), clock_timestamp()
+                            from    int$stg_djrn a
+                            where   date_trunc('day', jrn_date) = i.jrn_date1
+                            and     userid = p_userid;
+                        else
+                            begin
+                                select locdays, allow_last_fy_day_mode
+                                into STRICT   v_locdays, v_last_dt_lock
+                                from   hrdemp
+                                where  ecode = p_userid;
+
+                                if  v_locdays is not null then
+                                    if  coalesce(db_fun_chk_last_dt_lock(v_last_dt_lock, current_date),0) <> 0 then
+                                        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                                        SELECT  nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation',
+                                                a.jrn_date||': Jrn_date, User lock days logic fails.', clock_timestamp()
+                                        from    int$stg_djrn a
+                                        where   date_trunc('day', jrn_date) = i.jrn_date1
+                                        and     userid = p_userid;
+                                    else
+                                        if  date_trunc('day', i.jrn_date1) < (CURRENT_DATE - v_locdays::integer) then
+                                            insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                                            SELECT  nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation',
+                                                    a.jrn_date||': Jrn_date, User lock days logic fails', clock_timestamp()
+                                            from    int$stg_djrn a
+                                            where   date_trunc('day', jrn_date) = i.jrn_date1
+                                            and     userid = p_userid;
+                                        end if;
+                                    end if;
+                                end if;
+                            exception
+                                when no_data_found then
+                                    insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                                    SELECT  nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation', 'User not exists', clock_timestamp()
+                                    from    int$stg_djrn
+                                    where   date_trunc('day', jrn_date) = i.jrn_date1
+                                    and     userid = p_userid;
+                            end;
+                        end if;
+                    end if;
+                exception
+                    when no_data_found then
+                        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                        SELECT  nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation', 'Year not exists', clock_timestamp()
+                        from    int$stg_djrn
+                        where   date_trunc('day', jrn_date) = i.jrn_date1
+                        and     userid = p_userid;
+                end;
+
+                insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                SELECT  nextval('int$error_log_code'), 0, 'DJRN', p_userid, 'Mandatory Validation',
+                        i.jrn_date1||': Jrn_date, Finance month of the date is either closed or doesn''t exist.',clock_timestamp()
+                from    admmonth a, admou_month b
+                where   a.mcode = b.admmonth_code
+                and     i.jrn_date1 between dtfr and dtto
+                and     b.admou_code = p_connect_ou
+                and     b.fin_month_status = 'C';
+
+                insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                SELECT  nextval('int$error_log_code'), 0, 'DJRN', p_userid, 'Mandatory Validation',
+                        i.jrn_date1||': Jrn_date, Entry not allowed in the first accounting year. Only opening entries are allowed in first accounting year.',clock_timestamp()
+                from    admmonth a, admou_month b
+                where   a.mcode = b.admmonth_code
+                and     i.jrn_date1 between dtfr and dtto
+                and     b.admou_code = p_connect_ou
+                and     a.ycode = 1;
+            end loop;
+        end;
+
+        g_mark := 'V25';
+        -- SLID
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation', a.slid||': SLID, should be valid and non-extinct.',clock_timestamp()
+        FROM int$stg_djrn a LEFT OUTER JOIN finsl b ON (upper(a.slid) = upper(b.slid ))
+WHERE (b.slcode is null or coalesce(b.ext,'N') = 'Y') and userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation', a.slid||': SLID, must have AR/AP ledger tagged in the master.',clock_timestamp()
+        from    int$stg_djrn a, finsl b
+        where   upper(a.slid) = upper(b.slid)
+        and     b.glcode is null
+        and     userid = p_userid;
+
+      -- START REV : 001
+      insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+      SELECT  nextval('int$error_log_code'), lineno,
+                -- start rev : 005
+                --'CJRN',
+                'DJRN', 
+                -- end rev : 005
+                userid, 'Data Validation', a.slid||': SLID, entry is not allowed for the selected SLID in the connected OU.',clock_timestamp()
+        from    int$stg_djrn a
+        WHERE  NOT exists
+        (
+        SELECT finsl.slid
+    FROM fingrp p, fingl, admcls, finsl
+LEFT OUTER JOIN finsl ag ON (FINSL.AGCODE = AG.SLCODE)
+LEFT OUTER JOIN (  SELECT DISTINCT SLCODE, ADMOU_CODE
+              FROM (SELECT SLCODE, ADMOU_CODE
+                      FROM FINSL_OU
+                     WHERE ADMOU_CODE IS NOT NULL
+                    
+UNION ALL
+
+                    SELECT S.SLCODE, RS.ADMOU_CODE
+                      FROM ADMSITE_OU AO, ADMSITE S, ADMSITE RS
+                     WHERE     AO.ADMSITE_CODE = S.CODE
+                           AND AO.REPLN_ADMSITE_CODE = RS.CODE
+                           AND S.SLCODE IS NOT NULL
+                           AND coalesce(S.EXT, 'N') = 'N'
+                           AND coalesce(AO.EXT, 'N') = 'N'
+                           AND RS.ADMOU_CODE IS NOT NULL) alias5 ) sl_ou ON (FINSL.SLCODE = SL_OU.SLCODE)
+WHERE FINSL.CLSCODE = ADMCLS.CLSCODE AND FINSL.GLCODE = FINGL.GLCODE AND FINGL.SRCTYPE = 'R'  AND FINGL.GRPCODE = P.GRPCODE AND FINSL.EXT = 'N' -- SIDD CODE STARTS
+  AND (SL_OU.ADMOU_CODE IS NULL
+                OR (SL_OU.ADMOU_CODE IS NOT NULL AND SL_OU.ADMOU_CODE = p_connect_ou)
+             ) and upper(finsl.slid)=upper(a.slid)
+         );
+      -- END REV : 001
+        declare
+            c1 CURSOR FOR
+                SELECT  distinct upper(a.slid) sl_id, b.slcode, b.glcode, c.clscode, c.clstype
+                from    int$stg_djrn a, finsl b, admcls c
+                where   upper(a.slid) = upper(b.slid)
+                and     b.clscode = c.clscode
+                and     b.glcode is not null
+                and     coalesce(b.ext,'N') = 'N'
+                and     userid = p_userid;
+        begin
+            for i in c1 loop
+                update int$stg_djrn a
+                set    slcode = i.slcode,
+                       glcode = i.glcode,
+                       clstype = i.clstype,
+                       ref_admsite_code =  db_func_fin_ref_site(i.slcode,p_connect_site)
+                where  upper(a.slid) = i.sl_id
+                and     userid = p_userid;
+            end loop;
+        end;
+
+        g_mark := 'V25';
+        -- ref_site_short_name
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation', a.ref_site_short_name||': REF_SITE_SHORT_NAME, should be valid and non-extinct.',clock_timestamp()
+        FROM int$stg_djrn a
+LEFT OUTER JOIN  admsite b ON (upper(a.ref_site_short_name) = upper(b.shrtname ))
+WHERE (b.code is null or coalesce(b.ext,'N') = 'Y') and a.ref_site_short_name is not null and userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation', a.ref_site_short_name||': REF_SITE_SHORT_NAME, is not allowed with the given Sub ledger.',clock_timestamp()
+        from    int$stg_djrn a
+        where   a.ref_site_short_name is not null
+        and     upper(a.ref_site_short_name) not in
+                            (
+                                SELECT  upper(shrtname)
+                                from    v_pop_ref_admsite
+                                where   (
+                                            (
+                                                slcode is not null
+                                                and
+                                                slcode = a.slcode
+                                            )
+                                            or
+                                            slcode is null
+                                        )
+                                and     (
+                                            (
+                                                a.clstype = 'C'
+                                                and
+                                                v_pop_ref_admsite.clstype = 'C'
+                                            )
+                                            or (
+                                                a.clstype <> 'C'
+                                                and
+                                                v_pop_ref_admsite.clstype = 'N'
+                                            )
+                                        )
+                                and (
+                                            admou_code is null
+                                            or
+                                            admou_code = p_connect_ou
+                                        )
+                            )
+        and     userid = p_userid;
+
+        declare
+            v_admsite_code          numeric(12);
+            c1 CURSOR FOR
+                SELECT distinct UPPER(a.ref_site_short_name) ref_site_short_name1, b.code
+                FROM   int$stg_djrn a, admsite b
+                WHERE  UPPER(a.ref_site_short_name) = UPPER(b.shrtname)
+                and    a.userid = p_userid;
+
+            c2 CURSOR FOR
+                SELECT distinct a.slcode
+                FROM   int$stg_djrn a
+                WHERE  a.ref_site_short_name is null
+                and    a.clstype = 'C'
+                and    a.userid = p_userid;
+        begin
+            for i in c1 loop
+                update int$stg_djrn
+                set    ref_admsite_code = i.code
+                where  UPPER(ref_site_short_name) = i.ref_site_short_name1
+                and    userid = p_userid;
+            end loop;
+
+        end;
+
+        -- Detail Section
+        -- invalid gl name
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation', a.gl_name||': GL_NAME, should be valid and non-extinct.',clock_timestamp()
+        FROM int$stg_djrn a  LEFT OUTER JOIN fingl b ON (upper(a.gl_name) = upper(b.glname ))
+WHERE (b.glcode is null or coalesce(b.ext,'N') = 'Y') and userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation', a.gl_name||': GL_NAME, only General nature GLs are allowed.',clock_timestamp()
+        from    int$stg_djrn a, fingl b
+        where   upper(gl_name) = upper(glname)
+        and     b.srctype <> 'G'
+        and     userid = p_userid;
+
+        declare
+            v_slcode       bigint;
+
+            c1 CURSOR FOR
+                SELECT b.glname, b.glcode , b.slapp, b.costapp,HEADER_NARRATION,a.REFERENCE,a.SLID,SCHEME_DOC_FORMAT
+                from   int$stg_djrn a, fingl b
+                where  upper(gl_name) = upper(glname)
+                and    userid = p_userid;
+        begin
+            for i in c1 loop
+                update int$stg_djrn
+                set    det_glcode = i.glcode,
+                       det_slappl = i.slapp,
+                       det_gl_cc_appl = coalesce(i.costapp,'N')
+                where  upper(gl_name) = upper(i.glname)
+                AND    coalesce(HEADER_NARRATION,'@@') = coalesce(i.HEADER_NARRATION,'@@')
+                AND    coalesce(REFERENCE,'@@') = coalesce(i.REFERENCE,'@@')
+                AND    SLID = i.SLID
+                AND    coalesce(SCHEME_DOC_FORMAT,'@@') = coalesce(i.SCHEME_DOC_FORMAT,'@@')
+                and    userid = p_userid;
+
+                v_slcode := null;
+
+                begin
+                    select a.slcode into STRICT v_slcode
+                    from   finsl_gl a, finsl b
+                    where  a.slcode = b.slcode
+                    and    a.glcode = i.glcode
+                    and    coalesce(a.ext,'N') = 'N'
+                    and    coalesce(b.ext,'N') = 'N';
+
+                    update int$stg_djrn
+                    set    det_slcode = v_slcode
+                    where  upper(gl_name) = upper(i.glname)
+                    -- START REV : 005
+                    AND    sl_slid  IS NULL
+                    AND    det_slappl  = 'Y'
+                    AND    HEADER_NARRATION = i.HEADER_NARRATION
+                    -- END REV : 005
+                    and    userid = p_userid;
+                exception
+                    when others then null;
+                end;
+            end loop;
+        end;
+
+        -- SL_SLID
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation', a.sl_slid||': SL_SLID, should be valid and non-extinct.',clock_timestamp()
+        FROM int$stg_djrn a  LEFT OUTER JOIN finsl b ON (upper(a.sl_slid) = upper(b.slid ))
+WHERE (b.slcode is null or coalesce(b.ext,'N') = 'Y') and a.sl_slid is not null and userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation', a.sl_slid||': SL_SLID, is not applicable for the given GL_NAME.',clock_timestamp()
+        from    int$stg_djrn a, finsl b
+        where   upper(a.slid) = upper(b.slid)
+        and     b.glcode is not null
+        and     coalesce(a.det_slappl,'N') = 'N'
+        and     coalesce(b.ext,'N') = 'N'
+        and     a.sl_slid is not null
+        and     userid = p_userid;
+
+        declare
+            c1 CURSOR FOR
+                SELECT  upper(a.sl_slid) sl_id, b.slcode, b.glcode, a.clstype
+                from    int$stg_djrn a, finsl b, finsl_gl c
+                where   upper(a.sl_slid) = upper(b.slid)
+                and     b.slcode = c.slcode
+                and     a.det_glcode = c.glcode
+                and     coalesce(b.ext,'N') = 'N'
+                and     coalesce(c.ext,'N') = 'N'
+                and     userid = p_userid;
+        begin
+            for i in c1 loop
+                update int$stg_djrn a
+                set    a.det_slcode = i.slcode
+                where  upper(a.sl_slid) = i.sl_id
+                and    userid = p_userid;
+            end loop;
+        end;
+
+        -- START REV : 005
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation', a.sl_slid||': SL_SLID, is not applicable for the given GL_NAME.',clock_timestamp()
+        from    int$stg_djrn  a
+        where   not exists (
+                                SELECT   null
+                                FROM     FINSL,FINGL, FINSL_GL FGL
+                                where    FINSL.SLCODE = A.DET_SLCODE
+                                AND      FINGL.GLCODE = FGL.GLCODE
+                                AND      FGL.SLCODE   = FINSL.SLCODE
+                                AND      FGL.EXT      = 'N'
+                                AND      FINSL.EXT      = 'N'
+                                AND      FINGL.GLCODE =  A.DET_GLCODE
+                           )
+        AND  A.DET_SLAPPL = 'Y'
+        and     a.userid = p_userid;
+
+         insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation', a.TAG_SITE_SHORT_NAME||': TAG_ADMSITE_SHORT_NAME is not applicable for the given GL_NAME.',clock_timestamp()
+        from    int$stg_djrn  a
+        where   TAG_SITE_SHORT_NAME IS NOT NULL
+        AND  coalesce(A.DET_GL_CC_APPL,'N') = 'N'
+        and     a.userid = p_userid;
+        -- END REV : 005
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation', a.sl_slid||': SL_SLID, valid SLID is required for the given GL_NAME.',clock_timestamp()
+        from    int$stg_djrn a
+        where   a.det_slcode is null
+        and     coalesce(a.det_slappl,'N') = 'Y'
+        and     userid = p_userid;
+
+        g_mark := 'V35';
+        -- invalid amount  (amt = 0)
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DJRN', p_userid, 'Data Validation', a.amount::text||': AMOUNT, must be greater than or less than 0.',clock_timestamp()
+        from    int$stg_djrn a
+        where   amount = 0
+        and     userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DJRN', p_userid, 'Data Validation', a.amount::text||': AMOUNT, min and max value are -99,99,99,99,999.00 and 99,99,99,99,999.',clock_timestamp()
+        from    int$stg_djrn a
+        where   amount not between -99999999999 and 99999999999
+        and     userid = p_userid;
+
+        -- TAG_SITE_SHORT_NAME
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation', a.tag_site_short_name||': TAG_SITE_SHORT_NAME, should be valid and non-extinct.',clock_timestamp()
+        FROM int$stg_djrn a  LEFT OUTER JOIN admsite b ON (upper(a.tag_site_short_name) = upper(b.shrtname ))
+WHERE (b.code is null or coalesce(b.ext,'N') = 'Y') and a.tag_site_short_name is not null and userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation', a.tag_site_short_name||': TAG_SITE_SHORT_NAME, required for site applicable GL.',clock_timestamp()
+        from    int$stg_djrn a
+        where   coalesce(a.det_gl_cc_appl,'N') = 'Y'
+        and     a.tag_site_short_name is null
+        and     userid = p_userid;
+
+        declare
+            c1 CURSOR FOR
+                SELECT distinct a.gl_name, a.sl_slid, a.tag_site_short_name,
+                       b.glcode, b.glname, b.srctype, b.costapp, b.slapp,
+                       c.slcode
+                FROM int$stg_djrn a
+LEFT OUTER JOIN (SELECT upper(glname) glname, glcode, srctype, costapp, slapp from fingl) b ON (upper(a.gl_name) = upper (b.glname))
+LEFT OUTER JOIN (select upper(slid) slid, slname, slcode from finsl) c ON (upper(a.sl_slid) = upper (c.slid))
+WHERE b.costapp = 'Y' and a.userid = p_userid;
+        begin
+            for i in c1 loop
+                insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                SELECT  nextval('int$error_log_code'), lineno, 'DJRN', userid, 'Data Validation', tag_site_short_name||': TAG_SITE_SHORT_NAME, is either not tagged with given ledger/sub ledger or owner site is not assigned to the user.', clock_timestamp()
+                from    int$stg_djrn
+                where   gl_name = i.gl_name
+                and     coalesce(sl_slid, 'x4x') = coalesce(i.sl_slid,'x4x')
+                -- START REV : 002
+                and     upper(tag_site_short_name) = upper(i.tag_site_short_name)
+                -- END REV : 002
+                and     upper(i.tag_site_short_name) not in
+                                    (
+                                        SELECT upper(t.shrtname)
+                                        FROM (
+                                                    select s.shrtname, s.admou_code
+                                                    from admsite s, fingl_site gl, hrdemp_ou ou, finsl_gl a, finsl_gl_site b
+                                                    where s.code = gl.admsite_code
+                                                    and gl.glcode = i.glcode
+                                                    and ou.hrdemp_code = p_userid
+                                                    and (ou.admou_code is null or ou.admou_code = p_connect_ou)
+                                                    and ou.admsite_code = s.code
+                                                    and gl.glcode = a.glcode
+                                                    and a.code = b.finsl_gl_code
+                                                    and s.code = b.admsite_code
+                                                    and a.glcode = i.glcode
+                                                    and coalesce(a.slcode,0) = coalesce(i.slcode,0)
+                                                    and s.sitetype in ('OS-OO-CM')
+                                                    and s.code not in ( select ref_admsite_code from global_fincosttag)
+                                                    and b.ext ='N'
+                                                    and s.ext ='N'
+                                                    
+union
+
+                                                    select s.shrtname,s.admou_code
+                                                    from admsite s, fingl_site gl, finsl_gl a, finsl_gl_site b
+                                                    where s.code = gl.admsite_code
+                                                    and gl.glcode = a.glcode
+                                                    and a.code = b.finsl_gl_code
+                                                    and s.code = b.admsite_code
+                                                    and gl.glcode = i.glcode
+                                                    and a.glcode = i.glcode
+                                                    and a.slcode = i.slcode
+                                                    and (s.admou_code is null or s.admou_code = p_connect_ou)
+                                                    and s.sitetype not in ('OS-OO-CM')
+                                                    and s.code not in ( select ref_admsite_code from global_fincosttag)
+                                                    and b.ext ='N'
+                                                    and s.ext ='N'
+                                                    
+union
+
+                                                    select s.shrtname,s.admou_code
+                                                    from admsite s, fingl_site gl, hrdemp_ou ou
+                                                    where s.code = gl.admsite_code
+                                                    and gl.glcode = i.glcode
+                                                    and s.admou_code = p_connect_ou
+                                                    and ou.hrdemp_code = p_userid
+                                                    and (ou.admou_code is null or ou.admou_code = p_connect_ou)
+                                                    and ou.admsite_code = s.code
+                                                    and i.slcode is null
+                                                    and s.sitetype in ('OS-OO-CM')
+                                                    and s.code not in ( select ref_admsite_code from global_fincosttag)
+                                                    and s.ext ='N'
+                                                    
+union
+
+                                                    select s.shrtname,s.admou_code
+                                                    from admsite s, fingl_site gl
+                                                    where s.code = gl.admsite_code
+                                                    and gl.glcode = i.glcode
+                                                    and (s.admou_code is null or s.admou_code = p_connect_ou)
+                                                    and i.slcode is null
+                                                    and s.sitetype not in ('OS-OO-CM')
+                                                    and s.code not in ( select ref_admsite_code from global_fincosttag)
+                                                    and s.ext ='N'
+                                                ) t
+LEFT OUTER JOIN admou a ON (t.admou_code = a.code) )
+                and userid = p_userid;
+            end loop;
+        end;
+
+        declare
+            c1 CURSOR FOR
+                SELECT distinct UPPER(a.tag_site_short_name) tag_site_short_name1, b.code
+                FROM   int$stg_djrn a, admsite b
+                WHERE  UPPER(a.tag_site_short_name) = UPPER(b.shrtname)
+                and    a.userid = p_userid;
+        begin
+            for i in c1 loop
+                update int$stg_djrn
+                set    det_tag_admsite_code = i.code
+                where  UPPER(tag_site_short_name) = i.tag_site_short_name1
+                and    userid = p_userid;
+            end loop;
+        end;
+
+        -- Common Validations...
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), 0, 'DJRN', p_userid, 'Data Validation', dup_fld, clock_timestamp()
+        from   (
+                    SELECT Distinct 'Total line amount for a debit journal must be less than 0. - '||chr(13)||
+                           'Scheme Doc format='||COALESCE(a.scheme_doc_format,'')||','||chr(13)||
+                           'Scheme Doc No='||COALESCE(a.scheme_docno,'')||','||chr(13)||
+                           'JRN_Date='||COALESCE(a.jrn_date,CURRENT_DATE)||','||chr(13)||
+                           'SLID='||COALESCE(a.slid,'')||','||chr(13)||
+                           'REF_SITE_SHORT_NAME='||COALESCE(a.ref_site_short_name,'')||','||chr(13)||
+                           'REFERENCE='||COALESCE(a.reference,'')||','||chr(13)||
+                           'Narration='||COALESCE(a.header_narration,'')  dup_fld
+                    from   int$stg_djrn a,
+                            (
+                                select upper(COALESCE(m.scheme_doc_format,'')||','||
+											 COALESCE(m.scheme_docno,'')||','||
+											 COALESCE(m.jrn_date,CURRENT_DATE)||','||
+											 COALESCE(m.slid,'')||','||
+                                       		 COALESCE(m.ref_site_short_name,'')||','||
+											 COALESCE(m.reference,'')||','||
+											 COALESCE(m.header_narration,'')) combined_fld,
+                                       sum(amount)
+                                from   int$stg_djrn m
+                                where  m.userid = p_userid
+                                group by upper(COALESCE(m.scheme_doc_format,'')||','||
+												COALESCE(m.scheme_docno,'')||','||
+												COALESCE(m.jrn_date,CURRENT_DATE)||','||
+												COALESCE(m.slid,'')||','||
+                                       			COALESCE(m.ref_site_short_name,'')||','||
+												COALESCE(m.reference,'')||','||
+												COALESCE(m.header_narration,''))
+                                having  sum(amount) >= 0
+                            ) b
+                    where  upper(COALESCE(a.scheme_doc_format,'')||','||
+								 COALESCE(a.scheme_docno,'')||','||
+								 COALESCE(a.jrn_date,CURRENT_DATE)||','||
+								 COALESCE(a.slid,'')||','||
+                           		 COALESCE(a.ref_site_short_name,'')||','||
+								 COALESCE(a.reference,'')||','||
+								 COALESCE(a.header_narration,'')) = b.combined_fld
+                    and    a.userid = p_userid
+                ) alias16;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), 0, 'DJRN', p_userid, 'Data Validation', dup_fld, clock_timestamp()
+        from   (
+                    SELECT Distinct 'Multiple lines with same GL_NAME and SL_SLID can not exist in a debit journal document. - '||chr(13)||
+                           'Scheme Doc format='||COALESCE(a.scheme_doc_format,'')||','||chr(13)||
+                           'Scheme Doc No='||COALESCE(a.scheme_docno,'')||','||chr(13)||
+                           'JRN_Date='||COALESCE(a.jrn_date,CURRENT_DATE)||','||chr(13)||
+                           'SLID='||COALESCE(a.slid,'')||','||chr(13)||
+                           'REF_SITE_SHORT_NAME='||COALESCE(a.ref_site_short_name,'')||','||chr(13)||
+                           'REFERENCE='||COALESCE(a.reference,'')||','||chr(13)||
+                           'Narration='||COALESCE(a.header_narration,'')||','||chr(13)||
+                           'GL_NAME='||COALESCE(a.gl_name,'')||','||chr(13)||
+                           'SL_SLID='||COALESCE(a.slid,'')  dup_fld
+                    from   int$stg_djrn a,
+                            (
+                                select upper(COALESCE(m.scheme_doc_format,'')||','||
+											 COALESCE(m.scheme_docno,'')||','||
+											 COALESCE(m.jrn_date,CURRENT_DATE)||','||
+											 COALESCE(m.slid,'')||','||
+                                       		 COALESCE(m.ref_site_short_name,'')||','||
+											 COALESCE(m.reference,'')||','||
+											 COALESCE(m.header_narration,'')||','||
+											 COALESCE(m.gl_name,'')||','||
+											 COALESCE(m.sl_slid,'')||','||
+											 coalesce(m.tag_site_short_name,'dx')) combined_fld,
+                                       count(*)
+                                from   int$stg_djrn m
+                                where  m.userid = p_userid
+                                group by upper(COALESCE(m.scheme_doc_format,'')||','||
+											   COALESCE(m.scheme_docno,'')||','||
+											   COALESCE(m.jrn_date,CURRENT_DATE)||','||
+											   COALESCE(m.slid,'')||','||
+                                               COALESCE(m.ref_site_short_name,'')||','||
+											   COALESCE(m.reference,'')||','||
+											   COALESCE(m.header_narration,'')||','||
+											   COALESCE(m.gl_name,'')||','||
+											   COALESCE(m.sl_slid,'')||','||
+											   coalesce(tag_site_short_name,'dx'))
+                                having  count(*) > 1
+                            ) b
+                    where  upper(COALESCE(a.scheme_doc_format,'')||','||
+								 COALESCE(a.scheme_docno,'')||','||
+								 COALESCE(a.jrn_date,CURRENT_DATE)||','||
+								 COALESCE(a.slid,'')||','||
+                           		 COALESCE(a.ref_site_short_name,'')||','||
+								 COALESCE(a.reference,'')||','||
+								 COALESCE(a.header_narration,'')||','||
+								 COALESCE(a.gl_name,'')||
+								 COALESCE(a.sl_slid,'')||','||
+								 coalesce(a.tag_site_short_name,'dx')) = b.combined_fld
+                    and    a.userid = p_userid
+                ) alias21;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), 0, 'DJRN', p_userid, 'Data Validation', dup_fld, clock_timestamp()
+        from   (
+                    SELECT
+                     -- START REV : 005
+                     Distinct 'TAG_ADMSITE_SHORT_NAME / combination of GL_NAME and SL_SLID is duplicate for a journal. Can not proceed.'||chr(13)||
+                           'Scheme Doc format='||COALESCE(a.scheme_doc_format,'')||','||chr(13)||
+                           'Scheme Doc No='||COALESCE(a.scheme_docno,'')||','||chr(13)||
+                           'JRN_Date='||COALESCE(a.jrn_date,CURRENT_DATE)||','||chr(13)||
+                           'SLID='||COALESCE(a.slid,'')||','||chr(13)||
+                           'REF_SITE_SHORT_NAME='||COALESCE(a.ref_site_short_name,'')||','||chr(13)||
+                           'REFERENCE='||COALESCE(a.reference,'')||','||chr(13)||
+                           'Narration='||COALESCE(a.header_narration,'')||','||chr(13)||
+                           'GL_NAME='||COALESCE(a.gl_name,'')||','||chr(13)||
+                           'SL_SLID='||COALESCE(a.slid,'')||','||chr(13)||
+                           'TAG_SITE_SHORT_NAME='||COALESCE(a.tag_site_short_name,'')  dup_fld
+                    -- END REV : 005
+                    from   int$stg_djrn a,
+                            (
+                                select upper(COALESCE(m.scheme_doc_format,'')||','||
+											 COALESCE(m.scheme_docno,'')||','||
+											 COALESCE(m.jrn_date,CURRENT_DATE)||','||
+											 COALESCE(m.slid,'')||','||
+                                       		 COALESCE(m.ref_site_short_name,'')||','||
+											 COALESCE(m.reference,'')||','||
+											 COALESCE(m.header_narration,'')||','||
+											 COALESCE(m.gl_name,'')||','||
+											 COALESCE(m.sl_slid,'')||','||
+											 coalesce(m.tag_site_short_name,'dx')) combined_fld,
+                                       count(*)
+                                from   int$stg_djrn m
+                                where  m.userid = p_userid
+                                group by upper(COALESCE(m.scheme_doc_format,'')||','||
+											   COALESCE(m.scheme_docno,'')||','||
+											   COALESCE(m.jrn_date,CURRENT_DATE)||','||
+											   COALESCE(m.slid,'')||','||
+                                       		   COALESCE(m.ref_site_short_name,'')||','||
+											   COALESCE(m.reference,'')||','||
+											   COALESCE(m.header_narration,'')||','||
+											   COALESCE(m.gl_name,'')||','||
+											   COALESCE(m.sl_slid,'')||','||
+											   coalesce(m.tag_site_short_name,'dx'))
+                                having  count(*) > 1
+                            ) b
+                    where  upper(COALESCE(a.scheme_doc_format,'')||','||
+								 COALESCE(a.scheme_docno,'')||','||
+								 COALESCE(a.jrn_date,CURRENT_DATE)||','||
+								 COALESCE(a.slid,'')||','||
+                           		 COALESCE(a.ref_site_short_name,'')||','||
+								 COALESCE(a.reference,'')||','||
+								 COALESCE(a.header_narration,'')||','||
+								 COALESCE(a.gl_name,'')||','||
+								 COALESCE(a.sl_slid,'')||','||
+								 coalesce(a.tag_site_short_name,'dx')) = b.combined_fld
+                    and    a.userid = p_userid
+                ) alias22;
+
+        --COMMIT;
+
+        -- check whether records are valid or not
+        begin
+            select  'S'
+            into STRICT    v_status
+
+            where   exists (
+                            SELECT  'S'
+                            from    int$error_log
+                            where   userid = p_userid
+                            );
+            return('0');
+        exception
+            when no_data_found then
+            return('1');
+        end;
+    exception
+        when others then
+            errcode := SQLSTATE;
+            errmsg := sqlerrm;
+
+            insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            values (nextval('int$error_log_code'), 0, 'DJRN', p_userid, errcode, errmsg||','||g_mark, clock_timestamp());
+            --COMMIT;
+
+            return('0');
+    END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

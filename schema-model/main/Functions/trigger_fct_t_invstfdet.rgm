@@ -1,0 +1,281 @@
+function "main"."trigger_fct_t_invstfdet()" {
+  text = """
+
+/*******************************************************************************************************************
+   REVISIONS:
+   No.         Date      Author               Description
+   --------- ----------  ---------------     ------------------------------------------------------------------
+   REV : 001 30/09/2011  MANASH              (BUG ID : 034)  Multiple OU creation.
+   REV : 002 06/02/2012  DIPTIMAN            (BUG ID : 216)  Site related changes.
+   REV : 003 02/08/2022  DIPTIMAN            (TFS ID : XXX)  Batch Serial Related Development.
+ *********************************************************************************************************************/
+DECLARE
+    V_TYPE            varchar(100);
+    V_DETAIL_CODE     INVSTOCK.DETAIL_CODE%TYPE;
+    V_ENTCODE         INVSTOCK.ENTCODE%TYPE;
+    V_ENTNO           INVSTOCK.ENTNO%TYPE;
+    V_SCHEME_DOCNO    INVSTOCK.SCHEME_DOCNO%TYPE;
+    V_ENTDT           INVSTOCK.ENTDT%TYPE;
+    V_RCDT            INVSTOCK.ENTDT%TYPE;
+    V_LOCCODE         INVSTOCK.LOCCODE%TYPE;
+    V_YCODE           INVSTOCK.YCODE%TYPE;
+    V_NEW_ICODE       INVSTOCK.ICODE%TYPE;
+    V_OLD_ICODE       INVSTOCK.ICODE%TYPE;
+    V_NEW_QTY         INVSTOCK.QTY%TYPE;
+    V_OLD_QTY         INVSTOCK.QTY%TYPE;
+    V_NEW_RATE        INVSTOCK.RATE%TYPE;
+    V_OLD_RATE        INVSTOCK.RATE%TYPE;
+    V_REFPCODE        INVSTOCK.REFPCODE%TYPE;
+    V_REFLOCCODE      INVSTOCK.REFLOCCODE%TYPE;
+    V_REFCMPCODE      INVSTOCK.REFCMPCODE%TYPE;
+    V_REFGLCODE       INVSTOCK.REFGLCODE%TYPE;
+    V_REFDEPTCODE     INVSTOCK.REFDEPTCODE%TYPE;
+    V_REFPRCODE       INVSTOCK.REFPRCODE%TYPE;
+    V_REFDOCNO        INVSTOCK.REFDOCNO%TYPE;
+    V_REFPKGCODE      INVSTOCK.REFPKGCODE%TYPE;
+    V_REFDCCODE       INVSTOCK.REFDCCODE%TYPE;
+    V_OTHER_RATE      INVSTOCK.COSTRATE%TYPE;
+    V_TEMP_LOC        INVSTOCK.REFLOCCODE%TYPE;
+    V_SUBENTTYPE      INVSTOCK.SUBENTTYPE%TYPE;
+    V_INOUCODE        ADMOU.CODE%TYPE;
+    V_OUTOUCODE       ADMOU.CODE%TYPE;
+    -- START REV : 001
+    V_ADMOU_CODE      ADMOU.CODE%TYPE;
+    V_ADMOU_CODE_IN   ADMOU.CODE%TYPE;
+    -- END REV : 001
+    -- START REV : 002
+    V_ADMSITE_CODE    INVSTOCK.ADMSITE_CODE%TYPE;
+    -- END REV : 002
+BEGIN
+
+    IF  TG_OP = 'INSERT' THEN
+        V_TYPE := 'INSERTING';
+    END IF;
+
+    IF  TG_OP = 'UPDATE' THEN
+        V_TYPE := 'UPDATING';
+    END IF;
+
+    IF  TG_OP = 'DELETE' THEN
+        V_TYPE := 'DELETING';
+    END IF;
+
+    -- STOCK AND COSTING REFLECTION
+    -- FOR OUT
+    SELECT  STFNO                 ENTNO,
+            SCHEME_DOCNO          SCHEME_DOCNO,
+            STFDT                 ENTDT,
+            RCDT                  RCDT,
+            YCODE                 YCODE,
+            OUTLOCCODE            OUTLOCCODE,
+            NULL                  REFPCODE,
+            INLOCCODE             REFLOCCODE,
+            NULL                  REFCMPCODE,
+            NULL                  REFGLCODE,
+            NULL                  REFDEPTCODE,
+            NULL                  REFPRCODE,
+            GENO                  REFDOCNO,
+            NULL                  REFPKGCODE,
+            -- START REV : 001
+            ADMOU_CODE,
+            ADMOU_CODE_IN,
+            -- END REV : 001
+            -- START REV : 002
+            ADMSITE_CODE
+            -- END REV : 002
+    INTO STRICT
+            V_ENTNO,
+            V_SCHEME_DOCNO,
+            V_ENTDT,
+            V_RCDT,
+            V_YCODE,
+            V_LOCCODE,
+            V_REFPCODE,
+            V_REFLOCCODE,
+            V_REFCMPCODE,
+            V_REFGLCODE,
+            V_REFDEPTCODE,
+            V_REFPRCODE,
+            V_REFDOCNO,
+            V_REFPKGCODE,
+            -- START REV : 001
+            V_ADMOU_CODE,
+            V_ADMOU_CODE_IN,
+            -- END REV : 001
+            -- START REV : 002
+            V_ADMSITE_CODE
+            -- END REV : 002
+    FROM    INVSTFMAIN
+    WHERE   STFCODE = coalesce(NEW.STFCODE,OLD.STFCODE);
+
+    V_DETAIL_CODE   := coalesce(NEW.CODE,OLD.CODE);
+    V_ENTCODE       := coalesce(NEW.STFCODE,OLD.STFCODE);
+    V_NEW_ICODE     := NEW.ICODE;
+    V_OLD_ICODE     := OLD.ICODE;
+    V_NEW_QTY       := NEW.QTY;
+    V_OLD_QTY       := OLD.QTY;
+    V_NEW_RATE      := NEW.STFRATE;
+    V_OLD_RATE      := OLD.STFRATE;
+
+    IF  coalesce(V_ADMOU_CODE, 0) <> coalesce(V_ADMOU_CODE_IN, 0) THEN
+        call Db_Pkg_Stock$REFLECT(V_DETAIL_CODE,V_TYPE,V_ENTCODE, V_ENTNO, V_ENTDT, 'OUO', V_LOCCODE, V_YCODE,
+                              V_NEW_ICODE, V_OLD_ICODE, V_NEW_QTY, V_OLD_QTY, V_NEW_RATE, V_OLD_RATE, V_REFPCODE,
+                              V_REFLOCCODE, V_REFCMPCODE, V_REFGLCODE, V_REFDEPTCODE, V_REFPRCODE, V_REFDOCNO,
+                              V_REFPKGCODE, V_REFDCCODE, V_OTHER_RATE, V_SCHEME_DOCNO, NULL, NULL, NEW.REM,
+                              -- START REV : 002
+                              V_ADMSITE_CODE, 
+                              -- END REV : 002
+                              -- START REV : 003
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL,
+                              0,
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL ,
+                              NULL,
+                              NULL,
+                              coalesce(NEW.INVBATCH_SERIAL_CODE, OLD.INVBATCH_SERIAL_CODE)
+                              -- END REV : 003
+                             );
+
+        -- INTERCHANGING THE LOCATION
+        V_TEMP_LOC      :=  V_LOCCODE;
+        V_LOCCODE       :=  V_REFLOCCODE;
+        V_REFLOCCODE    :=  V_TEMP_LOC;
+
+        call Db_Pkg_Stock$REFLECT(V_DETAIL_CODE,V_TYPE,V_ENTCODE, V_ENTNO, V_ENTDT, 'OUI', V_LOCCODE, V_YCODE,
+                               V_NEW_ICODE, V_OLD_ICODE, V_NEW_QTY, V_OLD_QTY, V_NEW_RATE, V_OLD_RATE, V_REFPCODE,
+                               V_REFLOCCODE, V_REFCMPCODE, V_REFGLCODE, V_REFDEPTCODE, V_REFPRCODE, V_REFDOCNO,
+                               V_REFPKGCODE, V_REFDCCODE, V_OTHER_RATE, V_SCHEME_DOCNO, NULL, NULL, NEW.REM,
+                               -- START REV : 002
+                               V_ADMSITE_CODE,
+                               -- END REV : 002
+                               -- START REV : 003
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               0,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL ,
+                               NULL,
+                               NULL,
+                               coalesce(NEW.INVBATCH_SERIAL_CODE, OLD.INVBATCH_SERIAL_CODE)
+                               -- END REV : 003
+                             );
+    ELSE
+       call Db_Pkg_Stock$REFLECT(V_DETAIL_CODE,V_TYPE,V_ENTCODE, V_ENTNO, V_ENTDT, 'WTO', V_LOCCODE, V_YCODE,
+                              V_NEW_ICODE, V_OLD_ICODE, V_NEW_QTY, V_OLD_QTY, V_NEW_RATE, V_OLD_RATE, V_REFPCODE,
+                              V_REFLOCCODE, V_REFCMPCODE, V_REFGLCODE, V_REFDEPTCODE, V_REFPRCODE, V_REFDOCNO,
+                              V_REFPKGCODE, V_REFDCCODE, V_OTHER_RATE, V_SCHEME_DOCNO, NULL, NULL, NEW.REM,
+                              -- START REV : 002
+                              V_ADMSITE_CODE,
+                              -- END REV : 002
+                              -- START REV : 003
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL,
+                              0,
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL,
+                              NULL ,
+                              NULL,
+                              NULL,
+                              coalesce(NEW.INVBATCH_SERIAL_CODE, OLD.INVBATCH_SERIAL_CODE)
+                              -- END REV : 003
+                             );
+
+        -- INTERCHANGING THE LOCATION
+        V_TEMP_LOC      :=  V_LOCCODE;
+        V_LOCCODE       :=  V_REFLOCCODE;
+        V_REFLOCCODE    :=  V_TEMP_LOC;
+
+        call Db_Pkg_Stock$REFLECT(V_DETAIL_CODE,V_TYPE,V_ENTCODE, V_ENTNO, V_ENTDT, 'WTI', V_LOCCODE, V_YCODE,
+                               V_NEW_ICODE, V_OLD_ICODE, V_NEW_QTY, V_OLD_QTY, V_NEW_RATE, V_OLD_RATE, V_REFPCODE,
+                               V_REFLOCCODE, V_REFCMPCODE, V_REFGLCODE, V_REFDEPTCODE, V_REFPRCODE, V_REFDOCNO,
+                               V_REFPKGCODE, V_REFDCCODE, V_OTHER_RATE, V_SCHEME_DOCNO, NULL, NULL, NEW.REM,
+                               -- START REV : 002
+                               V_ADMSITE_CODE,
+                               -- END REV : 002
+                               -- START REV : 003
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               0,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL ,
+                               NULL,
+                               NULL,
+                               coalesce(NEW.INVBATCH_SERIAL_CODE, OLD.INVBATCH_SERIAL_CODE)
+                               -- END REV : 003
+                             );
+    END IF;
+
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

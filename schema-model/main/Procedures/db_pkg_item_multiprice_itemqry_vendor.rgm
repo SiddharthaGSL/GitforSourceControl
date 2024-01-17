@@ -1,0 +1,282 @@
+procedure "main"."db_pkg_item_multiprice_itemqry_vendor(refcursor, bigint, character, character, character, character, character, character, character, character, bigint, timestamp without time zone, timestamp without time zone)" {
+  text = """
+
+BEGIN
+
+      IF  coalesce(selection_flag, 'N') = 'N' THEN
+          OPEN block_data FOR
+          SELECT  i.icode,
+                  coalesce(i.barcode, i.icode)     barcode,
+                  SUBSTR(     i.cname1
+                              || ' '
+                              || i.cname2
+                              || ' '
+                              || i.cname3
+                              || ' '
+                              || i.cname4
+                              || ' '
+                              || i.cname5
+                              || ' '
+                              || i.cname6,
+                              1,
+                              80
+                         ) item
+                  ,selection_pcode
+                  ,g.lev1grpname
+                  ,g.lev2grpname
+                  ,g.grpname
+                  ,a.name
+                  ,null
+                  ,null
+          FROM    invitem i, invgrp g, invarticle a,
+                  (
+           SELECT  DISTINCT icode
+                   FROM    pur_price_chart
+                   WHERE   pcode = selection_pcode
+           AND     (
+                             (date_from IS NULL AND date_to IS NULL)
+                            OR
+                             (date_from IS NOT NULL AND date_to IS NOT NULL AND effective_date between date_from AND date_to)
+                            OR
+                             (date_from IS NOT NULL AND date_to IS NULL AND effective_date > date_from)
+                            OR
+                             (date_from IS NULL AND date_to IS NOT NULL AND effective_date < date_to)
+                           )
+                  ) x
+          WHERE   i.icode = x.icode
+          AND     i.invarticle_code = a.code
+          AND     a.grpcode = g.grpcode
+          AND     i.pos_multiprice_action = 'P'
+          AND (   selection_article IS NULL
+                   OR i.invarticle_code = coalesce(selection_article, 0)
+                  )
+          AND (    selection_1 IS NULL
+                    OR (cname1 LIKE selection_1 || '%')
+                  )
+          AND (    selection_2 IS NULL
+                    OR (cname2 LIKE selection_2 || '%')
+                  )
+          AND (    selection_3 IS NULL
+                   OR (cname3 LIKE selection_3 || '%')
+                  )
+          AND (    selection_4 IS NULL
+                   OR (cname4 LIKE selection_4 || '%')
+                  )
+          AND (    selection_5 IS NULL
+                   OR (cname5 LIKE selection_5 || '%')
+                  )
+          AND (    selection_6 IS NULL
+                   OR (cname6 LIKE selection_6 || '%')
+                  )
+          AND     i.grpcode IN (WITH RECURSIVE cte AS (
+
+                                SELECT  a.grpcode
+                                FROM    invgrp a WHERE a.grpcode = coalesce(selection_grp, 0)
+  UNION ALL
+
+                                SELECT  a.grpcode
+                                FROM    invgrp a JOIN cte c ON (c.grpcode = a.a.parcode)
+
+) SELECT * FROM cte)
+          ORDER BY i.icode;
+      ELSIF coalesce(selection_flag, 'N') = 'Y' THEN
+            /* This is populate all the items for the selected vendor from PUR_PRICE_CHART*/
+
+            IF    coalesce(selection_pcode, 0) <> 0 THEN
+              DELETE FROM GLOBAL_ITEM_PRICE
+                  WHERE  ICODE IN (SELECT ICODE
+                           FROM   PUR_PRICE_CHART
+                   WHERE  pcode = selection_pcode
+                  );
+
+          OPEN block_data FOR
+                  SELECT  i.icode,
+                          coalesce(i.barcode, i.icode)     barcode,
+                            SUBSTR(   i.cname1
+                                   || ' '
+                                   || i.cname2
+                                   || ' '
+                                   || i.cname3
+                                   || ' '
+                                   || i.cname4
+                                   || ' '
+                                   || i.cname5
+                                   || ' '
+                                   || i.cname6,
+                                   1,
+                                   80
+                                  )
+                            || '  ('
+                          || (
+                  SELECT  COUNT(*)
+                              FROM    pur_price_chart
+                              WHERE   icode = i.icode
+                              AND    pcode = selection_pcode
+                  )
+                          || ') ' item
+                          ,selection_pcode
+                          ,g.lev1grpname
+                          ,g.lev2grpname
+                          ,g.grpname
+                          ,a.name
+                          ,a.mrprangefrom
+                          ,a.mrprangeto
+                  FROM    invitem i, invgrp g, invarticle a,
+                          (
+                           SELECT  DISTINCT icode, -1 seq
+                           FROM    pur_price_chart
+                           WHERE   pcode = selection_pcode
+
+UNION ALL
+
+                           SELECT icode, seq seq
+                           FROM GLOBAL_ITEM_PRICE
+                          ) x
+                  WHERE   i.icode = x.icode
+                  AND     i.invarticle_code = a.code
+                  AND     a.grpcode = g.grpcode
+                  ORDER BY x.seq, i.icode;
+            ELSIF coalesce(selection_pcode, 0) = 0 THEN
+                  DELETE  FROM GLOBAL_ITEM_PRICE
+                   WHERE icode not in (SELECT icode from global_item_price);
+
+                  /* This is populate all items from PUR_PRICE_CHART*/
+
+          OPEN block_data FOR
+                  SELECT  i.icode,
+                          coalesce(i.barcode, i.icode)     barcode,
+                          SUBSTR(   i.cname1
+                                  || ' '
+                                  || i.cname2
+                                  || ' '
+                                  || i.cname3
+                                  || ' '
+                                  || i.cname4
+                                  || ' '
+                                  || i.cname5
+                                  || ' '
+                                  || i.cname6,
+                                  1,
+                                  80
+                                 ) item
+                          ,NULL
+                          ,g.lev1grpname
+                          ,g.lev2grpname
+                          ,g.grpname
+                          ,a.name
+                          ,a.mrprangefrom
+                          ,a.mrprangeto
+                  FROM    invitem i, invgrp g, invarticle a,
+                          (
+               SELECT  DISTINCT icode, -1 seq
+                           FROM    PUR_PRICE_CHART
+               WHERE   pcode IS  NULL
+
+UNION ALL
+
+                           SELECT  icode, seq seq
+                           FROM    GLOBAL_ITEM_PRICE
+              ) x
+                  WHERE    i.icode = x.icode
+                  AND      i.grpcode = g.grpcode
+                  AND      i.invarticle_code = a.code
+                  ORDER BY x.seq, i.icode;
+            END IF;
+      END IF;
+   END;
+
+"""
+  arguments = <
+    {
+      name = block_data
+      type = refcursor
+      mode = INOUT
+    }
+
+    {
+      name = selection_pcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = selection_flag
+      type = character
+      mode = IN
+      default = 'N'::bpchar
+    }
+
+    {
+      name = selection_1
+      type = character
+      mode = IN
+      default = NULL::bpchar
+    }
+
+    {
+      name = selection_2
+      type = character
+      mode = IN
+      default = NULL::bpchar
+    }
+
+    {
+      name = selection_3
+      type = character
+      mode = IN
+      default = NULL::bpchar
+    }
+
+    {
+      name = selection_4
+      type = character
+      mode = IN
+      default = NULL::bpchar
+    }
+
+    {
+      name = selection_5
+      type = character
+      mode = IN
+      default = NULL::bpchar
+    }
+
+    {
+      name = selection_6
+      type = character
+      mode = IN
+      default = NULL::bpchar
+    }
+
+    {
+      name = selection_grp
+      type = character
+      mode = IN
+      default = NULL::bpchar
+    }
+
+    {
+      name = selection_article
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = date_from
+      type = timestamp without time zone
+      mode = IN
+      default = NULL::timestamp without time zone
+    }
+
+    {
+      name = date_to
+      type = timestamp without time zone
+      mode = IN
+      default = NULL::timestamp without time zone
+    }
+
+  >
+  language = plpgsql
+}
+

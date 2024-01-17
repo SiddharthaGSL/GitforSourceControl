@@ -1,0 +1,80 @@
+function "main"."trigger_fct_t_a_invgrtdet()" {
+  text = """
+
+DECLARE
+V_ENTRY_SOURCE      varchar(10) := NULL;
+ V_SID                           bigint;
+ V_PROGRAM                       varchar(50);
+BEGIN
+  BEGIN
+
+ BEGIN
+ SELECT ENTRY_SOURCE
+ INTO STRICT   V_ENTRY_SOURCE
+ FROM   INVGRTMAIN
+ WHERE  GRTCODE = coalesce(NEW.GRTCODE,OLD.GRTCODE);
+ EXCEPTION WHEN no_data_found THEN
+    V_ENTRY_SOURCE := NULL;
+ END;
+ -- END REV : 001
+    IF  TG_OP = 'INSERT' THEN
+      IF coalesce(V_ENTRY_SOURCE,'XX') <> 'WEB' THEN    -- REV : 001
+            IF  NEW.INVGRCDET_CODE IS NOT NULL THEN
+                UPDATE  INVGRCDET
+                SET     RTQTY    = coalesce(RTQTY,0) + coalesce(NEW.QTY,0),
+                        RTINVQTY = coalesce(RTINVQTY,0) + coalesce(NEW.RTINVQTY,0)
+                WHERE   CODE = NEW.INVGRCDET_CODE;
+            END IF;  -- REV : 001
+      END IF;
+    END IF;
+
+    IF   TG_OP = 'UPDATE' THEN
+        -- START REV : 001
+		SELECT PG_BACKEND_PID() INTO V_SID;
+
+		SELECT APPLICATION_NAME INTO V_PROGRAM FROM PG_STAT_ACTIVITY WHERE PID=V_SID;
+
+        IF coalesce(V_ENTRY_SOURCE,'XX') <> 'WEB'
+           --OR
+           AND -- REV : 002
+not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+           THEN
+            IF  OLD.INVGRCDET_CODE IS NOT NULL THEN
+                UPDATE  INVGRCDET
+                SET     RTQTY    = coalesce(RTQTY,0)    - coalesce(OLD.QTY,0),
+                        RTINVQTY = coalesce(RTINVQTY,0) - coalesce(OLD.RTINVQTY,0)
+                 WHERE  CODE = OLD.INVGRCDET_CODE;
+            END IF;
+
+            IF  NEW.INVGRCDET_CODE IS NOT NULL THEN
+                UPDATE  INVGRCDET
+                SET     RTQTY    = coalesce(RTQTY,0)    + coalesce(NEW.QTY,0) ,
+                        RTINVQTY = coalesce(RTINVQTY,0) + coalesce(NEW.RTINVQTY,0)
+                WHERE   CODE = NEW.INVGRCDET_CODE;
+            END IF;
+        END IF;  -- REV : 001
+    END IF;
+
+    IF  TG_OP = 'DELETE' THEN
+
+        NULL;
+     -- END REV : 001
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+   CALL ERRAUDIT(USER, 'T_A_INVGRTDET', SQLSTATE, SQLERRM);
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

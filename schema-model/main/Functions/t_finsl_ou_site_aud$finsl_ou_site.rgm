@@ -1,0 +1,155 @@
+function "main"."t_finsl_ou_site_aud$finsl_ou_site()" {
+  text = """
+
+DECLARE
+    V_RECORD_OLD AUD_FINSL_OU_SITE%ROWTYPE;
+	V_RECORD_NEW AUD_FINSL_OU_SITE%ROWTYPE;
+    V_SID DOUBLE PRECISION;
+    V_TRNID CHARACTER VARYING(50);
+    V_ACTION CHARACTER VARYING(10);
+    I RECORD;    
+	V_AUDIT_USER CHARACTER VARYING (100);
+	V_LOGINUSER  CHARACTER VARYING (100);
+	V_PROGRAM    CHARACTER VARYING (100);
+	V_REC_COUNT  BIGINT; 
+   
+BEGIN
+       SELECT current_setting('audit.AUDIT_USER', true) INTO V_AUDIT_USER;
+	   IF NULLIF(V_AUDIT_USER,'') IS NOT NULL THEN  
+		   BEGIN
+				SELECT FULLNAME
+				INTO   STRICT V_LOGINUSER
+				FROM   APPUSER
+				WHERE  ID =  substring (V_AUDIT_USER,8,position(';' in V_AUDIT_USER)-8)::NUMERIC; 
+		   EXCEPTION
+				WHEN no_data_found
+				THEN
+					V_LOGINUSER := 'System';
+			END;			
+		ELSE
+			V_LOGINUSER := 'SYSTEM';
+		END IF;
+	   
+	   select application_name
+	   INTO   V_PROGRAM
+	   from pg_stat_activity where pid = pg_backend_pid();
+
+       V_ACTION:=TG_OP;
+	   
+       SELECT TXID_CURRENT() INTO V_TRNID;
+       
+        IF TG_OP = 'INSERT' OR  TG_OP = 'UPDATE' THEN 
+	   
+           V_RECORD_NEW.ACTION := V_ACTION;
+           V_RECORD_NEW.ACTION_SUBTYPE := 'NEW';
+           V_RECORD_NEW.TRANSACTION_ID := V_TRNID::TEXT;		   
+		   V_RECORD_NEW.finsl_ou_code := NEW.finsl_ou_code;
+            V_RECORD_NEW.site_code := NEW.site_code;
+            V_RECORD_NEW.termcode := NEW.termcode;
+            V_RECORD_NEW.code := NEW.code;
+            V_RECORD_NEW.out_lgt_appl := NEW.out_lgt_appl;
+            V_RECORD_NEW.out_permit_appl := NEW.out_permit_appl;
+            V_RECORD_NEW.pricelistcode := NEW.pricelistcode;
+            V_RECORD_NEW.saltradegrp_code := NEW.saltradegrp_code;
+            V_RECORD_NEW.salformcode := NEW.salformcode;
+            V_RECORD_NEW.transit_via_admsite_code := NEW.transit_via_admsite_code;
+            V_RECORD_NEW.strictly_follow_transit_route := NEW.strictly_follow_transit_route;
+          END IF;  
+            
+         IF TG_OP = 'UPDATE' OR TG_OP = 'DELETE' THEN 
+	   
+            V_RECORD_OLD.ACTION := V_ACTION;
+            V_RECORD_OLD.ACTION_SUBTYPE := 'OLD';
+            V_RECORD_OLD.TRANSACTION_ID := V_TRNID::TEXT;			
+			V_RECORD_OLD.finsl_ou_code := OLD.finsl_ou_code;
+            V_RECORD_OLD.site_code := OLD.site_code;
+            V_RECORD_OLD.termcode := OLD.termcode;
+            V_RECORD_OLD.code := OLD.code;
+            V_RECORD_OLD.out_lgt_appl := OLD.out_lgt_appl;
+            V_RECORD_OLD.out_permit_appl := OLD.out_permit_appl;
+            V_RECORD_OLD.pricelistcode := OLD.pricelistcode;
+            V_RECORD_OLD.saltradegrp_code := OLD.saltradegrp_code;
+            V_RECORD_OLD.salformcode := OLD.salformcode;
+            V_RECORD_OLD.transit_via_admsite_code := OLD.transit_via_admsite_code;
+            V_RECORD_OLD.strictly_follow_transit_route := OLD.strictly_follow_transit_route;
+          END IF;  
+
+    IF TG_OP = 'INSERT' THEN
+	    V_REC_COUNT := 1;
+        INSERT INTO AUD_FINSL_OU_SITE SELECT V_RECORD_NEW.*;
+    END IF;
+
+    IF TG_OP = 'UPDATE' THEN
+	FOR I IN (
+		SELECT 
+		V_RECORD_OLD.strictly_follow_transit_route,
+                  V_RECORD_OLD.transit_via_admsite_code,
+                  V_RECORD_OLD.salformcode,
+                  V_RECORD_OLD.saltradegrp_code,
+                  V_RECORD_OLD.pricelistcode,
+                  V_RECORD_OLD.out_permit_appl,
+                  V_RECORD_OLD.out_lgt_appl,
+                  V_RECORD_OLD.termcode,
+                  V_RECORD_OLD.site_code
+		EXCEPT
+		SELECT 
+		V_RECORD_NEW.strictly_follow_transit_route,
+                  V_RECORD_NEW.transit_via_admsite_code,
+                  V_RECORD_NEW.salformcode,
+                  V_RECORD_NEW.saltradegrp_code,
+                  V_RECORD_NEW.pricelistcode,
+                  V_RECORD_NEW.out_permit_appl,
+                  V_RECORD_NEW.out_lgt_appl,
+                  V_RECORD_NEW.termcode,
+                  V_RECORD_NEW.site_code
+			 )
+	LOOP
+	  V_REC_COUNT := 1; 
+		INSERT INTO AUD_FINSL_OU_SITE SELECT V_RECORD_OLD.*;
+       INSERT INTO AUD_FINSL_OU_SITE SELECT V_RECORD_NEW.*;    
+	END LOOP;   
+    END IF;
+
+    IF TG_OP = 'DELETE' THEN
+		V_REC_COUNT := 1;
+		INSERT INTO AUD_FINSL_OU_SITE SELECT V_RECORD_OLD.*;
+    END IF;
+	
+	IF V_REC_COUNT >  0
+	THEN
+	   BEGIN
+            INSERT INTO AUD_TRANSACTION (TRANSACTION_ID, TRANSACTION_DATE, LOGIN_USER, PROGRAM, MODULE_SHORTCODE, MODULE_TYPE)
+            VALUES (V_TRNID,   current_date,V_LOGINUSER, V_PROGRAM, 'SubLedgerSiteAssignment', 'Sub-Ledger - Assign Organization Site');
+       EXCEPTION WHEN unique_violation THEN
+            NULL;
+       END;  
+
+       BEGIN  
+             INSERT INTO AUD_TRANSACTION_TABLE (TRANSACTION_ID, TABLE_NAME)
+             VALUES (V_TRNID,  'FINSL_OU_SITE');
+       EXCEPTION WHEN unique_violation THEN
+             NULL;
+       END; 
+	END IF;   
+    
+
+    IF TG_OP = 'INSERT' THEN
+        RETURN NEW;
+    ELSIF TG_OP = 'UPDATE' THEN
+        RETURN NEW;
+    ELSIF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    EXCEPTION
+        WHEN others THEN
+            CALL main.erraudit(SESSION_USER::text, 'T_FINSL_OU_SITE_AUD'::CHARACTER, SQLSTATE::text, SQLERRM);
+			RAISE;
+			RETURN NULL;
+END;
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

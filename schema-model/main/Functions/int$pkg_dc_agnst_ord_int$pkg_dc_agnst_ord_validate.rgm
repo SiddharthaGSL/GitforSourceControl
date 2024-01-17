@@ -1,0 +1,783 @@
+function "main"."int$pkg_dc_agnst_ord_int$pkg_dc_agnst_ord_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status                 char(1);
+      errmsg                   varchar(200);
+      errcode                  text;
+      v_grcdt                  timestamp;
+      v_icode                  varchar(9);
+      v_barcode                varchar(50);
+      v_pono                   varchar(25)  := NULL;
+      v_cnt                    bigint;
+      v_userid                 bigint;
+      v_profcode               bigint;
+      v_rlcode                 bigint;
+      v_doccode                bigint;
+      v_item_batch_separator   char(1);
+BEGIN
+
+        -- START REV : 015
+        select item_batch_separator into STRICT v_item_batch_separator from admcmpprof;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid, 'Data Validation', 'Please remove value from batch/serial column and try again.', clock_timestamp()
+        from   int$stg_dc_agnst_ord a
+        where  a.item is not null
+        and    a.batch_serial_no is not null
+        and    coalesce((position(v_item_batch_separator in a.item)),0) <> 0
+        and    a.userid = p_userid;
+
+    declare 
+         c_separator CURSOR FOR
+                    SELECT *
+                    from   int$stg_dc_agnst_ord
+                    where  userid = p_userid
+                    and    item like '%'||v_item_batch_separator||'%'
+                    order by lineno;
+         begin
+           for c1 in c_separator
+           loop
+                   update int$stg_dc_agnst_ord
+                   set    batch_serial_no = SUBSTR(item, INSTR(item,v_item_batch_separator, -1) + 1),
+                   item = SUBSTR(item, 1, position(v_item_batch_separator in item)-1)
+                   where  lineno = c1.lineno
+                   and    item like '%'||v_item_batch_separator||'%'
+                   and    userid = p_userid;
+           end loop;
+         end;
+
+    --COMMIT;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid, 'Data Validation', 'System Batch Serial is not allowed. Please remove and proceed.', clock_timestamp()
+        from   int$stg_dc_agnst_ord a
+        where  UPPER(a.batch_serial_no) = 'SYSTEM BATCH SERIAL'
+        and    a.batch_serial_no is not null
+        and    a.userid = p_userid;
+
+        -- END REV : 015
+        
+        -- START REV : 001
+        -- length of site code
+        -- site short name length
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid, 'Data Length Validation','Site Code length is higher than it''s defined data length.',clock_timestamp()
+        from    int$stg_dc_agnst_ord a
+        where   length(a.site_code::text) > 12
+        and     a.site_code is not null
+        and     a.userid = p_userid;
+
+        /*insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid, 'Data Validation','Invalid / Extinct Site Name.',clock_timestamp()
+        from    int$stg_dc_agnst_ord a
+        where   length(ltrim(rtrim(translate(a.site_code,'1234567890',' ')))) > 0
+        and     a.site_code is not null
+        and     a.userid = p_userid;*/
+
+        -- invalid site short name
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid, 'Data Validation','Invalid / Extinct Site Name.',clock_timestamp()
+        FROM int$stg_dc_agnst_ord a
+LEFT OUTER JOIN (
+                    SELECT  s.code    site_code
+                    from    admsite s
+                    where   s.ext = 'N'
+                    -- START REV : 009
+                    --AND     ADMOU_CODE = P_CONNECT_OU -- REV : 004
+                    and (admou_code is null or admou_code = p_connect_ou)
+                    -- END REV : 009
+                ) st ON (a.site_code = st.site_code)
+WHERE a.userid = p_userid  and st.site_code is null and a.site_code is not null;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid, 'Data Validation','Either Site Short Name or Site Code can be provided , both value is not allowed.',clock_timestamp()
+        from    int$stg_dc_agnst_ord a
+        where   a.userid = p_userid
+        and     a.site_short_name is not null
+        and     a.site_code is not null;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid, 'Data Validation','Either Site Short Name or Site Code is required.',clock_timestamp()
+        from    int$stg_dc_agnst_ord a
+        where   a.userid = p_userid
+        and     a.site_short_name is null
+        and     a.site_code is null;
+
+        -- END REV : 001
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid,
+                'Date Validation', 'Please enter a valid date.',
+                clock_timestamp()
+           FROM int$stg_DC_AGNST_ORD a
+          WHERE db_func_is_date(TO_CHAR(dc_date,'DD-MM-YYYY')) <> 1 AND a.userid = p_userid;
+
+--Future date transaction is not allowed
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid,
+                'Date Validation', 'Future date transaction is not allowed.',
+                clock_timestamp()
+           FROM int$stg_DC_AGNST_ORD a
+          WHERE date_trunc('day', dc_date) > date_trunc('day', clock_timestamp()) AND a.userid = p_userid;
+
+      --User lock days setting getting violated
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid,
+                'Date Validation',
+                'User lock days setting getting violated.', clock_timestamp()
+           FROM int$stg_DC_AGNST_ORD a, hrdemp b
+          WHERE a.userid = b.ecode
+            AND date_trunc('day', a.dc_date) NOT BETWEEN (CURRENT_DATE - locdays::INTEGER)
+                                        AND (CURRENT_DATE + locdays::INTEGER)
+            AND a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid, 'Date Validation','Month / Year is not in open state.' ,clock_timestamp()
+        FROM    int$stg_DC_AGNST_ORD a, ADMMONTH m,ADMOU_MONTH b
+        WHERE   date_trunc('day', a.DC_DATE) between date_trunc('day', m.dtfr) and  date_trunc('day', m.dtto)
+        AND     B.ADMMONTH_CODE = M.MCODE
+        AND     B.ADMOU_CODE   = P_CONNECT_OU
+        AND     b.INV_MONTH_STATUS <> 'O'
+        AND     a.userid = p_userid;
+   -- END REV : 004
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid,
+                'Date Validation', 'Date entered does not belong to currently logged in Year.',
+                clock_timestamp()
+           FROM int$stg_DC_AGNST_ORD a
+          WHERE TO_CHAR(a.dc_date,'YYYY') <> TO_CHAR(p_logging_date ,'YYYY')
+            AND a.userid = p_userid;
+
+      --SITE IS NOT VALID
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid,
+                'Site Validation', 'Site should be valid and non-extinct.', clock_timestamp()
+           FROM  int$stg_dc_agnst_ord a
+LEFT OUTER JOIN admsite b ON (UPPER(a.SITE_SHORT_NAME) = UPPER(b.SHRTNAME))
+WHERE a.site_short_name is not null
+  AND ( (
+                    ADMOU_CODE IS NOT NULL
+                    AND
+                    ADMOU_CODE = P_CONNECT_OU
+                )
+                OR
+                ADMOU_CODE IS NULL
+               )
+  AND (   b.CODE IS NULL
+                 OR coalesce(ext, 'N') = 'Y'
+                ) AND a.userid = p_userid;
+
+  -- DOCNAME VALODATION
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), a.lineno, 'DC_AGNST_ORD', userid,
+                'Data Validation',
+                'Invalid Scheme Document Number.', clock_timestamp()
+           FROM (   SELECT D.DOCNAME docname ,d.doccode
+                    FROM     ADMDOCSCHEME D, ADMMENU_DOCSCHEME M
+                    WHERE    D.DOCCODE = M.DOCCODE
+                    and      manual ='N'
+                    -- START REV : 013
+                   -- AND         M.MENUCODE = 464
+                    AND      M.MDMENUSHORTCODE = 'DcOrder'
+                    -- END REV : 013
+                    AND         coalesce(D.EXT,'N') = 'N'
+                    AND ( 0 = (SELECT COUNT(*)
+                                FROM     ADMDOCSCHEME D, ADMOU_DOCSCHEME M
+                                WHERE     D.DOCCODE = M.DOCCODE
+                                AND       M.ADMSITE_CODE   = P_CONNECT_SITE
+                                AND         coalesce(D.EXT,'N') = 'N')
+                            OR
+                            D.DOCCODE IN (SELECT D.DOCCODE
+                                            FROM     ADMDOCSCHEME D,
+                                                     ADMOU_DOCSCHEME M
+                                            WHERE     D.DOCCODE = M.DOCCODE
+                                            AND       M.ADMSITE_CODE   = P_CONNECT_SITE
+                                            AND         coalesce(D.EXT,'N') = 'N'))
+                ) b, int$stg_dc_agnst_ord a
+WHERE B.DOCCODE IS NULL AND a.userid = p_userid;
+
+       --MULTIPLE SITE FOUND SHOULD BE RESTRICTED
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), a.lineno, 'DC_AGNST_ORD', userid,
+                'Site Validation',
+                'Multiple Site Name found against this number. Cannot proceed.',
+                clock_timestamp()
+           FROM int$stg_DC_AGNST_ORD a,
+                (SELECT   lineno, b.SHRTNAME, COUNT(1)
+                     FROM int$stg_DC_AGNST_ORD a, ADMSITE b
+                    WHERE UPPER(a.SITE_SHORT_NAME) = UPPER(b.SHRTNAME)
+                      AND a.userid = p_userid
+                 -- START REV : 004
+                  AND   (
+                            (ADMOU_CODE IS NOT NULL AND ADMOU_CODE = P_CONNECT_OU)
+                            OR
+                            ADMOU_CODE IS NULL
+                        )
+                  -- END REV : 004
+                 GROUP BY lineno, b.SHRTNAME
+                   HAVING COUNT(1) > 1) b
+          WHERE a.lineno = b.lineno AND a.userid = p_userid;
+
+      --STOCK POINT IS NOT VALID
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid,
+                'Data Validation', 'Stock point should belong to the connected site.', clock_timestamp()
+           FROM  int$stg_dc_agnst_ord a
+LEFT OUTER JOIN invloc b ON (UPPER(a.stock_point_name) = UPPER(b.locname))
+WHERE b.loccode IS NOT NULL
+AND admsite_code <> p_connect_site
+AND coalesce(ext, 'N') = 'N'
+AND a.userid = p_userid;
+
+       --STOCK POINT IS NOT VALID
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid,
+                'Data Validation', 'Stock point should be valid and non-extinct.', clock_timestamp()
+           FROM  int$stg_dc_agnst_ord a
+LEFT OUTER JOIN invloc b ON (UPPER(a.stock_point_name) = UPPER(b.locname))
+WHERE (   b.loccode IS NULL
+                 OR coalesce(ext, 'N') = 'Y'
+                ) AND a.userid = p_userid;
+
+        --MULTIPLE STOCK POINT FOUND SHOULD BE RESTRICTED
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), a.lineno, 'DC_AGNST_ORD', userid,
+                'Data Validation',
+                'Multiple Stock Point found against this number. Cannot proceed.',
+                clock_timestamp()
+           FROM int$stg_DC_AGNST_ORD a,
+                (SELECT   lineno, b.locname, COUNT(1)
+                     FROM int$stg_DC_AGNST_ORD a, INVLOC b
+                    WHERE UPPER(a.stock_point_name) = UPPER(b.locname)
+                      AND a.userid = p_userid
+                 GROUP BY lineno, b.locname
+                   HAVING COUNT(1) > 1) b
+          WHERE a.lineno = b.lineno AND a.userid = p_userid;
+
+      --FUTURE DATE SO
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid,
+                'Data Validation',
+                'Future date Sales orders are not allowed.', clock_timestamp()
+           FROM int$stg_dc_agnst_ord a
+LEFT OUTER JOIN salordmain b ON (UPPER(a.order_no) = UPPER(b.scheme_docno))
+WHERE a.DC_DATE < b.orddt
+  AND B.ADMSITE_CODE_OWNER = P_CONNECT_SITE
+  AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid,
+                'Data Validation',
+                'Please select a valid and non-extinct order.',
+                clock_timestamp()
+           FROM  int$stg_dc_agnst_ord a
+LEFT OUTER JOIN salordmain b ON (UPPER(a.order_no) = UPPER(b.scheme_docno))
+WHERE (B.ORDCODE IS NULL OR coalesce(EXT,'N') = 'Y') -- START REV : 006
+  AND B.ADMSITE_CODE_OWNER = P_CONNECT_SITE -- END REV : 006
+  AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid,
+                'Data Validation',
+                'DC cannot be created against held orders / Un-Authorized orders / Reservation Required Orders.',
+                clock_timestamp()
+           FROM  int$stg_dc_agnst_ord a
+LEFT OUTER JOIN salordmain b ON (UPPER(a.order_no) = UPPER(b.scheme_docno))
+WHERE ((B.ORDCODE IS NOT NULL AND coalesce(ISHOLD,'N') = 'Y') OR (B.ORDCODE IS NOT NULL AND AUTHORCODE IS NULL )
+                 -- START REV : 002
+                 OR (coalesce(b.RESERVE_INV,'N') = 'Y' AND B.ORDCODE IS NOT NULL )
+                -- END REV : 002
+                ) -- START REV : 004
+  AND (
+                            (ADMOU_CODE IS NOT NULL AND ADMOU_CODE = P_CONNECT_OU)
+                            OR
+                            ADMOU_CODE IS NULL
+                        ) -- END REV : 004
+            -- START REV : 006
+  AND B.ADMSITE_CODE_OWNER = P_CONNECT_SITE -- END REV : 006
+  AND a.userid = p_userid;
+
+      -- Order not belongs to the site
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid,
+                'Data Validation',
+                'Sales Order not belongs to the site.',
+                clock_timestamp()
+           FROM  int$stg_dc_agnst_ord a
+LEFT OUTER JOIN salordmain b ON (UPPER(a.order_no) = UPPER(b.scheme_docno))
+WHERE (B.ORDCODE IS NULL OR b.ADMSITE_CODE_OWNER <> p_connect_site) -- START REV : 004
+  AND (
+                            (ADMOU_CODE IS NOT NULL AND ADMOU_CODE = P_CONNECT_OU)
+                            OR
+                            ADMOU_CODE IS NULL
+                        ) -- END REV : 004
+            -- START REV : 006
+  AND B.ADMSITE_CODE_OWNER = P_CONNECT_SITE -- END REV : 006
+  AND a.userid = p_userid;
+
+       --Item doesn't exist or is extinct.
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid,
+                'Item Data Validation', 'Item doesn''t exist or is extinct.',
+                clock_timestamp()
+           FROM int$stg_dc_agnst_ord a LEFT OUTER JOIN  (SELECT icode, ext
+                   FROM invitem
+
+UNION
+
+                 SELECT barcode, ext
+                   FROM invitem) b 
+				   ON (UPPER(a.item) = UPPER(b.icode))
+WHERE (b.icode IS NULL OR coalesce(b.ext, 'N') = 'Y') AND a.userid = p_userid;
+
+      --Item doesn't belong to SO
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid,
+                'Item Data Validation',
+                'Item doesn''t exist in the specified order.', clock_timestamp()
+           FROM  int$stg_dc_agnst_ord a LEFT OUTER JOIN (SELECT d.icode icode, d.icode icode1,
+                        UPPER(a1.order_no) order_no
+                   FROM SALORDDET d, SALORDMAIN m, int$stg_DC_AGNST_ORD a1
+                  WHERE d.ordcode = m.ordcode
+                    AND UPPER(m.scheme_docno) = UPPER(a1.order_no)
+                -- START REV : 004
+                AND         (
+                                (ADMOU_CODE IS NOT NULL AND ADMOU_CODE = P_CONNECT_OU)
+                                OR
+                                ADMOU_CODE IS NULL
+                            )
+                -- END REV : 004
+            -- START REV : 006
+            AND  M.ADMSITE_CODE_OWNER = P_CONNECT_SITE
+            -- END REV : 006
+                    AND a1.userid = p_userid
+
+UNION ALL
+
+                 SELECT i.barcode icode, d.icode icode1,
+                        UPPER(a1.order_no)
+                   FROM SALORDDET d,
+                        SALORDMAIN m,
+                        int$stg_DC_AGNST_ORD a1,
+                        invitem i
+                  WHERE d.ordcode = m.ordcode
+                    AND UPPER(m.scheme_docno) = UPPER(a1.order_no)
+                -- START REV : 004
+                AND         (
+                                (ADMOU_CODE IS NOT NULL AND ADMOU_CODE = P_CONNECT_OU)
+                                OR
+                                ADMOU_CODE IS NULL
+                            )
+                -- END REV : 004
+            -- START REV : 006
+            AND  M.ADMSITE_CODE_OWNER = P_CONNECT_SITE
+            -- END REV : 006
+                    AND a1.userid = p_userid
+                    AND i.icode = d.icode) i 
+  ON (UPPER(a.order_no) = UPPER(i.order_no) AND UPPER(a.item) = UPPER(i.icode))
+WHERE i.icode1 IS NULL AND a.userid = p_userid;
+
+       INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid,
+                'Item Data Validation', 'No such Order exists against the selected order..', clock_timestamp()
+           FROM   int$stg_dc_agnst_ord a
+		   LEFT OUTER JOIN (SELECT   m.scheme_docno,SHRTNAME,ST.CODE SITE_CODE
+                     		FROM admsite st, int$stg_dc_agnst_ord a1, salordmain m
+							LEFT OUTER JOIN finsl s ON (m.pcode = s.slcode)
+							WHERE (
+                            ( ST.SITETYPE NOT IN ('OS-OO-CM','MS-OO-CM')
+                                AND M.SALETYPE = S.SALETYPE
+                            )
+                            OR (ST.SITETYPE IN ('OS-OO-CM','MS-OO-CM')
+                                AND M.SALETYPE = 'C')
+                            ) AND (
+                               (
+                                  ST.SITETYPE IN ('MS-CO-OM-TS','US-CO-OM-TS','US-CO-OM')
+                                  AND ( M.ADMSITE_CODE        = ST.CODE OR ADMSITE_CODE IS NULL)
+                               )
+                               OR (
+                                  ST.SITETYPE IN ('US-CO-CM','OS-OO-CM','MS-OO-CM','MS-CO-CM')
+                                  AND
+                                  M.ADMSITE_CODE           = ST.CODE
+                               )
+								) AND UPPER(m.scheme_docno) = UPPER(A1.order_no) -- START REV : 006
+		--                        AND  M.ADMSITE_CODE_OWNER = P_CONNECT_SITE
+								-- END REV : 006
+							  AND m.authorcode IS NOT NULL AND coalesce(ISHOLD, 'N') = 'N' -- START REV : 002
+							  AND coalesce(M.RESERVE_INV,'N') = 'N' -- END REV : 002
+							  AND m.orddt <= DATE_TRUNC('day',A1.DC_DATE) -- START REV : 004
+							  AND (
+																	(M.ADMOU_CODE IS NOT NULL AND M.ADMOU_CODE = P_CONNECT_OU)
+																	OR
+																	M.ADMOU_CODE IS NULL
+																) -- END REV : 004
+							  AND m.admsite_code_owner = p_connect_site AND A1.userid = p_userid AND coalesce(m.stat, 'N') <> 'T'
+                       ) p ON (( UPPER(a.SITE_SHORT_NAME) = UPPER(p.SHRTNAME)))
+WHERE a.userid = P_USERID and a.order_no <> p.scheme_docno
+  AND A.SITE_SHORT_NAME IS NOT NULL
+  AND p.SHRTNAME is null;
+
+      -- START REV : 002
+         INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid,
+                'Item Data Validation',
+                'No such Order exists against the selected order.', clock_timestamp()
+           FROM int$stg_dc_agnst_ord a LEFT OUTER JOIN  (SELECT   m.scheme_docno,SHRTNAME,ST.CODE SITE_CODE
+                     				FROM admsite st, int$stg_dc_agnst_ord a1, salordmain m
+									LEFT OUTER JOIN finsl s ON (m.pcode = s.slcode)
+								WHERE (( ST.SITETYPE NOT IN ('OS-OO-CM','MS-OO-CM') AND M.SALETYPE = S.SALETYPE)
+                            			OR (ST.SITETYPE IN ('OS-OO-CM','MS-OO-CM') AND M.SALETYPE = 'C'))
+				 						AND ((ST.SITETYPE IN ('MS-CO-OM-TS','US-CO-OM-TS','US-CO-OM')
+                            			AND ( M.ADMSITE_CODE        = ST.CODE OR ADMSITE_CODE IS NULL))
+                               			OR (ST.SITETYPE IN ('US-CO-CM','OS-OO-CM','MS-OO-CM','MS-CO-CM')
+                                  		AND M.ADMSITE_CODE= ST.CODE))
+										AND UPPER(m.scheme_docno) =UPPER(A1.order_no)
+  										AND M.ADMSITE_CODE_OWNER = P_CONNECT_SITE
+  										AND m.authorcode IS NOT NULL AND coalesce(ISHOLD, 'N') = 'N'
+  										AND coalesce(M.RESERVE_INV,'N') = 'N'
+  										AND m.orddt <= DATE_TRUNC('day',A1.DC_DATE)
+  										AND ((M.ADMOU_CODE IS NOT NULL AND M.ADMOU_CODE = P_CONNECT_OU) OR M.ADMOU_CODE IS NULL)
+  										AND m.admsite_code_owner = p_connect_site AND A1.userid = p_userid AND coalesce(m.stat, 'N') <> 'T'
+                      					) p 
+  ON ((UPPER(a.SITE_CODE) = UPPER(p.SITE_CODE)))
+WHERE a.userid = P_USERID
+AND A.SITE_CODE IS NOT NULL
+AND p.SHRTNAME is null;
+
+-- Pending Qty. Validation
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          lineno,
+          'DC_AGNST_ORD',
+          userid,
+          'Item Data Validation',
+          a.item||'- Issue qty. of item is more than Order qty. Please rectify and try again.',
+          clock_timestamp()
+     FROM int$stg_DC_AGNST_ORD a,
+          (  SELECT i.icode,
+                    m.scheme_docno,
+                    stg.item_qty,
+                    i.barcode
+               FROM (  SELECT DC_DATE,
+                              i.icode,
+                              order_no,
+                              SUM(coalesce(item_qty, 0)) item_qty,
+                              userid,
+                              site_short_name,
+                              -- START REV : 002
+                              site_code
+                              -- END REV : 002
+                         FROM int$stg_DC_AGNST_ORD stg, invitem i
+                        WHERE     stg.userid = p_userid
+                              AND (   UPPER(stg.item) = UPPER(i.icode)
+                                   OR UPPER(stg.item) = UPPER(i.barcode))
+                     GROUP BY DC_DATE,
+                              i.icode,
+                              order_no,
+                              userid,
+                              site_short_name,
+                              site_code                           -- REV : 002
+                                       ) stg, admsite st, invitem i, salorddet d, salordmain m
+LEFT OUTER JOIN finsl s ON (m.pcode = s.slcode)
+WHERE d.ordcode = m.ordcode -- START REV : 004
+  AND (   (    ST.ADMOU_CODE IS NOT NULL
+                             AND ST.ADMOU_CODE = P_CONNECT_OU)
+                         OR ST.ADMOU_CODE IS NULL) -- END REV : 004
+  AND i.icode = d.icode  -- START REV  : 002
+                    --AND  UPPER (a.SITE_SHORT_NAME) = UPPER (p.SHRTNAME(+))
+  AND (   (    UPPER(STG.SITE_SHORT_NAME) =
+                                    UPPER(ST.SHRTNAME)
+                             AND STG.SITE_SHORT_NAME IS NOT NULL)
+                         OR (    UPPER(STG.SITE_CODE) = UPPER(ST.CODE)
+                             AND STG.SITE_CODE IS NOT NULL)) -- END REV : 002
+  AND (   (    ST.SITETYPE NOT IN ('OS-OO-CM', 'MS-OO-CM')
+                             AND M.SALETYPE = S.SALETYPE)
+                         OR (    ST.SITETYPE IN ('OS-OO-CM', 'MS-OO-CM')
+                             AND M.SALETYPE = 'C')) AND (   (    ST.SITETYPE IN ('MS-CO-OM-TS', 'US-CO-OM-TS', 'US-CO-OM')
+                             AND (   M.ADMSITE_CODE = ST.CODE
+                                  OR ADMSITE_CODE IS NULL))
+                         OR (    ST.SITETYPE IN ('US-CO-CM',
+                                                 'OS-OO-CM',
+                                                 'MS-OO-CM',
+                                                 'MS-CO-CM')
+                             AND M.ADMSITE_CODE = ST.CODE)) AND UPPER(stg.icode) = UPPER(i.icode) AND UPPER(m.scheme_docno) = UPPER(stg.order_no) -- START REV : 006
+  AND M.ADMSITE_CODE_OWNER = P_CONNECT_SITE -- END REV : 006
+  AND m.authorcode IS NOT NULL AND coalesce(ISHOLD, 'N') = 'N' -- START REV : 002
+  AND coalesce(M.RESERVE_INV, 'N') = 'N' -- END REV : 002
+                    -- AND NVL (d.ordqty, 0) - NVL (d.cnlqty, 0) - NVL (d.Dqty, 0) > 0
+  AND m.orddt <= date_trunc('day',stg.DC_DATE) AND m.admsite_code_owner = p_connect_site AND stg.userid = p_userid AND coalesce(m.stat, 'N') <> 'T' GROUP BY i.icode,
+                    m.scheme_docno,
+                    stg.item_qty,
+                    i.barcode
+             HAVING SUM(
+                         coalesce(d.ordqty, 0)
+                       - coalesce(d.cnlqty, 0)
+                       - coalesce(d.Dqty, 0)) < coalesce(stg.item_qty, 0)) p
+    WHERE     a.userid = p_userid
+          AND (   UPPER(a.item) = UPPER(p.icode)
+               OR UPPER(a.item) = UPPER(p.barcode))
+          AND UPPER(p.scheme_docno) = UPPER(a.order_no);
+
+      --Item quantity cannot be 0.
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid,
+                'Mandatory Validation',
+                'Item quantity cannot be negative or 0.', clock_timestamp()
+           FROM int$stg_DC_AGNST_ORD a
+          WHERE a.item_qty <= 0 AND a.userid = p_userid;
+
+      --Item quantity cannot be 0.
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid,
+                'Mandatory Validation',
+                'Qty. can be provided upto 3 decimal places only.', clock_timestamp()
+           FROM int$stg_DC_AGNST_ORD a
+          WHERE SCALE(ITEM_QTY) > 4
+          AND coalesce(ITEM_QTY,0) <> 0
+          AND a.userid = p_userid;
+
+      --Item quantity should be in multiples of scan unit.
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid,
+                'Item Data Validation',
+                'Item quantity should be in multiples of scan unit.', clock_timestamp()
+           FROM int$stg_DC_AGNST_ORD a, invitem b
+          WHERE (   UPPER(a.item) = UPPER(b.icode)
+                 OR UPPER(a.item) = UPPER(b.barcode)
+                )
+            AND MOD(a.item_qty, b.barunit) <> 0
+            AND b.item_management_mode <> 'S'
+            AND a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid, 'Data Validation', 'Batch/Serial information for item not defined.', clock_timestamp()
+        from   int$stg_dc_agnst_ord a, invitem i
+        where (UPPER(a.item) = i.icode OR UPPER(a.item) = i.barcode)
+        and    a.item is not null
+        and    a.batch_serial_no is null
+        and    i.item_management_mode in ('B','S')
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid, 'Data Validation', 'Batch/Serial information is not applicable for the item, Please delete batch/serial info and try again.', clock_timestamp()
+        from   int$stg_dc_agnst_ord a, invitem i
+        where (UPPER(a.item) = i.icode OR UPPER(a.item) = i.barcode)
+        and    a.item is not null
+        and    a.batch_serial_no is not null
+        and    i.item_management_mode = 'I'
+        and    a.userid = p_userid;
+
+        
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid, 'Data Validation', 'Serial No. can’t be duplicate.', clock_timestamp()
+        from   int$stg_dc_agnst_ord a, invitem i
+        where (UPPER(a.item) = i.icode OR UPPER(a.item) = i.barcode)
+        and    a.batch_serial_no is not null
+        and    i.item_management_mode = 'S'
+        and    a.item in (SELECT item from int$stg_dc_agnst_ord GROUP BY item, batch_serial_no HAVING count(*) > 1 )
+        and    a.userid = p_userid;
+
+insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid, 'Data Validation', 'Invalid Batch/Serial information or Batch/Serial No. not exists for this Item.', clock_timestamp()
+        FROM  int$stg_dc_agnst_ord a
+		INNER JOIN invitem i ON (UPPER(a.item) = i.icode OR UPPER(a.item) = i.barcode)
+		LEFT OUTER JOIN invbatch_serial b ON (i.icode = b.icode) AND 
+		(UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no ))
+		WHERE a.batch_serial_no is not null
+		and (b.icode is null or b.batch_serial_no is null)
+		and i.item_management_mode in ('B','S') and a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid, 'Data Validation', 'Item Quantity for serial managed items must be equal to scan unit of item.', clock_timestamp()
+        from   int$stg_dc_agnst_ord a, invitem i
+        where (UPPER(a.item) = i.icode OR UPPER(a.item) = i.barcode)
+        and    a.batch_serial_no is not null
+        and    i.item_management_mode = 'S'
+        and    coalesce(ABS(a.item_qty),0) <> coalesce(i.barunit,1)
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid, 'Data Validation', 'Invalid Batch/Serial information.', clock_timestamp()
+        FROM int$stg_dc_agnst_ord a
+LEFT OUTER JOIN invbatch_serial b ON (UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no))
+WHERE a.batch_serial_no is not null and b.batch_serial_no is null and a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid, 'Data Validation', 'Multi combination exist for the given batch/serial. Specify the icode to proceed.', clock_timestamp()
+        from   int$stg_dc_agnst_ord a
+        where  a.item is null
+        and    a.batch_serial_no is not null
+        and    a.batch_serial_no in (SELECT distinct batch_serial_no from int$stg_dc_agnst_ord where item is not null)
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_AGNST_ORD', userid, 'Data Validation', 'Expiry Batch Selected. Please rectify and proceed.', clock_timestamp()
+        from int$stg_dc_agnst_ord a, invitem i, invbatch_serial b
+        where (UPPER(a.item) = i.icode OR UPPER(a.item) = i.barcode)
+        and    UPPER(i.icode) = b.icode
+        and    UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no)
+        and    b.exp_date < a.dc_date
+        and    a.userid = p_userid;
+
+--END REV : 015
+      
+
+      -- Check whether records are valid or not
+      BEGIN
+         SELECT 'S'
+           INTO STRICT v_status
+           
+          WHERE EXISTS (SELECT 'S'
+                          FROM int$error_log
+                         WHERE userid = p_userid);
+
+         RETURN('0');
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            RETURN('1');
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code, lineno, classname,
+                      userid, errortype, errordesc, createdon
+                     )
+              VALUES (nextval('int$error_log_code'), 0, 'V' || 'DC_AGNST_ORD',
+                      p_userid, errcode, errmsg, clock_timestamp()
+                     );
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+   -- Create DC against SO after validation
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+
+function "main"."int$pkg_dc_agnst_ord_int$pkg_dc_agnst_ord_validate(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+ 
+DECLARE
+    -- Change this to reflect the dblink connection string
+    --v_conn_str  text := format('port=%s dbname=%s user=%s', current_setting('port'), current_database(), current_user);
+    v_srvname       name;
+    v_connname      text;
+    v_connstr       text;
+    v_conn_result   text;
+    v_query         text;
+
+    v_ret    text;
+
+BEGIN
+    v_srvname := 'foreign_pgbase';
+    v_connname := replace(uuid_generate_v4()::text,'-','');
+    v_connstr  := v_srvname;
+    
+    --Open the connection  
+    SELECT dblink_connect(v_connname,v_connstr) 
+    INTO v_conn_result;
+	v_query := 'SELECT * FROM int$pkg_dc_agnst_ord_int$pkg_dc_agnst_ord_validate_atx ( ' || quote_nullable(p_userid::text) || '::bigint,' || quote_nullable(p_connect_site::text) || '::bigint,' || quote_nullable(p_logging_date::text) || '::timestamp without time zone,' || quote_nullable(p_connect_ou::text) || '::bigint )';
+	SELECT * INTO v_ret FROM dblink(v_connname, v_query) AS p (ret text);
+
+	SELECT dblink_disconnect(v_connname) 
+    INTO v_conn_result;
+	
+	RETURN v_ret;
+EXCEPTION 
+   WHEN OTHERS THEN
+        SELECT dblink_disconnect(v_connname) 
+        INTO v_conn_result;
+
+END;
+"""
+  returnType = text
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

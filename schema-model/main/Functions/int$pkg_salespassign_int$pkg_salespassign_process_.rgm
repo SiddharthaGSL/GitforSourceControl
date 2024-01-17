@@ -1,0 +1,133 @@
+function "main"."int$pkg_salespassign_int$pkg_salespassign_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      errmsg             varchar(500);
+      vsession           varchar(100);
+      vdetailtbl         varchar(1000);
+      vdetailrec         varchar(500);
+      errcode            text;
+      vcount             bigint;
+      v_exists			 bigint;stg_rec RECORD;
+
+BEGIN
+
+  	FOR stg_rec IN (
+          SELECT UPPER(a.ACTION) ACTION, pgs.code spcode, s.code sitecode
+          FROM int$stg_SALESPASSIGN a, PSITE_GLOBAL_SALESPERSON pgs, ADMSITE s
+          WHERE USERID = p_userid
+              AND UPPER(a.SALESPERSON_NO) = UPPER(pgs.SPNO)
+              AND UPPER(a.SITE_SHORT_CODE) = UPPER(s.SHRTNAME)
+      )
+      LOOP
+          IF stg_rec.ACTION = 'DELETE' THEN
+              DELETE FROM PSITE_SALESPERSON_ASSIGN psa
+              WHERE psa.psite_global_salesperson_code = stg_rec.spcode
+              AND psa.ADMSITE_CODE = stg_rec.sitecode;
+          ELSE
+              SELECT COUNT(*) INTO STRICT v_exists
+              FROM PSITE_SALESPERSON_ASSIGN psa
+              WHERE psa.psite_global_salesperson_code = stg_rec.spcode
+              AND psa.ADMSITE_CODE = stg_rec.sitecode;
+
+              IF v_exists = 0 THEN
+                  INSERT INTO PSITE_SALESPERSON_ASSIGN(
+                      psite_global_salesperson_code,
+                      ADMSITE_CODE
+                  ) VALUES (
+                      stg_rec.spcode,
+                      stg_rec.sitecode
+                  );
+              END IF;
+          END IF;
+      END LOOP;
+
+      -- log to be added in history table
+      SELECT nextval('int$error_log_code') INTO STRICT vsession;
+
+      vdetailtbl :=
+            'create table ginarchive.SALESPASSIGN_'
+         || vsession
+         || ' as select SALESPERSON_NO, SITE_SHORT_CODE, ACTION from int$stg_SALESPASSIGN where userid ='
+         || p_userid::TEXT;
+
+      EXECUTE vdetailtbl;
+
+      vdetailrec := 'select count(1) from ginarchive.SALESPASSIGN_' || vsession;
+
+      EXECUTE vdetailrec INTO STRICT vcount;
+
+      INSERT INTO int$history(code,
+                               importedby,
+                               importedon,
+                               classname,
+                               summary,
+                               history_detail_tablename,
+                               history_detail_row_count)
+           VALUES (nextval('int$history_code'),
+                   p_userid,
+                   clock_timestamp(),
+                   'SALESPASSIGN',
+                   vcount::text || ' sales person assignments changed successfully.',
+                   'ginarchive.SALESPASSIGN_' || vsession,
+                   vcount);
+
+      RETURN('1');
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         -- error log for oracle internal error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'SALESPASSIGN',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

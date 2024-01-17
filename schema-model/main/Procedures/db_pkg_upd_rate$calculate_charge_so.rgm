@@ -1,0 +1,289 @@
+procedure "main"."db_pkg_upd_rate$calculate_charge_so(bigint, text)" {
+  text = """
+
+ -- END REV : 002
+DECLARE
+
+       v_rate                       double precision;
+       v_taxrate                    double precision;--fintaxdet.rate%TYPE;
+       v_taxamt                     double precision;
+       v_net_rate                   double precision;
+       v_discount                   double precision;
+       v_roundoff                   double precision;
+       v_basic_rate                 double precision;
+       v_discount_factor            double precision;
+       v_grsamt                     double precision;
+       v_chgamt                     double precision;
+       v_netamt                     double precision;
+
+       d1 CURSOR FOR
+              SELECT DISTINCT M.ORDCODE,
+                               M.ORDNO,
+                                M.ORDDT,
+                                M.PCODE,
+                               M.DOCNO,
+                               M.DOCDT,
+                               M.AGCODE,
+                               M.AGRATE,
+                               M.TRPCODE,
+                               M.DUEDT,
+                               M.STAT,
+                               M.AUTHORCODE,
+                               M.REM,
+                               M.YCODE,
+                                M.EXT,
+                                M.ECODE,
+                                M.TIME,
+                                M.SALETYPE,
+                                M.DOCCODE,
+                                M.SCHEME_DOCNO,
+                                M.ADMOU_CODE,
+                                M.ADMSITE_CODE,
+                                M.PRICETYPE,
+                                M.PRICELISTCODE,
+                                M.DISCOUNT_FACTOR,
+                                M.PRICE_ROUNDOFF,
+                                M.ROUNDOFF_LIMIT,
+                                M.ADMSITE_CODE_OWNER,
+                                M.INCL_VAT_IN_DIST,
+                                M.DISCOUNT_MODE,
+                                M.DISCOUNT_BASIS,
+                                M.SALTERMCODE,
+                                M.GRSAMT,
+                                M.CHGAMT,
+                                M.NETAMT,
+                                M.SALTRADEGRP_CODE,
+                                M.FORMCODE,
+                                M.PSITE_POSORDER_CODE,
+                                M.POS_REMARKS,
+                                M.CMPTAX_CODE_BASIS,
+                                M.CHL_ORDERID,
+                                M.CHL_MASTER_CHLCODE,
+                                M.AUTHORIZATIONTIME,
+                                M.LAST_ACCESS_ECODE,
+                                M.LAST_ACCESS_TIME,
+                                M.ISHOLD,
+                                M.HELDBY,
+                                M.HELDON,
+                                M.RESERVE_INV,
+              o.psite_admcmptax_code ou_admcmptax_code, s.psite_admcmptax_code, t.isexcise, u.sales_glcode, u.sales_slcode
+              FROM global_dc_items x, admdocscheme t, admsite s, admsite o, invitem i, salorddet d, salordmain m
+LEFT OUTER JOIN saltermmain u ON (m.saltermcode = u.saltermcode)
+WHERE m.ordcode = d.ordcode AND d.icode = i.icode AND m.admsite_code = s.code AND m.admsite_code_owner = o.code AND m.doccode = t.doccode  AND m.ordcode = x.ordcode AND m.psite_posorder_code IS NULL AND m.pricetype = x.rem AND coalesce(d.ordqty, 0) - coalesce(d.cnlqty, 0) - coalesce(d.dqty, 0) > 0 AND coalesce(d.dqty, 0) = 0 AND (p_ordcode IS NULL OR m.ordcode = p_ordcode) -- START REV : 002
+  AND (p_ICODE IS NULL OR d.icode = p_icode) -- END REV : 002
+ ORDER BY m.ordcode DESC;
+
+       -- START REV : 002
+       --CURSOR c2(p_ordcode NUMBER) IS
+       c2 CURSOR(p_ordcode bigint,P_ICODE text) FOR
+       -- END REV : 002
+              SELECT d.code, d.icode, coalesce(i.mrp,0) mrp, i.barunit
+              FROM   salorddet d, invitem i
+              WHERE  d.icode = i.icode
+              AND    d.ordcode = p_ordcode
+              -- START REV : 002
+              AND (p_ICODE IS NULL OR d.icode = p_icode)
+              -- END REV : 002
+              AND    coalesce(d.dqty, 0) = 0
+              AND    coalesce(d.ordqty, 0) - coalesce(d.cnlqty, 0) - coalesce(d.dqty, 0) > 0
+              ORDER BY d.code DESC;
+
+BEGIN
+       FOR i IN d1 LOOP
+           PERFORM set_config('db_pkg_upd_rate.g_ordcode', i.ordcode, false);
+           PERFORM set_config('db_pkg_upd_rate.g_orddt', i.orddt::text, false);
+           PERFORM set_config('db_pkg_upd_rate.g_formcode', i.formcode, false);
+           PERFORM set_config('db_pkg_upd_rate.g_saltermcode', i.saltermcode, false);
+           PERFORM set_config('db_pkg_upd_rate.g_admcmptax_code_ou', i.ou_admcmptax_code, false);
+           PERFORM set_config('db_pkg_upd_rate.g_admcmptax_code_site', i.psite_admcmptax_code, false);
+           PERFORM set_config('db_pkg_upd_rate.g_saltradegrp_code', i.saltradegrp_code, false);
+           PERFORM set_config('db_pkg_upd_rate.g_excise_appl', i.isexcise, false);
+           PERFORM set_config('db_pkg_upd_rate.g_grsamt', i.grsamt, false);
+           PERFORM set_config('db_pkg_upd_rate.g_glcode', i.sales_glcode, false);
+           PERFORM set_config('db_pkg_upd_rate.g_slcode', i.sales_slcode, false);
+           v_grsamt              := 0;
+           v_chgamt              := 0;
+           v_netamt              := 0;
+
+           IF    i.saletype = 'C' THEN
+                 FOR -- START REV : 002
+                     --j IN c2(i.ordcode) 
+                     j IN c2(i.ordcode,P_ICODE:=NULL)
+                     -- END REV : 002
+                 LOOP
+                     v_rate            := NULL;
+                     v_taxrate         := NULL;
+                     v_taxamt          := NULL;
+                     v_net_rate        := NULL;
+                     v_discount        := NULL;
+                     v_roundoff        := NULL;
+                     v_basic_rate      := NULL;
+                     v_discount_factor := NULL;
+
+                     IF i.pricetype = 'F' THEN
+                        V_RATE := 0;
+                     ELSE
+                        CALL db_pro_item_rate_disc_roff(
+                                      j.icode
+                                     ,i.orddt
+                                     ,i.pricelistcode
+                                     ,i.psite_admcmptax_code
+                                     ,i.ou_admcmptax_code
+                                     ,'NEW'
+                                     ,i.admou_code
+                                     ,j.barunit
+                                     ,i.admsite_code
+                                     ,i.admsite_code_owner
+                                     ,i.pcode
+                                     ,'C'
+                                     ,NULL
+                                     ,NULL
+                                     ,v_taxrate
+                                     ,v_taxamt
+                                     ,v_net_rate
+                                     ,v_discount
+                                     ,v_roundoff
+                                     ,v_basic_rate
+                                     ,v_discount_factor
+                                     ,i.saltradegrp_code
+                                     ,i.formcode
+                                  );
+
+                        v_rate := round((v_net_rate)::numeric,2);
+                     END IF;
+
+                     UPDATE salorddet
+                     SET    rsp        = j.mrp,
+                            rate       = v_rate,
+                            discount   = v_discount,
+                            roundoff   = v_roundoff,
+                            basic_rate = v_basic_rate,
+                            factor     = coalesce(v_discount_factor, i.discount_factor),
+                            netamt     = ROUND((coalesce(ordqty,0)*coalesce(v_rate,0))::numeric, 2)
+                     WHERE  code = j.code;
+                 END LOOP;
+
+                 PERFORM set_config('db_pkg_upd_rate.g_grsamt', (SELECT round((SUM(coalesce(ordqty,0)*coalesce(rate,0)))::numeric, 2)
+                 FROM   salorddet
+                 WHERE  ordcode = i.ordcode), false);
+
+           ELSIF i.saletype = 'O' THEN
+                 FOR
+                     -- START REV : 002
+                     --j IN c2(i.ordcode)
+                     j IN c2(i.ordcode,P_ICODE:=NULL)
+                     -- END REV : 002 
+                 LOOP
+                        --ERRAUDIT('PB3','PB3','PB3',i.ordcode||'*'||P_ICODE);
+                     v_rate            := NULL;
+                     v_taxrate         := NULL;
+                     v_taxamt          := NULL;
+                     v_net_rate        := NULL;
+                     v_discount        := NULL;
+                     v_roundoff        := NULL;
+                     v_basic_rate      := NULL;
+                     v_discount_factor := NULL;
+
+                     IF i.pricetype = 'F' THEN
+                        v_rate := 0;
+                     ELSE
+                        CALL db_pro_item_rate_disc_roff(
+                                      j.icode
+                                     ,i.orddt
+                                     ,i.pricelistcode
+                                     ,i.psite_admcmptax_code
+                                     ,i.ou_admcmptax_code
+                                     ,'NEW'
+                                     ,i.admou_code
+                                     ,j.barunit
+                                     ,i.admsite_code
+                                     ,i.admsite_code_owner
+                                     ,i.pcode
+                                     ,'C'
+                                     ,NULL
+                                     ,NULL
+                                     ,v_taxrate
+                                     ,v_taxamt
+                                     ,v_net_rate
+                                     ,v_discount
+                                     ,v_roundoff
+                                     ,v_basic_rate
+                                     ,v_discount_factor
+                                     ,i.saltradegrp_code
+                                     ,i.formcode
+                                  );
+
+                        v_rate := round((v_net_rate)::numeric,2);
+                     END IF;
+
+                     UPDATE salorddet
+                     SET    rsp        = j.mrp,
+                            rate       = v_rate,
+                            discount   = v_discount,
+                            roundoff   = v_roundoff,
+                            basic_rate = v_basic_rate,
+                            factor     = coalesce(v_discount_factor, i.discount_factor),
+                            netamt     = ROUND((coalesce(ordqty,0)*coalesce(v_rate,0))::integer, 2)
+                     WHERE  code = j.code;
+                 END LOOP;
+
+                 PERFORM set_config('db_pkg_upd_rate.g_grsamt', (SELECT round((SUM(coalesce(ordqty,0)*coalesce(rate,0)))::numeric, 2)
+                 FROM   salorddet
+                 WHERE  ordcode = i.ordcode), false);
+
+                 IF  coalesce(i.stat,'N') = 'N' THEN
+                     CALL db_pkg_upd_rate$calculate_term_item_so();
+                 ELSE
+                     -- START REV : 002
+                     --FOR j IN c2(i.ordcode) LOOP
+                     FOR j IN c2(i.ordcode,P_ICODE:=NULL) LOOP
+                     -- END REV : 002
+                         delete FROM salordchg_item
+                         where  salorddet_code = j.code;
+                         --erraudit('pb4','pb4','pb4',i.ordcode||'-'||P_Icode);
+                         CALL db_pkg_upd_rate$calculate_term_item_so(j.code);
+                     END LOOP;
+                 END IF;
+
+               --  erraudit('pb5','pb5','pb5',g_ordcode);
+                 CALL db_pkg_upd_rate$calculate_term_so();
+           END IF;
+
+           SELECT round((coalesce(SUM(coalesce(netamt,0)),0))::numeric,2)
+           INTO STRICT   v_grsamt
+           FROM   salorddet
+           WHERE  ordcode = i.ordcode;
+
+           SELECT round((coalesce(SUM(coalesce(chgamt,0)),0))::numeric,2)
+           INTO STRICT   v_chgamt
+           FROM   salordchg
+           WHERE  ordcode = i.ordcode;
+
+           UPDATE salordmain
+           SET    grsamt = coalesce(v_grsamt,0),
+                  chgamt = coalesce(v_chgamt,0),
+                  netamt = round((coalesce(v_grsamt,0)+ coalesce(v_chgamt,0))::numeric,2)
+           WHERE  ordcode = i.ordcode;
+       END LOOP;
+   END;
+
+"""
+  arguments = <
+    {
+      name = p_ordcode
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_icode
+      type = text
+      mode = IN
+      default = NULL::text
+    }
+
+  >
+  language = plpgsql
+}
+

@@ -1,0 +1,126 @@
+procedure "main"."db_pro_pop_subledger_opening(numeric, numeric, character, bigint)" {
+  text = """
+
+DECLARE
+
+   /*******************************************************************************************************************
+   No.          Date        Author         Description
+   ---------  ----------  --------------   ------------------------------------------------------------------------------
+   REV : 000  05/08/2016   MANASH          (BUG ID : 19509) Excel Import option required in opening Finance Outstanding.
+   REV : 001  05/05/2017   DIPTIMAN        (TFS ID : 28530) Multi Ou related changes.
+   REV : 002  23/08/2017   DIPTIMAN        (TFS ID : 31107) OU data related changes.
+   REV : 003  23/08/2017   SIDDHARTHA      (TFS ID : 32181) Migration Related changes.
+   *********************************************************************************************************************/
+   v_errcode      varchar(50);
+   v_errmsg       varchar(2000);
+   -- START REV : 002
+   v_admou_code   bigint;
+-- END REV : 002
+BEGIN
+   -- START REV : 002
+   --v_admou_code := Db_Pkg_Genentryno.G_OUCODE;
+   v_admou_code := p_admou_code;
+   -- END REV : 002
+   DELETE FROM finslop slop
+    WHERE     slop.ycode = 2
+          AND slop.slcode = p_slcode
+          AND slop.glcode = p_glcode
+          -- START REV : 002
+          AND admou_code = p_admou_code;
+   -- END REV : 002
+   -- START REV : 003
+   IF p_costapp = 'N'
+   -- END REV : 003
+   THEN
+      INSERT INTO finslop (slcode,
+                                glcode,
+                                opdamt,
+                                opcamt,
+                                gl_cc_appl,
+                                ycode-- START REV : 001
+                                ,
+                                admou_code-- END REV : 001
+                                )
+           SELECT f.slcode,
+                  f.glcode,
+                  CASE WHEN                      SIGN(SUM(coalesce(f.damount, 0)) - SUM(coalesce(f.camount, 0)))=-1 THEN  0 WHEN                      SIGN(SUM(coalesce(f.damount, 0)) - SUM(coalesce(f.camount, 0)))=1 THEN  SUM(coalesce(f.damount, 0)) - SUM(coalesce(f.camount, 0))  ELSE 0 END ,
+                  CASE WHEN                      SIGN(SUM(coalesce(f.camount, 0)) - SUM(coalesce(f.damount, 0)))=-1 THEN  0 WHEN                      SIGN(SUM(coalesce(f.camount, 0)) - SUM(coalesce(f.damount, 0)))=1 THEN  SUM(coalesce(f.camount, 0)) - SUM(coalesce(f.damount, 0))  ELSE 0 END ,
+                  p_costapp,
+                  2,
+                  -- START REV : 001
+                  f.admou_code
+             -- END REV : 001
+             FROM finpost f
+            WHERE f.slcode = p_slcode AND f.GLCODE = p_glcode AND f.ycode = 1 -- START REV : 002
+                  AND admou_code = p_admou_code
+         -- END REV : 002
+         GROUP BY f.slcode, f.glcode, -- START REV : 001
+                                      f.admou_code;
+   -- END REV : 001
+   -- START REV : 003
+   ELSE
+      IF p_costapp = 'Y'
+      THEN
+         INSERT INTO finslop (slcode,
+                                   glcode,
+                                   opdamt,
+                                   opcamt,
+                                   gl_cc_appl,
+                                   ycode,
+                                   admou_code)
+              SELECT fo.slcode,
+                     fo.glcode,
+                     CASE WHEN                         SIGN(                             SUM(coalesce(fo.damount, 0))                           - SUM(coalesce(fo.camount, 0)))=-1 THEN  0 WHEN                         SIGN(                             SUM(coalesce(fo.damount, 0))                           - SUM(coalesce(fo.camount, 0)))=1 THEN    SUM(coalesce(fo.damount, 0))                           - SUM(coalesce(fo.camount, 0))  ELSE 0 END ,
+                     CASE WHEN                         SIGN(                             SUM(coalesce(fo.camount, 0))                           - SUM(coalesce(fo.damount, 0)))=-1 THEN  0 WHEN                         SIGN(                             SUM(coalesce(fo.camount, 0))                           - SUM(coalesce(fo.damount, 0)))=1 THEN    SUM(coalesce(fo.camount, 0))                           - SUM(coalesce(fo.damount, 0))  ELSE 0 END ,
+                     p_costapp,
+                     2,
+                     fo.admou_code
+                FROM fincostop fo
+               WHERE     fo.slcode = p_slcode
+                     AND fo.GLCODE = p_glcode
+                     AND fo.ycode = 2
+                     AND admou_code = p_admou_code
+            GROUP BY fo.slcode, fo.glcode, fo.admou_code;
+      -- END REV : 003
+      END IF;
+   END IF;
+EXCEPTION
+   WHEN OTHERS
+   THEN
+      v_errcode := SQLSTATE;
+      v_errmsg := SQLERRM;
+      CALL erraudit(USER,
+                'db_pro_pop_subledger_opening',
+                v_errcode,
+                v_errmsg);
+END;
+"""
+  arguments = <
+    {
+      name = p_slcode
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_glcode
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_costapp
+      type = character
+      mode = IN
+    }
+
+    {
+      name = p_admou_code
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

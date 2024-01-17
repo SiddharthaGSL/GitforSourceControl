@@ -1,0 +1,247 @@
+procedure "main"."int$pkg_sales_cr_note_calculate_dflt_scn(bigint, bigint, timestamp without time zone, bigint, bigint, bigint, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+      DUMMY_APPAMT      double precision;
+      V_ITEM_CHG        double precision;
+      DUMMY_TOTCHGAMT   double precision;
+      DUMMY_CHKCHGAMT   double precision;
+      DUMMY_CHK         char(1);
+      DUMMY_PRVCHK      char(1);
+      DUMMY_SIGN        char(1);
+      V_INVCODE         bigint := ARGINVCODE;
+      V_INVNO           bigint := ARGINVNO;
+      V_INVDT           timestamp := ARGINVDT;
+      V_YCODE           bigint := ARGYCODE;
+      V_GRSAMT          double precision := 0;
+
+      C1 CURSOR FOR
+           SELECT SALTERMDET.SALTERMCODE,
+                  SALTERMDET.CHGCODE,
+                  coalesce(SALTERMDET.RATE, 0)      RATE,
+                  SALTERMDET.FORMULAE,
+                  LENGTH(SALTERMDET.FORMULAE)  FORMLEN,
+                  SALTERMDET.SIGN,
+                  coalesce(SALCHG.GLCODE, ARGINVCODE) GLCODE,
+                  coalesce(FINGL.COSTAPP, 'N')      COSTAPP,
+                  SALCHG.FORMCODE,
+                  SALCHG.ROUNDOFF,
+                  SALTERMDET.SEQ,
+                  SALCHG.BASIS,
+                  SALTERMDET.OPERATION_LEVEL,
+                  SALCHG.ISTAX,
+                  SALCHG.SOURCE,
+                  CASE WHEN SALCHG.GLCODE IS NULL THEN  coalesce(SALCHG.SLCODE, ARGSLCODE)  ELSE SALCHG.SLCODE END
+                     SLCODE
+             FROM SALTERMDET, SALCHG, FINGL
+            WHERE     SALTERMDET.CHGCODE = SALCHG.SALCHGCODE
+                  AND FINGL.GLCODE =
+                         CASE WHEN SALCHG.ISTAX='N' THEN  coalesce(SALCHG.GLCODE, ARGGLCODE)  ELSE SALCHG.GLCODE END 
+                  AND SALTERMCODE = ARGTERMCODE
+                  AND SALTERMDET.OPERATION_LEVEL = 'H'
+         ORDER BY SALTERMDET.SEQ;
+
+BEGIN
+      DELETE FROM SALINVJRNCHG
+            WHERE JRNCODE = ARGINVCODE AND OPERATION_LEVEL = 'H';
+
+      -- ADJUST ITEM CHARGE FROM GRSAMT
+      BEGIN
+         SELECT SUM(CHGAMT)
+           INTO STRICT V_ITEM_CHG
+           FROM SALINVJRNCHG_ITEM
+          WHERE JRNCODE = ARGINVCODE;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            V_ITEM_CHG := 0;
+      END;
+
+      SELECT round((coalesce(SUM(coalesce(AMOUNT, 0)), 0))::numeric, 2)
+        INTO STRICT V_GRSAMT
+        FROM SALINVJRNDET
+       WHERE JRNCODE = ARGINVCODE;
+
+      FOR C1REC IN C1
+      LOOP
+         DUMMY_TOTCHGAMT := 0;
+
+         FOR I IN 1 .. C1REC.FORMLEN
+         LOOP
+            IF MOD(I, 2) != 0
+            THEN
+               DUMMY_CHK := SUBSTR(C1REC.FORMULAE, I, 1);
+               DUMMY_CHKCHGAMT := 0;
+
+               IF DUMMY_CHK = 'B'
+               THEN
+                  -- DUMMY_CHKCHGAMT :=  NVL(:SALINVJRNMAIN.S_GRSAMT,0) + NVL(V_ITEM_CHG,0);
+                  DUMMY_CHKCHGAMT := coalesce(V_GRSAMT, 0) + coalesce(V_ITEM_CHG, 0);
+               ELSE
+                  BEGIN
+                     SELECT SALINVJRNCHG.CHGAMT
+                       INTO STRICT DUMMY_CHKCHGAMT
+                       FROM SALTERMDET, SALINVJRNCHG SALINVJRNCHG
+                      WHERE     SALTERMDET.CHGCODE = SALINVJRNCHG.SALCHGCODE
+                            AND SALINVJRNCHG.JRNCODE = ARGINVCODE
+                            AND SALTERMDET.SALTERMCODE = C1REC.SALTERMCODE
+                            AND SALTERMDET.OPERATION_LEVEL = 'H'
+                            AND SALTERMDET.SEQ = (DUMMY_CHK)::numeric;
+                  EXCEPTION
+                     WHEN no_data_found
+                     THEN
+                        DUMMY_CHKCHGAMT := 0;
+                  END;
+               END IF;
+
+               DUMMY_PRVCHK := SUBSTR(C1REC.FORMULAE, I - 1, 1);
+
+               IF DUMMY_PRVCHK = '+'
+               THEN
+                  DUMMY_TOTCHGAMT :=
+                     DUMMY_TOTCHGAMT + coalesce(DUMMY_CHKCHGAMT, 0);
+               ELSIF DUMMY_PRVCHK = '-'
+               THEN
+                  DUMMY_TOTCHGAMT :=
+                     DUMMY_TOTCHGAMT - coalesce(DUMMY_CHKCHGAMT, 0);
+               ELSE
+                  DUMMY_TOTCHGAMT := coalesce(DUMMY_CHKCHGAMT, 0);
+               END IF;
+            END IF;
+         END LOOP;
+
+         DUMMY_APPAMT := DUMMY_TOTCHGAMT;
+
+         IF C1REC.BASIS = 'P'
+         THEN
+            DUMMY_TOTCHGAMT :=
+               ( (C1REC.RATE / 100) * coalesce(DUMMY_TOTCHGAMT, 0));
+         ELSE
+            DUMMY_TOTCHGAMT := C1REC.RATE;
+         END IF;
+
+         IF C1REC.SIGN = '-' AND coalesce(DUMMY_TOTCHGAMT, 0) >= 0
+         THEN
+            DUMMY_TOTCHGAMT := -1 * coalesce(DUMMY_TOTCHGAMT, 0);
+         END IF;
+
+         IF DUMMY_TOTCHGAMT < 0
+         THEN
+            DUMMY_SIGN := '-';
+         ELSIF DUMMY_TOTCHGAMT > 0
+         THEN
+            DUMMY_SIGN := '+';
+         ELSIF DUMMY_TOTCHGAMT = 0
+         THEN
+            DUMMY_SIGN := C1REC.SIGN;
+         END IF;
+
+         IF C1REC.ROUNDOFF = 'Y'
+         THEN
+            DUMMY_TOTCHGAMT := ROUND(DUMMY_TOTCHGAMT);
+         END IF;
+
+         INSERT INTO SALINVJRNCHG(JRNCODE,
+                                   SEQ,
+                                   SALCHGCODE,
+                                   RATE,
+                                   SIGN,
+                                   CHGAMT,
+                                   GLCODE,
+                                   FORMCODE,
+                                   BASIS,
+                                   APPAMT,
+                                   FORMULAE,
+                                   OPERATION_LEVEL,
+                                   ISTAX,
+                                   SOURCE,
+                                   SLCODE,
+                                   GL_CC_APPL,
+                                   WITHOUT_TERM_FORMULA)
+              VALUES (ARGINVCODE,
+                      C1REC.SEQ,
+                      C1REC.CHGCODE,
+                      C1REC.RATE,
+                      DUMMY_SIGN,
+                      DUMMY_TOTCHGAMT,
+                      C1REC.GLCODE,
+                      C1REC.FORMCODE,
+                      C1REC.BASIS,
+                      DUMMY_APPAMT,
+                      C1REC.FORMULAE,
+                      C1REC.OPERATION_LEVEL,
+                      C1REC.ISTAX,
+                      C1REC.SOURCE,
+                      C1REC.SLCODE,
+                      C1REC.COSTAPP,
+                      'N');
+      END LOOP;
+
+      UPDATE SALINVJRNCHG
+         SET JRNCODE = JRNCODE
+       WHERE JRNCODE = ARGINVCODE;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         CALL ERRAUDIT(USER,
+                   'CALCULATE_DFLT_SCN',
+                   SQLSTATE::varchar,
+                   SQLERRM);
+         RAISE EXCEPTION '%', 'ERROR ENCOUNTERED ' || SQLSTATE::varchar || '  ' || SQLERRM USING ERRCODE = '45104';
+   END;
+
+"""
+  arguments = <
+    {
+      name = arginvcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = arginvno
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = arginvdt
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = argycode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = argglcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = argslcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = argtermcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = arggrsamt
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

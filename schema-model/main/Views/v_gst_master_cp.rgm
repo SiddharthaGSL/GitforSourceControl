@@ -1,0 +1,173 @@
+view "main"."v_gst_master_cp" {
+  text = """-
+SELECT DISTINCT gv.document_gstin,
+    to_char(gv.entdt, 'MM-YYYY'::text) AS month_year,
+    gv.cp_gstin,
+        CASE
+            WHEN ((st.slcode)::text <> ''::text) THEN sl.slname
+            ELSE ou.name
+        END AS business_name,
+        CASE
+            WHEN ((st.slcode)::text <> ''::text) THEN sl.bcp
+            ELSE ou.contact_person
+        END AS contact_person,
+        CASE
+            WHEN ((st.slcode)::text <> ''::text) THEN sl.bemail
+            ELSE ou.email1
+        END AS email_address,
+        CASE
+            WHEN ((st.slcode)::text <> ''::text) THEN sl.bfx2
+            ELSE ou.mobile
+        END AS mobile_number,
+        CASE
+            WHEN ((st.slcode)::text <> ''::text) THEN sl.bwebsite
+            ELSE ou.website
+        END AS website,
+        CASE
+            WHEN ((st.slcode)::text <> ''::text) THEN sl.slname
+            ELSE ou.name
+        END AS organization_name,
+    NULL::text AS pan_number,
+        CASE
+            WHEN ((st.slcode)::text <> ''::text) THEN ((replace(replace((sl.baddr)::text, chr(13), NULL::text), chr(10), ', '::text) || ' '::text) || (sl.bctname)::text)
+            ELSE ((replace(replace((ou.address)::text, chr(13), NULL::text), chr(10), ', '::text) || ' '::text) || (ou.ctname)::text)
+        END AS address,
+        CASE
+            WHEN ((st.slcode)::text <> ''::text) THEN sl.bpin
+            ELSE ou.pin
+        END AS pin_code,
+        CASE
+            WHEN ((st.slcode)::text <> ''::text) THEN cl.clsname
+            ELSE 'Owned Site'::character varying
+        END AS class_name,
+        CASE
+            WHEN ((st.slcode)::text <> ''::text) THEN
+            CASE
+                WHEN (cl.clstype = 'C'::bpchar) THEN 'Customer'::text
+                ELSE 'Vendor'::text
+            END
+            ELSE 'Owned Site'::text
+        END AS class_type,
+        CASE
+            WHEN ((st.slcode)::text <> ''::text) THEN cg.name
+            ELSE 'Normal Registered'::character varying
+        END AS registration_type
+   FROM (((main.v_gst_ent_hsn gv
+     LEFT JOIN main.finsl sl ON ((gv.cp_slcode = (sl.slcode)::numeric)))
+     LEFT JOIN main.admcls cl ON ((sl.clscode = cl.clscode)))
+     LEFT JOIN main.admgstcategory cg ON ((sl.cp_category_code = cg.code))),
+    (main.admsite st
+     LEFT JOIN main.admou ou ON ((st.admou_code = ou.code)))
+  WHERE (((gv.cp_sitecode)::text <> ''::text) AND (gv.cp_sitecode = (st.code)::numeric) AND ((gv.document_gstin)::text <> (gv.cp_gstin)::text))
+UNION
+ SELECT DISTINCT gv.document_gstin,
+    to_char(gv.entdt, 'MM-YYYY'::text) AS month_year,
+    gv.cp_gstin,
+        CASE
+            WHEN ((gv.cp_slcode)::text <> ''::text) THEN (sl.slname)::text
+            ELSE (((((pc.fname)::text || ' '::text) || (pc.mname)::text) || ' '::text) || (pc.lname)::text)
+        END AS business_name,
+        CASE
+            WHEN ((gv.cp_slcode)::text <> ''::text) THEN sl.bcp
+            ELSE NULL::character varying
+        END AS contact_person,
+        CASE
+            WHEN ((gv.cp_slcode)::text <> ''::text) THEN sl.bemail
+            ELSE pc.email
+        END AS email_address,
+        CASE
+            WHEN ((gv.cp_slcode)::text <> ''::text) THEN sl.bfx2
+            ELSE pc.mobile
+        END AS mobile_number,
+        CASE
+            WHEN ((gv.cp_slcode)::text <> ''::text) THEN sl.bwebsite
+            ELSE NULL::character varying
+        END AS website,
+        CASE
+            WHEN ((gv.cp_slcode)::text <> ''::text) THEN (sl.slname)::text
+            ELSE (((((pc.fname)::text || ' '::text) || (pc.mname)::text) || ' '::text) || (pc.lname)::text)
+        END AS organization_name,
+        CASE
+            WHEN ((gv.cp_slcode)::text <> ''::text) THEN sl.pan
+            ELSE pc.panno
+        END AS pan_number,
+        CASE
+            WHEN ((gv.cp_slcode)::text <> ''::text) THEN ((replace(replace((sl.baddr)::text, chr(13), NULL::text), chr(10), ', '::text) || ' '::text) || (sl.bctname)::text)
+            ELSE (((((((pc.address1)::text || ' '::text) || (pc.address2)::text) || ' '::text) || (pc.address3)::text) || ' '::text) || (pc.city)::text)
+        END AS address,
+        CASE
+            WHEN ((gv.cp_slcode)::text <> ''::text) THEN sl.bpin
+            ELSE pc.pin
+        END AS pin_code,
+        CASE
+            WHEN ((gv.cp_slcode)::text <> ''::text) THEN cl.clsname
+            ELSE 'Customer'::character varying
+        END AS class_name,
+        CASE
+            WHEN ((gv.cp_slcode)::text <> ''::text) THEN
+            CASE
+                WHEN (cl.clstype = 'C'::bpchar) THEN 'Customer'::text
+                ELSE 'Vendor'::text
+            END
+            ELSE 'Customer'::text
+        END AS class_type,
+        CASE
+            WHEN ((gv.cp_slcode)::text <> ''::text) THEN cg.name
+            ELSE NULL::character varying
+        END AS registration_type
+   FROM ((((main.v_gst_ent_hsn gv
+     LEFT JOIN main.finsl sl ON ((gv.cp_slcode = (sl.slcode)::numeric)))
+     LEFT JOIN main.psite_customer pc ON ((gv.cp_psite_customer_code = (pc.code)::text)))
+     LEFT JOIN main.admcls cl ON ((sl.clscode = cl.clscode)))
+     LEFT JOIN main.admgstcategory cg ON ((sl.cp_category_code = cg.code)))
+  WHERE ((COALESCE((gv.cp_sitecode)::text, ''::text) = ''::text) AND (((gv.cp_slcode)::text <> ''::text) OR (gv.cp_psite_customer_code <> ''::text)) AND ((gv.document_gstin)::text <> (gv.cp_gstin)::text) AND (((gv.cp_psite_customer_code <> ''::text) AND ((gv.cp_gstin)::text <> ''::text)) OR (COALESCE(gv.cp_psite_customer_code, ''::text) = ''::text)));
+"""
+  columns = (
+    column "document_gstin" {
+      type = "character varying(15)"
+    }
+    column "month_year" {
+      type = text
+    }
+    column "cp_gstin" {
+      type = "character varying(15)"
+    }
+    column "business_name" {
+      type = "character varying"
+    }
+    column "contact_person" {
+      type = "character varying"
+    }
+    column "email_address" {
+      type = "character varying"
+    }
+    column "mobile_number" {
+      type = "character varying"
+    }
+    column "website" {
+      type = "character varying"
+    }
+    column "organization_name" {
+      type = "character varying"
+    }
+    column "pan_number" {
+      type = text
+    }
+    column "address" {
+      type = text
+    }
+    column "pin_code" {
+      type = "character varying"
+    }
+    column "class_name" {
+      type = "character varying"
+    }
+    column "class_type" {
+      type = text
+    }
+    column "registration_type" {
+      type = "character varying"
+    }
+  )
+}
+

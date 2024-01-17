@@ -1,0 +1,387 @@
+function "main"."int$pkg_pocnl_int$pkg_pocnl_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status      char(1);
+      errmsg        varchar(200);
+      errcode       text;
+BEGIN
+
+    -- updating icode
+   UPDATE int$stg_POCNL a SET DERIVED_ICODE = icode
+   from (SELECT  coalesce(a.lineno, 0) lineno, i.icode
+             FROM    int$stg_POCNL a, invitem i
+             WHERE   ((UPPER(a.ITEM_BARCODE) = i.icode) or (UPPER(a.ITEM_BARCODE) = i.barcode))
+             AND     a.userid = p_userid) b
+    where (a.lineno = b.lineno); 
+
+    -- updating setcode
+    UPDATE int$stg_POCNL a SET DERIVED_SETCODE = SETCODE
+	from (SELECT  coalesce(a.lineno, 0) lineno, s.SETCODE
+             FROM    int$stg_POCNL a, invsetmain s
+             WHERE   UPPER(a.SET_CODE) = UPPER('S$'||LPAD(s.CREATOR_CMPCODE, 3, 0)||s.SETCODE::TEXT)
+             AND     a.userid = 2345) b
+    where (a.lineno = b.lineno);   
+
+    -- updating PO Code
+   UPDATE int$stg_POCNL a SET DERIVED_ORDCODE = ORDCODE,DERIVED_PCODE=PCODE
+    from (SELECT  coalesce(a.lineno, 0) lineno, po.ORDCODE, po.PCODE
+             FROM    int$stg_POCNL a, purordmain po
+             WHERE   UPPER(a.ORDER_NO) = UPPER(po.SCHEME_DOCNO)
+             AND     po.ADMSITE_CODE = p_connect_site
+             AND     po.AUTHORCODE IS NOT NULL
+             AND     po.ORDDT <= a.CANCEL_DATE
+             AND     coalesce(po.STAT, 'N') <> 'T'
+             AND     po.ORDCODE NOT IN (  SELECT po.ORDCODE
+                                            FROM PURORDMAIN po, ( SELECT UPPER(po.SCHEME_DOCNO) SCHEME_DOCNO
+                                                                     FROM PURORDMAIN po
+                                                                    WHERE po.ADMSITE_CODE = p_connect_site
+                                                                    GROUP BY UPPER(po.SCHEME_DOCNO)
+                                                                    HAVING COUNT(*) > 1
+                                                                ) x
+                                            WHERE UPPER(po.SCHEME_DOCNO) = x.SCHEME_DOCNO
+                                              AND po.ADMSITE_CODE = p_connect_site
+                                        )
+             AND     a.userid = p_userid) b
+    where (a.lineno = b.lineno);        
+
+    -- updating ORDSET details
+    UPDATE int$stg_POCNL a SET  DERIVED_ORDERSET_CODE = CODE,
+                                 DERIVED_ORDERSET_ORDQTY = ORDQTY,
+                                 DERIVED_ORDERSET_CANCELQTY = CNLQTY,
+                                 DERIVED_ORDERSET_RECQTY = RECQTY
+            FROM(SELECT  coalesce(a.lineno, 0) lineno, s.CODE, coalesce(s.QTY, 0) ORDQTY, coalesce(s.CNLQTY, 0) CNLQTY, coalesce(s.RCQTY, 0) RECQTY
+             FROM    int$stg_POCNL a, purordset s
+             WHERE   s.ORDCODE = a.DERIVED_ORDCODE
+             AND     s.INVSETMAIN_CODE = a.DERIVED_SETCODE
+             AND     UPPER(a.CANCEL_MODE) = 'SET'
+             AND     a.userid = p_userid) b 
+            WHERE a.lineno = b.lineno;
+
+    -- updating ORDITEM details
+    UPDATE int$stg_POCNL a SET DERIVED_ORDDET_CODE = CODE,
+                                 DERIVED_ORDDET_ORDQTY = ORDQTY,
+                                 DERIVED_ORDDET_CANCELQTY = CNLQTY,
+                                 DERIVED_ORDDET_RECQTY = RECQTY,
+                                 DERIVED_ORDDET_RATE = RATE
+             FROM (SELECT  coalesce(a.lineno, 0) lineno, d.CODE, coalesce(d.ORDQTY, 0) ORDQTY, coalesce(d.CNLQTY, 0) CNLQTY, coalesce(d.RCQTY, 0) RECQTY, d.RATE
+             FROM    int$stg_POCNL a, purorddet d
+             WHERE   d.ORDCODE = a.DERIVED_ORDCODE
+             AND     d.ICODE = a.DERIVED_ICODE
+             AND     (
+                        (
+                            a.ITEM_RATE IS NULL
+                            AND
+                            a.DERIVED_ICODE NOT IN (SELECT ICODE
+                                                    FROM PURORDDET
+                                                    WHERE  ORDCODE = a.DERIVED_ORDCODE
+                                                    GROUP BY ORDCODE, ICODE
+                                                    HAVING COUNT(*) > 1)
+                        )
+                        OR
+                            d.RATE = a.ITEM_RATE
+                        )
+             AND     UPPER(a.CANCEL_MODE) = 'ITEM'
+             AND     d.INVSETMAIN_CODE IS NULL
+             AND     a.userid = p_userid) b   
+            WHERE  a.lineno = b.lineno;                         
+
+     -- Validing SET/ITEM INPUT
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'POCNL', userid, 'Data Validation', 'CANCEL_MODE should either be ITEM or SET.', clock_timestamp()
+        from   int$stg_POCNL a
+        where (
+                    a.CANCEL_MODE IS NULL
+                    OR
+                    UPPER(a.CANCEL_MODE) NOT IN ( 'ITEM', 'SET' )
+                )
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'POCNL', userid, 'Data Validation', 'ITEM or SET should be specified as per CANCEL_MODE selected.', clock_timestamp()
+        from   int$stg_POCNL a
+        where  (
+                    (
+                        UPPER(a.CANCEL_MODE) = 'ITEM'
+                        AND
+                        a.ITEM_BARCODE IS NULL
+                    )
+                    OR (
+                        UPPER(a.CANCEL_MODE) = 'SET'
+                        AND
+                        a.SET_CODE IS NULL
+                    )
+                    OR (
+                        a.SET_CODE IS NULL
+                        AND
+                        a.ITEM_BARCODE IS NULL
+                    )
+                )
+        and    a.userid = p_userid;
+
+     -- Cancel Date validations
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'POCNL', userid, 'Data Validation', 'CANCEL_DATE is required and should be not be a future date.', clock_timestamp()
+        from   int$stg_POCNL a
+        where (
+                    a.CANCEL_DATE IS NULL
+                    OR
+                    date_trunc('day', a.CANCEL_DATE) > date_trunc('day', clock_timestamp())
+                )
+        and    a.userid = p_userid;
+
+     -- Cancel Date - User lock days validations
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'POCNL', userid, 'Data Validation', 'Item not found against specified barcode.', clock_timestamp()
+        from   int$stg_POCNL a, (SELECT ECODE, LOCDAYS, ALLOW_LAST_FY_DAY_MODE FROM HRDEMP WHERE ECODE = p_userid) b
+        where  a.userid = b.ecode
+        and     (
+                    b.LOCDAYS IS NOT NULL
+                    AND
+                    (
+                        (
+                            coalesce(b.ALLOW_LAST_FY_DAY_MODE, 'N') = 'N'
+                            AND
+                            (current_date -b.LOCDAYS::integer) > a.CANCEL_DATE
+                        )
+                        OR (
+                            coalesce(b.ALLOW_LAST_FY_DAY_MODE, 'N') = 'Y'
+                            AND (select COUNT(*) from admyear where dtto = a.CANCEL_DATE) = 0
+                            AND
+                            (current_date-b.LOCDAYS::integer) > a.CANCEL_DATE
+                        )
+                    )
+                )
+        and    a.userid = p_userid;
+
+     -- DOCSCHEME should be valid
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'POCNL', userid, 'Data Validation', 'Document scheme either not found or is of manual type.', clock_timestamp()
+        FROM int$stg_pocnl a
+		LEFT OUTER JOIN admdocscheme d ON (UPPER(a.SCHEME_DOC_FORMAT) = UPPER(d.DOCNAME))
+		WHERE (
+		                 d.DOCCODE  IS NULL
+		                 OR
+		                 d.MANUAL = 'Y'
+		                ) and a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'POCNL', userid, 'Data Validation', 'Document scheme not tagged to purchase order cancellation menu.', clock_timestamp()
+        from   int$stg_POCNL a, admdocscheme d
+        where  UPPER(a.SCHEME_DOC_FORMAT) = UPPER(d.DOCNAME)
+        AND    d.DOCCODE NOT IN (SELECT DOCCODE from admmenu_docscheme where mdmenushortcode = 'ProcOrdCnl')
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'POCNL', userid, 'Data Validation', 'Document scheme not tagged to the connected site.', clock_timestamp()
+        from   int$stg_POCNL a, admdocscheme d
+        where  UPPER(a.SCHEME_DOC_FORMAT) = UPPER(d.DOCNAME)
+        AND (SELECT COUNT(*) from admou_docscheme where admsite_code = p_connect_site) > 0
+        AND (SELECT COUNT(*) from admou_docscheme where admsite_code = p_connect_site and doccode = d.DOCCODE) = 0
+        and    a.userid = p_userid;
+
+     -- Validing ITEM
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'POCNL', userid, 'Data Validation', 'Item not found against specified barcode.', clock_timestamp()
+        from   int$stg_POCNL a
+        where  a.DERIVED_ICODE IS NULL
+        and    UPPER(a.CANCEL_MODE) = 'ITEM'
+        and    a.userid = p_userid;
+
+     -- Validing SET
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'POCNL', userid, 'Data Validation', 'Set not found against specified set code.', clock_timestamp()
+        from   int$stg_POCNL a
+        where  a.DERIVED_SETCODE IS NULL
+        and    UPPER(a.CANCEL_MODE) = 'SET'
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'POCNL', userid, 'Data Validation', 'Item rate is not applicable for set cancellation mode.', clock_timestamp()
+        from   int$stg_POCNL a
+        where  a.SET_CODE IS NOT NULL
+        and    a.ITEM_RATE IS NOT NULL
+        and    a.userid = p_userid;
+
+     -- Validing PO
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'POCNL', userid, 'Data Validation', 'Pending authorized purchase order not found for the connected site as per the cancel date provided or multiple orders found with same number.', clock_timestamp()
+        from   int$stg_POCNL a
+        where  a.DERIVED_ORDCODE IS NULL
+        and    a.userid = p_userid;
+
+     -- Validing Order set code
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'POCNL', userid, 'Data Validation', 'Set not found in the specified purchase order.', clock_timestamp()
+        from   int$stg_POCNL a
+        where  a.DERIVED_ORDERSET_CODE IS NULL
+        and    UPPER(a.CANCEL_MODE) = 'SET'
+        and    a.DERIVED_ORDCODE IS NOT NULL
+        and    a.userid = p_userid;
+
+     -- Validing Order det code
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'POCNL', userid, 'Data Validation', 'Item not found in the specified purchase order or exists in multiple rows (please specify rate in such cases).', clock_timestamp()
+        from   int$stg_POCNL a
+        where  a.DERIVED_ORDDET_CODE IS NULL
+        and    UPPER(a.CANCEL_MODE) = 'ITEM'
+        and    a.DERIVED_ORDCODE IS NOT NULL
+        and    a.userid = p_userid;
+
+     -- Validating Cancel Qty
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'POCNL', userid, 'Data Validation', 'CANCEL_QTY can not be Zero/Negative.', clock_timestamp()
+        from   int$stg_POCNL a
+        where  a.CANCEL_QTY <= 0
+        and    a.CANCEL_QTY IS NOT NULL
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'POCNL', userid, 'Data Validation', 'This set is already cancelled, please use UI to change the cancellation qty.', clock_timestamp()
+        from   int$stg_POCNL a
+        where  a.DERIVED_ORDERSET_CANCELQTY <> 0
+        and    a.DERIVED_ORDERSET_CANCELQTY IS NOT NULL
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'POCNL', userid, 'Data Validation', 'CANCEL_QTY for set should be an integer.', clock_timestamp()
+        from   int$stg_POCNL a
+        where  length(abs((CANCEL_QTY) - round(CANCEL_QTY))::text) > 1
+        and    a.CANCEL_QTY IS NOT NULL
+        and    UPPER(a.CANCEL_MODE) = 'SET'
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'POCNL', userid, 'Data Validation', 'CANCEL_QTY for ITEM should be max at 3 decimal places only.', clock_timestamp()
+        from   int$stg_POCNL a
+        where  length(abs((CANCEL_QTY) - round(CANCEL_QTY))::text) > 5
+        and    UPPER(a.CANCEL_MODE) = 'ITEM'
+        and    a.CANCEL_QTY IS NOT NULL
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'POCNL', userid, 'Data Validation', 'CANCEL_QTY for ITEM should be in multiple of the scan unit.', clock_timestamp()
+        from   int$stg_POCNL a, invitem i
+        where  i.ICODE = a.DERIVED_ICODE
+        and    MOD(a.CANCEL_QTY, i.BARUNIT) <> 0
+        and    UPPER(a.CANCEL_MODE) = 'ITEM'
+        and    a.CANCEL_QTY IS NOT NULL
+        and    a.userid = p_userid;
+
+      -- Validating pendency
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'POCNL', userid, 'Data Validation', 'CANCEL_QTY cannot be more than the pending qty. of the order detail.', clock_timestamp()
+        from   int$stg_POCNL a
+        where  (
+                    (
+                        a.DERIVED_ORDDET_CODE IS NOT NULL
+                        AND
+                        a.DERIVED_ORDDET_ORDQTY-a.DERIVED_ORDDET_CANCELQTY-a.DERIVED_ORDDET_RECQTY < a.CANCEL_QTY 
+                    )
+                    OR (
+                        a.DERIVED_ORDERSET_CODE IS NOT NULL
+                        AND
+                        a.DERIVED_ORDERSET_ORDQTY-a.DERIVED_ORDERSET_CANCELQTY-a.DERIVED_ORDERSET_RECQTY < a.CANCEL_QTY
+                    )
+                )
+        and    a.userid = p_userid;
+
+      -- Validating same order det / set row in multiple rows
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'POCNL', userid, 'Data Validation', 'Multiple rows exists in import excel with same order - item/item rate/set combination.', clock_timestamp()
+        from   int$stg_POCNL a
+        WHERE    (
+                    (
+                        UPPER(a.CANCEL_MODE) = 'ITEM'
+                        AND
+                        a.DERIVED_ORDDET_CODE IN (SELECT DERIVED_ORDDET_CODE 
+                                                    FROM int$stg_POCNL 
+                                                    WHERE userid = p_userid 
+                                                    GROUP BY DERIVED_ORDDET_CODE 
+                                                    HAVING COUNT(*) > 1)
+                    )
+                    OR (
+                        UPPER(a.CANCEL_MODE) = 'SET'
+                        AND
+                        a.DERIVED_ORDERSET_CODE IN (SELECT DERIVED_ORDERSET_CODE 
+                                                    FROM int$stg_POCNL 
+                                                    WHERE userid = p_userid 
+                                                    GROUP BY DERIVED_ORDERSET_CODE 
+                                                    HAVING COUNT(*) > 1)
+                    )
+                 )
+        and    a.userid = p_userid;
+
+      -- Check whether records are valid or not
+      BEGIN
+         SELECT 'S'
+           INTO STRICT v_status
+           
+          WHERE EXISTS (SELECT 'S'
+                      FROM int$error_log
+                     WHERE userid = p_userid);
+
+         RETURN('0');
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            RETURN('1');
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'BOM',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

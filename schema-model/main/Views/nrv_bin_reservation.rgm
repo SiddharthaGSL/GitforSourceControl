@@ -1,0 +1,231 @@
+view "main"."nrv_bin_reservation" {
+  text = """-
+SELECT i.code,
+    i.scheme_docno,
+    i.doccode,
+    i.entdt,
+    a1.name AS document_site,
+    a1.code AS document_site_code,
+        CASE
+            WHEN (i.order_type = 'SO'::bpchar) THEN 'Sales Order'::text
+            WHEN (i.order_type = 'TO'::bpchar) THEN 'Transfer Order'::text
+            ELSE NULL::text
+        END AS order_type,
+    i.order_code,
+    i.loccode,
+    s.scheme_docno AS order_no,
+    s.orddt AS order_date,
+    s.admsite_code AS destination_site_code,
+    a2.name AS destination_site_name,
+    a1.shrtname AS destination_site_short_name,
+    a1.sitetype AS destination_site_type,
+    s.pcode AS customer_code,
+    f.slname AS customer_name,
+    f.slid AS customer_slid,
+    i.remarks,
+    a1.floorloccode,
+    p.rule_name AS pick_list_rule,
+    sum(COALESCE(id.reserve_qty, (0)::numeric)) AS reservation_qty,
+    sum(COALESCE(id.cancel_qty, (0)::numeric)) AS cancelled_qty,
+    sum(COALESCE(id.picklist_qty, (0)::numeric)) AS pick_list_qty,
+    sum(((COALESCE(id.reserve_qty, (0)::numeric) - COALESCE(id.cancel_qty, (0)::numeric)) - COALESCE(id.picklist_qty, (0)::numeric))) AS pending_pick_list_qty,
+    sum((COALESCE(a.confirmed_qty, (0)::numeric) - COALESCE(a.packed_qty, (0)::numeric))) AS pending_packed_qty,
+    sum(COALESCE(a.confirmed_qty, (0)::numeric)) AS confirm_qty,
+    sum(((COALESCE(a.picklist_qty, (0)::numeric) - COALESCE(a.picklist_cancel_qty, (0)::numeric)) - COALESCE(a.confirmed_qty, (0)::numeric))) AS picklist_in_progress_qty,
+    sum((((COALESCE(id.reserve_qty, (0)::numeric) - COALESCE(id.cancel_qty, (0)::numeric)) - COALESCE(id.picklist_qty, (0)::numeric)) + (COALESCE(a.confirmed_qty, (0)::numeric) - COALESCE(a.packed_qty, (0)::numeric)))) AS cancellable_qty,
+    h1.fname AS created_by,
+    i.createdon AS created_on,
+    h2.fname AS lastmodified_by,
+    i.lastmodifiedon AS lastmodified_on,
+    s.entry_source,
+    s.duedt AS ship_due_date,
+    s.rem AS order_remarks
+   FROM (((((((((main.invreservemain i
+     JOIN main.picklist_rule p ON ((i.picklist_rule_code = p.code)))
+     JOIN main.invreservedet id ON ((i.code = id.invreservemain_code)))
+     JOIN main.salordmain s ON ((i.order_code = s.ordcode)))
+     JOIN main.admsite a1 ON ((i.admsite_code_owner = a1.code)))
+     LEFT JOIN ( SELECT invpicklistdet.invreservedet_code,
+            sum(invpicklistdet.picklist_qty) AS picklist_qty,
+            sum(invpicklistdet.confirm_qty) AS confirmed_qty,
+            sum(invpicklistdet.packed_qty) AS packed_qty,
+            sum(invpicklistdet.cancel_qty) AS picklist_cancel_qty
+           FROM main.invpicklistdet
+          GROUP BY invpicklistdet.invreservedet_code) a ON ((id.code = a.invreservedet_code)))
+     JOIN main.hrdemp h1 ON ((i.createdby = h1.ecode)))
+     LEFT JOIN main.hrdemp h2 ON ((i.lastmodifiedby = h2.ecode)))
+     LEFT JOIN main.admsite a2 ON ((s.admsite_code = a2.code)))
+     LEFT JOIN main.finsl f ON ((s.pcode = f.slcode)))
+  WHERE (i.order_type = ANY (ARRAY['SO'::bpchar, 'TO'::bpchar]))
+  GROUP BY i.code, i.scheme_docno, i.doccode, i.entdt, a1.name, a1.code, i.order_type, i.order_code, i.loccode, s.scheme_docno, s.orddt, s.admsite_code, a2.name, a1.shrtname, a1.sitetype, s.pcode, f.slname, f.slid, i.remarks, a1.floorloccode, p.rule_name, h1.fname, i.createdon, h2.fname, i.lastmodifiedon, s.entry_source, s.duedt, s.rem
+UNION ALL
+ SELECT i.code,
+    i.scheme_docno,
+    i.doccode,
+    i.entdt,
+    a1.name AS document_site,
+    a1.code AS document_site_code,
+        CASE
+            WHEN (i.order_type = 'RO'::bpchar) THEN 'Retail Order'::text
+            ELSE NULL::text
+        END AS order_type,
+    i.order_code,
+    i.loccode,
+    s.scheme_docno AS order_no,
+    s.orddt AS order_date,
+    s.admsite_code AS destination_site_code,
+    a2.name AS destination_site_name,
+    a1.shrtname AS destination_site_short_name,
+    a1.sitetype AS destination_site_type,
+    s.chnlcode AS customer_code,
+    f.slname AS customer_name,
+    f.slid AS customer_slid,
+    i.remarks,
+    a1.floorloccode,
+    p.rule_name AS pick_list_rule,
+    sum(COALESCE(id.reserve_qty, (0)::numeric)) AS reservation_qty,
+    sum(COALESCE(id.cancel_qty, (0)::numeric)) AS cancelled_qty,
+    sum(COALESCE(id.picklist_qty, (0)::numeric)) AS pick_list_qty,
+    sum(((COALESCE(id.reserve_qty, (0)::numeric) - COALESCE(id.cancel_qty, (0)::numeric)) - COALESCE(id.picklist_qty, (0)::numeric))) AS pending_pick_list_qty,
+    sum((COALESCE(a.confirmed_qty, (0)::numeric) - COALESCE(a.packed_qty, (0)::numeric))) AS pending_packed_qty,
+    sum(COALESCE(a.confirmed_qty, (0)::numeric)) AS confirm_qty,
+    sum(((COALESCE(a.picklist_qty, (0)::numeric) - COALESCE(a.picklist_cancel_qty, (0)::numeric)) - COALESCE(a.confirmed_qty, (0)::numeric))) AS picklist_in_progress_qty,
+    sum((((COALESCE(id.reserve_qty, (0)::numeric) - COALESCE(id.cancel_qty, (0)::numeric)) - COALESCE(id.picklist_qty, (0)::numeric)) + (COALESCE(a.confirmed_qty, (0)::numeric) - COALESCE(a.packed_qty, (0)::numeric)))) AS cancellable_qty,
+    h1.fname AS created_by,
+    i.createdon AS created_on,
+    h2.fname AS lastmodified_by,
+    i.lastmodifiedon AS lastmodified_on,
+    'API'::character varying AS entry_source,
+    s.ship_duedt AS ship_due_date,
+    s.remarks AS order_remarks
+   FROM (((((((((main.invreservemain i
+     JOIN main.picklist_rule p ON ((i.picklist_rule_code = p.code)))
+     JOIN main.invreservedet id ON ((i.code = id.invreservemain_code)))
+     JOIN main.hrdemp h1 ON ((i.createdby = h1.ecode)))
+     JOIN main.admsite a1 ON ((i.admsite_code_owner = a1.code)))
+     LEFT JOIN ( SELECT invpicklistdet.invreservedet_code,
+            sum(invpicklistdet.picklist_qty) AS picklist_qty,
+            sum(invpicklistdet.confirm_qty) AS confirmed_qty,
+            sum(invpicklistdet.packed_qty) AS packed_qty,
+            sum(invpicklistdet.cancel_qty) AS picklist_cancel_qty
+           FROM main.invpicklistdet
+          GROUP BY invpicklistdet.invreservedet_code) a ON ((id.code = a.invreservedet_code)))
+     LEFT JOIN main.hrdemp h2 ON ((i.lastmodifiedby = h2.ecode)))
+     LEFT JOIN main.retailordmain s ON (((i.retailordmain_code)::numeric = (s.ordcode)::numeric)))
+     LEFT JOIN main.admsite a2 ON ((s.admsite_code = a2.code)))
+     LEFT JOIN main.finsl f ON ((s.chnlcode = f.slcode)))
+  WHERE (i.order_type = 'RO'::bpchar)
+  GROUP BY i.code, i.scheme_docno, i.doccode, i.entdt, a1.name, a1.code, i.order_type, i.order_code, i.loccode, s.scheme_docno, s.orddt, s.admsite_code, a2.name, a1.shrtname, a1.sitetype, s.chnlcode, f.slname, f.slid, i.remarks, a1.floorloccode, p.rule_name, h1.fname, i.createdon, h2.fname, i.lastmodifiedon, s.ship_duedt, s.remarks;
+"""
+  columns = (
+    column "code" {
+      type = "bigint"
+    }
+    column "scheme_docno" {
+      type = "character varying(25)"
+    }
+    column "doccode" {
+      type = "bigint"
+    }
+    column "entdt" {
+      type = "timestamp(0) without time zone"
+    }
+    column "document_site" {
+      type = "character varying(100)"
+    }
+    column "document_site_code" {
+      type = "bigint"
+    }
+    column "order_type" {
+      type = text
+    }
+    column "order_code" {
+      type = "bigint"
+    }
+    column "loccode" {
+      type = "bigint"
+    }
+    column "order_no" {
+      type = "character varying"
+    }
+    column "order_date" {
+      type = "timestamp(0) without time zone"
+    }
+    column "destination_site_code" {
+      type = "bigint"
+    }
+    column "destination_site_name" {
+      type = "character varying(100)"
+    }
+    column "destination_site_short_name" {
+      type = "character varying(25)"
+    }
+    column "destination_site_type" {
+      type = "character varying(15)"
+    }
+    column "customer_code" {
+      type = "bigint"
+    }
+    column "customer_name" {
+      type = "character varying(100)"
+    }
+    column "customer_slid" {
+      type = "character varying(25)"
+    }
+    column "remarks" {
+      type = "character varying(200)"
+    }
+    column "floorloccode" {
+      type = "bigint"
+    }
+    column "pick_list_rule" {
+      type = "character varying(100)"
+    }
+    column "reservation_qty" {
+      type = "numeric"
+    }
+    column "cancelled_qty" {
+      type = "numeric"
+    }
+    column "pick_list_qty" {
+      type = "numeric"
+    }
+    column "pending_pick_list_qty" {
+      type = "numeric"
+    }
+    column "pending_packed_qty" {
+      type = "numeric"
+    }
+    column "confirm_qty" {
+      type = "numeric"
+    }
+    column "picklist_in_progress_qty" {
+      type = "numeric"
+    }
+    column "cancellable_qty" {
+      type = "numeric"
+    }
+    column "created_by" {
+      type = "character varying(100)"
+    }
+    column "created_on" {
+      type = "timestamp(0) without time zone"
+    }
+    column "lastmodified_by" {
+      type = "character varying(100)"
+    }
+    column "lastmodified_on" {
+      type = "timestamp(0) without time zone"
+    }
+    column "entry_source" {
+      type = "character varying"
+    }
+    column "ship_due_date" {
+      type = "timestamp(0) without time zone"
+    }
+    column "order_remarks" {
+      type = "character varying(500)"
+    }
+  )
+}
+

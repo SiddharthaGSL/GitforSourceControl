@@ -1,0 +1,181 @@
+view "main"."v_cheque_book_list" {
+  text = """-
+SELECT d.code,
+    m.bookcode,
+    m.bookno AS chequebooknumber,
+    d.chqno AS chequenumber,
+    d.chqdt AS chequedate,
+    vm.vchcode AS vouchercode,
+    vm.scheme_docno AS voucherno,
+    vm.vchdt AS voucherdate,
+    vm.vchtype AS vouchertype,
+        CASE
+            WHEN (vm.vchtype = 'C'::bpchar) THEN 'Contra'::text
+            WHEN (vm.vchtype = 'P'::bpchar) THEN 'Payment'::text
+            WHEN (vm.vchtype = 'G'::bpchar) THEN 'General'::text
+            WHEN (vm.vchtype = 'R'::bpchar) THEN 'Receipt'::text
+            WHEN (vm.vchtype = 'B'::bpchar) THEN 'Both ARAP'::text
+            ELSE NULL::text
+        END AS vouchertypedisplay,
+        CASE
+            WHEN (d.vchcode IS NULL) THEN NULL::text
+            ELSE vd.chqlabel
+        END AS chequelabel,
+        CASE
+            WHEN (d.vchcode IS NULL) THEN NULL::numeric
+            ELSE sum(vd.damount)
+        END AS amount,
+        CASE
+            WHEN (d.vchcode IS NULL) THEN NULL::text
+            ELSE vd.brsdt
+        END AS brsdate,
+        CASE
+            WHEN (d.vchcode IS NULL) THEN NULL::text
+            ELSE vd.printchq
+        END AS printchq,
+        CASE
+            WHEN (d.vchcode IS NULL) THEN NULL::text
+            ELSE vd.nartext
+        END AS narration,
+    m.admsite_code_owner,
+    os.name AS ownersite,
+    m.bookdt AS dateofissue,
+    gl.glname AS bankname,
+    m.rem AS remarks,
+    d.type,
+    d.stat AS status,
+    m.ycode AS yearcode,
+    y.yname AS yearname,
+    m.created_on AS createdon,
+    uc.fname AS createdby,
+    m.last_modified_on AS lastmodifiedon,
+    um.fname AS lastmodifiedby
+   FROM main.admyear y,
+    main.hrdemp uc,
+    (main.finchqmain m
+     LEFT JOIN main.hrdemp um ON ((m.last_modified_by = um.ecode))),
+    ((main.finchqdet d
+     LEFT JOIN main.finvchmain vm ON ((d.vchcode = vm.vchcode)))
+     LEFT JOIN ( SELECT alias11.vchcode,
+            alias11.chqno,
+                CASE
+                    WHEN (POSITION((', '::text) IN (alias11.chqlabel)) > 0) THEN NULL::text
+                    ELSE alias11.chqlabel
+                END AS chqlabel,
+            sum(alias11.damount) AS damount,
+                CASE
+                    WHEN (POSITION((', '::text) IN (alias11.brsdt)) > 0) THEN NULL::text
+                    ELSE alias11.brsdt
+                END AS brsdt,
+                CASE
+                    WHEN (POSITION((', '::text) IN (alias11.printchq)) > 0) THEN NULL::text
+                    ELSE alias11.printchq
+                END AS printchq,
+                CASE
+                    WHEN (POSITION((', '::text) IN (alias11.nartext)) > 0) THEN NULL::text
+                    ELSE alias11.nartext
+                END AS nartext
+           FROM ( SELECT finvchdet.vchcode,
+                    finvchdet.chqno,
+                    string_agg((finvchdet.chqlabel)::text, ', '::text ORDER BY finvchdet.vchcode) AS chqlabel,
+                    string_agg(((finvchdet.brsdt)::character varying)::text, ', '::text ORDER BY finvchdet.vchcode) AS brsdt,
+                    string_agg(((finvchdet.printchq)::character varying)::text, ', '::text ORDER BY finvchdet.vchcode) AS printchq,
+                    string_agg((finvchdet.nartext)::text, ', '::text ORDER BY finvchdet.vchcode) AS nartext,
+                    sum(finvchdet.damount) AS damount
+                   FROM main.finvchdet
+                  WHERE (finvchdet.chqno IS NOT NULL)
+                  GROUP BY finvchdet.vchcode, finvchdet.chqno) alias11
+          GROUP BY alias11.vchcode, alias11.chqno, alias11.chqlabel, alias11.brsdt, alias11.printchq, alias11.nartext) vd ON (((d.vchcode = vd.vchcode) AND ((d.chqno)::text = (vd.chqno)::text)))),
+    (main.fingl gl
+     LEFT JOIN main.admsite os ON ((gl.admsite_code_owner = os.code)))
+  WHERE ((m.bookcode = d.bookcode) AND (m.glcode = gl.glcode) AND (m.ecode = uc.ecode) AND (m.ycode = y.ycode))
+  GROUP BY d.code, m.bookcode, m.bookno, d.chqno, d.chqdt, vm.vchcode, vm.scheme_docno, vm.vchdt, vm.vchtype, d.vchcode, vd.chqlabel, vd.brsdt, vd.printchq, vd.nartext, m.admsite_code_owner, os.name, m.bookdt, gl.glname, m.rem, d.type, d.stat, m.ycode, y.yname, m.created_on, uc.fname, m.last_modified_on, um.fname;
+"""
+  columns = (
+    column "code" {
+      type = "bigint"
+    }
+    column "bookcode" {
+      type = "bigint"
+    }
+    column "chequebooknumber" {
+      type = "bigint"
+    }
+    column "chequenumber" {
+      type = "character varying(25)"
+    }
+    column "chequedate" {
+      type = "timestamp(0) without time zone"
+    }
+    column "vouchercode" {
+      type = "bigint"
+    }
+    column "voucherno" {
+      type = "character varying(25)"
+    }
+    column "voucherdate" {
+      type = "timestamp(0) without time zone"
+    }
+    column "vouchertype" {
+      type = "character(1)"
+    }
+    column "vouchertypedisplay" {
+      type = text
+    }
+    column "chequelabel" {
+      type = text
+    }
+    column "amount" {
+      type = "numeric"
+    }
+    column "brsdate" {
+      type = text
+    }
+    column "printchq" {
+      type = text
+    }
+    column "narration" {
+      type = text
+    }
+    column "admsite_code_owner" {
+      type = "bigint"
+    }
+    column "ownersite" {
+      type = "character varying(100)"
+    }
+    column "dateofissue" {
+      type = "timestamp(0) without time zone"
+    }
+    column "bankname" {
+      type = "character varying(100)"
+    }
+    column "remarks" {
+      type = "character varying(500)"
+    }
+    column "type" {
+      type = "character(1)"
+    }
+    column "status" {
+      type = "character(1)"
+    }
+    column "yearcode" {
+      type = "bigint"
+    }
+    column "yearname" {
+      type = "character varying(100)"
+    }
+    column "createdon" {
+      type = "timestamp(0) without time zone"
+    }
+    column "createdby" {
+      type = "character varying(100)"
+    }
+    column "lastmodifiedon" {
+      type = "timestamp(0) without time zone"
+    }
+    column "lastmodifiedby" {
+      type = "character varying(100)"
+    }
+  )
+}
+

@@ -1,0 +1,316 @@
+view "main"."v_psite_stlmauthorizeinfo_stg" {
+  text = """-
+SELECT q.sitecode,
+    q.sitename,
+    q.sitecuid,
+    q.stlmfor,
+    sum(q.nontaxable) AS nontaxable,
+    sum(q.taxable) AS taxable,
+    sum(q.taxpayable) AS taxpayable,
+    sum(q.netsales) AS netsales,
+    sum(q.gvsale) AS gvsales,
+    sum(q.deprefamt) AS deprefamt,
+    sum(q.effectivetaxpercent) AS effectivetaxpercent,
+    q.status,
+    q.statusdisplay,
+    q.posstlmid,
+    q.comments,
+    q.validationstate,
+    q.validationstate_display AS validationstatedisplay,
+    q.auto_stlm_error AS autostlmerror,
+    q.dataversion
+   FROM ( SELECT s.code AS sitecode,
+            s.name AS sitename,
+            s.psite_initial AS sitecuid,
+            date_trunc('day'::text, pb.billdate) AS stlmfor,
+            sum(
+                CASE
+                    WHEN (COALESCE((pbi.taxdescription)::text, ''::text) = ''::text) THEN COALESCE(pbi.netamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS nontaxable,
+            sum(COALESCE(pbi.taxableamt, (0)::numeric)) AS taxable,
+            sum(COALESCE(pbi.taxamt, (0)::numeric)) AS taxpayable,
+            sum(COALESCE(pbi.netamt, (0)::numeric)) AS netsales,
+            0 AS gvsale,
+            0 AS deprefamt,
+                CASE
+                    WHEN (sum(COALESCE(pbi.netamt, (0)::numeric)) = (0)::numeric) THEN (0)::numeric
+                    ELSE round(((sum(COALESCE(pbi.taxamt, (0)::numeric)) / sum(COALESCE(pbi.netamt, (0)::numeric))) * (100)::numeric))
+                END AS effectivetaxpercent,
+            stlm.status,
+                CASE
+                    WHEN (stlm.status = 'O'::bpchar) THEN
+                    CASE
+                        WHEN ((stlm.auto_stlm_error)::text <> ''::text) THEN 'Error (Open)'::text
+                        WHEN (COALESCE((stlm.auto_stlm_error)::text, ''::text) = ''::text) THEN 'Pending (Open)'::text
+                        ELSE NULL::text
+                    END
+                    WHEN (stlm.status = 'U'::bpchar) THEN 'Success (Release Pending)'::text
+                    WHEN (stlm.status = 'C'::bpchar) THEN 'Close'::text
+                    WHEN (stlm.status = 'R'::bpchar) THEN 'Vat Recalculate Request'::text
+                    ELSE NULL::text
+                END AS statusdisplay,
+            replace((stlm.code)::text, ((s.psite_initial)::text || '-'::text), ''::text) AS posstlmid,
+            stlm.comments,
+            stlm.validation_state AS validationstate,
+                CASE
+                    WHEN (stlm.validation_state = 'P'::bpchar) THEN 'Pending'::text
+                    WHEN (stlm.validation_state = 'S'::bpchar) THEN 'Success'::text
+                    WHEN (stlm.validation_state = 'E'::bpchar) THEN 'Error'::text
+                    ELSE NULL::text
+                END AS validationstate_display,
+            stlm.auto_stlm_error,
+            stlm.dataversion
+           FROM main.psite_posbill pb,
+            main.psite_posbillitem pbi,
+            main.admsite s,
+            ( SELECT psite_posstlm.code,
+                    psite_posstlm.admsite_code,
+                    psite_posstlm.settledon,
+                    psite_posstlm.settledby,
+                    psite_posstlm.stlmfor,
+                    psite_posstlm.footfall,
+                    psite_posstlm.psite_reason_code,
+                    psite_posstlm.status,
+                    psite_posstlm.doc,
+                    psite_posstlm.comments,
+                    psite_posstlm.ho_settledon,
+                    psite_posstlm.ho_settledby,
+                    psite_posstlm.validation_state,
+                    psite_posstlm.auto_stlm_error,
+                    psite_posstlm.dataversion
+                   FROM main.psite_posstlm
+                  WHERE (psite_posstlm.status = ANY (ARRAY['O'::bpchar, 'U'::bpchar]))) stlm
+          WHERE (((pb.code)::text = (pbi.psite_posbill_code)::text) AND (pb.admsite_code = s.code) AND (date_trunc('day'::text, stlm.stlmfor) = date_trunc('day'::text, pb.billdate)) AND (stlm.admsite_code = pb.admsite_code))
+          GROUP BY s.code, s.name, s.psite_initial, (date_trunc('day'::text, pb.billdate)), stlm.status,
+                CASE
+                    WHEN (stlm.status = 'O'::bpchar) THEN
+                    CASE
+                        WHEN ((stlm.auto_stlm_error)::text <> ''::text) THEN 'Error (Open)'::text
+                        WHEN (COALESCE((stlm.auto_stlm_error)::text, ''::text) = ''::text) THEN 'Pending (Open)'::text
+                        ELSE NULL::text
+                    END
+                    WHEN (stlm.status = 'U'::bpchar) THEN 'Success (Release Pending)'::text
+                    WHEN (stlm.status = 'C'::bpchar) THEN 'Close'::text
+                    WHEN (stlm.status = 'R'::bpchar) THEN 'Vat Recalculate Request'::text
+                    ELSE NULL::text
+                END, (replace((stlm.code)::text, ((s.psite_initial)::text || '-'::text), ''::text)), stlm.comments, stlm.validation_state,
+                CASE
+                    WHEN (stlm.validation_state = 'P'::bpchar) THEN 'Pending'::text
+                    WHEN (stlm.validation_state = 'S'::bpchar) THEN 'Success'::text
+                    WHEN (stlm.validation_state = 'E'::bpchar) THEN 'Error'::text
+                    ELSE NULL::text
+                END, stlm.auto_stlm_error, stlm.dataversion
+        UNION ALL
+         SELECT s.code AS sitecode,
+            s.name AS sitename,
+            s.psite_initial AS sitecuid,
+            date_trunc('day'::text, pgvb.billdate) AS stlmfor,
+            0 AS nontaxable,
+            0 AS taxable,
+            0 AS taxpayable,
+            0 AS netsales,
+            sum(COALESCE(pgvb.netamt, (0)::numeric)) AS gvsale,
+            0 AS deprefamt,
+            0 AS effectivetaxpercent,
+            stlm.status,
+                CASE
+                    WHEN (stlm.status = 'O'::bpchar) THEN
+                    CASE
+                        WHEN ((stlm.auto_stlm_error)::text <> ''::text) THEN 'Error (Open)'::text
+                        WHEN (COALESCE((stlm.auto_stlm_error)::text, ''::text) = ''::text) THEN 'Pending (Open)'::text
+                        ELSE NULL::text
+                    END
+                    WHEN (stlm.status = 'U'::bpchar) THEN 'Success (Release Pending)'::text
+                    WHEN (stlm.status = 'C'::bpchar) THEN 'Close'::text
+                    WHEN (stlm.status = 'R'::bpchar) THEN 'Vat Recalculate Request'::text
+                    ELSE NULL::text
+                END AS statusdisplay,
+            replace((stlm.code)::text, ((s.psite_initial)::text || '-'::text), ''::text) AS posstlmid,
+            stlm.comments,
+            stlm.validation_state AS validationstate,
+                CASE
+                    WHEN (stlm.validation_state = 'P'::bpchar) THEN 'Pending'::text
+                    WHEN (stlm.validation_state = 'S'::bpchar) THEN 'Success'::text
+                    WHEN (stlm.validation_state = 'E'::bpchar) THEN 'Error'::text
+                    ELSE NULL::text
+                END AS validationstate_display,
+            stlm.auto_stlm_error,
+            stlm.dataversion
+           FROM main.psite_posgvbill pgvb,
+            main.admsite s,
+            ( SELECT psite_posstlm.code,
+                    psite_posstlm.admsite_code,
+                    psite_posstlm.settledon,
+                    psite_posstlm.settledby,
+                    psite_posstlm.stlmfor,
+                    psite_posstlm.footfall,
+                    psite_posstlm.psite_reason_code,
+                    psite_posstlm.status,
+                    psite_posstlm.doc,
+                    psite_posstlm.comments,
+                    psite_posstlm.ho_settledon,
+                    psite_posstlm.ho_settledby,
+                    psite_posstlm.validation_state,
+                    psite_posstlm.auto_stlm_error,
+                    psite_posstlm.dataversion
+                   FROM main.psite_posstlm
+                  WHERE (psite_posstlm.status = ANY (ARRAY['O'::bpchar, 'U'::bpchar]))) stlm
+          WHERE ((pgvb.admsite_code = s.code) AND (date_trunc('day'::text, stlm.stlmfor) = date_trunc('day'::text, pgvb.billdate)) AND (stlm.admsite_code = pgvb.admsite_code))
+          GROUP BY s.code, s.name, s.psite_initial, (date_trunc('day'::text, pgvb.billdate)), stlm.status,
+                CASE
+                    WHEN (stlm.status = 'O'::bpchar) THEN
+                    CASE
+                        WHEN ((stlm.auto_stlm_error)::text <> ''::text) THEN 'Error (Open)'::text
+                        WHEN (COALESCE((stlm.auto_stlm_error)::text, ''::text) = ''::text) THEN 'Pending (Open)'::text
+                        ELSE NULL::text
+                    END
+                    WHEN (stlm.status = 'U'::bpchar) THEN 'Success (Release Pending)'::text
+                    WHEN (stlm.status = 'C'::bpchar) THEN 'Close'::text
+                    WHEN (stlm.status = 'R'::bpchar) THEN 'Vat Recalculate Request'::text
+                    ELSE NULL::text
+                END, (replace((stlm.code)::text, ((s.psite_initial)::text || '-'::text), ''::text)), stlm.comments, stlm.validation_state,
+                CASE
+                    WHEN (stlm.validation_state = 'P'::bpchar) THEN 'Pending'::text
+                    WHEN (stlm.validation_state = 'S'::bpchar) THEN 'Success'::text
+                    WHEN (stlm.validation_state = 'E'::bpchar) THEN 'Error'::text
+                    ELSE NULL::text
+                END, stlm.auto_stlm_error, stlm.dataversion
+        UNION ALL
+         SELECT s.code AS sitecode,
+            s.name AS sitename,
+            s.psite_initial AS sitecuid,
+            date_trunc('day'::text, pdrb.billdate) AS stlmfor,
+            0 AS nontaxable,
+            0 AS taxable,
+            0 AS taxpayable,
+            0 AS netsales,
+            0 AS gvsale,
+            sum(COALESCE(pdrb.amount, (0)::numeric)) AS deprefamt,
+            0 AS effectivetaxpercent,
+            stlm.status,
+                CASE
+                    WHEN (stlm.status = 'O'::bpchar) THEN
+                    CASE
+                        WHEN ((stlm.auto_stlm_error)::text <> ''::text) THEN 'Error (Open)'::text
+                        WHEN (COALESCE((stlm.auto_stlm_error)::text, ''::text) = ''::text) THEN 'Pending (Open)'::text
+                        ELSE NULL::text
+                    END
+                    WHEN (stlm.status = 'U'::bpchar) THEN 'Success (Release Pending)'::text
+                    WHEN (stlm.status = 'C'::bpchar) THEN 'Close'::text
+                    WHEN (stlm.status = 'R'::bpchar) THEN 'Vat Recalculate Request'::text
+                    ELSE NULL::text
+                END AS statusdisplay,
+            replace((stlm.code)::text, ((s.psite_initial)::text || '-'::text), ''::text) AS posstlmid,
+            stlm.comments,
+            stlm.validation_state AS validationstate,
+                CASE
+                    WHEN (stlm.validation_state = 'P'::bpchar) THEN 'Pending'::text
+                    WHEN (stlm.validation_state = 'S'::bpchar) THEN 'Success'::text
+                    WHEN (stlm.validation_state = 'E'::bpchar) THEN 'Error'::text
+                    ELSE NULL::text
+                END AS validationstate_display,
+            stlm.auto_stlm_error,
+            stlm.dataversion
+           FROM main.psite_posdeprefbill pdrb,
+            main.admsite s,
+            ( SELECT psite_posstlm.code,
+                    psite_posstlm.admsite_code,
+                    psite_posstlm.settledon,
+                    psite_posstlm.settledby,
+                    psite_posstlm.stlmfor,
+                    psite_posstlm.footfall,
+                    psite_posstlm.psite_reason_code,
+                    psite_posstlm.status,
+                    psite_posstlm.doc,
+                    psite_posstlm.comments,
+                    psite_posstlm.ho_settledon,
+                    psite_posstlm.ho_settledby,
+                    psite_posstlm.validation_state,
+                    psite_posstlm.auto_stlm_error,
+                    psite_posstlm.dataversion
+                   FROM main.psite_posstlm
+                  WHERE (psite_posstlm.status = ANY (ARRAY['O'::bpchar, 'U'::bpchar]))) stlm
+          WHERE ((pdrb.admsite_code = s.code) AND (date_trunc('day'::text, stlm.stlmfor) = date_trunc('day'::text, pdrb.billdate)) AND (stlm.admsite_code = pdrb.admsite_code))
+          GROUP BY s.code, s.name, s.psite_initial, (date_trunc('day'::text, pdrb.billdate)), stlm.status,
+                CASE
+                    WHEN (stlm.status = 'O'::bpchar) THEN
+                    CASE
+                        WHEN ((stlm.auto_stlm_error)::text <> ''::text) THEN 'Error (Open)'::text
+                        WHEN (COALESCE((stlm.auto_stlm_error)::text, ''::text) = ''::text) THEN 'Pending (Open)'::text
+                        ELSE NULL::text
+                    END
+                    WHEN (stlm.status = 'U'::bpchar) THEN 'Success (Release Pending)'::text
+                    WHEN (stlm.status = 'C'::bpchar) THEN 'Close'::text
+                    WHEN (stlm.status = 'R'::bpchar) THEN 'Vat Recalculate Request'::text
+                    ELSE NULL::text
+                END, (replace((stlm.code)::text, ((s.psite_initial)::text || '-'::text), ''::text)), stlm.comments, stlm.validation_state,
+                CASE
+                    WHEN (stlm.validation_state = 'P'::bpchar) THEN 'Pending'::text
+                    WHEN (stlm.validation_state = 'S'::bpchar) THEN 'Success'::text
+                    WHEN (stlm.validation_state = 'E'::bpchar) THEN 'Error'::text
+                    ELSE NULL::text
+                END, stlm.auto_stlm_error, stlm.dataversion) q
+  GROUP BY q.sitecode, q.sitename, q.sitecuid, q.stlmfor, q.status, q.statusdisplay, q.posstlmid, q.comments, q.validationstate, q.validationstate_display, q.auto_stlm_error, q.dataversion;
+"""
+  columns = (
+    column "sitecode" {
+      type = "bigint"
+    }
+    column "sitename" {
+      type = "character varying(100)"
+    }
+    column "sitecuid" {
+      type = "character varying(14)"
+    }
+    column "stlmfor" {
+      type = "timestamp without time zone"
+    }
+    column "nontaxable" {
+      type = "numeric"
+    }
+    column "taxable" {
+      type = "numeric"
+    }
+    column "taxpayable" {
+      type = "numeric"
+    }
+    column "netsales" {
+      type = "numeric"
+    }
+    column "gvsales" {
+      type = "numeric"
+    }
+    column "deprefamt" {
+      type = "numeric"
+    }
+    column "effectivetaxpercent" {
+      type = "numeric"
+    }
+    column "status" {
+      type = "character(1)"
+    }
+    column "statusdisplay" {
+      type = text
+    }
+    column "posstlmid" {
+      type = text
+    }
+    column "comments" {
+      type = "character varying(500)"
+    }
+    column "validationstate" {
+      type = "character(1)"
+    }
+    column "validationstatedisplay" {
+      type = text
+    }
+    column "autostlmerror" {
+      type = "character varying(1000)"
+    }
+    column "dataversion" {
+      type = "bigint"
+    }
+  )
+}
+

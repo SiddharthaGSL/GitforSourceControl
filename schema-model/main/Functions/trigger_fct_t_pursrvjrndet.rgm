@@ -1,0 +1,298 @@
+function "main"."trigger_fct_t_pursrvjrndet()" {
+  text = """
+
+DECLARE
+   ora2pg_rowcount integer;
+V_DOCNO                PURSRVMAIN.DOCNO%TYPE;
+   -- START REV : 026
+   V_DOCDT                PURSRVMAIN.DOCDT%TYPE;
+   V_DUEDT                PURSRVMAIN.DUEDT%TYPE;
+   -- END REV : 026
+   V_REM                  PURSRVMAIN.REM%TYPE;
+   V_SCHEME_DOCNO         PURSRVMAIN.SCHEME_DOCNO%TYPE;
+   -- START REV : 005
+   V_TYPE                 PURSRVMAIN.TYPE%TYPE;
+   V_YCODE                FINPOST.YCODE%TYPE;
+   V_POSTCODE             FINPOST.POSTCODE%TYPE;
+   V_CCCODE               FINCOSTTAG.CODE%TYPE;
+   V_ADMSITE_CODE_OWNER   PURSRVMAIN.ADMSITE_CODE_OWNER%TYPE;
+   -- END REV : 005
+   -- START REV : 008
+   V_ECODE                bigint;
+   V_TIME                 timestamp;
+   V_LAST_ACCESS_ECODE    bigint;
+   V_LAST_ACCESS_TIME     timestamp;
+   -- END REV : 008
+   V_ADMOU_CODE           PURSRVMAIN.ADMOU_CODE%TYPE;
+BEGIN
+  BEGIN
+   BEGIN
+      SELECT DOCNO
+            ,DOCDT
+            ,remarks
+            ,SCHEME_DOCNO
+            ,jrnTYPE
+            ,YCODE
+            ,ADMSITE_CODE_OWNER
+            ,ECODE
+            ,TIME
+            ,LAST_MODIFIED_by
+            ,LAST_MODIFIED_ON
+            ,ADMOU_CODE
+      INTO STRICT   V_DOCNO
+            ,V_DOCDT
+            ,V_REM
+            ,V_SCHEME_DOCNO
+            ,V_TYPE
+            ,V_YCODE
+            ,V_ADMSITE_CODE_OWNER
+            ,V_ECODE
+            ,V_TIME
+            ,V_LAST_ACCESS_ECODE
+            ,V_LAST_ACCESS_TIME
+            ,V_ADMOU_CODE 
+      FROM   PURSRVjrnMAIN
+      WHERE  JRNCODE = coalesce(NEW.JRNCODE, OLD.JRNCODE);
+   EXCEPTION
+      WHEN OTHERS THEN
+         V_REM  := NULL;
+         V_REM  := NULL;
+         V_SCHEME_DOCNO := NULL;
+   END;
+
+   IF OLD.JRNCODE IS NOT NULL THEN
+      IF    coalesce(OLD.SRVAMT, 0) < 0 THEN
+            UPDATE FINPOST
+            SET    ENTNO = OLD.JRNNO::varchar    -- REV : 004
+                  ,ENTDT = OLD.JRNDT
+                  ,GLCODE = OLD.GLCODE
+                  ,SLCODE = OLD.SLCODE
+                  ,DOCNO = V_DOCNO
+                 -- START REV : 026
+                  ,DOCDT = V_DOCDT
+                  ,DUEDT = V_DUEDT
+                 -- END REV : 026
+                  ,NARTEXT = V_REM
+                  ,SCHEME_DOCNO = V_SCHEME_DOCNO
+                  ,DAMOUNT = coalesce(DAMOUNT, 0) + coalesce(OLD.SRVAMT, 0)
+                  ,ADMOU_CODE  = V_ADMOU_CODE -- REV : 025
+            WHERE  ENTCODE = OLD.JRNCODE::varchar                        -- REV : 004
+            AND    GLCODE = OLD.GLCODE
+            AND    ((OLD.SLCODE IS NULL AND SLCODE IS NULL)
+                    OR
+                    SLCODE = OLD.SLCODE)
+            AND    ENTTYPE = 'PJD'
+            -- START REV : 007
+            AND    SERVICECODE = OLD.SERVICECODE;
+            -- END REV : 007
+      ELSIF coalesce(OLD.SRVAMT, 0) > 0 THEN
+            UPDATE FINPOST
+            SET ENTNO = OLD.JRNNO::varchar         -- REV : 004
+               ,ENTDT = OLD.JRNDT
+               ,GLCODE = OLD.GLCODE
+               ,SLCODE = OLD.SLCODE
+               ,DOCNO = V_DOCNO
+            -- START REV : 026
+              ,DOCDT = V_DOCDT
+              ,DUEDT = V_DUEDT
+             -- END REV : 026
+               ,NARTEXT = V_REM
+               ,SCHEME_DOCNO = V_SCHEME_DOCNO
+               ,CAMOUNT = coalesce(CAMOUNT, 0) - coalesce(OLD.SRVAMT, 0)
+               ,ADMOU_CODE  = V_ADMOU_CODE -- REV : 025
+            WHERE  ENTCODE = OLD.JRNCODE::varchar           -- REV : 004
+            AND    GLCODE = OLD.GLCODE
+            AND    ((OLD.SLCODE IS NULL AND SLCODE IS NULL)
+                    OR
+                    SLCODE = OLD.SLCODE)
+            AND    ENTTYPE = 'PJD'
+            -- START REV : 007
+            AND    SERVICECODE = OLD.SERVICECODE;
+            -- END REV : 007
+      END IF;
+   END IF;
+
+   IF NEW.JRNCODE IS NOT NULL THEN
+      IF    coalesce(NEW.SRVAMT, 0) < 0 THEN
+            UPDATE FINPOST
+            SET    ENTNO = NEW.JRNNO::varchar     -- REV : 004
+                  ,ENTDT = NEW.JRNDT
+                  ,GLCODE = NEW.GLCODE
+                  ,SLCODE = NEW.SLCODE
+                  ,DOCNO = V_DOCNO
+                   -- START REV : 026
+                  ,DOCDT = V_DOCDT
+                  ,DUEDT = V_DUEDT
+                 -- END REV : 026
+                  ,NARTEXT = V_REM
+                  ,SCHEME_DOCNO = V_SCHEME_DOCNO
+                  ,DAMOUNT = coalesce(DAMOUNT, 0) - coalesce(NEW.SRVAMT, 0)
+                  ,ADMOU_CODE  = V_ADMOU_CODE -- REV : 025
+            WHERE  ENTCODE = NEW.JRNCODE::varchar              -- REV : 004
+            AND    GLCODE = NEW.GLCODE
+            -- START REV : 007
+            AND    SERVICECODE = NEW.SERVICECODE
+            -- END REV : 007
+            AND    ((NEW.SLCODE IS NULL AND SLCODE IS NULL)
+                    OR
+                    SLCODE = NEW.SLCODE)
+            AND    ENTTYPE = 'PJD';
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0 THEN
+               INSERT INTO FINPOST(POSTCODE, ENTCODE, ENTNO, ENTDT, ENTTYPE, GLCODE
+                           ,SLCODE, DAMOUNT, YCODE, DOCNO,NARTEXT, SCHEME_DOCNO,SERVICECODE
+                           ,ADMOU_CODE -- REV : 025
+                           --START REV : 026
+                           ,DOCDT
+                           ,DUEDT
+                           -- END REV : 026
+                           )
+               VALUES (nextval('erp01'), NEW.JRNCODE::varchar, NEW.JRNNO::varchar, NEW.JRNDT, 'PJD', NEW.GLCODE
+                           ,NEW.SLCODE, -coalesce(NEW.SRVAMT, 0), V_YCODE, V_DOCNO,V_REM, V_SCHEME_DOCNO,
+                            NEW.SERVICECODE
+                            ,V_ADMOU_CODE
+                            ,V_DOCDT
+                            ,V_DUEDT
+                           );
+            END IF;
+
+            -- START REV : 003
+            IF  coalesce(V_TYPE, 'N') <> 'N' THEN
+                V_POSTCODE := NULL;
+                V_CCCODE   := NULL;
+
+                BEGIN
+                   SELECT POSTCODE
+                   INTO STRICT   V_POSTCODE
+                   FROM   FINPOST
+                   WHERE  ENTCODE = NEW.JRNCODE::varchar
+                   AND    ENTTYPE = 'PJD'
+                   AND    GLCODE = NEW.GLCODE
+                   AND    coalesce(SLCODE, 0) = coalesce(NEW.SLCODE, 0)
+                   AND    coalesce(DAMOUNT, 0) = -coalesce(NEW.SRVAMT, 0)
+                   AND    YCODE = V_YCODE
+                  -- START REV : 007
+                   AND    SERVICECODE = NEW.SERVICECODE;
+                  -- END REV : 007;
+                EXCEPTION
+                   WHEN no_data_found THEN NULL;
+                END;
+            END IF;
+            -- END REV : 003
+      ELSIF coalesce(NEW.SRVAMT, 0) > 0 THEN
+            UPDATE FINPOST
+            SET    ENTNO = NEW.JRNNO::varchar
+                  ,ENTDT = NEW.JRNDT
+                  ,GLCODE = NEW.GLCODE
+                  ,SLCODE = NEW.SLCODE
+                  ,DOCNO = V_DOCNO
+                   -- START REV : 026
+                  ,DOCDT = V_DOCDT
+                  ,DUEDT = V_DUEDT
+                 -- END REV : 026
+                  ,NARTEXT = V_REM
+                  ,SCHEME_DOCNO = V_SCHEME_DOCNO
+                  ,CAMOUNT = coalesce(CAMOUNT, 0) + coalesce(NEW.SRVAMT, 0)
+                   ,ADMOU_CODE  = V_ADMOU_CODE -- REV : 025
+            WHERE  ENTCODE = NEW.JRNCODE::varchar
+            AND    GLCODE = NEW.GLCODE
+            AND    ((NEW.SLCODE IS NULL AND SLCODE IS NULL)
+                    OR
+                    SLCODE = NEW.SLCODE)
+            AND    ENTTYPE = 'PJD'
+            -- START REV : 007
+            AND    SERVICECODE = NEW.SERVICECODE;
+            -- END REV : 007
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0 THEN
+               INSERT INTO FINPOST(POSTCODE, ENTCODE, ENTNO, ENTDT, ENTTYPE, GLCODE
+                           ,SLCODE, CAMOUNT, YCODE, DOCNO, NARTEXT, SCHEME_DOCNO,SERVICECODE
+                           ,ADMOU_CODE  -- REV :025
+                           --START REV : 026
+                           ,DOCDT
+                           ,DUEDT
+                           -- END REV : 026
+                           )
+               VALUES (nextval('erp01'), NEW.JRNCODE::varchar, NEW.JRNNO::varchar, NEW.JRNDT, 'PJD', NEW.GLCODE
+                           ,NEW.SLCODE, coalesce(NEW.SRVAMT, 0), V_YCODE, V_DOCNO, V_REM, V_SCHEME_DOCNO,
+                           -- START REV : 007
+                            NEW.SERVICECODE
+                            -- END REV : 007
+                            ,V_ADMOU_CODE -- REV : 025
+                             --START REV : 026
+                            ,V_DOCDT
+                            ,V_DUEDT
+                            -- END REV : 026
+                           );
+            END IF;
+
+            -- START REV : 003
+            IF  coalesce(V_TYPE, 'N') <> 'N' THEN
+                V_POSTCODE := NULL;
+                V_CCCODE   := NULL;
+
+                BEGIN
+                   SELECT POSTCODE
+                   INTO STRICT   V_POSTCODE
+                   FROM   FINPOST
+                   WHERE  ENTCODE = NEW.JRNCODE::varchar
+                   AND    ENTTYPE = 'PJD'
+                   AND    GLCODE = NEW.GLCODE
+                   AND    coalesce(SLCODE, 0) = coalesce(NEW.SLCODE, 0)
+                   AND    coalesce(CAMOUNT, 0) = coalesce(NEW.SRVAMT, 0)
+                   AND    YCODE = V_YCODE
+            -- START REV : 007
+                   AND    SERVICECODE = NEW.SERVICECODE;
+            -- END REV : 007
+                EXCEPTION
+                   WHEN no_data_found THEN NULL;
+                END;
+
+            END IF;
+            -- END REV : 003
+      END IF;
+   END IF;
+
+   UPDATE FINPOST
+   SET    ADMSITE_CODE_OWNER = V_ADMSITE_CODE_OWNER,
+          ECODE              = V_ECODE,
+          TIME               = V_TIME,
+          LAST_ACCESS_ECODE  = V_LAST_ACCESS_ECODE,
+          LAST_ACCESS_TIME   = V_LAST_ACCESS_TIME
+   WHERE  ENTCODE = NEW.JRNCODE::varchar
+   AND    ENTTYPE = 'PJD';
+   -- END REV : 008
+   DELETE FROM FINCOSTTAG
+   WHERE  POSTCODE IN (
+                       SELECT POSTCODE
+                       FROM   FINPOST
+                       WHERE  ENTCODE = OLD.JRNCODE::varchar
+                       AND    SERVICECODE = OLD.SERVICECODE
+                       AND    ENTTYPE = 'PJD'
+                       AND    coalesce(DAMOUNT, 0) = 0
+                       AND    coalesce(CAMOUNT, 0) = 0);
+
+   DELETE FROM FINPOST
+   WHERE       ENTCODE = OLD.JRNCODE::varchar
+   AND         SERVICECODE = OLD.SERVICECODE
+   AND         ENTTYPE = 'PJD'
+   AND         coalesce(CAMOUNT, 0) = 0
+   AND         coalesce(DAMOUNT, 0) = 0;
+-- END REV : 007
+-- END REV : 006
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

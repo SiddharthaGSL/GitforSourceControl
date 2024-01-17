@@ -1,0 +1,77 @@
+function "main"."trigger_fct_t_gvleaves_cdc()" {
+  text = """
+
+DECLARE
+   tmpvar   bigint;
+BEGIN
+   IF TG_OP = 'INSERT'
+   THEN
+      SELECT nextval('gvleaves_code_seq')
+        INTO STRICT tmpvar
+;
+
+      NEW.code := tmpvar;
+   END IF;
+
+   IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE'
+   THEN
+      SELECT nextval('psite_dataversion')
+        INTO STRICT tmpvar
+;
+
+      NEW.dataversion := tmpvar;
+   END IF;
+
+   -- If INSERTING part for XL Import
+   IF TG_OP = 'INSERT'
+   THEN
+      IF NEW.status = 'A'
+      THEN
+         CALL db_pkg_npos_event$track(NEW.allocate_admsite_code,
+                                  'GVALLOCATE',
+                                  NEW.code
+                                 );
+      END IF;
+   END IF;
+
+   IF TG_OP = 'UPDATE'
+   THEN
+      IF OLD.status <> 'A' AND NEW.status = 'A'
+      THEN
+         CALL db_pkg_npos_event$track(NEW.allocate_admsite_code,
+                                  'GVALLOCATE',
+                                  NEW.code
+                                 );
+      END IF;
+
+      IF OLD.status IN ('A','I')
+      THEN
+         IF  NEW.allocate_admsite_code IS NOT NULL
+         THEN
+         CALL db_pkg_npos_event$track(NEW.allocate_admsite_code,
+                                  'GVCHANGE',
+                                  NEW.code
+                                 );
+         END IF;
+         IF  OLD.issued_admsite_code IS NOT NULL
+         THEN
+             CALL db_pkg_npos_event$webtrack('GVCHANGEWEB', NEW.code);
+         END IF;
+      END IF;
+
+      IF     NEW.issued_psite_posgvbill_code IS NOT NULL
+         AND OLD.status <> 'I'
+         AND NEW.status = 'I'
+      THEN
+        CALL db_pkg_npos_event$webtrack('GVISSUEWEB', NEW.code);
+      END IF;
+   END IF;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

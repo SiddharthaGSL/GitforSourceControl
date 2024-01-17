@@ -1,0 +1,66 @@
+function "main"."trigger_fct_t_invgrtmain_gds2()" {
+  text = """
+
+DECLARE
+
+   SUB_COUNT_GRT_ADD        smallint;
+   SUB_COUNT_GRT_UPD        smallint;
+   SUB_COUNT_GRT_REL        smallint;
+   SUB_COUNT_GRT_POST_REL   smallint;
+
+BEGIN
+    IF  TG_OP = 'INSERT'
+    THEN
+        SELECT COUNT(1)
+        INTO STRICT   SUB_COUNT_GRT_ADD
+        FROM  GDS2_SUBSCR_EVENT
+        WHERE  EVENT_ID = 'procurement.grt.added';
+
+        IF coalesce(SUB_COUNT_GRT_ADD,0) > 0
+        THEN
+            call DB_PKG_GDS2_EVENT$TRACK('procurement.grt.added', NEW.GRTCODE);
+        END IF;
+    END IF;
+
+    IF  TG_OP = 'UPDATE'
+    THEN
+        SELECT COUNT(1)
+        INTO STRICT   SUB_COUNT_GRT_UPD
+        FROM  GDS2_SUBSCR_EVENT
+        WHERE  EVENT_ID = 'procurement.grt.updated';
+
+        SELECT COUNT(1)
+        INTO STRICT   SUB_COUNT_GRT_REL
+        FROM  GDS2_SUBSCR_EVENT
+        WHERE  EVENT_ID = 'procurement.grt.released';
+
+        SELECT COUNT(1)
+        INTO STRICT   SUB_COUNT_GRT_POST_REL
+        FROM  GDS2_SUBSCR_EVENT
+        WHERE  EVENT_ID = 'procurement.grt.updated_after_release';
+
+        IF coalesce(OLD.AUTH_ECODE,0)  = coalesce(NEW.AUTH_ECODE,0) AND NEW.AUTH_ECODE IS NULL AND coalesce(SUB_COUNT_GRT_UPD,0) > 0 
+        THEN
+            call DB_PKG_GDS2_EVENT$TRACK('procurement.grt.updated', NEW.GRTCODE);
+        END IF;
+
+        IF coalesce(OLD.AUTH_ECODE,0) = coalesce(NEW.AUTH_ECODE,0) AND NEW.AUTH_ECODE IS NOT NULL AND coalesce(SUB_COUNT_GRT_POST_REL,0) > 0 
+           AND coalesce(OLD.SCHEME_DOCNO,'XX') = coalesce(NEW.SCHEME_DOCNO,'XX')
+        THEN
+            call DB_PKG_GDS2_EVENT$TRACK('procurement.grt.updated_after_release', NEW.GRTCODE);
+        END IF;
+
+        IF OLD.AUTH_ECODE IS NULL AND NEW.AUTH_ECODE IS NOT NULL AND coalesce(SUB_COUNT_GRT_REL,0) > 0 
+        THEN
+            call DB_PKG_GDS2_EVENT$TRACK('procurement.grt.released', NEW.GRTCODE);
+        END IF;
+    END IF;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

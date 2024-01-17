@@ -1,0 +1,252 @@
+function "main"."db_pkg_promo_condition$display_condition(bigint)" {
+  text = """
+
+DECLARE
+
+        V_STRING            varchar(2000);
+        V_RETURN_STRING     varchar(2000);
+        V_NO                bigint;
+        V_FLAG              char(1);
+        V_CONDITION         T_CONDITION;
+        V_HEADER            varchar(100);
+        V_FOOTER            varchar(100);
+        V_COUNT             bigint;
+        -- START REV 001
+        V_BUY_ASSRT_COUNT   bigint;
+        V_BUY_ASSRT_CODE    bigint;
+        -- START REV : 013
+        --V_BUY_NAME          VARCHAR2 (100);
+        V_BUY_NAME          varchar(500);
+        -- END REV : 013
+        -- END REV 001
+        ERRCODE             varchar(50);
+        ERRMSG              varchar(2000);
+		
+  REC RECORD;
+
+BEGIN
+        V_NO    := 0;
+        V_FLAG  := NULL;
+        V_CONDITION := ARRAY[]::T_CONDITION;
+
+        BEGIN
+            SELECT  'Applicable for Card Holders only '
+            INTO STRICT    V_HEADER
+            FROM    PROMO_MASTER
+            WHERE   CODE = P_CODE AND FORCARDHOLDERS = 'Y';
+
+            V_NO                           := V_NO + 1;
+            V_CONDITION[V_NO].SEQ 		   := V_NO;
+            V_CONDITION[V_NO].FLAG         := 'H';
+            V_CONDITION[V_NO].DESCRIPTION  := V_HEADER;
+        EXCEPTION WHEN no_data_found THEN
+            NULL;
+        END;
+        -- START REV 001
+        SELECT  COUNT(1)
+        INTO STRICT    V_BUY_ASSRT_COUNT
+        FROM    PROMO_BUY
+        WHERE   PROMO_CODE = P_CODE;
+
+        IF coalesce(V_BUY_ASSRT_COUNT,0) > 1
+        THEN
+           V_BUY_ASSRT_CODE := 0;
+           V_BUY_NAME := 'Multiple';
+        ELSIF  coalesce(V_BUY_ASSRT_COUNT,0) = 1
+        THEN
+            SELECT PB.ASSORTMENT_CODE , NAME
+            INTO STRICT   V_BUY_ASSRT_CODE, V_BUY_NAME
+            FROM   PROMO_BUY PB, PROMO_ASSORTMENT PA
+            WHERE  PB.ASSORTMENT_CODE = PA.CODE
+            AND    PB.PROMO_CODE = P_CODE;
+        END IF;
+        -- END REV 001
+        FOR REC IN (SELECT M.TYPE,
+                            M.BASIS,
+                            -- START REV 001
+                            --M.BUY_ASSORTMENT_CODE,
+                            V_BUY_ASSRT_CODE BUY_ASSORTMENT_CODE,
+                            -- END REV 001
+                            D.SLAB_RANGE_FROM,
+                            D.SLAB_RANGE_TO,
+                            D.SIMPLE_FACTOR,
+                            D.GET_BENEFIT_CODE,
+                            D.GET_VOUCHER_CODE,
+                            D.GET_FACTOR,
+                            D.GET_METHOD,
+                            D.GET_POOL_TYPE,
+                            D.GET_ASSORTMENT_CODE,
+                            D.GET_AUTO_INCLUDE,
+                            D.DISCOUNT_TYPE,
+                            D.DISCOUNT_FACTOR,
+                            D.DISCOUNT_PRICE_BASIS,
+                            -- START REV 001
+                            --B.NAME BUY_NAME,
+                            V_BUY_NAME BUY_NAME,
+                            --B.ISCOMBO,
+                            'N' ISCOMBO,
+                            -- END REV 001
+                            A.EXCLUDE_DESC,
+                            A.NAME,
+                            V.SHORT_DESC
+                    FROM promo_master m, promo_slab d
+LEFT OUTER JOIN promo_assortment a ON (D.GET_ASSORTMENT_CODE = A.CODE)
+LEFT OUTER JOIN promo_voucher v ON (D.GET_VOUCHER_CODE = V.CODE)
+WHERE M.CODE = D.PROMO_CODE AND M.CODE = P_CODE --AND     M.BUY_ASSORTMENT_CODE = B.CODE(+)
+   ORDER BY 4)
+        LOOP
+            V_NO := V_NO + 1;
+
+            V_RETURN_STRING := db_pkg_promo_condition$display_benefits(
+                                                REC.SLAB_RANGE_FROM,
+                                                REC.SLAB_RANGE_TO,
+                                                REC.BUY_ASSORTMENT_CODE,
+                                                REC.SIMPLE_FACTOR,
+                                                REC.GET_BENEFIT_CODE,
+                                                REC.GET_VOUCHER_CODE,
+                                                REC.GET_FACTOR,
+                                                REC.GET_METHOD,
+                                                REC.GET_POOL_TYPE,
+                                                REC.GET_ASSORTMENT_CODE,
+                                                REC.GET_AUTO_INCLUDE,
+                                                REC.DISCOUNT_TYPE,
+                                                REC.DISCOUNT_FACTOR,
+                                                REC.DISCOUNT_PRICE_BASIS
+                                                );
+            IF  REC.TYPE = 'I' AND REC.BASIS = 'QSLAB' THEN
+                IF      coalesce(REC.SLAB_RANGE_TO,0) <> 0 AND coalesce(REC.SLAB_RANGE_FROM,0) <> 0 AND coalesce(REC.SLAB_RANGE_TO,0) = coalesce(REC.SLAB_RANGE_FROM,0) THEN
+                        IF  coalesce(REC.ISCOMBO, 'N') = 'Y' THEN
+                            V_STRING := 'Buy '||coalesce(REC.SLAB_RANGE_TO,0)||' unit of Combo ['||REC.BUY_NAME||'] '||V_RETURN_STRING;
+                        ELSE
+                            V_STRING := 'Buy '||coalesce(REC.SLAB_RANGE_TO,0)||' unit from Assortment ['||REC.BUY_NAME||'] '||V_RETURN_STRING;
+                        END IF;
+                ELSIF   coalesce(REC.SLAB_RANGE_TO,0) <> 0 AND coalesce(REC.SLAB_RANGE_FROM,0) <> 0 AND coalesce(REC.SLAB_RANGE_TO,0) <> coalesce(REC.SLAB_RANGE_FROM,0) THEN
+                        IF  coalesce(REC.ISCOMBO, 'N') = 'Y' THEN
+                            V_STRING := 'Buy '||coalesce(REC.SLAB_RANGE_FROM,0)||' - '||coalesce(REC.SLAB_RANGE_TO,0)||' unit of Combo ['||REC.BUY_NAME||'] '||V_RETURN_STRING;
+                        ELSE
+                            V_STRING := 'Buy '||coalesce(REC.SLAB_RANGE_FROM,0)||' - '||coalesce(REC.SLAB_RANGE_TO,0)||' unit from Assortment ['||REC.BUY_NAME||'] '||V_RETURN_STRING;
+                        END IF;
+                ELSIF   coalesce(REC.SLAB_RANGE_TO,0) = 0 AND coalesce(REC.SLAB_RANGE_FROM,0) <> 0 THEN
+                        IF  coalesce(REC.ISCOMBO, 'N') = 'Y' THEN
+                            V_STRING := 'Buy '||coalesce(REC.SLAB_RANGE_FROM,0)||' and above uniit of combo ['||REC.BUY_NAME||'] '||V_RETURN_STRING;
+                        ELSE
+                            V_STRING := 'Buy '||coalesce(REC.SLAB_RANGE_FROM,0)||' and above unit from Assortment ['||REC.BUY_NAME||'] '||V_RETURN_STRING;
+                        END IF;
+                END IF;
+            ELSIF   REC.TYPE = 'I' AND REC.BASIS = 'QSIMPLE' THEN
+                IF  coalesce(REC.SIMPLE_FACTOR,0) <> 0 THEN
+                    IF  coalesce(REC.ISCOMBO, 'N') = 'Y' THEN
+                        V_STRING := 'Buy '||coalesce(REC.SIMPLE_FACTOR,0)||' unit of Combo ['||REC.BUY_NAME||'] '||V_RETURN_STRING;
+                    ELSE
+                        V_STRING := 'Buy '||coalesce(REC.SIMPLE_FACTOR,0)||' unit from Assortment ['||REC.BUY_NAME||'] '||V_RETURN_STRING;
+                    END IF;
+                ELSE
+                    IF  coalesce(REC.ISCOMBO, 'N') = 'Y' THEN
+                        V_STRING := 'Buy any unit of Combo ['||REC.BUY_NAME||'] '||V_RETURN_STRING;
+                    ELSE
+                        V_STRING := 'Buy any unit from Assortment ['||REC.BUY_NAME||'] '||V_RETURN_STRING;
+                    END IF;
+                END IF;
+            ELSIF  REC.TYPE = 'I' AND REC.BASIS = 'VSLAB' THEN
+                IF      coalesce(REC.SLAB_RANGE_TO,0) <> 0 AND coalesce(REC.SLAB_RANGE_FROM,0) <> 0 AND coalesce(REC.SLAB_RANGE_TO,0) = coalesce(REC.SLAB_RANGE_FROM,0) THEN
+                        IF  coalesce(REC.ISCOMBO, 'N') = 'Y' THEN
+                            V_STRING := 'Buy from Combo ['||REC.BUY_NAME||'] worth Rs. '||coalesce(REC.SLAB_RANGE_TO,0)||' '||V_RETURN_STRING;
+                        ELSE
+                            V_STRING := 'Buy from Assortment ['||REC.BUY_NAME||'] worth Rs. '||coalesce(REC.SLAB_RANGE_TO,0)||' '||V_RETURN_STRING;
+                        END IF;
+                ELSIF   coalesce(REC.SLAB_RANGE_TO,0) <> 0 AND coalesce(REC.SLAB_RANGE_FROM,0) <> 0 AND coalesce(REC.SLAB_RANGE_TO,0) <> coalesce(REC.SLAB_RANGE_FROM,0) THEN
+                        IF  coalesce(REC.ISCOMBO, 'N') = 'Y' THEN
+                            V_STRING := 'Buy from Combo ['||REC.BUY_NAME||'] worth Rs. '||coalesce(REC.SLAB_RANGE_FROM,0)||' - '||coalesce(REC.SLAB_RANGE_TO,0)||' '||V_RETURN_STRING;
+                        ELSE
+                            V_STRING := 'Buy from Assortment ['||REC.BUY_NAME||'] worth Rs. '||coalesce(REC.SLAB_RANGE_FROM,0)||' - '||coalesce(REC.SLAB_RANGE_TO,0)||' '||V_RETURN_STRING;
+                        END IF;
+                ELSIF   coalesce(REC.SLAB_RANGE_TO,0) = 0 AND coalesce(REC.SLAB_RANGE_FROM,0) <> 0 THEN
+                        IF  coalesce(REC.ISCOMBO, 'N') = 'Y' THEN
+                            V_STRING := 'Buy from Combo ['||REC.BUY_NAME||'] worth Rs. '||coalesce(REC.SLAB_RANGE_FROM,0)||' and above '||V_RETURN_STRING;
+                        ELSE
+                            V_STRING := 'Buy from Assortment ['||REC.BUY_NAME||'] worth Rs. '||coalesce(REC.SLAB_RANGE_FROM,0)||' and above '||V_RETURN_STRING;
+                        END IF;
+                END IF;
+            ELSIF    REC.TYPE = 'M' AND REC.BASIS = 'VSLAB' THEN
+                IF  coalesce(REC.BUY_ASSORTMENT_CODE,0) = 0 THEN
+                    IF      coalesce(REC.SLAB_RANGE_TO,0) <> 0 AND coalesce(REC.SLAB_RANGE_FROM,0) <> 0 AND coalesce(REC.SLAB_RANGE_TO,0) = coalesce(REC.SLAB_RANGE_FROM,0) THEN
+                            V_STRING := 'Buy any item worth Rs. '||coalesce(REC.SLAB_RANGE_TO,0)||' '||V_RETURN_STRING;
+                    ELSIF   coalesce(REC.SLAB_RANGE_TO,0) <> 0 AND coalesce(REC.SLAB_RANGE_FROM,0) <> 0 AND coalesce(REC.SLAB_RANGE_TO,0) <> coalesce(REC.SLAB_RANGE_FROM,0) THEN
+                            V_STRING := 'Buy any item worth Rs. '||coalesce(REC.SLAB_RANGE_FROM,0)||' - '||coalesce(REC.SLAB_RANGE_TO,0)||' '||V_RETURN_STRING;
+                    ELSIF   coalesce(REC.SLAB_RANGE_TO,0) = 0 AND coalesce(REC.SLAB_RANGE_FROM,0) <> 0 THEN
+                            V_STRING := 'Buy any item worth Rs. '||coalesce(REC.SLAB_RANGE_FROM,0)||' and above '||V_RETURN_STRING;
+                    END IF;
+                ELSE
+                    IF  coalesce(REC.ISCOMBO, 'N') = 'Y' THEN
+                        IF      coalesce(REC.SLAB_RANGE_TO,0) <> 0 AND coalesce(REC.SLAB_RANGE_FROM,0) <> 0 AND coalesce(REC.SLAB_RANGE_TO,0) = coalesce(REC.SLAB_RANGE_FROM,0) THEN
+                                V_STRING := 'Buy from Combo ['||REC.BUY_NAME||'] worth Rs. '||coalesce(REC.SLAB_RANGE_TO,0)||' '||V_RETURN_STRING;
+                        ELSIF   coalesce(REC.SLAB_RANGE_TO,0) <> 0 AND coalesce(REC.SLAB_RANGE_FROM,0) <> 0 AND coalesce(REC.SLAB_RANGE_TO,0) <> coalesce(REC.SLAB_RANGE_FROM,0) THEN
+                                V_STRING := 'Buy from Combo ['||REC.BUY_NAME||'] worth Rs. '||coalesce(REC.SLAB_RANGE_FROM,0)||' - '||coalesce(REC.SLAB_RANGE_TO,0)||' '||V_RETURN_STRING;
+                        ELSIF   coalesce(REC.SLAB_RANGE_TO,0) = 0 AND coalesce(REC.SLAB_RANGE_FROM,0) <> 0 THEN
+                                V_STRING := 'Buy from Combo ['||REC.BUY_NAME||'] worth Rs. '||coalesce(REC.SLAB_RANGE_FROM,0)||' and above '||V_RETURN_STRING;
+                        END IF;
+                    ELSE
+                        IF      coalesce(REC.SLAB_RANGE_TO,0) <> 0 AND coalesce(REC.SLAB_RANGE_FROM,0) <> 0 AND coalesce(REC.SLAB_RANGE_TO,0) = coalesce(REC.SLAB_RANGE_FROM,0) THEN
+                                V_STRING := 'Buy from Assortment ['||REC.BUY_NAME||'] worth Rs. '||coalesce(REC.SLAB_RANGE_TO,0)||' '||V_RETURN_STRING;
+                        ELSIF   coalesce(REC.SLAB_RANGE_TO,0) <> 0 AND coalesce(REC.SLAB_RANGE_FROM,0) <> 0 AND coalesce(REC.SLAB_RANGE_TO,0) <> coalesce(REC.SLAB_RANGE_FROM,0) THEN
+                                V_STRING := 'Buy from Assortment ['||REC.BUY_NAME||'] worth Rs. '||coalesce(REC.SLAB_RANGE_FROM,0)||' - '||coalesce(REC.SLAB_RANGE_TO,0)||' '||V_RETURN_STRING;
+                        ELSIF   coalesce(REC.SLAB_RANGE_TO,0) = 0 AND coalesce(REC.SLAB_RANGE_FROM,0) <> 0 THEN
+                                V_STRING := 'Buy from Assortment ['||REC.BUY_NAME||'] worth Rs. '||coalesce(REC.SLAB_RANGE_FROM,0)||' and above '||V_RETURN_STRING;
+                        END IF;
+                    END IF;
+                 END IF;
+            END IF;
+
+            V_CONDITION[V_NO].SEQ          := V_NO;
+            V_CONDITION[V_NO].FLAG         := 'B';
+            V_CONDITION[V_NO].DESCRIPTION  := V_STRING;
+            V_RETURN_STRING                 := NULL;
+        END LOOP;
+
+        BEGIN
+            SELECT  '[Offer not Valid for ' || D.EXCLUDE_DESC ||']'
+            INTO STRICT    V_FOOTER
+            FROM    PROMO_MASTER M,
+                    PROMO_ASSORTMENT D
+            WHERE   M.BUY_ASSORTMENT_CODE = D.CODE
+            AND     M.CODE = P_CODE
+            AND     D.EXCLUDE_DESC IS NOT NULL;
+
+            V_NO                            := V_NO + 1;
+            V_CONDITION[V_NO].SEQ          := V_NO;
+            V_CONDITION[V_NO].FLAG         := 'F';
+            V_CONDITION[V_NO].DESCRIPTION  := V_FOOTER;
+        EXCEPTION WHEN no_data_found THEN
+            BEGIN
+                SELECT  COUNT(1)
+                INTO STRICT    V_COUNT
+                FROM    PROMO_MASTER M,
+                        PROMO_ASSORTMENT_EXCLUDE D
+                WHERE   M.BUY_ASSORTMENT_CODE = D.ASSORTMENT_CODE
+                AND     M.CODE = P_CODE;
+
+                IF V_COUNT <> 0 THEN
+                    V_FOOTER                        := '[Offer not Valid for Items which are in exclusion list]';
+                    V_NO                            := V_NO + 1;
+                    V_CONDITION[V_NO].SEQ          := V_NO;
+                    V_CONDITION[V_NO].FLAG         := 'F';
+                    V_CONDITION[V_NO].DESCRIPTION  := V_FOOTER;
+                END IF;
+            END;
+        END;
+        RETURN(V_CONDITION);
+    END;
+
+"""
+  returnType = main.t_condition
+  arguments = <
+    {
+      name = p_code
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

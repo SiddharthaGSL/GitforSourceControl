@@ -1,0 +1,190 @@
+function "main"."int$pkg_budgetmaster_int$pkg_budgetmaster_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      errmsg       varchar(500);
+      vsession     varchar(100);
+      vdetailtbl   varchar(1000);
+      vdetailrec   varchar(500);
+      errcode      bigint;
+      vcount       bigint;
+      v_cnt        bigint;
+BEGIN
+      DECLARE
+         c_bud CURSOR FOR
+            SELECT a.accounting_year,
+                   a.behaviour,
+                   f.glcode,
+                   a.gl_name,
+                   m.mcode,
+                   CASE WHEN a.amount > 0 THEN a.amount ELSE 0 END buddamt,
+                   CASE WHEN a.amount < 0 THEN -1 * a.amount ELSE 0 END
+                      budcamt,
+                   s.slcode,
+                   adm.code                                        costcode,
+                   CASE
+                      WHEN UPPER(a.sl_applicable) = 'YES' THEN 'Y'
+                      ELSE 'N'
+                   END
+                      gl_slapp,
+                   CASE
+                      WHEN UPPER(a.site_applicable) = 'YES' THEN 'Y'
+                      ELSE 'N'
+                   END
+                      costapp
+              FROM admyear y,
+			  		admmonth m,
+					fingl f,
+					int$stg_budgetmaster a LEFT OUTER JOIN finsl s ON (UPPER(a.sl_slid) = s.slid)
+					LEFT OUTER JOIN admsite adm on (UPPER(a.tag_admsite_shrtname) = UPPER(adm.shrtname))
+					WHERE UPPER(a.gl_name) = UPPER(f.glname)  AND a.accounting_year = y.yname
+					AND UPPER(a.fin_month) = UPPER(m.month_name);
+					  
+      BEGIN
+         FOR c1 IN c_bud
+         LOOP
+            SELECT COUNT(*)
+              INTO STRICT v_cnt
+              FROM FINGLBUD
+             WHERE     glcode = c1.glcode
+                   AND mcode = c1.mcode
+                   AND coalesce(slcode, 0) = coalesce(c1.slcode, 0)
+                   AND coalesce(costcode, 0) = coalesce(c1.costcode, 0)
+                   AND admou_code = p_connect_ou;
+
+            IF v_cnt = 0
+            THEN
+               INSERT INTO finglbud(glcode,
+                                     mcode,
+                                     buddamt,
+                                     budcamt,
+                                     slcode,
+                                     costcode,
+                                     admou_code,
+                                     gl_slapp,
+                                     costapp)
+                    VALUES (c1.glcode,
+                            c1.mcode,
+                            c1.buddamt,
+                            c1.budcamt,
+                            c1.slcode,
+                            c1.costcode,
+                            p_connect_ou,
+                            c1.gl_slapp,
+                            c1.costapp);
+            ELSIF     v_cnt > 0
+                  AND c1.behaviour = 'Update existing ledger combination'
+            THEN
+               UPDATE finglbud
+                  SET buddamt = c1.buddamt, budcamt = c1.budcamt
+                WHERE     glcode = c1.glcode
+                      AND mcode = c1.mcode
+                      AND coalesce(slcode, 0) = coalesce(c1.slcode, 0)
+                      AND coalesce(costcode, 0) = coalesce(c1.costcode, 0)
+                      AND gl_slapp = c1.gl_slapp
+                      AND costapp = c1.costapp;
+            ELSIF     v_cnt > 0
+                  AND c1.behaviour = 'Ignore if ledger combination exist'
+            THEN
+               UPDATE finglbud
+                  SET buddamt = buddamt, budcamt = budcamt
+                WHERE     glcode = c1.glcode
+                      AND mcode = c1.mcode
+                      AND coalesce(slcode, 0) = coalesce(c1.slcode, 0)
+                      AND coalesce(costcode, 0) = coalesce(c1.costcode, 0)
+                      AND gl_slapp = c1.gl_slapp
+                      AND costapp = c1.costapp;
+            END IF;
+         END LOOP;
+      END;
+
+      -- log to be added in history table
+      SELECT nextval('int$error_log_code') INTO STRICT vsession;
+
+      vdetailtbl :=
+            'create table ginarchive.budgetmaster_'
+         || vsession
+         || ' as select accounting_year, behaviour, gl_name, sl_applicable, sl_slid, site_applicable, tag_admsite_shrtname, fin_month, amount from int$stg_budgetmaster where userid ='
+         || p_userid::text;
+
+      EXECUTE vdetailtbl;
+
+      vdetailrec :=
+         'select count(1) from ginarchive.budgetmaster_' || vsession::text;
+
+      EXECUTE vdetailrec INTO STRICT vcount;
+
+      INSERT INTO int$history(code,
+                               importedby,
+                               importedon,
+                               classname,
+                               summary,
+                               history_detail_tablename,
+                               history_detail_row_count)
+           VALUES (nextval('int$history_code'),
+                   p_userid,
+                   clock_timestamp(),
+                   'BUDGETMASTER',
+                   vcount::TEXT || 'Data updated successfully.',
+                   'ginarchive.budgetmaster_' || vsession,
+                   vcount);
+
+      RETURN('1');
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         -- error log for oracle internal error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'BUDGETMASTER',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

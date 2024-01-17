@@ -1,0 +1,674 @@
+function "main"."int$pkg_sales_cr_note_int$pkg_sales_cr_note_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_site_initial             varchar(15);
+      errmsg                     varchar(500);
+      vsession                   varchar(100);
+      vdetailtbl                 varchar(5000);
+      vdetailrec                 varchar(500);
+      errcode                    bigint;
+      vcount                     bigint;
+      v_tempno                   bigint;
+      v_JRNCODE                  bigint;
+      v_scheme_docno             varchar(25) := NULL;V_OWNER_GSTIN_NO           varchar(50) := NULL;
+      V_OWNER_GSTIN_STATE_CODE   bigint := NULL;
+
+      -- Populate SALINVJRNMAIN Table
+      c_main CURSOR FOR
+         SELECT nextval('erp01')                                JRNCODE,
+                T1.ENTRY_DATE                                ENTRY_DATE,
+                T2.doccode                                   doccode,
+                T2.GSTAPPL                                   GSTAPPL,
+                T1.DOCUMENT_NUMBER                           DOCUMENT_NUMBER,
+                T1.DOCUMENT_DATE                             DOCUMENT_DATE,
+                P_CONNECT_SITE                               ADMSITE_CODE_OWNER,
+                p_connect_ou                                 ADMOU_CODE,
+                T1.ADMSITE_CODE                              ADMSITE_CODE,
+                T1.PCODE                                     PCODE,
+                T1.PGLCODE                                   PGLCODE,
+                T1.SALINVMAIN_CODE                           SALINVMAIN_CODE,
+                T1.JRNGLCODE                                 JRNGLCODE,
+                CASE WHEN S.SLCODE IS NULL THEN  T1.SLCODE  ELSE S.SLCODE END  JRNSLCODE,
+                coalesce(T1.GL_CC_APPL, 'N')                     GL_CC_APPL,
+                T1.ADMGSTJRNREASON_CODE
+                   ADMGSTJRNREASON_CODE,
+                T1.REMARKS                                   REMARKS,
+                T1.YCODE                                     YCODE,
+                T1.tot_item_qty                              tot_item_qty,
+                T1.SALTERMCODE,
+                T1.SALTRADEGRP_CODE,
+                coalesce(T1.FORMCODE, 0)                         FORMCODE,
+                T1.SALES_SUB_LEDGER,
+                T1.SALES_LEDGER,
+                T1.REASON,
+                SITE_SHORT_NAME,
+                SALES_INVOICE_NUMBER,
+                OWNER_GSTIN_NO,
+                OWNER_GSTIN_STATE_CODE,
+                T1.CP_GSTIN_NO,
+                T1.CP_GSTIN_STATE_CODE
+           FROM admdocscheme t2,admou o,(  SELECT UPPER(A.document_scheme)                 document_scheme,
+                          A.ENTRY_DATE                              ENTRY_DATE,
+                          UPPER(A.SALES_INVOICE_NUMBER)            SALES_INVOICE_NUMBER,
+                          --  M.GSTAPPL             GSTAPPL,
+                          A.DOCUMENT_NUMBER                         DOCUMENT_NUMBER,
+                          A.DOCUMENT_DATE                           DOCUMENT_DATE,
+                          M.ADMSITE_CODE                            ADMSITE_CODE,
+                          M.PCODE                                   PCODE,
+                          M.PGLCODE                                 PGLCODE,
+                          M.INVCODE                                 SALINVMAIN_CODE,
+                          CASE WHEN G.GLCODE IS NULL THEN  M.GLCODE  ELSE G.GLCODE END  JRNGLCODE,
+                          A.SALES_SUB_LEDGER
+                             SALES_SUB_LEDGER,
+                          A.SALES_LEDGER
+                             SALES_LEDGER,
+                          R.CODE
+                             ADMGSTJRNREASON_CODE,
+                          A.REMARKS                                 REMARKS,
+                          CASE WHEN G.GLCODE IS NULL THEN  M.GL_CC_APPL  ELSE G.COSTAPP END
+                             GL_CC_APPL,
+                          (SELECT Y.YCODE YCODE
+                             FROM admyear Y
+                            WHERE A.ENTRY_DATE BETWEEN dtfr AND dtto)
+                             ycode,
+                          SUM(coalesce(A.ITEM_QTY, 0))
+                             TOT_ITEM_QTY,
+                          M.SALTERMCODE
+                             SALTERMCODE,
+                          M.SALTRADEGRP_CODE
+                             SALTRADEGRP_CODE,
+                          M.FORMCODE                                FORMCODE,
+                          M.SLCODE                                  SLCODE,
+                          A.REASON                                  REASON,
+                          SITE_SHORT_NAME,
+                          M.OWNER_GSTIN_NO
+                             OWNER_GSTIN_NO,
+                          M.OWNER_GSTIN_STATE_CODE
+                             OWNER_GSTIN_STATE_CODE,
+                          M.CP_GSTIN_NO
+                             CP_GSTIN_NO,
+                          M.CP_GSTIN_STATE_CODE
+                             CP_GSTIN_STATE_CODE
+                     FROM int$stg_sales_cr_note a INNER JOIN salinvmain m ON UPPER(A.SALES_INVOICE_NUMBER) =
+                                 UPPER(M.scheme_docno)
+						  INNER JOIN admgstjrnreason r ON UPPER(A.REASON) = UPPER(R.REASON)						  
+			LEFT OUTER JOIN fingl g ON (UPPER(A.SALES_LEDGER) = UPPER(G.GLNAME))
+			WHERE M.admsite_code_OWNER = p_connect_site AND coalesce(M.RELEASE_STATUS, 'N') = 'P' AND A.userid = p_userid GROUP BY UPPER(A.document_scheme),
+                          A.ENTRY_DATE,
+                          UPPER(A.SALES_INVOICE_NUMBER),
+                          -- M.GSTAPPL             ,
+                          A.DOCUMENT_NUMBER,
+                          A.DOCUMENT_DATE,
+                          M.ADMSITE_CODE,
+                          M.PCODE,
+                          M.PGLCODE,
+                          M.INVCODE,
+                          CASE WHEN G.GLCODE IS NULL THEN  M.GLCODE  ELSE G.GLCODE END ,
+                          A.SALES_SUB_LEDGER,
+                          A.SALES_LEDGER,
+                          R.CODE,
+                          A.REMARKS,
+                          CASE WHEN G.GLCODE IS NULL THEN  M.GL_CC_APPL  ELSE G.COSTAPP END ,
+                          M.SALTERMCODE,
+                          M.SALTRADEGRP_CODE,
+                          M.FORMCODE,
+                          M.SLCODE,
+                          A.REASON,
+                          SITE_SHORT_NAME,
+                          M.OWNER_GSTIN_NO,
+                          M.OWNER_GSTIN_STATE_CODE,
+                          M.CP_GSTIN_NO,
+                          M.CP_GSTIN_STATE_CODE) t1 
+LEFT OUTER JOIN finsl s  ON (UPPER(t1.SALES_SUB_LEDGER) = UPPER(s.SLNAME))
+WHERE UPPER(t1.document_scheme) = UPPER(T2.docname)  AND O.CODE = P_CONNECT_OU;
+
+      v_det_grsamt               double precision := 0;
+      v_det_chgamt               double precision := 0;
+      v_JRNNO                    numeric(20) := 0;
+      v_tot_qty                  double precision := 0;
+      V_MAIN_GL_AMT              double precision := 0;
+      V_TOTNETAMT                double precision := 0;
+
+BEGIN
+      FOR R IN c_main
+      LOOP
+         -- START REV : 002
+         
+         v_JRNCODE := r.JRNCODE;
+         -- END REV : 002
+         v_scheme_docno := 'AUTOMATIC';
+         v_tot_qty := coalesce(r.tot_item_qty, 0);
+
+         INSERT INTO SALINVJRNMAIN(JRNCODE,
+                                    --JRNNO,
+                                    JRNDT,
+                                    DOCCODE,
+                                    SCHEME_DOCNO,
+                                    GSTAPPL,
+                                    DOCNO,
+                                    DOCDT,
+                                    ADMSITE_CODE_OWNER,
+                                    ADMOU_CODE,
+                                    ADMSITE_CODE,
+                                    PCODE,
+                                    PGLCODE,
+                                    JRNTYPE,
+                                    SALINVMAIN_CODE,
+                                    OWNER_GSTIN_NO,
+                                    OWNER_GSTIN_STATE_CODE,
+                                    CP_GSTIN_NO,
+                                    CP_GSTIN_STATE_CODE,
+                                    JRNGLCODE,
+                                    JRNSLCODE,
+                                    GL_CC_APPL,
+                                    ADMGSTJRNREASON_CODE,
+                                    REMARKS,
+                                    SALTERMCODE,
+                                    SALTRADEGRP_CODE,
+                                    FORMCODE,
+                                    YCODE,
+                                    ECODE,
+                                    TIME,
+                                    RELEASE_STATUS,
+                                    RELEASE_TIME,
+                                    RELEASE_ECODE,
+                                    LAST_MODIFIED_BY,
+                                    LAST_MODIFIED_ON,
+                                    MAIN_GL_AMT,
+                                    ENTRY_SOURCE                  -- REV : 002
+                                                )
+              VALUES (V_JRNCODE,
+                      -- V_JRNCODE, -- 002
+                      R.ENTRY_DATE,
+                      R.DOCCODE,
+                      v_scheme_docno,
+                      R.GSTAPPL,
+                      R.DOCUMENT_NUMBER,
+                      R.DOCUMENT_DATE,
+                      P_CONNECT_SITE,
+                      p_connect_ou,
+                      R.ADMSITE_CODE,
+                      R.PCODE,
+                      R.PGLCODE,
+                      'C',
+                      R.SALINVMAIN_CODE,
+                      R.OWNER_GSTIN_NO,
+                      R.OWNER_GSTIN_STATE_CODE,
+                      R.CP_GSTIN_NO,
+                      R.CP_GSTIN_STATE_CODE,
+                      R.JRNGLCODE,
+                      R.JRNSLCODE,
+                      R.GL_CC_APPL,
+                      R.ADMGSTJRNREASON_CODE,
+                      R.REMARKS,
+                      R.SALTERMCODE,
+                      R.SALTRADEGRP_CODE,
+                      R.FORMCODE,
+                      R.YCODE,
+                      p_userid,
+                      clock_timestamp(),
+                      'U',
+                      NULL,
+                      NULL,
+                      NULL,
+                      NULL,
+                      NULL,
+                      'EXCEL'                                     -- REV : 002
+                             );
+
+         DECLARE
+            c_det CURSOR FOR
+                 SELECT DISTINCT
+                        i.icode,
+                        -- START REV : 005
+                        --SUM (a.item_qty) item_qty,
+                        SUM(coalesce(d.invqty, 0)) item_qty,
+                        SUM(coalesce(a.item_qty, 0)) excel_qty,
+                        -- END REV : 005
+                        a.item_RATE             item_RATE,
+                        -- START REV : 005
+                        -- a.AMOUNT    item_AMOUNT ,
+                        round((SUM(coalesce(a.item_qty, 0)) * a.item_RATE)::numeric, 2)
+                           ITEM_AMOUNT,
+                        a.item_REMARKS          item_REMARKS,
+                        -- END REV : 005
+                        I.GLCODE                GLCODE,
+                        I.SLCODE                SLCODE,
+                        coalesce(G.COSTAPP, 'N')    GL_CC_APPL,
+                        I.MRP                   RSP,
+                        H.HSN_SAC_CODE,
+                        D.CODE                  SALINVDET_CODE
+                   FROM invhsnsacmain h, salinvdet d, int$stg_sales_cr_note a, invitem i
+LEFT OUTER JOIN fingl g ON (I.GLCODE = G.GLCODE)
+WHERE a.ENTRY_DATE = r.ENTRY_DATE AND d.INVCODE = r.SALINVMAIN_CODE AND i.icode = d.icode AND i.INVHSNSACMAIN_CODE = H.CODE  AND a.userid = p_userid AND UPPER(a.SALES_INVOICE_NUMBER) =
+                               UPPER(r.SALES_INVOICE_NUMBER) AND UPPER(a.SITE_SHORT_NAME) =
+                               UPPER(r.SITE_SHORT_NAME) AND UPPER(a.REASON) = UPPER(r.REASON) AND coalesce(UPPER(a.DOCUMENT_NUMBER), '@@') =
+                               coalesce(UPPER(r.DOCUMENT_NUMBER), '@@') /*AND NVL (a.DOCUMENT_DATE, '@@') =
+                                                 NVL (r.DOCUMENT_DATE, '@@')*/
+  AND coalesce(a.remarks, '@@') = coalesce(r.remarks, '@@') AND coalesce(UPPER(a.SALES_LEDGER), '@@') =
+                               coalesce(UPPER(r.SALES_LEDGER), '@@') AND coalesce(UPPER(a.SALES_SUB_LEDGER), '@@') =
+                               coalesce(UPPER(r.SALES_SUB_LEDGER), '@@') AND (   (UPPER(a.barcode) = UPPER(i.icode))
+                             OR (UPPER(a.barcode) = UPPER(i.barcode))) -- START REV : 006
+  AND d.code =
+                               (SELECT MIN(t4.code)
+                                  FROM salinvdet t4
+                                 WHERE     t4.invcode = r.salinvmain_code
+                                       AND t4.icode = d.icode) -- END REV : 006
+ GROUP BY i.icode,
+                        a.item_RATE,
+                        -- START REV : 005
+                        --a.AMOUNT     ,
+                        -- END REV : 005
+                        a.item_REMARKS,
+                        I.GLCODE,
+                        I.SLCODE,
+                        G.COSTAPP,
+                        I.MRP,
+                        H.HSN_SAC_CODE,
+                        D.CODE;
+
+            v_qty        double precision := 0;
+            curr_qty     double precision := 0;
+            v_rate       double precision := 0;
+            v_discount   double precision := 0;
+            v_taxamt     double precision := 0;
+            -- start rev : 005
+            v_itemqty    double precision := 0;
+         -- end rev : 005
+         BEGIN
+            FOR c2 IN c_det
+            LOOP
+               -- start rev : 005
+              
+               -- START REV : 005
+               SELECT SUM(coalesce(qty, 0))
+                 INTO STRICT v_itemqty
+                 FROM salinvjrndet
+                WHERE jrncode = V_JRNCODE AND ICODE = C2.ICODE;
+
+                 --CALL ERRAUDIT('a','a','a','v_itemqty = '||C2.ICODE||','||v_itemqty||','||C2.excel_qty);
+
+               IF coalesce(C2.excel_qty, 0) > coalesce(v_itemqty, 0)
+               THEN
+                  INSERT INTO salinvJRNdet(-- CODE,
+                                            JRNCODE,
+                                            SALINVDET_CODE,
+                                            ICODE,
+                                            QTY,
+                                            RATE,
+                                            AMOUNT,
+                                            REMARKS,
+                                            -- CHGAMT,
+                                            HSN_SAC_CODE,
+                                            RSP,
+                                            -- TAXAMT,
+                                            GL_CC_APPL,
+                                            GLCODE,
+                                            SLCODE)
+                          VALUES (
+                                    -- CODE,
+                                    V_JRNCODE,
+                                    C2.SALINVDET_CODE,
+                                    C2.ICODE,
+                                    C2.EXCEL_QTY,
+                                    C2.ITEM_RATE,
+                                    CASE WHEN                                        coalesce(C2.ITEM_AMOUNT, 0)=0 THEN  round((                                               coalesce(C2.ITEM_RATE, 0)                                             * coalesce(C2.EXCEL_QTY, 0))::numeric,                                             2)  ELSE C2.ITEM_AMOUNT END ,
+                                    C2.ITEM_REMARKS,
+                                    -- CHGAMT,
+                                    C2.HSN_SAC_CODE,
+                                    C2.RSP,
+                                    --TAXAMT,
+                                    C2.GL_CC_APPL,
+                                    C2.GLCODE,
+                                    C2.SLCODE);
+
+               END IF;
+
+               -- END REV : 005
+               --CALL ERRAUDIT(123,
+                         --111,
+                         --123,
+                         --123);
+               -- START REV : 007        
+               IF coalesce(v_itemqty,0) = 0 and coalesce(C2.EXCEL_QTY,0) = 0 then
+                  INSERT INTO salinvJRNdet(-- CODE,
+                                            JRNCODE,
+                                            SALINVDET_CODE,
+                                            ICODE,
+                                            QTY,
+                                            RATE,
+                                            AMOUNT,
+                                            REMARKS,
+                                            -- CHGAMT,
+                                            HSN_SAC_CODE,
+                                            RSP,
+                                            -- TAXAMT,
+                                            GL_CC_APPL,
+                                            GLCODE,
+                                            SLCODE)
+                          VALUES (
+                                    -- CODE,
+                                    V_JRNCODE,
+                                    C2.SALINVDET_CODE,
+                                    C2.ICODE,
+                                    C2.EXCEL_QTY,
+                                    C2.ITEM_RATE,
+                                    (SELECT AMOUNT FROM int$stg_SALES_CR_NOTE WHERE USERID = p_userid and (barcode = C2.ICODE or barcode = (select barcode from invitem where icode = c2.icode))),
+                                    C2.ITEM_REMARKS,
+                                    C2.HSN_SAC_CODE,
+                                    C2.RSP,
+                                    C2.GL_CC_APPL,
+                                    C2.GLCODE,
+                                    C2.SLCODE);
+                   END IF;
+                   -- END REV : 007
+            END LOOP;
+         END;
+
+         BEGIN
+            SELECT SUM(coalesce(AMOUNT, 0))
+              INTO STRICT V_MAIN_GL_AMT
+              FROM SALINVJRNDET
+             WHERE JRNCODE = V_JRNCODE AND GLCODE IS NULL;
+
+            UPDATE SALINVJRNMAIN
+               SET MAIN_GL_AMT = V_MAIN_GL_AMT
+             WHERE JRNCODE = R.JRNCODE;
+         EXCEPTION
+            WHEN no_data_found
+            THEN
+               V_MAIN_GL_AMT := NULL;
+         END;
+
+         SELECT SUM(round((coalesce(AMOUNT, 0))::numeric, 2))
+           INTO STRICT V_TOTNETAMT
+           FROM SALINVJRNDET
+          WHERE JRNCODE = R.JRNCODE;
+
+         CALL int$pkg_sales_cr_note_calculate_dflt_item_scn(R.JRNCODE,
+                                  R.JRNCODE,
+                                  R.ENTRY_DATE,
+                                  R.YCODE,
+                                  R.PCODE,
+                                  R.JRNGLCODE,
+                                  R.JRNSLCODE,
+                                  R.DOCCODE,
+                                  R.ADMOU_CODE,
+                                  R.SALTRADEGRP_CODE,
+                                  R.FORMCODE,
+                                  R.SALINVMAIN_CODE,
+                                  R.SALTERMCODE,
+                                  R.ADMSITE_CODE_OWNER,
+                                  R.ADMSITE_CODE,
+                                  R.GSTAPPL);
+
+         CALL int$pkg_sales_cr_note_calculate_dflt_scn(R.JRNCODE::bigint,
+                             R.JRNCODE::bigint,
+                             R.ENTRY_DATE,
+                             R.YCODE::bigint,
+                             R.JRNGLCODE::bigint,
+                             R.JRNSLCODE::bigint,
+                             R.SALTERMCODE::bigint,
+                             V_TOTNETAMT::bigint);
+
+         SELECT round((coalesce(SUM(coalesce(AMOUNT, 0)), 0))::numeric, 2)
+           INTO STRICT v_det_grsamt
+           FROM SALINVJRNDET
+          WHERE JRNCODE = R.JRNCODE;
+
+         SELECT round((coalesce(SUM(coalesce(chgamt, 0)), 0))::numeric, 2)
+           INTO STRICT v_det_chgamt
+           FROM SALINVJRNCHG
+          WHERE JRNCODE = r.JRNCODE;
+
+         UPDATE SALINVJRNMAIN
+            SET grsamt = v_det_grsamt,
+                chgamt = v_det_chgamt,
+                netamt = coalesce(v_det_chgamt, 0) + coalesce(v_det_grsamt, 0)
+          WHERE JRNCODE = r.JRNCODE;
+
+         -- START REV : 004
+         V_SCHEME_DOCNO :=
+            db_fun_document_number_web(NULL,
+                                        R.doccode,
+                                        R.YCODE,
+                                        TO_CHAR(R.ENTRY_DATE,'DD-MM-YYYY'),
+                                        NULL,
+                                        R.ADMSITE_CODE_OWNER,
+                                        R.ADMOU_CODE,
+                                        'SalesCRNote');
+
+         -- END REV : 004
+         UPDATE SALINVJRNMAIN
+            SET JRNCODE = JRNCODE,
+                -- START REV : 004
+                SCHEME_DOCNO = V_SCHEME_DOCNO,
+                -- END REV : 004
+                JRNNO = v_tempno
+          WHERE JRNCODE = r.JRNCODE;
+
+         SELECT JRNNO, scheme_docno
+           INTO STRICT v_JRNNO, v_scheme_docno
+           FROM SALINVJRNMAIN
+          WHERE JRNCODE = r.JRNCODE;
+
+         UPDATE SALINVJRNMAIN
+            SET SALINVMAIN_CODE = r.SALINVMAIN_CODE
+          WHERE JRNCODE = r.JRNCODE;
+
+         IF coalesce(v_scheme_docno, 'AUTOMATIC') = 'AUTOMATIC'
+         THEN
+            RAISE EXCEPTION 'insert_violation' USING ERRCODE = '50002';
+         END IF;
+      END LOOP;
+
+      -- log to be added in History table
+      SELECT nextval('int$error_log_code') INTO STRICT vsession;
+
+      --CALL ERRAUDIT(113,
+                --111,
+                --113,
+                --113);
+
+      vdetailtbl :=
+            -- start rev : 002
+            --'CREATE TABLE GRCORD_'
+            'CREATE TABLE ginarchive.SALES_CR_NOTE_'
+         -- end rev : 002
+         || vsession::text
+         || ' AS
+                            SELECT TRANSACTION_SITE, DATE_TRUNC(''day'',GRC_DATE) ENTRY_DATE, SALES_INVOICE_NUMBER,DOCUMENT_NO,REASON,remarks
+                            FROM
+                            (
+                            SELECT  b.name TRANSACTION_SITE, DATE_TRUNC(''day'',a.ENTRY_DATE) GRC_DATE, a.SALES_INVOICE_NUMBER SALES_INVOICE_NUMBER,a.DOCUMENT_NUMBER DOCUMENT_NO,a.REASON REASON
+                                    ,a.remarks ,COUNT(1),SALES_LEDGER,SALES_SUB_LEDGER
+                            FROM int$stg_SALES_CR_NOTE a, ADMSITE b,SALINVMAIN P WHERE upper(a.SALES_INVOICE_NUMBER) = upper(P.SCHEME_DOCNO)
+                            AND  P.ADMSITE_CODE = B.CODE
+                            AND userid ='
+         || p_userid::text
+         || ' GROUP BY b.name , DATE_TRUNC(''day'',ENTRY_DATE), a.SALES_INVOICE_NUMBER ,a.DOCUMENT_NUMBER ,a.REASON
+                                    ,a.remarks ,SALES_LEDGER,SALES_SUB_LEDGER
+                            ) s';
+
+      EXECUTE vdetailtbl;
+
+      -- start rev : 002
+      --vdetailrec := 'SELECT count(1) FROM GRCORD_' || vsession::text;
+      vdetailrec :=
+         'SELECT count(1) FROM ginarchive.SALES_CR_NOTE_' || vsession::text;
+
+      -- end rev : 002
+      EXECUTE vdetailrec INTO STRICT vcount;
+
+      IF coalesce(vcount, 0) = 0
+      THEN
+         RAISE EXCEPTION 'insert_violation' USING ERRCODE = '50002';
+      END IF;
+
+      INSERT INTO int$history(code,
+                               importedby,
+                               importedon,
+                               classname,
+                               summary,
+                               history_detail_tablename,
+                               history_detail_row_count)
+           VALUES (nextval('int$history_code'),
+                   p_userid,
+                   clock_timestamp(),
+                   'SALES_CR_NOTE',
+                   vcount::TEXT || ' Transaction(s) has been created.',
+                   -- start rev : 002
+                   --'GRCORD_' || vsession, vcount
+                   'ginarchive.SALES_CR_NOTE_' || vsession,
+                   vcount                                     -- end rev : 002
+                         );
+
+      RETURN('1');
+   EXCEPTION
+      WHEN SQLSTATE '50002' THEN
+         errcode := -02222;
+         errmsg := 'Data inconsistency';
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'SALES_CR_NOTE',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'SALES_CR_NOTE',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+
+function "main"."int$pkg_sales_cr_note_int$pkg_sales_cr_note_process(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+	-- Change this to reflect the dblink connection string
+    --v_conn_str  text := format('port=%s dbname=%s user=%s', current_setting('port'), current_database(), current_user);
+    v_srvname       name;
+    v_connname      text;
+    v_connstr       text;
+    v_conn_result   text;
+    v_query         text;
+
+    v_ret    text;
+BEGIN
+	 v_srvname := 'foreign_pgbase';
+    v_connname := replace(uuid_generate_v4()::text,'-','');
+    v_connstr  := v_srvname;
+    
+    --Open the connection  
+    SELECT dblink_connect(v_connname,v_connstr) 
+    INTO v_conn_result;
+	
+	v_query := 'SELECT * FROM int$pkg_sales_cr_note_int$pkg_sales_cr_note_process_atx ( ' || quote_nullable(p_userid::text) || '::bigint,' || quote_nullable(p_connect_site::text) || '::bigint,' || quote_nullable(p_logging_date::text) || '::timestamp without time zone,' || quote_nullable(p_connect_ou::text) || '::bigint )';
+	SELECT * INTO v_ret FROM dblink(v_connname, v_query) AS p (ret text);
+
+	
+	SELECT dblink_disconnect(v_connname) 
+    INTO v_conn_result;
+	
+	RETURN v_ret;
+EXCEPTION 
+   WHEN OTHERS THEN
+        SELECT dblink_disconnect(v_connname) 
+        INTO v_conn_result;
+
+END;
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

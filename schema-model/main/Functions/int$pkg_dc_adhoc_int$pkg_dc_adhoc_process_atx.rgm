@@ -1,0 +1,277 @@
+function "main"."int$pkg_dc_adhoc_int$pkg_dc_adhoc_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        --v_site_initial     VARCHAR2 (15);
+        errmsg             varchar(500);
+        vsession           varchar(100);
+        vdetailtbl         varchar(5000);
+        vdetailrec         varchar(500);
+        errcode            bigint;
+        vcount             bigint;
+        v_mark             varchar(500);
+
+        v_scheme_docno     varchar(25);
+        v_dccode           bigint;
+        v_tempno           bigint;
+        v_cmpcode          bigint;
+        v_ycode            bigint;
+        v_itm_cnt          bigint;c0 CURSOR FOR
+            SELECT dcdt, scheme_docno, site_short_name, out_stock_pt_name, agcode, trpcode, dc_rem
+            from   int$stg_createdc_all_fld
+            where  userid = p_userid
+            group by dcdt, scheme_docno, site_short_name, out_stock_pt_name, agcode, trpcode, dc_rem
+            order by 1,2;
+
+        c1 CURSOR(p_dccode bigint) FOR
+            SELECT distinct dcdt, scheme_doc_format, scheme_docno, site_short_name, out_stock_pt_name, agent_slid, transporter_slid, dc_rem,
+                   dccode, pcode, inloccode, outloccode, ycode, agcode, trpcode, saletype, doccode, admsite_code, sitetype,
+                   pricetype, pricelistcode, discount_factor, price_roundoff, roundoff_limit, admsite_code_owner, incl_vat_in_dist,
+                   discount_mode, discount_basis, saltradegrp_code, formcode, cmptax_code_basis, doc_status, psite_admcmptax_code,
+                   userid
+            from   int$stg_createdc_all_fld
+            where  dccode = p_dccode;
+
+        c2 CURSOR(p_dccode bigint) FOR
+            SELECT *
+            from   int$stg_createdc_all_fld
+            where  userid = p_userid
+            and    dccode = p_dccode;
+
+  i RECORD;
+BEGIN
+        v_mark := 'P01';
+
+        -- Deleting all log against the DC adhoc for the user
+        delete FROM admerraudit a
+        where  a.usrname = user
+        and    a.prcname = 'dc_adhoc'
+        and    a.errcode = p_userid :: text;
+
+        update int$stg_createdc_all_fld
+        set    admsite_code_owner = p_connect_site
+        where  userid = p_userid;
+
+        --COMMIT;
+        v_mark := 'P02';
+        --erraudit (user, 'dc_adhoc', p_userid, '1 - Web import DC adhoc start');
+        begin
+            select cmpcode
+            into STRICT   v_cmpcode
+            from   admcmp;
+        exception
+            when others then
+                call erraudit(user, 'dc_adhoc', '1', sqlerrm);
+        end;
+        v_mark := 'P03';
+        --erraudit (user, 'dc_adhoc', p_userid, '6 - Site wise entry ... START');
+        -- site wise entry
+        for i in c0 loop
+            select nextval('erp01') into STRICT v_dccode;
+
+            update int$stg_createdc_all_fld
+            set    dccode = v_dccode
+            where  userid = p_userid
+            and    dcdt = i.dcdt
+            and    site_short_name = i.site_short_name
+            and    out_stock_pt_name = i.out_stock_pt_name
+            and    coalesce(scheme_docno, '00x') = coalesce(i.scheme_docno, '00x')
+            and    coalesce(agcode,0) = coalesce(i.agcode,0)
+            and    coalesce(trpcode,0) = coalesce(i.trpcode,0)
+            and    coalesce(dc_rem, '00x') = coalesce(i.dc_rem, '00x');
+
+            --COMMIT;
+        end loop;
+
+        v_mark := 'P04';
+        for i in (select distinct dccode
+                  from   int$stg_createdc_all_fld
+                  where  dccode is not null
+                  and    userid = p_userid
+                  order by 1) loop
+            for j in c1(i.dccode) loop
+                -- Document main entry
+                select ycode into STRICT v_ycode from admyear where j.dcdt between dtfr and dtto;
+
+                --erraudit (user, 'DC_ADHOC', p_userid, '7 - Document entry ... START '||i.ordcode);
+                --select erp01.nextval into v_dccode from sys.dual;
+                v_dccode := i.dccode;
+
+            v_scheme_docno :=   coalesce(j.scheme_docno, 'AUTOMATIC');
+
+-- END REV : 001
+                --erraudit (user, 'DC_ADHOC', p_userid, '71 - Inserting main entry ... '||i.ordcode);
+                insert into invdcmain(dccode, dcno, dcdt, pcode, inloccode, outloccode, rem,
+                                       ycode, ecode, time, agcode, trpcode, saletype,
+                                       cmpcode, against_so, dcbarcode, doccode, scheme_docno, admou_code,
+                                       admsite_code, pricetype, pricelistcode, discount_factor,
+                                       price_roundoff, roundoff_limit, admsite_code_owner,
+                                       incl_vat_in_dist, discount_mode, discount_basis,
+                                       saltradegrp_code, formcode, cmptax_code_basis, doc_status
+                        -- START REV : 001
+                        ,entry_source
+                        ,entry_mode
+                        -- END REV :001
+                        )
+                values (v_dccode, v_tempno, j.dcdt, j.pcode, j.inloccode, j.outloccode, j.dc_rem,
+                        v_ycode, p_userid, clock_timestamp(), j.agcode, j.trpcode, j.SALETYPE,
+                        null, 'N', lpad(v_cmpcode,3,'0') :: text||v_dccode :: text, j.doccode, v_scheme_docno, p_connect_ou,
+                        j.admsite_code, j.pricetype, j.pricelistcode, j.discount_factor,
+                        j.price_roundoff, j.roundoff_limit, p_connect_site,
+                        j.incl_vat_in_dist, j.discount_mode, j.discount_basis,
+                        j.saltradegrp_code, j.formcode, j.cmptax_code_basis, 'O'
+                        -- START REV : 001
+                        ,'EXCEL'
+                        ,'A'
+                        -- END REV :001
+                        );
+
+                v_mark := 'P06';
+                for k in c2(i.dccode) loop
+                    insert into invdcdet(dccode, icode, isqty, rate, mrp, costrate, remarks,
+                                          factor, discount, basic_rate, roundoff, wsp, listep_mrp, invbatch_serial_code)
+                    values (v_dccode, k.icode, k.itm_qty, k.itm_rate, k.itm_mrp, null, k.itm_rem,
+                            k.itm_factor, k.itm_discount, k.itm_basic_rate, k.itm_roundoff, k.itm_wsp, k.itm_listed_mrp, k.invbatch_serial_code);
+                end loop;
+
+                v_itm_cnt := null;
+
+                select count(*) into STRICT v_itm_cnt from invdcdet where dccode = v_dccode;
+
+             --   db_pkg_genentryno.set_entcode(v_dccode);  -- REV : 001
+                v_mark := 'P07';
+                update invdcmain
+                set    dccode = dccode,
+                       doc_status = case
+                                        when coalesce(v_itm_cnt,0) = 0 then 'O'
+                                        else 'C'
+                                    end
+                where  dccode = v_dccode;
+
+                SELECT scheme_docno into STRICT v_scheme_docno from invdcmain where dccode = v_dccode;
+
+                -- START REV : 001
+                IF v_scheme_docno = 'AUTOMATIC' THEN
+
+                     v_scheme_docno :=    db_fun_document_number_web(NULL,
+                                            j.doccode,
+                                            v_YCODE,
+                                            to_char(j.dcdt,'DD-MM-YYYY'),
+                                            NULL,
+                                            p_connect_site,
+                                            P_CONNECT_OU,
+                                            'DcAdhoc'
+                                           );
+                    update invdcmain
+                    set    scheme_docno = v_scheme_docno
+                    where  dccode = v_dccode;
+                END IF;
+                -- END REV : 001
+                update int$stg_createdc_all_fld
+                set    scheme_docno = v_scheme_docno
+                where  dccode = v_dccode;
+
+                --COMMIT;
+                v_mark := 'P08';
+            end loop;
+        end loop;
+
+        SELECT nextval('int$error_log_code')
+        INTO STRICT vsession
+;
+
+        vdetailtbl :=
+            'CREATE TABLE ginarchive.DC_ADHOC_'
+         || vsession
+         || ' AS select distinct scheme_docno, dcdt, site_short_name, out_stock_pt_name, dc_rem '
+         || ' from int$stg_createdc_all_fld '
+         || ' where userid = '|| p_userid::text
+         || ' and dccode is not null'
+         || ' order by 1';
+
+      EXECUTE vdetailtbl;
+
+      vdetailrec := 'SELECT count(*) FROM ginarchive.DC_ADHOC_' || vsession::text;
+
+      EXECUTE vdetailrec INTO STRICT vcount;
+
+      IF coalesce(vcount, 0) = 0
+      THEN
+         RAISE EXCEPTION 'insert_violation' USING ERRCODE = '50001';
+      END IF;
+
+      INSERT INTO int$history(code, importedby, importedon, classname,
+                   summary,
+                   history_detail_tablename, history_detail_row_count
+                  )
+           VALUES (nextval('int$history_code'), p_userid, clock_timestamp(), 'DC_ADHOC',
+                   vcount::TEXT || ' Transaction(s) has been created.',
+                   'ginarchive.DC_ADHOC_' || vsession, vcount
+                  );
+
+      RETURN('1');
+   EXCEPTION
+      WHEN SQLSTATE '50001' THEN
+         errcode := -02222;
+         errmsg := 'Data inconsistency';
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code, lineno, classname, userid,
+                      errortype, errordesc, createdon
+                     )
+              VALUES (nextval('int$error_log_code'), 0, 'DC_ADHOC', p_userid,
+                      errcode, errmsg, clock_timestamp()
+                     );
+
+         --COMMIT;
+         RETURN('0');
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code, lineno, classname, userid,
+                      errortype, errordesc, createdon
+                     )
+              VALUES (nextval('int$error_log_code'), 0, 'DC_ADHOC', p_userid,
+                      errcode, errmsg||','||v_mark, clock_timestamp()
+                     );
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+   -- Clear GRC against PO
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

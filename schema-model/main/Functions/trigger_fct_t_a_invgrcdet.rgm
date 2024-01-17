@@ -1,0 +1,95 @@
+function "main"."trigger_fct_t_a_invgrcdet()" {
+  text = """
+
+DECLARE
+ V_ENTRY_SOURCE    varchar(25);
+ -- START REV : 001
+ V_SID                           bigint;
+ V_PROGRAM                       varchar(50);
+ -- END REV : 001
+BEGIN
+  BEGIN
+
+    SELECT ENTRY_SOURCE
+    INTO STRICT   V_ENTRY_SOURCE
+    FROM   INVGRCMAIN
+    WHERE  GRCCODE = NEW.GRCCODE;
+    -- END REV : O01
+    IF  TG_OP = 'INSERT' THEN
+        -- START REV : 001
+        IF coalesce(V_ENTRY_SOURCE,'XX') <> 'WEB'
+        THEN
+        -- END REV : 001
+            UPDATE PURORDDET
+            SET    RCQTY = coalesce(RCQTY, 0) + coalesce(NEW.ACQTY, 0)
+            WHERE  CODE = NEW.PO_CODE;
+
+            UPDATE  INVGRCMAIN
+            SET     RCQTY = coalesce(RCQTY, 0) + coalesce(NEW.ACQTY, 0)
+                    ,RTQTY = coalesce(RTQTY, 0) + coalesce(NEW.RTQTY, 0)
+                    ,RCINVQTY = coalesce(RCINVQTY, 0) + coalesce(NEW.RCINVQTY, 0)
+                    ,RTINVQTY = coalesce(RTINVQTY, 0) + coalesce(NEW.RTINVQTY, 0)
+            WHERE   GRCCODE = NEW.GRCCODE;
+        -- END REV : 001    
+        END IF;
+        -- END REV : 001 
+    END IF;
+
+    IF  TG_OP = 'UPDATE' THEN
+        -- START REV : 002
+		SELECT PG_BACKEND_PID() INTO V_SID;
+
+		SELECT APPLICATION_NAME INTO V_PROGRAM FROM PG_STAT_ACTIVITY WHERE PID=V_SID;
+        -- END REV : 002
+       
+        -- START REV : 001
+        IF coalesce(V_ENTRY_SOURCE,'XX') <> 'WEB'
+           -- START  REV : 002
+           --OR
+           AND -- REV : 003
+not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+           --END REV : 002
+        THEN
+        --  END REV : 001
+            UPDATE PURORDDET
+            SET    RCQTY = coalesce(RCQTY, 0) - coalesce(OLD.ACQTY, 0)
+            WHERE  CODE = OLD.PO_CODE;
+
+            UPDATE PURORDDET
+            SET    RCQTY = coalesce(RCQTY, 0) + coalesce(NEW.ACQTY, 0)
+            WHERE  CODE = NEW.PO_CODE;
+
+            UPDATE  INVGRCMAIN
+            SET     RCQTY = coalesce(RCQTY, 0) + coalesce(NEW.ACQTY, 0) - coalesce(OLD.ACQTY, 0)
+                    ,RTQTY = coalesce(RTQTY, 0) + coalesce(NEW.RTQTY, 0) - coalesce(OLD.RTQTY, 0)
+                    ,RCINVQTY = coalesce(RCINVQTY, 0) + coalesce(NEW.RCINVQTY, 0) - coalesce(OLD.RCINVQTY, 0)
+                    ,RTINVQTY = coalesce(RTINVQTY, 0) + coalesce(NEW.RTINVQTY, 0) - coalesce(OLD.RTINVQTY, 0)
+            WHERE   GRCCODE = NEW.GRCCODE;
+        -- START REV : 001
+        END IF;
+        -- END REV : 001    
+    END IF;
+
+    IF  TG_OP = 'DELETE' THEN
+
+          null;
+     END IF;
+    -- END REV : 001
+EXCEPTION
+    WHEN OTHERS THEN
+       CALL ERRAUDIT(USER, 'T_A_INVGRCDET', SQLSTATE, SQLERRM);
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

@@ -1,0 +1,301 @@
+function "main"."db_fun_get_item_rate_web(text, timestamp without time zone, bigint, bigint, bigint, bigint, bigint, text, character, bigint, bigint, bigint, character, double, character, character, bigint, bigint, character, bigint, bigint, double, text, double, bigint)" {
+  text = """
+
+DECLARE
+
+   /**********************************************************************************************************************
+      NAME: DB_FUN_ITEM_RATE_WEB
+
+      PURPOSE: For web rate Calculation
+
+      REVISIONS:
+      No.           Date        Author                      TFS ID                             Description
+      ---------     ----------  ----------------------  --------------------           ------------------------------------------------
+      REV : 001     23/01/2018   SIDDHARTHA             (BUG ID : 37351)                 Import Excel Rate population logic incorporated in DB_FUN_ITEM_RATE
+      REV : 002     23/01/2018   ANINDY                 (TFS ID : Misc Migration)        Misc Entry web migration related changes.
+      REV : 003     31/JAN/2020  MOUSUMI                (TFS ID : RATE)                  Misc Entry / GRT web migration related changes.
+      REV : 004     30/MAR/2020  MOUSUMI                (TFS ID : MIGRATION )            Stock Point Transfer  Rate
+      REV : 005     10/MAR/2022  ANINDYA                (TFS ID : BATCH SERIAL )         Introduction of BatchId in Rate calculation
+      NOTES:
+   ***********************************************************************************************************************/
+   V_NET_RATE         double precision;
+   v_RATE             double precision;
+   V_RATE_HIERARCHY   bigint;
+
+BEGIN
+   IF P_FUNTYPE = 'DB_FUN_ITEM_RATE'
+   THEN
+      BEGIN
+         -- START REV :003
+         --SELECT DB_FUN_ITEM_RATE_WEB(P_TRANDT , P_CMP_CODE, P_ICODE, P_PCTYPE, P_ADMCMPTAX_CODE_SITE,P_ITEM_RATE)
+         SELECT DB_FUN_ITEM_RATE_WEB(P_TRANDT,
+                                      P_CMP_CODE,
+                                      P_ICODE,
+                                      P_PCTYPE,
+                                      P_ADMCMPTAX_CODE_SITE,
+                                      P_ITEM_RATE,
+                                      P_SITE_CODE_OWNER-- START REV : 005
+                                      ,
+                                      P_BATCH_SERIAL_CODE-- END REV : 005
+                                      )
+           -- END REV : 003
+           INTO STRICT V_NET_RATE
+;
+      END;
+   -- START REV : 004
+   ELSIF P_FUNTYPE = 'DB_FUN_ITEM_RATE_STK'
+   THEN
+      BEGIN
+         SELECT DB_FUN_ITEM_RATE_WEB(P_TRANDT,
+                                      P_CMP_CODE,
+                                      P_ICODE,
+                                      P_PCTYPE,
+                                      P_ADMCMPTAX_CODE_SITE,
+                                      P_ITEM_RATE,
+                                      P_SITE_CODE_OWNER-- START REV : 005
+                                      ,
+                                      P_BATCH_SERIAL_CODE-- END REV : 005
+                                      )
+           INTO STRICT v_RATE
+;
+      END;
+   -- END REV : 004
+   ELSIF P_FUNTYPE = 'DB_FUN_ITEM_RATE_SND_NEW'
+   THEN
+      BEGIN
+         SELECT DB_FUN_ITEM_RATE_SND_NEW(P_ICODE,
+                                          P_TRANDT,
+                                          P_ADMCMPTAX_CODE_OU,
+                                          P_ADMCMPTAX_CODE_SITE,
+                                          P_PRICELISTCODE,
+                                          'RATE',
+                                          P_DISCOUNT_FACTOR,
+                                          P_TRADEGRP_CODE,
+                                          P_FORMCODE)
+           INTO STRICT V_NET_RATE
+;
+      END;
+   ELSIF P_FUNTYPE = 'DB_FUN_ITEM_RATE_DISC_ROFF_P'
+   THEN
+      BEGIN
+         SELECT DB_FUN_ITEM_RATE_DISC_ROFF_P(P_ICODE,
+                                              P_TRANDT,
+                                              P_PRICELISTCODE,
+                                              P_ADMCMPTAX_CODE_SITE,
+                                              P_ADMCMPTAX_CODE_OU,
+                                              P_ENTRY_MODE,
+                                              P_ADMOU_CODE,
+                                              0,                       --P_QTY
+                                              P_SITE_CODE,
+                                              P_SITE_CODE_OWNER,
+                                              P_PCODE,
+                                              '',               --P_FIFO_LEVEL
+                                              P_BASIC_RATE_IN,
+                                              P_DISCOUNT_FACTOR,
+                                              'RATE',
+                                              P_TRADEGRP_CODE,
+                                              P_FORMCODE,
+                                              -- START REV : 005
+                                              P_BATCH_SERIAL_CODE-- END REV : 005
+                                              )
+           INTO STRICT V_NET_RATE
+;
+      END;
+   ELSIF P_FUNTYPE = 'GET_ITEM_LAST_IN_RATE'
+   THEN
+      BEGIN
+         IF P_BATCH_SERIAL_CODE IS NULL OR P_BATCH_SERIAL_CODE = -99999
+         THEN
+            CALL db_pkg_cogs$p_get_item_last_in_rate(P_SITE_CODE,
+                                               P_ICODE,
+                                               P_TRANDT,
+                                               NULL,
+                                               V_RATE,
+                                               V_RATE_HIERARCHY);
+         ELSE
+            CALL db_pkg_cogs$p_get_item_last_in_rate(P_SITE_CODE,
+                                               P_ICODE,
+                                               P_TRANDT,
+                                               NULL,
+                                               V_RATE,
+                                               V_RATE_HIERARCHY,
+                                               -- START REV : 005
+                                               P_BATCH_SERIAL_CODE-- END REV : 005
+                                               );
+         END IF;
+         V_NET_RATE := V_RATE;
+      END;
+   END IF;
+   -- START REV : 004
+   IF P_FUNTYPE = 'DB_FUN_ITEM_RATE_STK'
+   THEN
+      RETURN coalesce(V_RATE, 0);
+   ELSE
+      RETURN coalesce(V_NET_RATE, 0);
+   END IF;
+-- END REV : 004
+END;
+"""
+  returnType = double precision
+  arguments = <
+    {
+      name = p_icode
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_trandt
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_cmp_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_site_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_site_code_owner
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_admou_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_pcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_pctype
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_pricetype
+      type = character
+      mode = IN
+    }
+
+    {
+      name = p_pricelistcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_admcmptax_code_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_admcmptax_code_ou
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_incl_vat_in_dist
+      type = character
+      mode = IN
+    }
+
+    {
+      name = p_discount_factor
+      type = double precision
+      mode = IN
+    }
+
+    {
+      name = p_discount_mode
+      type = character
+      mode = IN
+    }
+
+    {
+      name = p_discount_basis
+      type = character
+      mode = IN
+    }
+
+    {
+      name = p_price_roundoff
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_roundoff_limit
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_entry_mode
+      type = character
+      mode = IN
+      default = NULL::bpchar
+    }
+
+    {
+      name = p_tradegrp_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_formcode
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_basic_rate_in
+      type = double precision
+      mode = IN
+      default = NULL::double precision
+    }
+
+    {
+      name = p_funtype
+      type = text
+      mode = IN
+      default = NULL::text
+    }
+
+    {
+      name = p_item_rate
+      type = double precision
+      mode = IN
+      default = NULL::double precision
+    }
+
+    {
+      name = p_batch_serial_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+  >
+  language = plpgsql
+}
+

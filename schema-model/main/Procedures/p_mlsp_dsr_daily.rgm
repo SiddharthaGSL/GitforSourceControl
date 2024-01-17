@@ -1,0 +1,53 @@
+procedure "main"."p_mlsp_dsr_daily(timestamp without time zone, refcursor)" {
+  text = """
+
+BEGIN
+/******************************************************************************
+001        22/02/2019         JIT CHATTERJEE (Reviewed by Mousumi di)               
+(Bug 12338 - There has been introduced a new status which is 'U' for auto settlement. For the new status, the report data was not generating for the DSR report )
+******************************************************************************/
+   OPEN refcur FOR
+      SELECT s.NAME sitename, s.psite_initial cuid, bill.saleamt, noofinv,
+             stlm.footfall,
+             CASE
+                WHEN stlm.footfall = 0
+                   THEN 0
+                ELSE ROUND ((bill.noofinv / stlm.footfall) * 100,
+                            3)
+             END conv_perc,
+             CASE
+                WHEN noofinv = 0
+                   THEN 0
+                ELSE round((coalesce(bill.saleamt, 0) / noofinv)::numeric, 2)
+             END avg_saleamt
+        FROM (SELECT   pb.admsite_code, SUM(pb.netpayable) saleamt,
+                       COUNT(1) noofinv
+                  FROM psite_posbill pb
+                 WHERE date_trunc('day', pb.billdate) = date_trunc('day', reportdate) - '1 days'::interval
+              GROUP BY pb.admsite_code) bill,
+             psite_posstlm stlm,
+             admsite s
+       WHERE bill.admsite_code = stlm.admsite_code
+         AND stlm.stlmfor = date_trunc('day', reportdate) - '1 days'::interval
+         AND bill.admsite_code = s.code
+         AND s.sitetype IN ('MS-CO-CM', 'MS-OO-CM')
+         AND stlm.status IN ('O','C','U'); --REV:001
+END;
+"""
+  arguments = <
+    {
+      name = reportdate
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = refcur
+      type = refcursor
+      mode = INOUT
+    }
+
+  >
+  language = plpgsql
+}
+

@@ -1,0 +1,106 @@
+function "main"."int$pkg_lpcardpoint_int$pkg_lpcardpoint_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        ora2pg_rowcount int;
+errmsg              varchar(500);
+        vsession            varchar(100);
+        vdetailtbl          varchar(1000);
+        vdetailrec          varchar(500);
+        errcode             bigint;
+        --vmaxno              number;
+        vcount              bigint;c1 RECORD;
+
+BEGIN
+        for c1 in (
+                   SELECT   a.cardno,
+                            coalesce(a.opening,m.opening)    opening,
+                            coalesce(a.earned,m.earned)     earned,
+                            coalesce(a.redeemed,m.redeemed)   redeemed,
+                            ((coalesce(a.opening,m.opening) + coalesce(a.earned,m.earned)) - coalesce(a.redeemed,0)) closing 
+                    FROM int$stg_lpcardpoint a
+LEFT OUTER JOIN lpcard_point m ON (a.cardno = m.cardno)
+WHERE a.userid = p_userid
+                     )
+        LOOP
+           UPDATE lpcard_point d
+           SET    opening = c1.opening,
+                  earned = c1.earned,  
+                  redeemed = c1.redeemed,
+                  closing = c1.closing 
+           WHERE  d.cardno = c1.cardno;
+
+           GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+           THEN         
+        
+                INSERT INTO lpcard_point(cardno,opening,earned,redeemed,closing)
+                VALUES (C1.cardno,C1.opening,C1.earned,C1.redeemed,C1.closing);
+           END IF;
+            
+        END LOOP;
+
+        -- log to be added in history table
+        select  nextval('int$error_log_code')
+        into STRICT    vsession
+;
+
+        vdetailtbl := 'create table ginarchive.lpcardpoint_'||vsession||' as select distinct cardno,opening,earned,redeemed from int$stg_lpcardpoint where userid ='|| p_userid::text;
+        EXECUTE vdetailtbl;
+
+        vdetailrec := 'select count(1) from ginarchive.lpcardpoint_'||vsession;
+        EXECUTE vdetailrec into STRICT vcount;
+
+        insert into int$history(code, importedby, importedon, classname, summary, history_detail_tablename, history_detail_row_count)
+        values (nextval('int$history_code'), p_userid, clock_timestamp(), 'LPCARDPOINT', vcount::TEXT||' Data updated successfully.', 'ginarchive.lpcardpoint_'||vsession, vcount);
+
+        --COMMIT;
+
+        return('1');
+
+    exception
+        when others then
+        errcode := SQLSTATE;
+        errmsg  := sqlerrm;
+
+        -- error log for oracle internal error
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        values (nextval('int$error_log_code'), 0, 'LPCARDPOINT', p_userid, errcode, errmsg, clock_timestamp());
+        --COMMIT;
+
+        return('0');
+    end;
+
+    -- clear stagging table
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

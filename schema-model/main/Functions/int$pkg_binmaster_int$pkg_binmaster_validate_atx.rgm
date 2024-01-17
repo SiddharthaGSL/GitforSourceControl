@@ -1,0 +1,375 @@
+function "main"."int$pkg_binmaster_int$pkg_binmaster_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status   char(1);
+      errmsg     varchar(200);
+      errcode    bigint;V_MAXSEQ_NO   bigint := NULL;
+
+BEGIN
+      --code  Validation
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'BINMASTER', userid,
+                'Data Validation', 'Bin Code is invalid.', clock_timestamp()
+           FROM int$stg_binmaster a  LEFT OUTER JOIN invbin b
+		   ON (UPPER(a.BIN_code) = UPPER(b.code))
+		   WHERE b.code IS NULL AND a.BIN_code IS NOT NULL AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'BINMASTER', userid,
+                'Data Validation', 'Bin doesn''t belong to the connected site. ', clock_timestamp()
+           FROM int$stg_BINMASTER a, INVBIN b
+          WHERE UPPER(a.BIN_code) = UPPER(b.code)
+          AND     b.ADMSITE_CODE <> P_CONNECT_SITE
+          AND a.BIN_code IS NOT NULL
+          AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), a.lineno, 'BINMASTER', userid,
+                'Data Validation',
+                'Same Bin Code available more than one time.',
+                clock_timestamp()
+           FROM int$stg_BINMASTER a,
+                (SELECT   a.bin_code, COUNT(1)
+                     FROM int$stg_BINMASTER a
+                    WHERE a.bin_code is not null
+                      AND a.userid = p_userid
+                 GROUP BY a.bin_code
+                   HAVING COUNT(1) > 1) b
+          WHERE a.bin_code = b.bin_code
+          and   a.bin_code is not null
+          AND a.userid = p_userid;
+
+      --BIN NO Validation
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'BINMASTER', userid,
+                'Data Validation', 'Bin No. cannot be duplicate.', clock_timestamp()
+           FROM int$stg_BINMASTER a, INVBIN b
+          WHERE UPPER(a.BIN_NO) = UPPER(b.BINNO)
+            AND b.BINNO IS NOT NULL
+            AND   ADMSITE_CODE = P_CONNECT_SITE
+            AND ((a.BIN_code IS NOT NULL AND a.BIN_code <> b.code) OR a.BIN_code IS NULL
+                )
+            AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), a.lineno, 'BINMASTER', userid,
+                'Data Validation',
+                'Same Bin No. exists in multiple rows.',
+                clock_timestamp()
+           FROM int$stg_BINMASTER a,
+                (SELECT   a.bin_NO, COUNT(1)
+                     FROM int$stg_BINMASTER a
+                    WHERE a.bin_NO is not null
+                      AND a.userid = p_userid
+                 GROUP BY a.bin_NO
+                   HAVING COUNT(1) > 1) b
+          WHERE a.bin_NO= b.bin_NO
+          and   a.bin_NO is not null
+          AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'BINMASTER', userid,
+                'Data Validation', 'Bin No. is mandatory.', clock_timestamp()
+           FROM int$stg_BINMASTER a
+            WHERE  BIN_NO IS NULL
+            AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'BINMASTER', userid,
+                'Data Validation', 'Bin No. cannot be more than 100 characters.', clock_timestamp()
+           FROM int$stg_BINMASTER a
+            WHERE  BIN_NO IS NOT NULL
+            AND   LENGTH(BIN_NO) > 100
+            AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'BINMASTER', userid,
+                'Data Validation', 'Sequence No. cannot be in decimals.', clock_timestamp()
+           FROM int$stg_BINMASTER a
+          WHERE (LENGTH(CAST(SEQ_NO - TRUNC(SEQ_NO) AS TEXT)) > 1 )
+          AND   SEQ_NO IS NOT NULL
+            AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'BINMASTER', userid,
+                'Data Validation', 'Sequence No. should be between 1 to 9999999999.', clock_timestamp()
+           FROM int$stg_BINMASTER a
+          WHERE (coalesce(SEQ_NO, 0) < 1 OR coalesce(SEQ_NO, 0) > 9999999999  )
+          AND   SEQ_NO IS NOT NULL
+            AND a.userid = p_userid;
+
+      --SEQ NO Validation
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'BINMASTER', userid,
+                'Data Validation', 'Sequence No. cannot be duplicate.', clock_timestamp()
+           FROM int$stg_BINMASTER a, INVBIN b
+          WHERE UPPER(a.SEQ_NO) = UPPER(b.SEQNO)
+            AND b.SEQNO IS NOT NULL
+            AND   ADMSITE_CODE = P_CONNECT_SITE
+            AND (a.bin_code is null or (A.SEQ_NO IS NOT NULL AND A.BIN_CODE <> B.CODE))
+            AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), a.lineno, 'BINMASTER', userid,
+                'Data Validation',
+                'Same Sequence No. exists in multiple rows.',
+                clock_timestamp()
+           FROM int$stg_BINMASTER a,
+                (SELECT   a.SEQ_NO, COUNT(1)
+                     FROM int$stg_BINMASTER a
+                    WHERE a.SEQ_NO is not null
+                      AND a.userid = p_userid
+                 GROUP BY a.SEQ_NO
+                   HAVING COUNT(1) > 1) b
+          WHERE a.SEQ_NO= b.SEQ_NO
+          and   a.SEQ_NO is not null
+          AND a.userid = p_userid;
+
+      --Allow reservation  Validation
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'BINMASTER', userid,
+                'Data Validation',
+                'Only Yes or No are allowed in Allow Reservation.', clock_timestamp()
+           FROM int$stg_BINMASTER a
+          WHERE UPPER(ALLOW_RES) NOT IN ('NO', 'YES')
+          AND ALLOW_RES IS NOT NULL
+                AND a.userid = p_userid;
+
+      --EXT  Validation
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'BINMASTER', userid,
+                'Data Validation',
+                'Only Yes or No are allowed in Extinct.', clock_timestamp()
+           FROM int$stg_BINMASTER a
+          WHERE UPPER(EXT) NOT IN ('NO', 'YES')
+          AND EXT IS NOT NULL
+                AND a.userid = p_userid;
+
+       --EXT  Validation
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'BINMASTER', userid,
+                'Data Validation',
+                'Bins cannot be created as Extinct.', clock_timestamp()
+           FROM int$stg_BINMASTER a
+          WHERE UPPER(EXT) =  'YES'
+          AND BIN_CODE IS NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'BINMASTER', userid,
+                'Data Validation', 'Remarks cannot be more than 200 characters.', clock_timestamp()
+           FROM int$stg_BINMASTER a
+            WHERE  REMARKS IS NOT NULL
+            AND   LENGTH(REMARKS) > 100
+            AND a.userid = p_userid;
+
+--===================================WMS Validation=============================
+--START REV : 002
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                 createdon)
+       SELECT nextval('int$error_log_code'), lineno, 'BINMASTER', userid,
+              'Data Validation', 'Invalid Bingroup. BinGroup not present', clock_timestamp()
+         FROM int$stg_binmaster a LEFT OUTER JOIN invbingrp i 
+		 ON (UPPER(a.bingroupname) = UPPER(i.GRPNAME ))
+		 WHERE i.GRPNAME IS NULL AND a.bingroupname IS NOT NULL AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                 createdon) 
+       SELECT nextval('int$error_log_code'), lineno, 'BINMASTER', userid,
+              'Data Validation', 'Invalid Assortment. Assortment not present', clock_timestamp()
+         FROM int$stg_binmaster a LEFT OUTER JOIN promo_assortment p 
+		 ON (UPPER(a.assortment) = UPPER(p.NAME ))
+		 WHERE p.NAME IS NULL AND a.assortment IS NOT NULL AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                 createdon) 
+       SELECT nextval('int$error_log_code'), lineno, 'BINMASTER', userid,
+              'Data Validation', 'Group exists for the connected site. Bin group cannot be null.', clock_timestamp()
+         FROM int$stg_BINMASTER a, INVBINGRP g
+        WHERE a.bingroupname IS NULL
+          AND g.ADMSITE_CODE = p_connect_site
+          AND UPPER(g.grpname) like UPPER('Root%')
+          AND EXISTS (SELECT NULL FROM INVBINGRP gd WHERE gd.parcode = g.grpcode)
+          AND a.userid = p_userid;
+
+    INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                 createdon)
+       SELECT nextval('int$error_log_code'), lineno, 'BINMASTER', userid,
+              'Data Validation', 'Invalid Assortment', clock_timestamp()
+         FROM  int$stg_binmaster a LEFT OUTER JOIN promo_assortment p
+		 ON (UPPER(a.ASSORTMENT) = UPPER(p.Name))
+          WHERE (
+                  p.admsite_code_owner <> p_connect_site
+                  OR UPPER(p.category)<> UPPER('Bin')
+                ) AND a.userid = p_userid;
+
+    INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                 createdon) 
+       SELECT nextval('int$error_log_code'), lineno, 'BINMASTER', userid,
+              'Data Validation', 'Invalid Bingroup', clock_timestamp()
+         FROM int$stg_BINMASTER a, INVBINGRP i, INVBINGRP im
+        WHERE a.BINGROUPNAME IS NOT NULL
+        AND  UPPER(a.BINGROUPNAME) = UPPER(i.GRPNAME)
+        AND i.admsite_code <> p_connect_site
+        AND im.ADMSITE_CODE = p_connect_site
+        AND im.grpcode = i.parcode
+        AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                 createdon) 
+         SELECT nextval('int$error_log_code'), lineno, 'BINMASTER', userid,
+              'Data Validation', 'Only leaf Bin Group is allowed', clock_timestamp()
+         FROM int$stg_BINMASTER a, INVBINGRP g
+        WHERE a.bingroupname IS NOT NULL
+          AND UPPER(a.bingroupname) = UPPER(g.grpname)
+          AND g.ADMSITE_CODE = P_connect_site
+          AND g.grpcode IN (SELECT distinct parcode from INVBINGRP where parcode is not null)
+          AND UPPER(g.grpname) NOT like UPPER('Root%')
+          AND a.userid = p_userid;
+
+--      INSERT INTO int$error_log
+--                (code, lineno, classname, userid, errortype, errordesc,
+--                 createdon)  
+--         SELECT int$error_log_code.NEXTVAL, lineno, 'BINMASTER', userid,
+--              'Data Validation', 'Bin group is not present for this site', SYSDATE
+--         FROM int$stg_BINMASTER a
+--        WHERE a.bingroupname IS NOT NULL
+--        AND UPPER(a.bingroupname) NOT IN (SELECT UPPER(grpname) from INVBINGRP where admsite_code = p_connect_site)
+--        AND a.userid = p_userid;
+        
+    INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                 createdon)   
+         SELECT nextval('int$error_log_code'), lineno, 'BINMASTER', userid,
+              'Data Validation', 'Bin group is not present for this site', clock_timestamp()
+         FROM int$stg_binmaster a LEFT OUTER JOIN (SELECT grpname from INVBINGRP where admsite_code = p_connect_site) i  
+                         ON (UPPER(a.bingroupname) = UPPER(i.grpname))
+                         WHERE a.bingroupname IS NOT NULL  AND i.grpname IS NULL AND a.userid = p_userid;
+
+--END REV : 002
+--===================================WMS Validation=============================
+            
+        /************************************FOR SEQ NO*******************************************/
+
+    
+            SELECT MAX(SEQ_NO)
+            INTO STRICT   V_MAXSEQ_NO
+            FROM   INT$stg_binmaster
+            WHERE  userid = p_userid
+            AND    SEQ_NO IS NOT NULL
+            AND    BIN_CODE IS NULL;
+            
+            IF V_MAXSEQ_NO IS NULL THEN
+                SELECT MAX(SEQNO)
+                INTO STRICT   V_MAXSEQ_NO
+                FROM   INVBIN
+                WHERE  SEQNO IS NOT NULL
+                AND    ADMSITE_CODE = P_CONNECT_SITE;
+            END IF;
+            
+                DECLARE C_SEQ_NO CURSOR FOR
+                    SELECT  BIN_CODE,BIN_NO,SEQ_NO
+                    FROM    int$stg_binmaster
+                    WHERE   userid = p_userid
+                    AND      SEQ_NO IS NULL
+                    AND      BIN_CODE IS NULL;
+                BEGIN
+                FOR C3 IN C_SEQ_NO
+                LOOP
+
+                UPDATE    INT$stg_binmaster
+                SET       SEQ_NO =  coalesce(V_MAXSEQ_NO,0) + 1
+                WHERE     BIN_NO = C3.BIN_NO
+                AND       userid = p_userid
+                AND       SEQ_NO IS NULL
+                AND       BIN_CODE IS NULL;
+
+                V_MAXSEQ_NO := coalesce(V_MAXSEQ_NO,0) + 1;
+
+                END LOOP;
+            EXCEPTION WHEN no_data_found THEN
+               NULL;
+            END;
+
+           
+
+      -- Check whether records are valid or not
+      BEGIN
+         SELECT 'S'
+           INTO STRICT v_status
+           
+          WHERE EXISTS (SELECT 'S'
+                          FROM int$error_log
+                         WHERE userid = p_userid);
+
+         RETURN('0');
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            RETURN('1');
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code, lineno, classname,
+                      userid, errortype, errordesc, createdon
+                     )
+              VALUES (nextval('int$error_log_code'), 0, 'BINMASTER',
+                      p_userid, errcode, errmsg, clock_timestamp()
+                     );
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

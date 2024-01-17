@@ -1,0 +1,69 @@
+function "main"."trigger_fct_t_admou()" {
+  text = """
+
+DECLARE
+    V_CUR_YCODE ADMYEAR.YCODE%TYPE;
+    V_CUR_MCODE ADMMONTH.MCODE%TYPE;
+BEGIN
+  BEGIN
+    SELECT  Y.YCODE
+    INTO STRICT    V_CUR_YCODE
+    FROM    ADMYEAR Y
+    WHERE   date_trunc('day', statement_timestamp()) BETWEEN Y.DTFR AND Y.DTTO;
+
+    SELECT  MN.MCODE
+    INTO STRICT    V_CUR_MCODE
+    FROM    ADMMONTH MN
+    WHERE   date_trunc('day', statement_timestamp()) BETWEEN MN.DTFR AND MN.DTTO;
+
+    IF  NEW.CODE IS NOT NULL THEN
+        INSERT
+        INTO    ADMOU_YEAR(
+                    ADMOU_CODE,
+                    ADMYEAR_CODE,
+                    ADMYEAR_STATUS
+                )
+        SELECT  NEW.CODE,
+                Y.YCODE,
+                CASE WHEN Y.YCODE < V_CUR_YCODE THEN 'C' ELSE 'O' END
+        FROM    ADMYEAR Y;
+
+        INSERT
+        INTO    ADMOU_MONTH (
+                    ADMMONTH_CODE,
+                    ADMOU_CODE,
+                    COGS_RUN_STATUS,
+                    INV_MONTH_STATUS,
+                    COGS_LAST_RUN_TIME,
+                    INV_MONTH_MODIFIED_TIME,
+                    INV_MONTH_MODIFIED_BY,
+                    FIN_MONTH_STATUS,
+                    FIN_MONTH_MODIFIED_BY,
+                    FIN_MONTH_MODIFIED_TIME
+                )
+        SELECT  MCODE,
+                NEW.CODE,
+                CASE WHEN MN.MCODE < V_CUR_MCODE THEN 'F' ELSE 'P' END,
+                CASE WHEN MN.MCODE < V_CUR_MCODE THEN 'C' ELSE 'O' END,
+                CASE WHEN MN.MCODE < V_CUR_MCODE THEN statement_timestamp() ELSE NULL END,
+                CASE WHEN MN.MCODE < V_CUR_MCODE THEN statement_timestamp() ELSE NULL END,
+                CASE WHEN MN.MCODE < V_CUR_MCODE THEN 1 ELSE NULL END,
+                CASE WHEN MN.MCODE < V_CUR_MCODE THEN 'C' ELSE 'O' END,
+                CASE WHEN MN.MCODE < V_CUR_MCODE THEN 1 ELSE NULL END,
+                CASE WHEN MN.MCODE < V_CUR_MCODE THEN statement_timestamp() ELSE NULL END
+        FROM    ADMMONTH MN;
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+    CALL ERRAUDIT(USER, 'T_ADMOU', SQLSTATE, SQLERRM);
+    RAISE EXCEPTION '%', 'T_ADMOU' USING ERRCODE = '45201';
+  END;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

@@ -1,0 +1,104 @@
+procedure "main"."p_mlv_vendor_wise_sale_stk(timestamp without time zone, timestamp without time zone, bigint, refcursor)" {
+  text = """
+
+BEGIN
+   OPEN refcur FOR
+      SELECT   partycode, admsite_code, icode, SUM(sale) sale,
+               SUM(unsettle_sale_qty) unsettle_sale_qty, SUM(stk) stock,
+               SUM(transit_stk) transit_stk, SUM(netamt) netamt
+          FROM (SELECT   pnpartycode partycode, pb.admsite_code, pbi.icode,
+                         SUM(pbi.qty) sale, 0 unsettle_sale_qty, 0 stk,
+                         0 transit_stk, SUM(pbi.netamt) netamt
+                    FROM psite_posbill pb, psite_posbillitem pbi, invitem i
+                   WHERE pb.code = pbi.psite_posbill_code
+                     AND pbi.icode = i.icode
+                     AND i.partycode = pnpartycode
+                     AND date_trunc('day', billdate) BETWEEN pdstartdate AND pdenddate
+                     AND (pb.admsite_code, date_trunc('day', billdate)) IN (
+                            SELECT admsite_code, stlmfor
+                              FROM psite_posstlm
+                             WHERE status = 'C'
+                               AND stlmfor BETWEEN pdstartdate AND pdenddate)
+                GROUP BY pb.admsite_code, pbi.icode
+
+UNION ALL
+
+                SELECT   pnpartycode partycode, pb.admsite_code, pbi.icode,
+                         0 sale, SUM(pbi.qty) unsettle_sale_qty, 0 stk,
+                         0 transit_stk, 0 netamt
+                    FROM psite_posbill pb, psite_posbillitem pbi, invitem i
+                   WHERE pb.code = pbi.psite_posbill_code
+                     AND pbi.icode = i.icode
+                     AND i.partycode = pnpartycode
+                     AND date_trunc('day', billdate) BETWEEN pdstartdate AND pdenddate
+                     AND (pb.admsite_code, date_trunc('day', billdate)) IN (
+                            SELECT admsite_code, stlmfor
+                              FROM psite_posstlm
+                             WHERE status = 'O'
+                               AND stlmfor BETWEEN pdstartdate AND pdenddate)
+                GROUP BY pb.admsite_code, pbi.icode
+                
+UNION ALL
+
+                SELECT   pnpartycode partycode, admsite_code, s.icode, 0 sale,
+                         0 unsettle_sale_qty, SUM(qty) stk, 0 transit_stk,
+                         0 netamt
+                    FROM invstock_onhand s, invitem i
+                   WHERE s.icode = i.icode
+                     AND i.partycode = pnpartycode
+                     AND loccode <> (SELECT loccode
+                                       FROM invloc
+                                      WHERE loctype = 'T')
+                     AND admsite_code IN (SELECT code
+                                            FROM admsite
+                                           WHERE ispos = 'Y')
+                GROUP BY admsite_code, s.icode
+                
+UNION ALL
+
+                SELECT   pnpartycode partycode, admsite_code, s.icode, 0 sale,
+                         0 unsettle_sale_qty, 0 stk, SUM(qty) transit_stk,
+                         0 netamt
+                    FROM invstock_onhand s, invitem i
+                   WHERE s.icode = i.icode
+                     AND i.partycode = pnpartycode
+                     AND loccode = (SELECT loccode
+                                      FROM invloc
+                                     WHERE loctype = 'T')
+                     AND admsite_code IN (SELECT code
+                                            FROM admsite
+                                           WHERE ispos = 'Y')
+                GROUP BY admsite_code, s.icode) alias22
+      GROUP BY partycode, admsite_code, icode
+      HAVING coalesce(SUM(sale),0) + coalesce(SUM(unsettle_sale_qty),0) + coalesce(SUM(stk),0) + coalesce(SUM(transit_stk),0) > 0;
+END;
+"""
+  arguments = <
+    {
+      name = pdstartdate
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = pdenddate
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = pnpartycode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = refcur
+      type = refcursor
+      mode = INOUT
+    }
+
+  >
+  language = plpgsql
+}
+

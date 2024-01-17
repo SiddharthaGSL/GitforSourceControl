@@ -1,0 +1,177 @@
+procedure "main"."db_pkg_stock_intra$reflect(text, text, text, timestamp without time zone, text, bigint, bigint, text, text, numeric, numeric, numeric, numeric, text, text, text, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+        ERRCODE  varchar(50);
+        ERRMSG   varchar(2000);
+
+BEGIN
+        PERFORM set_config('db_pkg_stock_intra.l_type', P_TYPE, false);
+        PERFORM set_config('db_pkg_stock_intra.l_entcode', P_ENTCODE, false);
+        PERFORM set_config('db_pkg_stock_intra.l_entdt', P_ENTDT::TEXT, false);
+        PERFORM set_config('db_pkg_stock_intra.l_enttype', P_ENTTYPE, false);
+        PERFORM set_config('db_pkg_stock_intra.l_loccode', P_LOCCODE, false);
+        PERFORM set_config('db_pkg_stock_intra.l_ycode', P_YCODE, false);
+        PERFORM set_config('db_pkg_stock_intra.l_new_icode', P_NEW_ICODE, false);
+        PERFORM set_config('db_pkg_stock_intra.l_old_icode', P_OLD_ICODE, false);
+        PERFORM set_config('db_pkg_stock_intra.l_new_qty', COALESCE(P_NEW_QTY,0), false);
+        PERFORM set_config('db_pkg_stock_intra.l_old_qty', COALESCE(P_OLD_QTY,0), false);
+        PERFORM set_config('db_pkg_stock_intra.l_new_rate', COALESCE(P_NEW_RATE,0), false);
+        PERFORM set_config('db_pkg_stock_intra.l_old_rate', COALESCE(P_OLD_RATE,0), false);
+        PERFORM set_config('db_pkg_stock_intra.l_detail_code', P_CODE, false);
+        PERFORM set_config('db_pkg_stock_intra.l_scheme_docno', P_SCHEME_DOCNO, false);
+        PERFORM set_config('db_pkg_stock_intra.l_subenttype', P_SUBENTTYPE, false);
+        PERFORM set_config('db_pkg_stock_intra.l_psite_stkpt_code', P_PSITE_STKPT_CODE, false);
+        PERFORM set_config('db_pkg_stock_intra.l_refsitecode', P_REFSITECODE, false);
+        -- START REV : 002
+        PERFORM set_config('db_pkg_stock_intra.l_batch_serial_code', P_BATCH_SERIAL_CODE, false);
+        -- END REV : 002
+        IF  P_SUBENTTYPE IN ('PKO','ISO') THEN
+            PERFORM set_config('db_pkg_stock_intra.l_new_qty', coalesce(P_NEW_QTY,0) * -1, false);
+            PERFORM set_config('db_pkg_stock_intra.l_old_qty', coalesce(P_OLD_QTY,0) * -1, false);
+        ELSE
+            PERFORM set_config('db_pkg_stock_intra.l_new_qty', coalesce(P_NEW_QTY,0), false);
+            PERFORM set_config('db_pkg_stock_intra.l_old_qty', coalesce(P_OLD_QTY,0), false);
+        END IF;
+
+        IF  NULLIF(current_setting('db_pkg_stock_intra.l_ycode'),'')::BIGINT <> 1 THEN
+            CASE P_TYPE
+            WHEN 'INSERTING' THEN
+                    PERFORM set_config('db_pkg_stock_intra.l_stockcode', NULL, false);
+                    CALL db_pkg_stock_intra$pro_for_new();
+            WHEN 'UPDATING' THEN
+                    CALL db_pkg_stock_intra_pro_for_old();
+                    CALL db_pkg_stock_intra$pro_for_new();
+            WHEN 'DELETING' THEN
+                    CALL db_pkg_stock_intra_pro_for_old();
+                    PERFORM set_config('db_pkg_stock_intra.l_stockcode', NULL, false);
+            END CASE;
+        END IF;
+    EXCEPTION
+        WHEN OTHERS THEN
+        ERRCODE     := SQLSTATE;
+        ERRMSG      := SQLERRM;
+        CALL ERRAUDIT(USER,'DB_REFLECT_STOCK',ERRCODE,P_ENTTYPE||' : '||P_TYPE||' : '||P_ENTCODE||' : '||ERRMSG);
+        RAISE EXCEPTION '%', 'Unable to update intra stock : '||ERRMSG USING ERRCODE = '45200';
+    END;
+
+"""
+  arguments = <
+    {
+      name = p_code
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_type
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_entcode
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_entdt
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_enttype
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_loccode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_ycode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_new_icode
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_old_icode
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_new_qty
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_old_qty
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_new_rate
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_old_rate
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_scheme_docno
+      type = text
+      mode = IN
+      default = NULL::text
+    }
+
+    {
+      name = p_subenttype
+      type = text
+      mode = IN
+      default = NULL::text
+    }
+
+    {
+      name = p_psite_stkpt_code
+      type = text
+      mode = IN
+      default = NULL::text
+    }
+
+    {
+      name = p_refsitecode
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_batch_serial_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+  >
+  language = plpgsql
+}
+

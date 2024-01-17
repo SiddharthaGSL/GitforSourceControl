@@ -1,0 +1,105 @@
+view "main"."v_list_promoassortment" {
+  text = """-
+SELECT p.code,
+    p.name AS assortmentname,
+    p.description,
+    site.name AS sitename,
+    p.admsite_code_owner AS sitecode,
+        CASE p.type
+            WHEN 'T'::bpchar THEN 'Both'::text
+            WHEN 'B'::bpchar THEN 'BUY'::text
+            WHEN 'G'::bpchar THEN 'GET'::text
+            WHEN 'V'::bpchar THEN 'Benefit Value'::text
+            ELSE NULL::text
+        END AS type,
+        CASE p.extinct
+            WHEN 'N'::bpchar THEN 0
+            ELSE 1
+        END AS extinct,
+    promo.promoname,
+    promo.description AS promodescription,
+    promo.promosummary,
+    promo.promocode,
+    p.category
+   FROM ((main.promo_assortment p
+     LEFT JOIN main.admsite site ON ((p.admsite_code_owner = site.code)))
+     LEFT JOIN ( SELECT var_sbq_2.assortment_code,
+                CASE
+                    WHEN (var_sbq_2.usecount = 1) THEN var_sbq_2.description
+                    ELSE NULL::text
+                END AS description,
+                CASE
+                    WHEN (var_sbq_2.usecount = 1) THEN var_sbq_2.promoname
+                    ELSE 'MULTIPLE'::text
+                END AS promoname,
+                CASE
+                    WHEN (var_sbq_2.usecount = 1) THEN var_sbq_2.promosummary
+                    ELSE NULL::text
+                END AS promosummary,
+                CASE
+                    WHEN (var_sbq_2.usecount = 1) THEN (var_sbq_2.promocode)::numeric
+                    ELSE (0)::numeric
+                END AS promocode
+           FROM ( SELECT var_sbq.assortment_code,
+                    max((var_sbq.description)::text) AS description,
+                    max((var_sbq.name)::text) AS promoname,
+                    max((var_sbq.promo_summary)::text) AS promosummary,
+                    count(var_sbq.assortment_code) AS usecount,
+                    max(var_sbq.promo_code) AS promocode
+                   FROM ( SELECT promo_master.name,
+                            promo_buy.assortment_code,
+                            promo_master.description,
+                            promo_master.promo_summary,
+                            promo_buy.promo_code
+                           FROM (main.promo_buy
+                             LEFT JOIN main.promo_master ON ((promo_buy.promo_code = promo_master.code)))
+                        UNION ALL
+                         SELECT promo_master.name,
+                            promo_slab.get_assortment_code,
+                            promo_master.description,
+                            promo_master.promo_summary,
+                            promo_master.code
+                           FROM (main.promo_slab
+                             LEFT JOIN main.promo_master ON ((promo_slab.promo_code = promo_master.code)))) var_sbq
+                  GROUP BY var_sbq.assortment_code) var_sbq_2) promo ON ((p.code = promo.assortment_code)));
+"""
+  columns = (
+    column "code" {
+      type = "bigint"
+    }
+    column "assortmentname" {
+      type = "character varying(150)"
+    }
+    column "description" {
+      type = "character varying(500)"
+    }
+    column "sitename" {
+      type = "character varying(100)"
+    }
+    column "sitecode" {
+      type = "bigint"
+    }
+    column "type" {
+      type = text
+    }
+    column "extinct" {
+      type = "integer"
+    }
+    column "promoname" {
+      type = text
+    }
+    column "promodescription" {
+      type = text
+    }
+    column "promosummary" {
+      type = text
+    }
+    column "promocode" {
+      type = "numeric"
+    }
+    column "category" {
+      type = "character varying(10)"
+    }
+  )
+}
+

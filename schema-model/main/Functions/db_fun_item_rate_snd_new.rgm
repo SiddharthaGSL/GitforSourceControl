@@ -1,0 +1,1095 @@
+function "main"."db_fun_item_rate_snd_new(text, timestamp without time zone, bigint, bigint, bigint, text, bigint, numeric, numeric)" {
+  text = """
+
+DECLARE
+
+/********************************************************************************************************************
+   NAME: DB_FUN_ITEM_RATE_NEW
+
+   PURPOSE:
+
+   REVISIONS:
+   No.           Date        Author                      Description
+   ---------     ----------  ----------------------  --------------------------------------------------------------------
+   REV : 000     20/10/2012  DIPTIMAN                (BUG ID : 413)  CREATED.
+   REV : 001     16/06/2014  MANASH                  (BUG ID : 1328) CST related changes.
+   REV : 002     06/08/2014  DIPTIMAN                (BUG ID : 1328) Rectification of bug id 739.
+   REV : 003     08/08/2014  PRASANTA                (BUG ID : 1505) Price list is not calculating for zero factor
+   REV : 004     26/09/2014  DIPTIMAN                (BUG ID : 1793) AND Design related changes.
+   REV : 005     09/01/2015  DIPTIMAN                (BUG ID : NKH-631-27258) Tax rate when discount factor is zero.
+   REV : 006     20/06/2017  MOUSUMI                 (TFS ID : 29081) GST
+   REV : 010     21/07/2017  SIDDHARTH               (TFS ID : 30847) GST Slab 'Tax Inclusive' Impact
+   REV : 011     08/08/2017  MOUSUMI                 (TFS ID : 31619) Pricelist changes
+   REV : 012     04/01/2018  MOUSUMI                 (TFS ID : 36619) In Sales Return (Do Not Resolve Invoice Option)-GST RATE is not picking proper when item is scanned.
+   REV : 013     11/03/2022  ANINDYA                 (TFS ID : BATCH SERIAL) BatchId introduction in Rate calculation
+********************************************************************************************************************/
+   V_DIVISION_GRPCODE      INVITEM.GRPCODE%TYPE;
+   V_SECTION_GRPCODE       INVITEM.GRPCODE%TYPE;
+   V_DEPT_GRPCODE          INVITEM.GRPCODE%TYPE;
+   V_ARTICLECODE           INVITEM.INVARTICLE_CODE%TYPE;
+   V_ICODE                 INVITEM.ICODE%TYPE;
+   V_CCODE1                INVITEM.CCODE1%TYPE;
+   V_CCODE2                INVITEM.CCODE2%TYPE;
+   V_CCODE3                INVITEM.CCODE3%TYPE;
+   V_CCODE4                INVITEM.CCODE4%TYPE;
+   V_CCODE5                INVITEM.CCODE5%TYPE;
+   V_CCODE6                INVITEM.CCODE6%TYPE;
+   -- START REV : 002
+   -- V_DISCOUNT_FACTOR       NUMBER(20,2);
+   -- V_BASIC_RATE            NUMBER(20,2);
+   -- V_NET_RATE              NUMBER(20,2);
+   V_DISCOUNT_FACTOR       SALORDDET.FACTOR%TYPE;
+   V_BASIC_RATE            SALORDDET.BASIC_RATE%TYPE;
+   V_NET_RATE              SALORDDET.RATE%TYPE;
+   -- END REV : 002
+   V_ROUNDOFF              double precision;
+   V_DISCOUNT              double precision;
+   V_PSITE_ADMCMPTAX_CODE  ADMSITE.PSITE_ADMCMPTAX_CODE%TYPE;
+   V_TAXCODE               INVITEM.TAXCODE%TYPE;
+   V_TAXDESC               FINTAXDET.TAXDESC%TYPE;
+   V_TAXRATE               FINTAXDET.RATE%TYPE;
+   V_TAX_BASIS             FINTAXDET.TAX_BASIS%TYPE;
+   V_RANGE_APPL            FINTAXDET.RANGE_APPL%TYPE;
+   V_TAXAMT                double precision;
+   V_PRICETYPE             SALPRICELISTMAIN.PRICE_TYPE%TYPE;
+   V_INCL_VAT_IN_DIST      SALPRICELISTMAIN.INCLUDE_VAT_IN_DISCOUNT%TYPE;
+   V_DISCOUNT_MODE         SALPRICELISTMAIN.DISCOUNT_MODE%TYPE;
+   V_PRICE_ROUNDOFF        SALPRICELISTMAIN.NET_PRICE_MULTIPLES_OF%TYPE;
+   V_DISCOUNT_BASIS        SALPRICELISTMAIN.DISCOUNT_BASIS%TYPE;
+   V_LIMIT                 SALPRICELISTMAIN.NET_PRICE_ROUND_LIMIT%TYPE;
+   -- START REV : 002
+   V_MIN_DIS_CODE          bigint;
+   -- END REV : 002
+   -- START REV : 001
+    --V_RANGE_APPL            FINTAXDET.RANGE_APPL%TYPE;
+    --V_TAX_BASIS             FINTAXDET.TAX_BASIS%TYPE;
+    V_RANGEFROM             FINTAX_RANGE.RANGEFROM%TYPE;
+    DUP_RATE                FINTAXDET.RATE%TYPE;
+    V_RSP                   V_ITEM.MRP%TYPE;
+    V_FLAG                  char(1) := 'N';
+    V_TAXDETCODE            FINTAXDET.TAXDETCODE%TYPE;
+    V_FACTOR                SALPRICELISTMAIN.DISCOUNT_FACTOR%TYPE;
+    -- END REV : 001
+    -- START REV : 004
+    V_CMPTAX_CODE_BASIS     char(1);
+    V_TRADEGRP_LOCAL        bigint;
+    V_FORMCODE_NONE         bigint;
+    -- END REV : 004
+   ERRCODE                 varchar(50);
+   ERRMSG                  varchar(2000);
+    V_SHOW_PARAM_VAL        char(1) := 'Y';
+  -- START REV : 006
+    /*V_SGST_RATE          NUMBER(20,2) := 0;
+    V_CGST_RATE          NUMBER(20,2) := 0;
+    V_IGST_RATE          NUMBER(20,2) := 0;
+    V_CESS_RATE          NUMBER(20,2) := 0;*/
+    V_CGST_RATE         INVGSTRATE.CGST_RATE%TYPE:= 0;
+    V_SGST_RATE         INVGSTRATE.SGST_RATE%TYPE:= 0;
+    V_IGST_RATE         INVGSTRATE.IGST_RATE%TYPE:= 0;
+    V_CESS_RATE         INVGSTRATE.CESS_RATE%TYPE:= 0;
+    V_GST                char(1) := 'N';
+    V_MAINCODE              INVHSNSACMAIN.CODE%TYPE;
+    V_SLAB_APPL             INVHSNSACDET.SLAB_APPL%TYPE;
+    V_SLAB_BASIS            INVHSNSACDET.SLAB_BASIS%TYPE;
+    V_DETCODE               INVHSNSACDET.CODE%TYPE;
+    V_INVGSTRATE_CODE       INVGSTRATE.CODE%TYPE;
+  -- END REV : 006
+  -- START REV : 011
+    V_EXCEPTION_BASIS       SALPRICELISTDET.EXCEPTION_BASIS%TYPE;
+    V_PRICEFR               SALPRICELISTDET.PRICEFR%TYPE;
+    V_PRICETO               SALPRICELISTDET.PRICETO%TYPE;
+    V_ITM_RATE              double precision;
+  -- END REV : 011
+BEGIN
+   IF  V_SHOW_PARAM_VAL = 'Y' THEN
+       CALL ERRAUDIT('1','2','1', 'P_ICODE                  = '||P_ICODE||CHR(10)||
+                              'P_DATE                   = '||P_DATE||CHR(10)||
+                              'P_SITE_ADMCMPTAX_CODE_OU = '||P_SITE_ADMCMPTAX_CODE_OU||CHR(10)||
+                              'P_ADMCMPTAX_CODE_SITE    = '||P_ADMCMPTAX_CODE_SITE||CHR(10)||
+                              'P_PRICELISTCODE          = '||P_PRICELISTCODE||CHR(10)||
+                              'P_RET_ITEM               = '||P_RET_ITEM||CHR(10)||
+                              'P_FACTOR                 = '||P_FACTOR||CHR(10)||
+                              'P_SALTRADEGRP_CODE       = '||P_SALTRADEGRP_CODE||CHR(10)||
+                              'P_FORMCODE               = '||P_FORMCODE||CHR(10)
+                            );
+   END IF;
+   BEGIN
+        SELECT PRICE_TYPE, INCLUDE_VAT_IN_DISCOUNT, DISCOUNT_MODE,
+               NET_PRICE_MULTIPLES_OF, DISCOUNT_BASIS, NET_PRICE_ROUND_LIMIT,
+               -- START REV : 001
+               DISCOUNT_FACTOR
+               -- END REV : 001
+               -- START REV : 004
+               ,CMPTAX_CODE_BASIS
+               -- END REV : 004
+        INTO STRICT   V_PRICETYPE, V_INCL_VAT_IN_DIST, V_DISCOUNT_MODE,
+               V_PRICE_ROUNDOFF, V_DISCOUNT_BASIS, V_LIMIT,
+               -- START REV : 001
+               V_FACTOR
+               -- END REV : 001
+               -- START REV : 007
+               ,V_CMPTAX_CODE_BASIS
+               -- END REV : 007
+        FROM   SALPRICELISTMAIN
+        WHERE  PRICELISTCODE = P_PRICELISTCODE;
+   EXCEPTION
+        WHEN no_data_found THEN NULL;
+   END;
+   BEGIN
+       SELECT DIVISIONCODE, SECTIONCODE, GRPCODE, ARTICLECODE, ICODE, MRP,
+              CCODE1, CCODE2, CCODE3, CCODE4, CCODE5, CCODE6--,
+              -- START REV : 011
+             -- DECODE( V_PRICETYPE, 'M', MRP,'W', WSP,'L', LISTED_MRP,'C', RATE,'R', COSTRATE ) BASIC_RATE
+                ,CASE WHEN                         V_PRICETYPE='M' THEN  MRP WHEN                         V_PRICETYPE='W' THEN  WSP WHEN                         V_PRICETYPE='L' THEN  LISTED_MRP WHEN                         V_PRICETYPE='C' THEN  RATE WHEN                         V_PRICETYPE='R' THEN  COSTRATE                 END  ITM_RATE
+               -- END REV : 011
+              -- END REV : 011
+       INTO STRICT   V_DIVISION_GRPCODE, V_SECTION_GRPCODE, V_DEPT_GRPCODE, V_ARTICLECODE, V_ICODE, V_RSP,
+              V_CCODE1, V_CCODE2, V_CCODE3, V_CCODE4, V_CCODE5, V_CCODE6
+              --, V_BASIC_RATE  -- REV : 011
+              ,v_itm_rate -- rev : 011
+       FROM   V_ITEM
+       WHERE (ICODE = P_ICODE OR BARCODE = P_ICODE);
+   EXCEPTION
+       WHEN no_data_found THEN NULL;
+   END;
+   BEGIN
+       -- START REV : 002
+       /*
+       SELECT  DISCOUNT_FACTOR
+       INTO    V_DISCOUNT_FACTOR
+       FROM    SALPRICELISTDET
+       WHERE   PRICELISTCODE = NVL(P_PRICELISTCODE,0)
+       AND     P_DATE BETWEEN DTFR AND DTTO
+       AND     (DIVISION_GRPCODE IS NULL OR DIVISION_GRPCODE = V_DIVISION_GRPCODE)
+       AND     (SECTION_GRPCODE  IS NULL OR SECTION_GRPCODE  = V_SECTION_GRPCODE)
+       AND     (DEPT_GRPCODE     IS NULL OR DEPT_GRPCODE     = V_DEPT_GRPCODE)
+       AND     (INVARTICLE_CODE  IS NULL OR INVARTICLE_CODE  = V_ARTICLECODE)
+       AND     (CCODE1           IS NULL OR CCODE1           = V_CCODE1)
+       AND     (CCODE2           IS NULL OR CCODE2           = V_CCODE2)
+       AND     (CCODE3           IS NULL OR CCODE3           = V_CCODE3)
+       AND     (CCODE4           IS NULL OR CCODE4           = V_CCODE4)
+       AND     (CCODE5           IS NULL OR CCODE5           = V_CCODE5)
+       AND     (CCODE6           IS NULL OR CCODE6           = V_CCODE6)
+       AND     CODE = (
+                            SELECT MIN(CODE)
+                            FROM   SALPRICELISTDET
+                            WHERE  PRICELISTCODE = P_PRICELISTCODE
+                            AND     P_DATE BETWEEN DTFR AND DTTO
+                            AND     (DIVISION_GRPCODE IS NULL OR DIVISION_GRPCODE = V_DIVISION_GRPCODE)
+                            AND     (SECTION_GRPCODE  IS NULL OR SECTION_GRPCODE  = V_SECTION_GRPCODE)
+                            AND     (DEPT_GRPCODE     IS NULL OR DEPT_GRPCODE     = V_DEPT_GRPCODE)
+                            AND     (INVARTICLE_CODE  IS NULL OR INVARTICLE_CODE  = V_ARTICLECODE)
+                            AND     (CCODE1           IS NULL OR CCODE1           = V_CCODE1)
+                            AND     (CCODE2           IS NULL OR CCODE2           = V_CCODE2)
+                            AND     (CCODE3           IS NULL OR CCODE3           = V_CCODE3)
+                            AND     (CCODE4           IS NULL OR CCODE4           = V_CCODE4)
+                            AND     (CCODE5           IS NULL OR CCODE5           = V_CCODE5)
+                            AND     (CCODE6           IS NULL OR CCODE6           = V_CCODE6)
+                      );
+
+       */
+       SELECT DISCOUNT_FACTOR,
+                  -- START REV : 011
+                  --MIN(CODE)
+                  max(PRIORITY)
+                  ,EXCEPTION_BASIS
+                  ,PRICEFR
+                  ,PRICETO
+                  -- END REV : 011
+       INTO STRICT   V_DISCOUNT_FACTOR, V_MIN_DIS_CODE
+                 ,V_EXCEPTION_BASIS -- REV : 011
+                 -- START REV : 011
+                 ,V_PRICEFR
+                 ,V_PRICETO
+                 -- END REV : 011
+       FROM   SALPRICELISTDET
+       WHERE  PRIORITY = (  SELECT
+                              -- START REV : 011
+                              --MAX(CODE)
+                               MAX(PRIORITY)
+                              -- END REV : 011
+                        FROM SALPRICELISTDET
+                        WHERE PRICELISTCODE = P_PRICELISTCODE
+                        AND (DIVISION_GRPCODE IS NULL OR DIVISION_GRPCODE = V_DIVISION_GRPCODE)
+                        AND (SECTION_GRPCODE IS NULL OR  SECTION_GRPCODE = V_SECTION_GRPCODE)
+                        AND (DEPT_GRPCODE IS NULL OR  DEPT_GRPCODE = V_DEPT_GRPCODE)
+                        AND (INVARTICLE_CODE IS NULL OR INVARTICLE_CODE = V_ARTICLECODE)
+                        AND (CCODE1 IS NULL OR CCODE1 = V_CCODE1)
+                        AND (CCODE2 IS NULL OR CCODE2 = V_CCODE2)
+                        AND (CCODE3 IS NULL OR CCODE3 = V_CCODE3)
+                        AND (CCODE4 IS NULL OR CCODE4 = V_CCODE4)
+                        AND (CCODE5 IS NULL OR CCODE5 = V_CCODE5)
+                        AND (CCODE6 IS NULL OR CCODE6 = V_CCODE6)
+                        AND (ICODE IS NULL OR ICODE = P_ICODE) -- REV : 011
+                        -- START REV : 011
+                        AND
+                            (
+                              (  V_ITM_RATE BETWEEN PRICEFR AND PRICETO )
+                            OR (PRICEFR IS NULL AND PRICETO IS NULL )
+                            )
+                        -- END REV : 011
+                        AND    P_DATE BETWEEN DTFR AND DTTO
+                      )
+         AND   PRICELISTCODE = P_PRICELISTCODE
+         -- START REV : 011
+         GROUP BY DISCOUNT_FACTOR
+                  ,EXCEPTION_BASIS
+                  ,PRICEFR
+                  ,PRICETO
+         -- END REV : 011
+;
+       -- END REV : 002
+       -- START REV : 003
+       /*
+       IF  NVL(V_DISCOUNT_FACTOR,0) = 0  THEN
+           V_DISCOUNT_FACTOR := NVL(P_FACTOR,0);
+       END IF;
+       */
+       IF V_DISCOUNT_FACTOR IS NULL THEN
+         V_DISCOUNT_FACTOR := coalesce(P_FACTOR,0);
+         V_EXCEPTION_BASIS  := NULL; -- REV :011
+       END IF;
+       -- END REV : 003
+   EXCEPTION
+       WHEN no_data_found THEN
+       V_DISCOUNT_FACTOR := coalesce(P_FACTOR,0);
+       V_EXCEPTION_BASIS  := NULL; -- REV :011
+   END;
+        -- START REV : 011
+        IF   V_EXCEPTION_BASIS = 'P' THEN
+                IF V_ITM_RATE IS NOT NULL THEN
+                   V_BASIC_RATE := V_ITM_RATE;
+                ELSE
+                    V_DISCOUNT_FACTOR := coalesce(V_FACTOR,0);
+                    V_EXCEPTION_BASIS  := NULL;
+                END IF;
+        -- START REV : 011
+        ELSIF V_EXCEPTION_BASIS = 'F' THEN
+                IF V_ITM_RATE IS NOT NULL THEN
+                          V_BASIC_RATE := V_DISCOUNT_FACTOR;
+                          V_NET_RATE   := V_DISCOUNT_FACTOR;
+                          V_TAXAMT     := 0;
+                          V_DISCOUNT   := 0;
+                          V_ROUNDOFF   := 0;
+                          V_DISCOUNT_FACTOR := 0;
+                ELSE
+                    V_DISCOUNT_FACTOR := coalesce(V_FACTOR,0);
+                    V_EXCEPTION_BASIS  := NULL;
+                END IF;
+        END IF;
+        -- END REV : 011
+    -- START REV : 011
+     IF   V_EXCEPTION_BASIS IS NULL THEN
+             V_BASIC_RATE := V_ITM_RATE;
+    END IF;
+    -- END REV : 011
+    -- START REV : 011
+        IF coalesce(V_EXCEPTION_BASIS,'P') = 'P' THEN
+        -- END REV : 011
+               IF  V_INCL_VAT_IN_DIST = 'Y' THEN
+                   -- Range would not be applied right now, HARSH.
+                   /*
+                   IF  NVL(V_PSITE_ADMCMPTAX_CODE,0) <> 0 THEN
+                       DB_PRO_RETURN_ITEM_TAX(
+                                                 P_ICODE
+                                                ,V_PSITE_ADMCMPTAX_CODE
+                                                ,P_DATE
+                                                ,V_RSP
+                                                ,V_BASIC_RATE
+                                                ,V_TAXCODE
+                                                ,V_TAXDESC
+                                                ,V_TAXRATE
+                                                ,V_TAX_BASIS
+                                                ,V_RANGE_APPL
+                                             );
+                   END IF;
+                   */
+                  -- BEGIN
+                      -- START REV : 004
+                      /*
+                      SELECT   T2.RATE,
+                              -- START REV : 001
+                               T2.TAXDETCODE,
+                               T2.RANGE_APPL,
+                               T2.TAX_BASIS
+                               -- END REV : 001
+                      INTO
+                               V_TAXRATE,
+                               -- START REV : 001
+                               V_TAXDETCODE,
+                               V_RANGE_APPL,
+                               V_TAX_BASIS
+                               -- END REV : 001
+                      FROM
+                              INVITEM T1,
+                              FINTAXDET T2
+                      WHERE
+                              T1.ICODE           = P_ICODE
+                      AND     T1.TAXCODE         = T2.TAXCODE(+)
+                      AND     T2.ADMCMPTAX_CODE  = P_SITE_ADMCMPTAX_CODE
+                      -- START REV : 001
+                    AND    (
+                                (
+                                    P_SALTRADEGRP_CODE IS NULL
+                                    AND
+                                    T2.FINTRADEGRP_CODE IS NULL
+                                )
+                                OR
+                                T2.FINTRADEGRP_CODE = P_SALTRADEGRP_CODE
+                           )
+                    AND    (
+                                (
+                                    P_FORMCODE IS NULL
+                                    AND
+                                    T2.FORMCODE IS NULL
+                                )
+                                OR
+                                T2.FORMCODE = P_FORMCODE
+                           )
+                    -- END RVE : 001
+                      AND     (T1.TAXCODE IS NULL
+                               OR
+                               T2.TAXDETCODE = ( SELECT TAXDETCODE
+                                                 FROM   FINTAXDET B
+                                                 WHERE  T2.TAXCODE  = B.TAXCODE
+                                                 AND    B.ADMCMPTAX_CODE = P_SITE_ADMCMPTAX_CODE
+                                                 -- START REV : 001
+                                                AND    (
+                                                            (
+                                                                P_SALTRADEGRP_CODE IS NULL
+                                                                AND
+                                                                B.FINTRADEGRP_CODE IS NULL
+                                                            )
+                                                            OR
+                                                            B.FINTRADEGRP_CODE = P_SALTRADEGRP_CODE
+                                                       )
+                                                AND    (
+                                                            (
+                                                                P_FORMCODE IS NULL
+                                                                AND
+                                                                B.FORMCODE IS NULL
+                                                            )
+                                                            OR
+                                                            B.FORMCODE = P_FORMCODE
+                                                       )
+                                                -- END RVE : 001
+                                                 AND    B.DTFR           =  (
+                                                                               SELECT  MAX(C.DTFR)
+                                                                               FROM    FINTAXDET C
+                                                                               WHERE   C.DTFR  <=  P_DATE
+                                                                               AND     (C.DTTO >=  P_DATE OR C.DTTO IS NULL )
+                                                                               AND     C.ADMCMPTAX_CODE = P_SITE_ADMCMPTAX_CODE
+                                                                               AND     C.ADMCMPTAX_CODE = P_SITE_ADMCMPTAX_CODE
+                                                                               AND     C.TAXCODE        = T2.TAXCODE
+                                                                               -- START REV : 001
+                                                                                AND    (
+                                                                                            (
+                                                                                                P_SALTRADEGRP_CODE IS NULL
+                                                                                                AND
+                                                                                                C.FINTRADEGRP_CODE IS NULL
+                                                                                            )
+                                                                                            OR
+                                                                                            C.FINTRADEGRP_CODE = P_SALTRADEGRP_CODE
+                                                                                       )
+                                                                                AND    (
+                                                                                            (
+                                                                                                P_FORMCODE IS NULL
+                                                                                                AND
+                                                                                                C.FORMCODE IS NULL
+                                                                                            )
+                                                                                            OR
+                                                                                            C.FORMCODE = P_FORMCODE
+                                                                                       )
+                                                                                -- END RVE : 001
+                                                                            )
+                                               )
+                              );
+                      */
+                       -- START REV : 004
+                       IF  V_CMPTAX_CODE_BASIS = 'D' THEN
+                            BEGIN
+                                SELECT CODE
+                                INTO STRICT   V_TRADEGRP_LOCAL
+                                FROM   FINTRADEGRP
+                                WHERE  UPPER(NAME) = 'LOCAL';
+                            EXCEPTION
+                                WHEN no_data_found THEN NULL;
+                            END;
+                            BEGIN
+                                SELECT FORMCODE
+                                INTO STRICT   V_FORMCODE_NONE
+                                FROM   FINFORM
+                                WHERE  UPPER(FORMNAME) = 'NONE';
+                            EXCEPTION
+                                WHEN no_data_found THEN NULL;
+                            END;
+                       END IF;
+                       -- END REV : 004
+                   -- START REV : 006
+                                BEGIN
+                                    SELECT	    INVHSNSACMAIN_CODE
+                                    INTO STRICT		V_MAINCODE
+                                    FROM		INVITEM
+                                    WHERE		ICODE = P_ICODE;
+                                EXCEPTION WHEN no_data_found THEN
+                                   V_MAINCODE := NULL;
+                                   V_GST      := 'N';
+                                END;
+                           /* ELSIF P_SERVICECODE IS NOT NULL THEN
+                                BEGIN
+                                    SELECT	    INVHSNSACMAIN_CODE
+                                    INTO		V_MAINCODE
+                                    FROM		PURSERVICE
+                                    WHERE		SERVICECODE = P_SERVICECODE;
+                                EXCEPTION WHEN NO_DATA_FOUND THEN
+                                   V_MAINCODE := NULL;
+                                   V_GST      := 'N';
+                                END;*/
+                           -- ERRAUDIT(11,11,11,V_TAXCODE||'*'||P_ENTDT||'*'||P_GST_COMPONENT);
+                           IF 	V_MAINCODE IS NOT NULL THEN
+                                BEGIN
+                                    SELECT	SLAB_APPL, SLAB_BASIS,CODE,INVGSTRATE_CODE
+                                    INTO STRICT    V_SLAB_APPL, V_SLAB_BASIS,V_DETCODE,V_INVGSTRATE_CODE
+                                    FROM	 INVHSNSACDET D
+                                    WHERE		D.INVHSNSACMAIN_CODE = V_MAINCODE
+                                    AND     	D.CODE = (  SELECT D1.CODE
+                                                            FROM   INVHSNSACDET D1
+                                                            WHERE  D1.INVHSNSACMAIN_CODE = V_MAINCODE
+                                                            AND    EFFECTIVE_DATE = ( SELECT MAX(EFFECTIVE_DATE)
+                                                                                           FROM   INVHSNSACDET D3
+                                                                                           WHERE  D3.INVHSNSACMAIN_CODE = V_MAINCODE
+                                                                                           AND    D3.EFFECTIVE_DATE 	<=  P_DATE
+                                                                                    )
+                                                         )	;
+                                     V_GST      := 'Y';
+                                EXCEPTION
+                                WHEN no_data_found THEN
+                                    V_TAXRATE       := 0;
+                                    V_GST      := 'N';
+                                WHEN OTHERS  THEN
+                                    V_TAXRATE       := 0;
+                                END;
+                            END IF;
+                            IF coalesce(V_GST,'N') = 'N' THEN
+                            -- END REV : 006
+                                            BEGIN
+                                                   SELECT  t2.rate, t2.taxdetcode, t2.range_appl, t2.tax_basis
+                                                   INTO STRICT    v_taxrate, v_taxdetcode, v_range_appl, v_tax_basis
+                                                   FROM invitem t1
+LEFT OUTER JOIN fintaxdet t2 ON (t1.taxcode = t2.taxcode)
+WHERE t1.icode  = p_icode  AND t2.admcmptax_code =
+                                                                                   CASE
+                                                                                      WHEN v_cmptax_code_basis = 'S' THEN p_site_admcmptax_code_ou
+                                                                                      ELSE p_admcmptax_code_site
+                                                                                   END AND (
+                                                             (
+                                                                 v_cmptax_code_basis = 'D'
+                                                                 AND
+                                                                 t2.fintradegrp_code = v_tradegrp_local
+                                                             )
+                                                             OR
+                                                             (
+                                                                v_cmptax_code_basis <> 'D'
+                                                                AND
+                                                                (
+                                                                    (
+                                                                        p_saltradegrp_code IS NULL
+                                                                        AND
+                                                                        t2.fintradegrp_code IS NULL
+                                                                    )
+                                                                    OR
+                                                                    t2.fintradegrp_code = p_saltradegrp_code
+                                                                )
+                                                             )
+                                                          ) AND (
+                                                             (
+                                                                 v_cmptax_code_basis = 'D'
+                                                                 AND
+                                                                 t2.formcode = v_formcode_none
+                                                             )
+                                                             OR
+                                                             (
+                                                                v_cmptax_code_basis <> 'D'
+                                                                AND
+                                                                (
+                                                                    (
+                                                                        p_formcode IS NULL
+                                                                        AND
+                                                                        t2.formcode IS NULL
+                                                                    )
+                                                                    OR
+                                                                    t2.formcode = p_formcode
+                                                                )
+                                                             )
+                                                          ) AND (
+                                                              t1.taxcode IS NULL
+                                                              OR
+                                                              t2.taxdetcode = (
+                                                                                 SELECT taxdetcode
+                                                                                 FROM   fintaxdet b
+                                                                                 WHERE  t2.taxcode = b.taxcode
+                                                                                 AND    b.admcmptax_code =
+                                                                                                              CASE
+                                                                                                                 WHEN v_cmptax_code_basis = 'S' THEN p_site_admcmptax_code_ou
+                                                                                                                 ELSE p_admcmptax_code_site
+                                                                                                              END
+                                                                                 AND    (
+                                                                                            (
+                                                                                                v_cmptax_code_basis = 'D'
+                                                                                                AND
+                                                                                                b.fintradegrp_code = v_tradegrp_local
+                                                                                            )
+                                                                                            OR
+                                                                                            (
+                                                                                                v_cmptax_code_basis <> 'D'
+                                                                                                AND
+                                                                                                (
+                                                                                                    (
+                                                                                                        p_saltradegrp_code IS NULL
+                                                                                                        AND
+                                                                                                        b.fintradegrp_code IS NULL
+                                                                                                    )
+                                                                                                    OR
+                                                                                                    b.fintradegrp_code = p_saltradegrp_code
+                                                                                                )
+                                                                                            )
+                                                                                        )
+                                                                                 AND    (
+                                                                                            (
+                                                                                                v_cmptax_code_basis = 'D'
+                                                                                                AND
+                                                                                                b.formcode = v_formcode_none
+                                                                                            )
+                                                                                            OR
+                                                                                            (
+                                                                                                v_cmptax_code_basis <> 'D'
+                                                                                                AND
+                                                                                                (
+                                                                                                    (
+                                                                                                        p_formcode IS NULL
+                                                                                                        AND
+                                                                                                        b.formcode IS NULL
+                                                                                                    )
+                                                                                                    OR
+                                                                                                    b.formcode = p_formcode
+                                                                                                )
+                                                                                            )
+                                                                                        )
+                                                                                 AND    b.dtfr =  (
+                                                                                                       SELECT MAX(c.dtfr)
+                                                                                                       FROM   fintaxdet c
+                                                                                                       WHERE  c.dtfr    <=  p_date
+                                                                                                       AND (c.dtto   >=  p_date or c.dtto IS NULL)
+                                                                                                       AND    c.taxcode  = t2.taxcode
+                                                                                                       AND    c.admcmptax_code =
+                                                                                                                                  CASE
+                                                                                                                                      WHEN v_cmptax_code_basis = 'S' THEN p_site_admcmptax_code_ou
+                                                                                                                                      ELSE p_admcmptax_code_site
+                                                                                                                                  END
+                                                                                                       AND    (
+                                                                                                                  (
+                                                                                                                      v_cmptax_code_basis = 'D'
+                                                                                                                      AND
+                                                                                                                      c.fintradegrp_code = v_tradegrp_local
+                                                                                                                  )
+                                                                                                                  OR
+                                                                                                                  (
+                                                                                                                      v_cmptax_code_basis <> 'D'
+                                                                                                                      AND
+                                                                                                                      (
+                                                                                                                          (
+                                                                                                                              p_saltradegrp_code IS NULL
+                                                                                                                              AND
+                                                                                                                              c.fintradegrp_code IS NULL
+                                                                                                                          )
+                                                                                                                          OR
+                                                                                                                          c.fintradegrp_code = p_saltradegrp_code
+                                                                                                                      )
+                                                                                                                  )
+                                                                                                              )
+                                                                                                       AND    (
+                                                                                                                  (
+                                                                                                                      v_cmptax_code_basis = 'D'
+                                                                                                                      AND
+                                                                                                                      c.formcode = v_formcode_none
+                                                                                                                  )
+                                                                                                                  OR
+                                                                                                                  (
+                                                                                                                      v_cmptax_code_basis <> 'D'
+                                                                                                                      AND
+                                                                                                                      (
+                                                                                                                           (
+                                                                                                                                p_formcode IS NULL
+                                                                                                                                AND
+                                                                                                                                c.formcode IS NULL
+                                                                                                                           )
+                                                                                                                           OR
+                                                                                                                           c.formcode = p_formcode
+                                                                                                                      )
+                                                                                                                  )
+                                                                                                              )
+                                                                                                  )
+                                                                              )
+                                                           );
+                                                  -- END REV : 004
+                                               EXCEPTION
+                                                  WHEN no_data_found THEN
+                                                  V_TAXRATE := 0;
+                                               END;
+                                               -- start rev : 001
+                                               IF   coalesce(V_RANGE_APPL,'N') = 'Y' AND coalesce(V_TAX_BASIS,'@') = 'M' THEN
+                                                    V_RANGEFROM := 0;
+                                                    V_FLAG := 'N';
+                                                    -- START REV : 004
+                                                    /*
+                                                    SELECT  NVL(MIN(RANGEFROM),0), 'Y'
+                                                    INTO    V_RANGEFROM,
+                                                            V_FLAG
+                                                    FROM    FINTAX_RANGE    R
+                                                    WHERE   TAXDETCODE = V_TAXDETCODE;
+                                                    */
+                                                    BEGIN
+                                                        SELECT  MIN(RANGEFROM), 'Y'
+                                                        INTO STRICT    V_RANGEFROM, V_FLAG
+                                                        FROM    FINTAX_RANGE R
+                                                        WHERE   TAXDETCODE = V_TAXDETCODE;
+                                                        IF  V_RANGEFROM IS NULL THEN
+                                                            V_FLAG := 'N';
+                                                        END IF;
+                                                    EXCEPTION
+                                                        WHEN no_data_found THEN
+                                                          NULL;
+                                                    END;
+                                                    -- END REV : 004
+                                                    IF    V_FLAG = 'N' THEN
+                                                          V_TAXRATE := 0;
+                                                    ELSE
+                                                        IF  V_RSP >= V_RANGEFROM  THEN
+                                                            BEGIN
+                                                                SELECT  coalesce(RATE,0)
+                                                                INTO STRICT    DUP_RATE
+                                                                FROM    FINTAX_RANGE    R
+                                                                WHERE   TAXDETCODE = V_TAXDETCODE
+                                                                AND     V_RSP BETWEEN coalesce(RANGEFROM,0) AND coalesce(RANGETO,999999999999999999);
+                                                                V_TAXRATE := DUP_RATE;
+                                                            EXCEPTION
+                                                                WHEN no_data_found THEN
+                                                                V_TAXRATE := 0;
+                                                                WHEN OTHERS THEN
+                                                                V_TAXRATE := 0;
+                                                            END;
+                                                        ELSE
+                                                            V_TAXRATE := 0;
+                                                        END IF;
+                                                    END IF;
+                                               END IF;
+                                               IF   coalesce(V_RANGE_APPL,'N') = 'Y' AND coalesce(V_TAX_BASIS,'@') = 'N' THEN
+                                                    V_RANGEFROM := 0;
+                                                    V_FLAG := 'N';
+                                                    BEGIN
+                                                        SELECT  MIN(RANGEFROM), 'Y'
+                                                        INTO STRICT    V_RANGEFROM, V_FLAG
+                                                        FROM    FINTAX_RANGE R
+                                                        WHERE   TAXDETCODE = V_TAXDETCODE;
+                                                        IF  V_RANGEFROM IS NULL THEN
+                                                            V_FLAG := 'N';
+                                                        END IF;
+                                                    EXCEPTION
+                                                       WHEN no_data_found THEN NULL;
+                                                    END;
+                                                    IF  V_FLAG = 'N' THEN
+                                                        V_TAXRATE := 0;
+                                                    ELSE
+                                                        -- START REV : 005
+                                                        -- IF  NVL(V_FACTOR,0) <> 0 AND V_DISCOUNT_MODE = 'U' THEN
+                                                        IF  V_DISCOUNT_MODE = 'U' THEN
+                                                        -- END REV : 005
+                                                            IF  V_LIMIT = 'U' THEN
+                                                                IF  coalesce(V_PRICE_ROUNDOFF,0) = 0 THEN
+                                                                    V_RSP := CEIL(V_BASIC_RATE + ((V_BASIC_RATE*V_FACTOR)/100));
+                                                                END IF;
+                                                                IF  coalesce(V_PRICE_ROUNDOFF,0) > 0  THEN
+                                                                    V_RSP := CEIL((V_BASIC_RATE + ((V_BASIC_RATE*V_FACTOR)/100))/V_PRICE_ROUNDOFF)*V_PRICE_ROUNDOFF;
+                                                                END IF;
+                                                            END IF;
+                                                            IF  V_LIMIT = 'L' THEN
+                                                                IF  coalesce(V_PRICE_ROUNDOFF,0) = 0 THEN
+                                                                    V_RSP := FLOOR(V_BASIC_RATE + ((V_BASIC_RATE*V_FACTOR)/100));
+                                                                END IF;
+                                                                IF  coalesce(V_PRICE_ROUNDOFF,0) > 0  THEN
+                                                                    V_RSP := FLOOR((V_BASIC_RATE + ((V_BASIC_RATE*V_FACTOR)/100))/V_PRICE_ROUNDOFF)*V_PRICE_ROUNDOFF;
+                                                                END IF;
+                                                            END IF;
+                                                            IF  V_LIMIT = 'R' THEN
+                                                                IF  coalesce(V_PRICE_ROUNDOFF,0) = 0 THEN
+                                                                    V_RSP := ROUND(V_BASIC_RATE + ((V_BASIC_RATE*V_FACTOR)/100),0);
+                                                                END IF;
+                                                                IF  coalesce(V_PRICE_ROUNDOFF,0) > 0  THEN
+                                                                    V_RSP := ROUND((V_BASIC_RATE + ((V_BASIC_RATE*V_FACTOR)/100))/V_PRICE_ROUNDOFF)*V_PRICE_ROUNDOFF;
+                                                                END IF;
+                                                            END IF;
+                                                            -- START REV : 004
+                                                            IF  V_LIMIT = 'N' THEN
+                                                                IF  coalesce(V_PRICE_ROUNDOFF,0) = 0 THEN
+                                                                    V_RSP := ROUND(V_BASIC_RATE + ((V_BASIC_RATE*V_FACTOR)/100),2);
+                                                                END IF;
+                                                                IF  coalesce(V_PRICE_ROUNDOFF,0) > 0  THEN
+                                                                    V_RSP := ROUND((V_BASIC_RATE + ((V_BASIC_RATE*V_FACTOR)/100))/V_PRICE_ROUNDOFF)*V_PRICE_ROUNDOFF;
+                                                                END IF;
+                                                            END IF;
+                                                            -- END REV : 004
+                                                        END IF;
+                                                        -- START REV : 005
+                                                        -- IF  NVL(V_FACTOR,0) <> 0 AND V_DISCOUNT_MODE = 'D' THEN
+                                                        IF  V_DISCOUNT_MODE = 'D' THEN
+                                                        -- END REV : 005
+                                                            IF  V_LIMIT = 'U' THEN
+                                                                IF  coalesce(V_PRICE_ROUNDOFF,0) = 0 THEN
+                                                                    V_RSP := CEIL(V_BASIC_RATE - ((V_BASIC_RATE*V_FACTOR)/100));
+                                                                END IF;
+                                                                IF  coalesce(V_PRICE_ROUNDOFF,0) > 0  THEN
+                                                                    V_RSP := CEIL((V_BASIC_RATE - ((V_BASIC_RATE*V_FACTOR)/100))/V_PRICE_ROUNDOFF)*V_PRICE_ROUNDOFF;
+                                                                END IF;
+                                                            END IF;
+                                                            IF  V_LIMIT = 'L' THEN
+                                                                IF  coalesce(V_PRICE_ROUNDOFF,0) = 0 THEN
+                                                                    V_RSP := FLOOR(V_BASIC_RATE - ((V_BASIC_RATE*V_FACTOR)/100));
+                                                                END IF;
+                                                                IF  coalesce(V_PRICE_ROUNDOFF,0) > 0  THEN
+                                                                    V_RSP := FLOOR((V_BASIC_RATE - ((V_BASIC_RATE*V_FACTOR)/100))/V_PRICE_ROUNDOFF)*V_PRICE_ROUNDOFF;
+                                                                END IF;
+                                                            END IF;
+                                                            IF  V_LIMIT = 'R' THEN
+                                                                IF  coalesce(V_PRICE_ROUNDOFF,0) = 0 THEN
+                                                                    V_RSP := ROUND(V_BASIC_RATE - ((V_BASIC_RATE*V_FACTOR)/100),0);
+                                                                END IF;
+                                                                IF  coalesce(V_PRICE_ROUNDOFF,0) > 0  THEN
+                                                                    V_RSP := ROUND((V_BASIC_RATE - ((V_BASIC_RATE*V_FACTOR)/100))/V_PRICE_ROUNDOFF)*V_PRICE_ROUNDOFF;
+                                                                END IF;
+                                                            END IF;
+                                                            -- START REV : 004
+                                                            -- START REV : 012
+                                                           -- IF  V_LIMIT = 'R' THEN
+                                                           IF  V_LIMIT = 'N' THEN
+                                                            -- END REV : 012
+                                                                IF  coalesce(V_PRICE_ROUNDOFF,0) = 0 THEN
+                                                                    V_RSP := ROUND(V_BASIC_RATE - ((V_BASIC_RATE*V_FACTOR)/100),2);
+                                                                END IF;
+                                                                IF  coalesce(V_PRICE_ROUNDOFF,0) > 0  THEN
+                                                                    V_RSP := ROUND((V_BASIC_RATE - ((V_BASIC_RATE*V_FACTOR)/100))/V_PRICE_ROUNDOFF)*V_PRICE_ROUNDOFF;
+                                                                END IF;
+                                                            END IF;
+                                                            -- END REV : 004
+                                                        END IF;
+                                                        IF    V_RSP >= V_RANGEFROM  THEN
+                                                            BEGIN
+                                                                SELECT  coalesce(RATE,0)
+                                                                INTO STRICT    DUP_RATE
+                                                                FROM    FINTAX_RANGE    R
+                                                                WHERE   TAXDETCODE = V_TAXDETCODE
+                                                                AND     V_RSP BETWEEN coalesce(RANGEFROM,0) AND coalesce(RANGETO,999999999999999999);
+                                                                V_TAXRATE := DUP_RATE;
+                                                            EXCEPTION
+                                                                WHEN no_data_found THEN
+                                                                V_TAXRATE := 0;
+                                                                WHEN OTHERS THEN
+                                                                V_TAXRATE := 0;
+                                                            END;
+                                                        ELSE
+                                                            V_TAXRATE := 0;
+                                                        END IF;
+                                                    END IF;
+                                               END IF;
+                                               -- end rev : 001
+                          ELSE
+                                                IF	coalesce(V_SLAB_APPL,'N') = 'Y' AND V_SLAB_BASIS = 'R' THEN
+                                                                V_RSP := round((V_RSP)::numeric,2);
+                                                ELSIF	coalesce(V_SLAB_APPL,'N') = 'Y' AND V_SLAB_BASIS = 'N' THEN
+                                                                V_RSP := 0;
+                                                      IF  V_DISCOUNT_BASIS = 'B' OR v_cmptax_code_basis = 'D' THEN
+                                                            V_RSP := round((V_BASIC_RATE)::numeric,2);
+                                                      ELSE
+                                                            IF  V_DISCOUNT_MODE = 'U' THEN
+                                                                IF  V_LIMIT = 'U' THEN
+                                                                    IF  coalesce(V_PRICE_ROUNDOFF,0) = 0 THEN
+                                                                        V_RSP := CEIL(V_BASIC_RATE + ((V_BASIC_RATE*V_FACTOR)/100));
+                                                                    END IF;
+                                                                    IF  coalesce(V_PRICE_ROUNDOFF,0) > 0  THEN
+                                                                        V_RSP := CEIL((V_BASIC_RATE + ((V_BASIC_RATE*V_FACTOR)/100))/V_PRICE_ROUNDOFF)*V_PRICE_ROUNDOFF;
+                                                                    END IF;
+                                                                END IF;
+                                                                IF  V_LIMIT = 'L' THEN
+                                                                    IF  coalesce(V_PRICE_ROUNDOFF,0) = 0 THEN
+                                                                        V_RSP := FLOOR(V_BASIC_RATE + ((V_BASIC_RATE*V_FACTOR)/100));
+                                                                    END IF;
+                                                                    IF  coalesce(V_PRICE_ROUNDOFF,0) > 0  THEN
+                                                                        V_RSP := FLOOR((V_BASIC_RATE + ((V_BASIC_RATE*V_FACTOR)/100))/V_PRICE_ROUNDOFF)*V_PRICE_ROUNDOFF;
+                                                                    END IF;
+                                                                END IF;
+                                                                IF  V_LIMIT = 'R' THEN
+                                                                    IF  coalesce(V_PRICE_ROUNDOFF,0) = 0 THEN
+                                                                        V_RSP := ROUND(V_BASIC_RATE + ((V_BASIC_RATE*V_FACTOR)/100),0);
+                                                                    END IF;
+                                                                    IF  coalesce(V_PRICE_ROUNDOFF,0) > 0  THEN
+                                                                        V_RSP := ROUND((V_BASIC_RATE + ((V_BASIC_RATE*V_FACTOR)/100))/V_PRICE_ROUNDOFF)*V_PRICE_ROUNDOFF;
+                                                                    END IF;
+                                                                END IF;
+                                                                -- START REV : 004
+                                                                IF  V_LIMIT = 'N' THEN
+                                                                    IF  coalesce(V_PRICE_ROUNDOFF,0) = 0 THEN
+                                                                        V_RSP := ROUND(V_BASIC_RATE + ((V_BASIC_RATE*V_FACTOR)/100),2);
+                                                                    END IF;
+                                                                    IF  coalesce(V_PRICE_ROUNDOFF,0) > 0  THEN
+                                                                        V_RSP := ROUND((V_BASIC_RATE + ((V_BASIC_RATE*V_FACTOR)/100))/V_PRICE_ROUNDOFF)*V_PRICE_ROUNDOFF;
+                                                                    END IF;
+                                                                END IF;
+                                                                -- END REV : 004
+                                                            END IF;
+                                                            IF  V_DISCOUNT_MODE = 'D' THEN
+                                                                IF  V_LIMIT = 'U' THEN
+                                                                    IF  coalesce(V_PRICE_ROUNDOFF,0) = 0 THEN
+                                                                        V_RSP := CEIL(V_BASIC_RATE - ((V_BASIC_RATE*V_FACTOR)/100));
+                                                                    END IF;
+                                                                    IF  coalesce(V_PRICE_ROUNDOFF,0) > 0  THEN
+                                                                        V_RSP := CEIL((V_BASIC_RATE - ((V_BASIC_RATE*V_FACTOR)/100))/V_PRICE_ROUNDOFF)*V_PRICE_ROUNDOFF;
+                                                                    END IF;
+                                                                END IF;
+                                                                IF  V_LIMIT = 'L' THEN
+                                                                    IF  coalesce(V_PRICE_ROUNDOFF,0) = 0 THEN
+                                                                        V_RSP := FLOOR(V_BASIC_RATE - ((V_BASIC_RATE*V_FACTOR)/100));
+                                                                    END IF;
+                                                                    IF  coalesce(V_PRICE_ROUNDOFF,0) > 0  THEN
+                                                                        V_RSP := FLOOR((V_BASIC_RATE - ((V_BASIC_RATE*V_FACTOR)/100))/V_PRICE_ROUNDOFF)*V_PRICE_ROUNDOFF;
+                                                                    END IF;
+                                                                END IF;
+                                                                IF  V_LIMIT = 'R' THEN
+                                                                    IF  coalesce(V_PRICE_ROUNDOFF,0) = 0 THEN
+                                                                        V_RSP := ROUND(V_BASIC_RATE - ((V_BASIC_RATE*V_FACTOR)/100),0);
+                                                                    END IF;
+                                                                    IF  coalesce(V_PRICE_ROUNDOFF,0) > 0  THEN
+                                                                        V_RSP := ROUND((V_BASIC_RATE - ((V_BASIC_RATE*V_FACTOR)/100))/V_PRICE_ROUNDOFF)*V_PRICE_ROUNDOFF;
+                                                                    END IF;
+                                                                END IF;
+                                                               -- START REV : 012
+                                                              -- ELSIF V_LIMIT = 'R' THEN
+                                                               IF V_LIMIT = 'N' THEN
+                                                               -- END REV : 012
+                                                                    IF  coalesce(V_PRICE_ROUNDOFF,0) = 0 THEN
+                                                                        V_RSP := ROUND(V_BASIC_RATE - ((V_BASIC_RATE*V_FACTOR)/100),2);
+                                                                    END IF;
+                                                                    IF  coalesce(V_PRICE_ROUNDOFF,0) > 0  THEN
+                                                                        V_RSP := ROUND((V_BASIC_RATE - ((V_BASIC_RATE*V_FACTOR)/100))/V_PRICE_ROUNDOFF)*V_PRICE_ROUNDOFF;
+                                                                    END IF;
+                                                                END IF;
+                                                            END IF;
+                                                        END IF;
+                                                END IF; -- END OF CALC V_RSP
+                                                IF	coalesce(V_SLAB_APPL,'N') = 'Y' THEN
+                                                            BEGIN
+                                                                -- START REV : 010
+                                                                /*
+                                                                SELECT	INVGSTRATE_CODE
+                                                                INTO    V_INVGSTRATE_CODE
+                                                                FROM	 INVHSNSACSLAB D
+                                                                WHERE		D.INVHSNSACDET_CODE = V_DETCODE
+                                                                AND     	D.CODE = (  SELECT D1.CODE
+                                                                                        FROM   INVHSNSACSLAB D1
+                                                                                        WHERE  D1.INVHSNSACDET_CODE = V_DETCODE
+                                                                                        AND    AMOUNT_FROM= ( SELECT MAX(AMOUNT_FROM)
+                                                                                                                       FROM   INVHSNSACSLAB D3
+                                                                                                                       WHERE  D3.INVHSNSACDET_CODE = V_DETCODE
+                                                                                                                       AND    D3.AMOUNT_FROM 	<=  NVL(V_RSP,0)
+                                                                                                                )
+                                                                                     )	;
+                                                                */
+                                                                SELECT	INVGSTRATE_CODE
+                                                                INTO STRICT    V_INVGSTRATE_CODE
+                                                                FROM	 V_GSTSLAB_CALC D
+                                                                WHERE		D.INVHSNSACDET_CODE = V_DETCODE
+                                                                AND     	D.INVHSNSACSLAB_CODE = (  SELECT D1.INVHSNSACSLAB_CODE
+                                                                                        FROM   V_GSTSLAB_CALC D1
+                                                                                        WHERE  D1.INVHSNSACDET_CODE = V_DETCODE
+                                                                                        AND
+                                                                                            (
+                                                                                                    (
+                                                                                                    v_cmptax_code_basis <> 'D'
+                                                                                                    AND
+                                                                                                    AMOUNT_FROM = ( SELECT MAX(AMOUNT_FROM)
+                                                                                                                           FROM   V_GSTSLAB_CALC D3
+                                                                                                                           WHERE  D3.INVHSNSACDET_CODE = V_DETCODE
+                                                                                                                           AND    D3.AMOUNT_FROM 	<=  coalesce(v_RSP,0)
+                                                                                                                    )
+                                                                                                    )
+                                                                                                    OR
+                                                                                                    (
+                                                                                                    v_cmptax_code_basis = 'D'
+                                                                                                    AND
+                                                                                                    EFF_AMOUNT_FROM = ( SELECT MAX(EFF_AMOUNT_FROM)
+                                                                                                                           FROM   V_GSTSLAB_CALC D3
+                                                                                                                           WHERE  D3.INVHSNSACDET_CODE = V_DETCODE
+                                                                                                                           AND    D3.EFF_AMOUNT_FROM 	<=  coalesce(v_RSP,0)
+                                                                                                                    )
+                                                                                                    )
+                                                                                             )
+                                                                                     )	;
+                                                                -- END REV : 010
+                                                            EXCEPTION
+                                                            WHEN no_data_found THEN
+                                                                    V_INVGSTRATE_CODE       := NULL;
+                                                                    V_TAXRATE        :=0;
+                                                                    V_GST      := 'N';
+                                                            WHEN OTHERS  THEN
+                                                                    V_INVGSTRATE_CODE       := 0;
+                                                                    V_TAXRATE        :=0;
+                                                            END;
+                                                END IF;
+                                                BEGIN
+                                                            SELECT	R.CGST_RATE,R.IGST_RATE,SGST_RATE,CESS_RATE --NVL(R.IGST_RATE,0) + NVL(CESS_RATE,0)
+                                                            INTO STRICT    V_CGST_RATE,V_IGST_RATE,V_SGST_RATE,V_CESS_RATE
+                                                            FROM	INVGSTRATE  R
+                                                            WHERE	CODE = V_INVGSTRATE_CODE;
+                                                          --  V_GST      := 'Y';
+                                                            V_TAXRATE := coalesce(V_IGST_RATE,0) + coalesce(V_CESS_RATE,0);
+                                                EXCEPTION
+                                                WHEN no_data_found THEN
+                                                    V_GST      := 'N';
+                                                    V_TAXRATE        :=0;
+                                                END;
+                           END IF;
+                   IF  V_DISCOUNT_BASIS = 'B' THEN
+                       V_TAXAMT   := coalesce(V_BASIC_RATE,0) - (coalesce(V_BASIC_RATE,0) / (1 + coalesce(V_TAXRATE,0)/100));
+                       V_DISCOUNT := coalesce(V_BASIC_RATE,0)* coalesce(V_DISCOUNT_FACTOR,0)/100 + coalesce(V_TAXAMT,0);
+                   ELSE
+                       V_DISCOUNT := (coalesce(V_BASIC_RATE,0)* coalesce(V_DISCOUNT_FACTOR,0)/100) + coalesce(V_TAXAMT,0);
+                       V_TAXAMT   := (coalesce(V_BASIC_RATE,0) - coalesce(V_DISCOUNT,0)) - (coalesce(V_BASIC_RATE,0)*(1 - coalesce(V_DISCOUNT_FACTOR,0)/100))/(1 + V_TAXRATE/100);
+                       V_DISCOUNT :=  coalesce(V_DISCOUNT,0) + coalesce(V_TAXAMT,0);
+                   END IF;
+               ELSE
+                   V_DISCOUNT  :=  coalesce(V_BASIC_RATE,0)* coalesce(V_DISCOUNT_FACTOR,0)/100;
+               END IF;
+               IF  V_DISCOUNT_MODE = 'U' THEN
+                   V_NET_RATE := coalesce(V_BASIC_RATE,0) + coalesce(V_DISCOUNT,0);
+               ELSE
+                   V_NET_RATE := coalesce(V_BASIC_RATE,0) - coalesce(V_DISCOUNT,0);
+               END IF;
+               IF    V_LIMIT = 'U' THEN
+                     IF    coalesce(V_PRICE_ROUNDOFF,0) = 0 THEN
+                           SELECT CEIL(coalesce(V_NET_RATE,0)) - coalesce(V_NET_RATE,0) INTO STRICT V_ROUNDOFF;
+                           SELECT CEIL(coalesce(V_NET_RATE,0)) INTO STRICT V_NET_RATE;
+                     ELSIF coalesce(V_PRICE_ROUNDOFF,0) > 0  THEN
+                           V_ROUNDOFF := (CEIL(coalesce(V_NET_RATE,0)/V_PRICE_ROUNDOFF)*V_PRICE_ROUNDOFF) - coalesce(V_NET_RATE,0);
+                           V_NET_RATE := CEIL(coalesce(V_NET_RATE,0)/V_PRICE_ROUNDOFF)*V_PRICE_ROUNDOFF;
+                     END IF;
+               ELSIF V_LIMIT = 'L' THEN
+                     IF    coalesce(V_PRICE_ROUNDOFF,0) = 0 THEN
+                           SELECT FLOOR(coalesce(V_NET_RATE,0)) - coalesce(V_NET_RATE,0) INTO STRICT V_ROUNDOFF;
+                           SELECT FLOOR(coalesce(V_NET_RATE,0)) INTO STRICT V_NET_RATE;
+                     ELSIF coalesce(V_PRICE_ROUNDOFF,0) > 0   THEN
+                           V_ROUNDOFF := (FLOOR(coalesce(V_NET_RATE,0)/V_PRICE_ROUNDOFF)*V_PRICE_ROUNDOFF) - coalesce(V_NET_RATE,0);
+                           V_NET_RATE := FLOOR(coalesce(V_NET_RATE,0)/V_PRICE_ROUNDOFF)*V_PRICE_ROUNDOFF;
+                     END IF;
+               ELSIF V_LIMIT = 'R' THEN
+                     IF    coalesce(V_PRICE_ROUNDOFF,0) = 0 THEN
+                           V_ROUNDOFF :=  ROUND(coalesce(V_NET_RATE,0)) - coalesce(V_NET_RATE,0);
+                           SELECT ROUND(coalesce(V_NET_RATE,0)) INTO STRICT V_NET_RATE;
+                     ELSIF coalesce(V_PRICE_ROUNDOFF,0) > 0   THEN
+                           V_ROUNDOFF := (ROUND(coalesce(V_NET_RATE,0)/V_PRICE_ROUNDOFF)*V_PRICE_ROUNDOFF) - coalesce(V_NET_RATE,0);
+                           V_NET_RATE := ROUND(coalesce(V_NET_RATE,0)/V_PRICE_ROUNDOFF)*V_PRICE_ROUNDOFF;
+                     END IF;
+               -- START REV : 004
+               ELSIF V_LIMIT = 'N' THEN
+                     IF    coalesce(V_PRICE_ROUNDOFF,0) = 0 THEN
+                           V_ROUNDOFF :=  round((coalesce(V_NET_RATE,0))::numeric,2) - coalesce(V_NET_RATE,0);
+                           SELECT round((coalesce(V_NET_RATE,0))::numeric,2) INTO STRICT V_NET_RATE;
+                     ELSIF coalesce(V_PRICE_ROUNDOFF,0) > 0   THEN
+                           V_ROUNDOFF := (ROUND(coalesce(V_NET_RATE,0)/V_PRICE_ROUNDOFF)*V_PRICE_ROUNDOFF) - coalesce(V_NET_RATE,0);
+                           V_NET_RATE := ROUND(coalesce(V_NET_RATE,0)/V_PRICE_ROUNDOFF)*V_PRICE_ROUNDOFF;
+                     END IF;
+               -- END REV : 004
+               ELSE
+                     V_ROUNDOFF := 0;
+               END IF;
+        END IF; -- REV : 011
+   IF    P_RET_ITEM = 'RATE' THEN
+         RETURN coalesce(V_NET_RATE,0);
+   ELSIF P_RET_ITEM = 'DISCOUNT' THEN
+         RETURN coalesce(V_DISCOUNT,0);
+   ELSIF P_RET_ITEM = 'ROUNDOFF' THEN
+         RETURN coalesce(V_ROUNDOFF,0);
+   ELSIF P_RET_ITEM = 'BASIC RATE' THEN
+         RETURN coalesce(V_BASIC_RATE,0);
+   ELSIF P_RET_ITEM = 'FACTOR' THEN
+         RETURN coalesce(V_DISCOUNT_FACTOR,0);
+   END IF;
+EXCEPTION
+   WHEN OTHERS THEN
+        ERRCODE := SQLSTATE;
+        ERRMSG  := SQLERRM;
+        CALL ERRAUDIT(USER,'DB_FUN_ITEM_RATE_SND_NEW',ERRCODE,ERRMSG);
+        RAISE EXCEPTION '%', 'Internal error occured.'||errmsg USING ERRCODE = '45111';
+        RETURN(0);
+END;
+"""
+  returnType = numeric
+  arguments = <
+    {
+      name = p_icode
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_site_admcmptax_code_ou
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_admcmptax_code_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_pricelistcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_ret_item
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_factor
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_saltradegrp_code
+      type = numeric
+      mode = IN
+      default = NULL::numeric
+    }
+
+    {
+      name = p_formcode
+      type = numeric
+      mode = IN
+      default = NULL::numeric
+    }
+
+  >
+  language = plpgsql
+  volatility = STABLE
+}
+

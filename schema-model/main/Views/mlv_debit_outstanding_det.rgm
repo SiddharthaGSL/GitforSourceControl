@@ -1,0 +1,90 @@
+view "main"."mlv_debit_outstanding_det" {
+  text = """-
+SELECT finsl.agcode AS agent_code,
+    p.slcode AS sl_code,
+    p.glcode AS gl_code,
+        CASE
+            WHEN (p.docno IS NULL) THEN NULL::text
+            ELSE
+            CASE
+                WHEN (p.docdt IS NULL) THEN (p.docno)::text
+                ELSE ((((p.docno)::text || ' ('::text) || to_char(p.docdt, 'DD/MM/YY'::text)) || ')'::text)
+            END
+        END AS ref_no,
+    p.scheme_docno AS document_no,
+        CASE
+            WHEN (finsl.due_date_basis = 'E'::bpchar) THEN p.entdt
+            ELSE COALESCE(p.docdt, p.entdt)
+        END AS document_date,
+    e.entname AS document_type,
+    p.duedt AS due_date,
+    (date_trunc('day'::text, statement_timestamp()) - (
+        CASE
+            WHEN (finsl.due_date_basis = 'E'::bpchar) THEN p.entdt
+            ELSE COALESCE(p.docdt, p.entdt)
+        END)::timestamp with time zone) AS no_of_days,
+        CASE
+            WHEN (COALESCE(p.damount, (0)::numeric) > (0)::numeric) THEN 'DR'::text
+            WHEN (COALESCE(p.camount, (0)::numeric) > (0)::numeric) THEN 'CR'::text
+            ELSE NULL::text
+        END AS drcr,
+    (COALESCE(p.damount, (0)::numeric) - COALESCE(p.camount, (0)::numeric)) AS amount,
+        CASE
+            WHEN (COALESCE(p.damount, (0)::numeric) > (0)::numeric) THEN ((0)::numeric - COALESCE(p.adjamt, (0)::numeric))
+            WHEN (COALESCE(p.camount, (0)::numeric) > (0)::numeric) THEN COALESCE(p.adjamt, (0)::numeric)
+            ELSE NULL::numeric
+        END AS adjusted,
+        CASE
+            WHEN (COALESCE(p.damount, (0)::numeric) > (0)::numeric) THEN (COALESCE(p.damount, (0)::numeric) - COALESCE(p.adjamt, (0)::numeric))
+            WHEN (COALESCE(p.camount, (0)::numeric) > (0)::numeric) THEN ((0)::numeric - (COALESCE(p.camount, (0)::numeric) - COALESCE(p.adjamt, (0)::numeric)))
+            ELSE NULL::numeric
+        END AS pending
+   FROM main.finpost p,
+    main.finenttype e,
+    main.finsl,
+    main.fingl
+  WHERE ((p.enttype = e.enttype) AND (p.slcode = finsl.slcode) AND (p.glcode = fingl.glcode) AND (fingl.srctype = 'R'::bpchar) AND (COALESCE(p.release_status, 'U'::bpchar) = 'P'::bpchar) AND (p.entdt <= to_date(to_char(statement_timestamp(), 'DD/MM/YYYY'::text), 'DD/MM/RRRR'::text)) AND ((abs((COALESCE(p.damount, (0)::numeric) - COALESCE(p.camount, (0)::numeric))) - COALESCE(p.adjamt, (0)::numeric)) > (0)::numeric));
+"""
+  columns = (
+    column "agent_code" {
+      type = "bigint"
+    }
+    column "sl_code" {
+      type = "bigint"
+    }
+    column "gl_code" {
+      type = "bigint"
+    }
+    column "ref_no" {
+      type = text
+    }
+    column "document_no" {
+      type = "character varying(50)"
+    }
+    column "document_date" {
+      type = "timestamp(0) without time zone"
+    }
+    column "document_type" {
+      type = "character varying(100)"
+    }
+    column "due_date" {
+      type = "timestamp(0) without time zone"
+    }
+    column "no_of_days" {
+      type = "interval"
+    }
+    column "drcr" {
+      type = text
+    }
+    column "amount" {
+      type = "numeric"
+    }
+    column "adjusted" {
+      type = "numeric"
+    }
+    column "pending" {
+      type = "numeric"
+    }
+  )
+}
+

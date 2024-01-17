@@ -1,0 +1,66 @@
+procedure "main"."p_psite_posbillcnr_bulk_ins(double, text)" {
+  text = """
+
+BEGIN
+    /* DELETE FROM psite_posbillcnadj */
+    /* WHERE PSITE_POSBILLCN_CODE IN (SELECT p_sitecuid || '-' || posbillcnid */
+    /* FROM staging_posbillcnradj); */
+    /* DELETE FROM psite_posbillcn */
+    /* WHERE code IN (SELECT p_sitecuid || '-' || posbillcnid */
+    /* FROM staging_posbillcnr); */
+    /* INSERT INTO psite_posbillcn */
+    /* (code, admsite_code, cnno, cndate, psite_customer_code, */
+    /* customer, remarks, amount, cni_psite_posbill_code, */
+    /* cnibilltype, cnradjamount, psite_posorder_code) */
+    /* SELECT p_sitecuid || '-' || posbillcnid, p_admsite_code, cnno, cndate, */
+    /* customerid, customername, remarks, amount, */
+    /* CASE */
+    /* WHEN cniposbillid IS NOT NULL */
+    /* THEN p_sitecuid || '-' || cniposbillid */
+    /* ELSE NULL */
+    /* END cniposbillid, */
+    /* cnibilltype, cnradjamount, */
+    /* CASE */
+    /* WHEN posorderid IS NOT NULL */
+    /* THEN p_sitecuid || '-' || posorderid */
+    /* ELSE NULL */
+    /* END posorderid */
+    /* FROM staging_posbillcnr; */
+    /* */
+    INSERT INTO pgmain.psite_posbillcn (code, admsite_code, cnno, cndate, psite_customer_code, customer, remarks, amount, cnibilltype, cnradjamount, psite_posorder_code, isglobalcn, globalposbillcnno, terminalid, psite_docscheme_code, otpcode)
+    (SELECT
+        stg.posbillcnid, stg.cnistoreid, stg.cnno, stg.cndate, stg.customerid, stg.customername, stg.remarks, stg.amount, stg.cnibilltype, stg.cnradjamount,
+        CASE
+            WHEN posorderid IS NOT NULL THEN CONCAT_WS('', p_sitecuid, '-', stg.posorderid)
+            ELSE NULL
+        END, stg.isglobalcn, stg.globalposbillcnno, stg.terminalid, stg.docschemeid, stg.otpcode
+        FROM pgmain.staging_posbillcnr AS stg)
+    ON CONFLICT on constraint psite_posbillcn_pk DO UPDATE SET cnradjamount = excluded.cnradjamount;
+    INSERT INTO pgmain.psite_recposbillcn (code, admsite_code, cnno, cndate, psite_customer_code, customer, remarks, amount, cnibilltype, cnradjamount, psite_posorder_code, isglobalcn, globalposbillcncode, globalposbillcnno, cni_posbillno, terminalid, psite_docscheme_code)
+    (SELECT
+        CONCAT_WS('', p_sitecuid, '-', stg.posbillcnid), p_admsite_code, stg.cnno, stg.cndate, stg.customerid, stg.customername, stg.remarks, stg.amount, stg.cnibilltype, stg.cnradjamount,
+        CASE
+            WHEN posorderid IS NOT NULL THEN CONCAT_WS('', p_sitecuid, '-', stg.posorderid)
+            ELSE NULL
+        END, stg.isglobalcn, stg.globalposbillcnid, stg.globalposbillcnno, stg.cnibillno, stg.terminalid, stg.docschemeid
+        FROM pgmain.staging_recposbillcnr AS stg)
+    ON CONFLICT on constraint psite_recposbillcn_pk DO UPDATE SET cnradjamount = excluded.cnradjamount;
+END;
+"""
+  arguments = <
+    {
+      name = p_admsite_code
+      type = double precision
+      mode = IN
+    }
+
+    {
+      name = p_sitecuid
+      type = text
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

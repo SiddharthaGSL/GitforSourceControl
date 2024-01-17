@@ -1,0 +1,138 @@
+function "main"."db_pkg_production$get_job_rate(character varying, bigint, bigint, character, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+        V_RATE bigint := NULL;
+        -- START REV : 015
+        V_LOTCODE   PRDLOTMAIN.CODE%TYPE;
+        V_ROUTECODE PRDROUTEMAIN.CODE%TYPE;
+        -- END REV : 015
+BEGIN
+
+        -- START REV : 015
+        V_LOTCODE   := P_LOTCODE;
+        V_ROUTECODE := P_ROUTECODE;
+        -- END REV : 015
+        BEGIN
+            SELECT  I.RATE
+            INTO STRICT    V_RATE
+            FROM    PRDPRRATE_ITEM I
+            WHERE
+                    I.PRCODE= P_PRCODE
+            AND     I.PCODE = P_PCODE
+            AND     I.ICODE = P_ICODE;
+        EXCEPTION
+            WHEN no_data_found THEN
+                BEGIN
+                    SELECT  A.RATE
+                    INTO STRICT    V_RATE
+                    FROM    PRDPRRATE_ARTICLE   A,
+                            INVITEM             I
+                    WHERE
+                            I.INVARTICLE_CODE = A.INVARTICLE_CODE
+                    AND     A.PRCODE          = P_PRCODE
+                    AND     A.PCODE           = P_PCODE
+                    AND     I.ICODE           = P_ICODE;
+                EXCEPTION
+                    WHEN no_data_found THEN
+                        BEGIN
+                            SELECT  P.RATE
+                            INTO STRICT    V_RATE
+                            FROM    PRDPRRATE P
+                            WHERE   P.PRCODE= P_PRCODE
+                            AND     P.PCODE = P_PCODE;
+                        EXCEPTION
+                            WHEN no_data_found THEN
+                                -- START REV : 003
+                                IF  coalesce(P_JOBTYPE,'XX') NOT IN ('AS','AN') THEN
+                                -- END REV : 003
+                                    -- START REV : 015
+                                    IF  V_LOTCODE IS NOT NULL THEN
+                                        BEGIN
+                                            SELECT  ROUTECODE
+                                            INTO STRICT    V_ROUTECODE
+                                            FROM    PRDLOTDET LD
+                                            WHERE   LOTCODE = P_LOTCODE
+                                            AND     ASSEMBLY_ICODE = P_ICODE;
+                                       EXCEPTION
+                                            WHEN no_data_found THEN
+                                            V_ROUTECODE := NULL;
+                                       END;
+                                    END IF;
+                                    -- END REV : 015
+                                    BEGIN
+                                        SELECT  R.RATE
+                                        INTO STRICT    V_RATE
+                                        FROM    PRDROUTEDET R
+                                        WHERE   R.PRCODE=P_PRCODE
+                                        -- START REV : 015
+                                        /*AND     R.ROUTECODE IN
+                                                            (
+                                                                SELECT  I.ROUTECODE
+                                                                FROM    INVITEM I
+                                                                WHERE   I.ICODE = P_ICODE
+                                                            )
+                                        */
+                                        AND     R.ROUTECODE  = V_ROUTECODE;
+                                        -- END REV : 015
+                                    EXCEPTION
+                                        WHEN OTHERS THEN
+                                             V_RATE := NULL;
+                                    END;
+                                -- START REV : 003
+                                END IF;
+                                -- END REV : 003
+                        END;
+                END;
+        END;
+
+        RETURN V_RATE;
+    END;
+
+"""
+  returnType = bigint
+  arguments = <
+    {
+      name = p_icode
+      type = character varying
+      mode = IN
+    }
+
+    {
+      name = p_prcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_pcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_jobtype
+      type = character
+      mode = IN
+      default = NULL::bpchar
+    }
+
+    {
+      name = p_routecode
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_lotcode
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+  >
+  language = plpgsql
+}
+

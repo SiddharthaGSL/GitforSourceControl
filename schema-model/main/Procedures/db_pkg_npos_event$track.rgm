@@ -1,0 +1,107 @@
+procedure "main"."db_pkg_npos_event$track(bigint, text, text, character)" {
+  text = """
+
+DECLARE
+
+    TmpVar bigint;
+    vDataSyncMode CHAR;
+    v_WebDbSyncCount bigint;
+    v_LiveSyncCount bigint;
+    v_Migration_State varchar(12);
+
+BEGIN
+    
+    SELECT nextval('psite_event_tracking_code')
+            INTO STRICT tmpvar
+;
+            
+    vDataSyncMode := p_datasyncmode;
+            
+    IF  p_admsite_code IS NOT NULL and vDataSyncMode IS NULL
+    THEN
+        SELECT coalesce(datasyncmode,'W')
+        INTO STRICT   vDataSyncMode
+        FROM   admsite
+        WHERE  CODE = p_admsite_code;
+    END IF;
+
+    IF p_admsite_code IS NULL and vDataSyncMode IS NULL
+    THEN
+        SELECT COUNT(*) INTO STRICT v_WebDbSyncCount FROM admsite
+            WHERE datasyncmode = 'W';
+
+        SELECT COUNT(*) INTO STRICT v_LiveSyncCount FROM admsite
+            WHERE datasyncmode = 'A';
+    END IF;
+    
+    IF p_admsite_code IS NULL and vDataSyncMode IS NULL
+    THEN
+        IF v_WebDbSyncCount > 0 AND v_LiveSyncCount = 0
+           THEN v_Migration_State := 'Not Migrated';
+        ELSIf v_WebDbSyncCount = 0 AND v_LiveSyncCount > 0
+            THEN v_Migration_State := 'Migrated';
+        ELSIf v_WebDbSyncCount > 0 and v_LiveSyncCount > 0
+            THEN v_Migration_State := 'Migration';
+        END IF;
+    END IF;
+
+    IF  vDataSyncMode = 'W' OR (p_admsite_code IS NULL AND vDataSyncMode IS NULL AND v_Migration_State in ('Not Migrated','Migration'))
+    THEN
+        BEGIN 
+            INSERT INTO psite_event_tracking(code, admsite_code, eventtype, refcode,time
+                          )
+                   VALUES (tmpvar, p_admsite_code, p_eventtype, p_refcode,clock_timestamp()
+                          );
+        EXCEPTION WHEN unique_violation THEN
+               NULL;
+        END;
+    END IF;
+    
+    IF  vDataSyncMode = 'A' OR (p_admsite_code IS NULL AND v_Migration_State in ('Migrated','Migration'))
+    THEN 
+        BEGIN 
+               INSERT INTO psite_event_tracking2(code, admsite_code, eventtype, refcode,time
+                          )
+                   VALUES (tmpvar, p_admsite_code, p_eventtype, p_refcode,clock_timestamp()
+                          );
+        EXCEPTION WHEN unique_violation THEN
+               NULL;
+        END;
+    END IF;
+     
+           
+  END;
+  -- --------------------------------------------------------------------------
+  -- Procedure for tracking Web Events
+  -- --------------------------------------------------------------------------
+"""
+  arguments = <
+    {
+      name = p_admsite_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_eventtype
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_refcode
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_datasyncmode
+      type = character
+      mode = IN
+      default = NULL::bpchar
+    }
+
+  >
+  language = plpgsql
+}
+

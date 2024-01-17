@@ -1,0 +1,346 @@
+function "main"."trigger_fct_t_psite_grc()" {
+  text = """
+
+DECLARE
+   v_postcode                     finpost.postcode%TYPE;
+   v_damount                      finpost.damount%TYPE;
+   v_camount                      finpost.camount%TYPE;
+   v_transferin_glcode_costapp    fingl.costapp%TYPE;
+   v_transit_glcode_costapp       fingl.costapp%TYPE;
+   v_transitdiff_glcode_costapp   fingl.costapp%TYPE;
+   v_sitetype                     admsite.sitetype%TYPE;
+   v_admsite_code_owner           finpost.admsite_code_owner%TYPE;
+BEGIN
+/********************************************************************************************************************************
+    REV NO         OWNER         DATE           DESCRIPTION
+    ---------     -----------    -----------    ---------------------------------------------------------------------
+    REV : 001     ANINDYA        28-APR-2017    (TFS ID : 26844) Introduced ADMOU_CODE in  FINPOST
+    REV : 002     MOUSUMI        14-MAR-2018    (TFS ID : 37820) NON TRADING CHANGES
+    REV : 003     ANINDYA        14-JAN-2020    (TFS ID : XXXXX) Inbound related changes
+  *********************************************************************************************************************************/
+   SELECT sitetype
+     INTO STRICT v_sitetype
+     FROM admsite
+    WHERE code = NEW.admsite_code;
+
+   IF v_sitetype <> 'MS-CO-OM-TS'
+   THEN
+
+      SELECT default_ho_site
+      INTO STRICT v_admsite_code_owner
+      FROM admou
+      WHERE code = NEW.admou_code;
+
+
+      IF NEW.transferin_glcode <> NEW.transit_glcode
+      THEN
+         -- START REV : 002
+         --v_damount := NVL (:NEW.receiveamt, 0) + NVL (:NEW.damageamt, 0);
+         IF coalesce(NEW.MAIN_GL_shortexcessamt, 0) < 0
+         THEN
+            -- START REV : 003
+           /* v_damount :=
+                 NVL (:NEW.receiveamt, 0)
+               + NVL (:NEW.damageamt, 0)
+               - ABS (NVL (:NEW.shortexcessamt, 0));
+         ELSE
+            v_damount :=
+                 NVL (:NEW.receiveamt, 0)
+               + NVL (:NEW.damageamt, 0)
+               + NVL (:NEW.shortexcessamt, 0);*/
+              IF   TG_OP = 'INSERT'
+               THEN
+              -- END REV : 003  
+                    IF (  coalesce(NEW.MAIN_GL_receiveamt, 0)
+                        + coalesce(NEW.MAIN_GL_damageamt, 0)
+                        - ABS(coalesce(NEW.MAIN_GL_shortexcessamt, 0))) <> 0
+                    THEN
+                         v_damount :=
+                             coalesce(NEW.MAIN_GL_receiveamt, 0)
+                           + coalesce(NEW.MAIN_GL_damageamt, 0)
+                           - ABS(coalesce(NEW.MAIN_GL_shortexcessamt, 0));
+                    ELSE
+                         v_damount := 0;
+                    END IF;
+              -- START REV : 003     
+              END IF;
+              -- END REV : 003
+              
+              -- START REV : 003
+              IF  TG_OP = 'UPDATE'
+              THEN      
+              -- END REV  : 003
+                    IF (coalesce(OLD.MAIN_GL_receiveamt, 0)
+                       + coalesce(OLD.MAIN_GL_damageamt, 0)
+                       - ABS(coalesce(OLD.MAIN_GL_shortexcessamt, 0))) = 0 AND (  coalesce(NEW.MAIN_GL_receiveamt, 0)
+                                                                               + coalesce(NEW.MAIN_GL_damageamt, 0)
+                                                                               - ABS(coalesce(NEW.MAIN_GL_shortexcessamt, 0))) <> 0 THEN
+
+                    v_damount :=
+                         coalesce(NEW.MAIN_GL_receiveamt, 0)
+                       + coalesce(NEW.MAIN_GL_damageamt, 0)
+                       - ABS(coalesce(NEW.MAIN_GL_shortexcessamt, 0));
+                    ELSE
+                     v_damount := 0;
+                    END IF;
+               -- START RREV : 003     
+               END IF;
+               -- END REV : 003
+               
+         ELSE
+            -- START REV : 003
+            IF  TG_OP = 'INSERT'
+            -- END REV : 003
+            THEN
+                IF ( coalesce(NEW.MAIN_GL_receiveamt, 0)
+                    + coalesce(NEW.MAIN_GL_damageamt, 0)
+                    + coalesce(NEW.MAIN_GL_shortexcessamt, 0)) <> 0 THEN
+
+                    v_damount :=
+                         coalesce(NEW.MAIN_GL_receiveamt, 0)
+                       + coalesce(NEW.MAIN_GL_damageamt, 0)
+                       + coalesce(NEW.MAIN_GL_shortexcessamt, 0);
+                  ELSE
+                     v_damount := 0;
+                  END IF;
+            -- START REV : 003      
+            END IF;
+            -- END REV : 003
+            
+            -- START  REV : 003
+            IF  TG_OP = 'UPDATE'
+            THEN
+            -- END REV : 003
+                  IF (coalesce(OLD.MAIN_GL_receiveamt, 0)
+                       + coalesce(OLD.MAIN_GL_damageamt, 0)
+                       + coalesce(OLD.MAIN_GL_shortexcessamt, 0)) = 0 AND ( coalesce(NEW.MAIN_GL_receiveamt, 0)
+                                                                           + coalesce(NEW.MAIN_GL_damageamt, 0)
+                                                                           + coalesce(NEW.MAIN_GL_shortexcessamt, 0)) <> 0 THEN
+
+                    v_damount :=
+                         coalesce(NEW.MAIN_GL_receiveamt, 0)
+                       + coalesce(NEW.MAIN_GL_damageamt, 0)
+                       + coalesce(NEW.MAIN_GL_shortexcessamt, 0);
+                  ELSE
+                     v_damount := 0;
+                  END IF;
+            -- START REV : 003      
+            END IF;
+            -- END REV : 003
+        END IF;
+
+
+       IF coalesce(v_damount,0) <> 0 THEN
+
+         INSERT INTO finpost(postcode, entcode, entno, entdt,
+                      enttype, glcode, slcode,
+                      damount, ycode, nartext, scheme_docno, release_status,
+                      admsite_code_owner, ref_admsite_code, chgappamt,
+                      chgamt, ecode, TIME, last_access_ecode,
+                      last_access_time, release_ecode, release_time,admou_code
+                     )
+              VALUES (nextval('erp01'), NEW.code, NEW.docno, NEW.docdt,
+                      'TIA', NEW.transferin_glcode, NEW.transferin_slcode,
+                      v_damount, NEW.ycode, NEW.remarks, NEW.docno, 'P',
+                      v_admsite_code_owner, NEW.admsite_code, NULL,
+                      NULL, 1, statement_timestamp(), NULL,
+                      NULL, 1, statement_timestamp(), NEW.admou_code
+                     )
+           RETURNING postcode
+                INTO v_postcode;
+
+         SELECT coalesce(costapp, 'N') costapp
+           INTO STRICT v_transferin_glcode_costapp
+           FROM fingl
+          WHERE glcode = NEW.transferin_glcode;
+
+         IF v_transferin_glcode_costapp = 'Y'
+         THEN
+            INSERT INTO fincosttag(entcode, entno, entdt, enttype,
+                         glcode, ycode, costcode,
+                         slcode, damount, camount, postcode,
+                         admsite_code, ref_admsite_code, admou_code
+                        )
+                 VALUES (NEW.code, NEW.docno, NEW.docdt, 'TIA',
+                         NEW.transferin_glcode, NEW.ycode, NULL,
+                         NEW.transferin_slcode, v_damount, 0, v_postcode,
+                         NEW.admsite_code, NEW.admsite_code, NEW.admou_code
+                        );
+            END IF;
+        END IF;
+
+        -- START REV : 003
+        IF  TG_OP = 'INSERT'
+        THEN
+        -- END REV : 003
+            IF coalesce(NEW.shortexcessamt, 0) < 0
+             THEN
+                v_camount :=
+                     coalesce(NEW.receiveamt, 0)
+                   + coalesce(NEW.damageamt, 0)
+                   - ABS(coalesce(NEW.shortexcessamt, 0))
+                   -- START REV :  002
+                   + coalesce(NEW.chgamt, 0);
+                   --END REV : 002
+             ELSE
+                v_camount :=
+                     coalesce(NEW.receiveamt, 0)
+                   + coalesce(NEW.damageamt, 0)
+                   + coalesce(NEW.shortexcessamt, 0)
+                   -- START REV : 002
+                   + coalesce(NEW.chgamt, 0);
+                   -- END REV :  002
+             END IF;
+
+             INSERT INTO finpost(postcode, entcode, entno, entdt,
+                          enttype, glcode, slcode,
+                          camount, ycode, nartext, scheme_docno, release_status,
+                          admsite_code_owner, ref_admsite_code, chgappamt,
+                          chgamt, ecode, TIME, last_access_ecode,
+                          last_access_time, release_ecode, release_time,admou_code
+                         )
+                  VALUES (nextval('erp01'), NEW.code, NEW.docno, NEW.docdt,
+                          'TIA', NEW.transit_glcode, NEW.transit_slcode,
+                          v_camount, NEW.ycode, NEW.remarks, NEW.docno, 'P',
+                          v_admsite_code_owner, NEW.admsite_code, NULL,
+                          NULL, 1, statement_timestamp(), NULL,
+                          NULL, 1, statement_timestamp(), NEW.admou_code
+                         )
+               RETURNING postcode
+                    INTO v_postcode;
+
+             SELECT coalesce(costapp, 'N') costapp
+               INTO STRICT v_transit_glcode_costapp
+               FROM fingl
+              WHERE glcode = NEW.transit_glcode;
+
+             IF v_transit_glcode_costapp = 'Y'
+             THEN
+                INSERT INTO fincosttag(entcode, entno, entdt, enttype,
+                             glcode, ycode, costcode,
+                             slcode, damount, camount, postcode,
+                             admsite_code, ref_admsite_code,admou_code
+                            )
+                     VALUES (NEW.code, NEW.docno, NEW.docdt, 'TIA',
+                             NEW.transit_glcode, NEW.ycode, NULL,
+                             NEW.transit_slcode, 0, v_camount, v_postcode,
+                             NEW.admsite_code, NEW.admsite_code,NEW.admou_code
+                            );
+             END IF;
+
+             -- START REV : 002
+             /*
+             IF NVL (:NEW.shortexcessamt, 0) > 0
+             THEN
+                INSERT INTO finpost
+                            (postcode, entcode, entno, entdt,
+                             enttype, glcode,
+                             slcode, damount,
+                             ycode, nartext, scheme_docno, release_status,
+                             admsite_code_owner, ref_admsite_code, chgappamt,
+                             chgamt, ecode, TIME, last_access_ecode,
+                             last_access_time, release_ecode, release_time,admou_code
+                            )
+                     VALUES (erp01.NEXTVAL, :NEW.code, :NEW.docno, :NEW.docdt,
+                             'TIA', :NEW.transitdiff_glcode,
+                             :NEW.transitdiff_slcode, :NEW.shortexcessamt,
+                             :NEW.ycode, :NEW.remarks, :NEW.docno, 'P',
+                             v_admsite_code_owner, :NEW.admsite_code, NULL,
+                             NULL, 1, SYSDATE, NULL,
+                             NULL, 1, SYSDATE, :NEW.admou_code)
+                  RETURNING postcode
+                       INTO v_postcode;
+
+                SELECT NVL (costapp, 'N') costapp
+                  INTO v_transitdiff_glcode_costapp
+                  FROM fingl
+                 WHERE glcode = :NEW.transitdiff_glcode;
+
+                IF v_transitdiff_glcode_costapp = 'Y'
+                THEN
+                   INSERT INTO fincosttag
+                               (entcode, entno, entdt, enttype,
+                                glcode, ycode, costcode,
+                                slcode, damount, camount,
+                                postcode, admsite_code, ref_admsite_code,admou_code
+                               )
+                        VALUES (:NEW.code, :NEW.docno, :NEW.docdt, 'TIA',
+                                :NEW.transitdiff_glcode, :NEW.ycode, NULL,
+                                :NEW.transitdiff_slcode, :NEW.shortexcessamt, 0,
+                                v_postcode, :NEW.admsite_code, :NEW.admsite_code,:NEW.admou_code
+                               );
+                END IF;
+             END IF;
+
+             IF NVL (:NEW.shortexcessamt, 0) < 0
+             THEN
+                INSERT INTO finpost
+                            (postcode, entcode, entno, entdt,
+                             enttype, glcode,
+                             slcode, camount,
+                             ycode, nartext, scheme_docno, release_status,
+                             admsite_code_owner, ref_admsite_code, chgappamt,
+                             chgamt, ecode, TIME, last_access_ecode,
+                             last_access_time, release_ecode, release_time,admou_code
+                            )
+                     VALUES (erp01.NEXTVAL, :NEW.code, :NEW.docno, :NEW.docdt,
+                             'TIA', :NEW.transitdiff_glcode,
+                             :NEW.transitdiff_slcode, ABS (:NEW.shortexcessamt),
+                             :NEW.ycode, :NEW.remarks, :NEW.docno, 'P',
+                             v_admsite_code_owner, :NEW.admsite_code, NULL,
+                             NULL, 1, SYSDATE, NULL,
+                             NULL, 1, SYSDATE,:NEW.admou_code
+                            )
+                  RETURNING postcode
+                       INTO v_postcode;
+
+                SELECT NVL (costapp, 'N') costapp
+                  INTO v_transitdiff_glcode_costapp
+                  FROM fingl
+                 WHERE glcode = :NEW.transitdiff_glcode;
+
+                IF v_transitdiff_glcode_costapp = 'Y'
+                THEN
+                   INSERT INTO fincosttag
+                               (entcode, entno, entdt, enttype,
+                                glcode, ycode, costcode,
+                                slcode, damount,
+                                camount, postcode,
+                                admsite_code, ref_admsite_code,admou_code
+                               )
+                        VALUES (:NEW.code, :NEW.docno, :NEW.docdt, 'TIA',
+                                :NEW.transitdiff_glcode, :NEW.ycode, NULL,
+                                :NEW.transitdiff_slcode, 0,
+                                ABS (:NEW.shortexcessamt), v_postcode,
+                                :NEW.admsite_code, :NEW.admsite_code,:NEW.admou_code
+                               );
+                END IF;
+             END IF;
+             */
+        -- START REV : 003     
+        END IF;
+        -- END REV : 003
+         -- END REV : 002
+         DELETE      FROM fincosttag
+               WHERE entcode = coalesce(OLD.code, NEW.code)::varchar
+                 AND enttype = 'TIA'
+                 AND coalesce(damount, 0) = 0
+                 AND coalesce(camount, 0) = 0;
+
+         -- END REV : 004
+         DELETE FROM finpost
+               WHERE entcode = coalesce(OLD.code, NEW.code)::varchar
+                 AND enttype = 'TIA'
+                 AND coalesce(damount, 0) = 0
+                 AND coalesce(camount, 0) = 0;
+      END IF;
+   END IF;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

@@ -1,0 +1,65 @@
+procedure "main"."int$pkg_grcadhoc_loc_pro_setoff_fraction_value(bigint)" {
+  text = """
+
+DECLARE
+
+      C1 CURSOR FOR
+           SELECT coalesce(A.EX_DUTYFACTOR, 0)  EX_DUTYFACTOR,
+                  SUM(coalesce(A.EX_APPAMT, 0)) ACT_EX_APPAMT,
+                  CASE WHEN                      A.EX_BASIS='M' THEN  ROUND (                             SUM (                                  (coalesce(A.ACQTY, 0) * coalesce(B.MRP, 0))                                * (100 - coalesce(EX_ABTFACTOR, 0))                                / 100),                             2) WHEN                      A.EX_BASIS='R' THEN  ROUND (                             SUM (                                  (coalesce(A.ACQTY, 0) * coalesce(A.ACRATE, 0))                                * (100 - coalesce(EX_ABTFACTOR, 0))                                / 100),                             2) WHEN                      A.EX_BASIS='L' THEN  ROUND (                             SUM (                                  (coalesce(A.ACQTY, 0) * coalesce(B.LISTED_MRP, 0))                                * (100 - coalesce(EX_ABTFACTOR, 0))                                / 100),                             2)  ELSE 0 END
+                     EXPT_EX_APPAMT,
+                  SUM(coalesce(A.EX_DUTYAMT, 0)) ACT_EX_DUTYAMT,
+                  CASE WHEN                      A.EX_BASIS='M' THEN  ROUND (                             SUM (                                ( ( (  coalesce(A.ACQTY, 0)                                     * coalesce(B.MRP, 0)                                     * (100 - coalesce(EX_ABTFACTOR, 0))                                     / 100                                     * coalesce(EX_DUTYFACTOR, 0)                                     / 100)))),                             (CASE WHEN A.EX_ROUNDOFF=0 THEN  0  ELSE 2 END )) WHEN                      A.EX_BASIS='R' THEN  ROUND (                             SUM (                                ( ( (  coalesce(A.ACQTY, 0)                                     * coalesce(A.ACRATE, 0)                                     * (100 - coalesce(EX_ABTFACTOR, 0))                                     / 100                                     * coalesce(EX_DUTYFACTOR, 0)                                     / 100)))),                             (CASE WHEN A.EX_ROUNDOFF=0 THEN  0  ELSE 2 END )) WHEN                      A.EX_BASIS='L' THEN  ROUND (                             SUM (                                ( ( (  coalesce(A.ACQTY, 0)                                     * coalesce(B.LISTED_MRP, 0)                                     * (100 - coalesce(EX_ABTFACTOR, 0))                                     / 100                                     * coalesce(EX_DUTYFACTOR, 0)                                     / 100)))),                             (CASE WHEN A.EX_ROUNDOFF=0 THEN  0  ELSE 2 END ))  ELSE 0 END 
+                     EXPT_EX_DUTYAMT,
+                  SUM(coalesce(A.EX_CESSAMT, 0)) ACT_EX_CESSAMT,
+                  CASE WHEN                      A.EX_BASIS='M' THEN  ROUND (                             SUM (                                (  ( (  ( (  coalesce(A.ACQTY, 0)                                           * coalesce(B.MRP, 0)                                           * (100 - coalesce(EX_ABTFACTOR, 0))                                           / 100))                                      * EX_DUTYFACTOR                                      / 100))                                 * coalesce(EX_CESSFACTOR, 0)                                 / 100)),                             (CASE WHEN A.EX_ROUNDOFF=0 THEN  0  ELSE 2 END )) WHEN                      A.EX_BASIS='R' THEN  ROUND (                             SUM (                                (  ( (  ( (  coalesce(A.ACQTY, 0)                                           * coalesce(A.ACRATE, 0)                                           * (100 - coalesce(EX_ABTFACTOR, 0))                                           / 100))                                      * EX_DUTYFACTOR                                      / 100))                                 * coalesce(EX_CESSFACTOR, 0)                                 / 100)),                             (CASE WHEN A.EX_ROUNDOFF=0 THEN  0  ELSE 2 END )) WHEN                      A.EX_BASIS='L' THEN  ROUND (                             SUM (                                (  ( (  ( (  coalesce(A.ACQTY, 0)                                           * coalesce(B.LISTED_MRP, 0)                                           * (100 - coalesce(EX_ABTFACTOR, 0))                                           / 100))                                      * EX_DUTYFACTOR                                      / 100))                                 * coalesce(EX_CESSFACTOR, 0)                                 / 100)),                             (CASE WHEN A.EX_ROUNDOFF=0 THEN  0  ELSE 2 END ))  ELSE 0 END 
+                     EXPT_EX_CESSAMT
+             FROM INVGRCDET A, INVITEM B
+            WHERE     A.GRCCODE = P_GRCCODE
+                  AND A.ICODE = B.ICODE
+                  AND A.EXCISEMAIN_CODE IS NOT NULL
+                  AND coalesce(EX_EFFRATE, 0) >= coalesce(EX_APPLICABLE_FROM, 0)
+         GROUP BY coalesce(A.EX_DUTYFACTOR, 0), A.EX_BASIS, A.EX_ROUNDOFF;
+
+BEGIN
+      FOR C1_LOOP IN C1
+      LOOP
+         UPDATE INVGRCDET
+            SET EX_APPAMT =
+                   (  coalesce(EX_APPAMT, 0)
+                    + (  coalesce(C1_LOOP.EXPT_EX_APPAMT, 0)
+                       - coalesce(C1_LOOP.ACT_EX_APPAMT, 0))),
+                EX_DUTYAMT =
+                   (  coalesce(EX_DUTYAMT, 0)
+                    + (  coalesce(C1_LOOP.EXPT_EX_DUTYAMT, 0)
+                       - coalesce(C1_LOOP.ACT_EX_DUTYAMT, 0))),
+                EX_CESSAMT =
+                   (  coalesce(EX_CESSAMT, 0)
+                    + (  coalesce(C1_LOOP.EXPT_EX_CESSAMT, 0)
+                       - coalesce(C1_LOOP.ACT_EX_CESSAMT, 0)))
+          WHERE CODE =
+                   (SELECT MAX(CODE)
+                      FROM INVGRCDET
+                     WHERE     GRCCODE = P_GRCCODE
+                           AND coalesce(EX_DUTYFACTOR, 0) =
+                                  coalesce(C1_LOOP.EX_DUTYFACTOR, 0)
+                           AND EXCISEMAIN_CODE IS NOT NULL
+                           -- start rev : 054
+                           AND coalesce(EX_EFFRATE, 0) >=
+                                  coalesce(EX_APPLICABLE_FROM, 0) -- end rev : 054
+                                                             );
+      END LOOP;
+   END;
+
+"""
+  arguments = <
+    {
+      name = p_grccode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

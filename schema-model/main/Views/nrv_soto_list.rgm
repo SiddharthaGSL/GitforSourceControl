@@ -1,0 +1,310 @@
+view "main"."nrv_soto_list" {
+  text = """-
+SELECT i.scheme_docno AS orderno,
+    ad.docname,
+    i.ordcode,
+    i.orddt AS orderdate,
+    i.docno AS documentno,
+    i.docdt AS documentdt,
+    i.admsite_code_owner AS ownersitecode,
+    sto.name AS ownersite,
+    sto.shrtname AS ownershrtname,
+    s.slname AS customername,
+    s.slid AS customerid,
+    i.admsite_code AS transactionsitecode,
+    stt.name AS transactionsite,
+    stt.shrtname AS trnshrtname,
+        CASE
+            WHEN (i.saletype = 'C'::bpchar) THEN 'CONSIGNMENT'::text
+            WHEN (i.saletype = 'O'::bpchar) THEN 'OUTRIGHT'::text
+            ELSE NULL::text
+        END AS mode_of_operation,
+        CASE
+            WHEN (i.stat = 'N'::bpchar) THEN 'DELIVERY PENDING'::text
+            WHEN (i.stat = 'P'::bpchar) THEN 'PENDING'::text
+            WHEN (i.stat = 'T'::bpchar) THEN 'COMPLETED'::text
+            ELSE NULL::text
+        END AS status,
+    ((ag.slname)::text ||
+        CASE
+            WHEN (ag.slid IS NULL) THEN NULL::text
+            ELSE ((' ['::text || (ag.slid)::text) || ']'::text)
+        END) AS agent,
+    ((trp.slname)::text ||
+        CASE
+            WHEN (trp.slid IS NULL) THEN NULL::text
+            ELSE ((' ['::text || (trp.slid)::text) || ']'::text)
+        END) AS transporter,
+    trd.name AS tradegroupname,
+    trm.saltermname AS termname,
+    y.yname AS yearname,
+    i.ycode,
+        CASE
+            WHEN ((cr.fname IS NOT NULL) AND (cr.eno IS NOT NULL)) THEN (((((cr.fname)::text || ' ['::text) || (cr.eno)::text) || ']'::text))::character varying
+            ELSE cr.fname
+        END AS createdby,
+    i."time" AS createdon,
+        CASE
+            WHEN ((la.fname IS NOT NULL) AND (la.eno IS NOT NULL)) THEN (((((la.fname)::text || ' ['::text) || (la.eno)::text) || ']'::text))::character varying
+            ELSE la.fname
+        END AS lastmodifiedby,
+    i.last_access_time AS lastaccesstime,
+        CASE
+            WHEN ((au.fname IS NOT NULL) AND (au.eno IS NOT NULL)) THEN (((((au.fname)::text || ' ['::text) || (au.eno)::text) || ']'::text))::character varying
+            ELSE au.fname
+        END AS authby,
+    i.authorizationtime AS authtime,
+    COALESCE(agm.noofattachment, (0)::bigint) AS noofattachment,
+        CASE
+            WHEN (i.ishold = 'N'::bpchar) THEN 'NO'::text
+            WHEN (i.ishold = 'Y'::bpchar) THEN 'YES'::text
+            ELSE NULL::text
+        END AS ishold,
+    i.rem AS remarks,
+    i.pos_remarks,
+        CASE
+            WHEN (i.reserve_inv = 'N'::bpchar) THEN 'NO'::text
+            WHEN (i.reserve_inv = 'Y'::bpchar) THEN 'YES'::text
+            ELSE NULL::text
+        END AS reserve_req,
+    pso.orderno AS posorder_no,
+    i.grsamt,
+    i.netamt,
+    i.chgamt,
+        CASE
+            WHEN (i.pricetype = 'M'::bpchar) THEN 'RSP'::text
+            WHEN (i.pricetype = 'W'::bpchar) THEN 'WSP'::text
+            WHEN (i.pricetype = 'R'::bpchar) THEN 'STD. RATE'::text
+            WHEN (i.pricetype = 'L'::bpchar) THEN 'MRP'::text
+            WHEN (i.pricetype = 'C'::bpchar) THEN 'EFF. RATE'::text
+            WHEN (i.pricetype = 'F'::bpchar) THEN 'FIFO'::text
+            ELSE NULL::text
+        END AS pricetype,
+    pl.pricelistname,
+    i.entry_source,
+    i.udfstring01,
+    i.udfstring02,
+    i.udfstring03,
+    i.udfstring04,
+    i.udfstring05,
+    i.udfstring06,
+    i.udfstring07,
+    i.udfstring08,
+    i.udfstring09,
+    i.udfstring10,
+    i.udfnum01,
+    i.udfnum02,
+    i.udfnum03,
+    i.udfnum04,
+    i.udfnum05,
+    i.udfdate01,
+    i.udfdate02,
+    i.udfdate03,
+    i.udfdate04,
+    i.udfdate05
+   FROM main.admyear y,
+    main.admsite sto,
+    main.admdocscheme ad,
+    ((((((((((((main.salordmain i
+     LEFT JOIN main.salpricelistmain pl ON ((i.pricelistcode = pl.pricelistcode)))
+     LEFT JOIN main.psite_posorder pso ON (((i.psite_posorder_code)::text = (pso.code)::text)))
+     LEFT JOIN main.finsl s ON ((i.pcode = s.slcode)))
+     LEFT JOIN main.finsl ag ON ((i.agcode = ag.slcode)))
+     LEFT JOIN main.finsl trp ON ((i.trpcode = trp.slcode)))
+     LEFT JOIN main.fintradegrp trd ON ((i.saltradegrp_code = trd.code)))
+     LEFT JOIN main.saltermmain trm ON ((i.saltermcode = trm.saltermcode)))
+     LEFT JOIN main.admsite stt ON ((i.admsite_code = stt.code)))
+     LEFT JOIN main.hrdemp cr ON ((i.ecode = cr.ecode)))
+     LEFT JOIN main.hrdemp la ON (((i.last_access_ecode)::double precision = (la.ecode)::double precision)))
+     LEFT JOIN main.hrdemp au ON ((i.authorcode = au.ecode)))
+     LEFT JOIN ( SELECT count(*) AS noofattachment,
+            admattached_files.entry_code
+           FROM main.admattached_files
+          WHERE ((admattached_files.entry_type)::text = 'SALORD'::text)
+          GROUP BY admattached_files.entry_code) agm ON (((i.ordcode)::numeric = (agm.entry_code)::numeric)))
+  WHERE ((i.doccode = ad.doccode) AND (i.admsite_code_owner = sto.code) AND (i.ycode = y.ycode));
+"""
+  columns = (
+    column "orderno" {
+      type = "character varying(25)"
+    }
+    column "docname" {
+      type = "character varying(100)"
+    }
+    column "ordcode" {
+      type = "bigint"
+    }
+    column "orderdate" {
+      type = "timestamp(0) without time zone"
+    }
+    column "documentno" {
+      type = "character varying(25)"
+    }
+    column "documentdt" {
+      type = "timestamp(0) without time zone"
+    }
+    column "ownersitecode" {
+      type = "bigint"
+    }
+    column "ownersite" {
+      type = "character varying(100)"
+    }
+    column "ownershrtname" {
+      type = "character varying(25)"
+    }
+    column "customername" {
+      type = "character varying(100)"
+    }
+    column "customerid" {
+      type = "character varying(25)"
+    }
+    column "transactionsitecode" {
+      type = "bigint"
+    }
+    column "transactionsite" {
+      type = "character varying(100)"
+    }
+    column "trnshrtname" {
+      type = "character varying(25)"
+    }
+    column "mode_of_operation" {
+      type = text
+    }
+    column "status" {
+      type = text
+    }
+    column "agent" {
+      type = text
+    }
+    column "transporter" {
+      type = text
+    }
+    column "tradegroupname" {
+      type = "character varying(100)"
+    }
+    column "termname" {
+      type = "character varying(100)"
+    }
+    column "yearname" {
+      type = "character varying(100)"
+    }
+    column "ycode" {
+      type = "bigint"
+    }
+    column "createdby" {
+      type = "character varying"
+    }
+    column "createdon" {
+      type = "timestamp(0) without time zone"
+    }
+    column "lastmodifiedby" {
+      type = "character varying"
+    }
+    column "lastaccesstime" {
+      type = "timestamp(0) without time zone"
+    }
+    column "authby" {
+      type = "character varying"
+    }
+    column "authtime" {
+      type = "timestamp(0) without time zone"
+    }
+    column "noofattachment" {
+      type = "bigint"
+    }
+    column "ishold" {
+      type = text
+    }
+    column "remarks" {
+      type = "character varying(500)"
+    }
+    column "pos_remarks" {
+      type = "character varying(500)"
+    }
+    column "reserve_req" {
+      type = text
+    }
+    column "posorder_no" {
+      type = "character varying(25)"
+    }
+    column "grsamt" {
+      type = "numeric(20,2)"
+    }
+    column "netamt" {
+      type = "numeric(20,2)"
+    }
+    column "chgamt" {
+      type = "numeric(20,2)"
+    }
+    column "pricetype" {
+      type = text
+    }
+    column "pricelistname" {
+      type = "character varying(100)"
+    }
+    column "entry_source" {
+      type = "character varying(25)"
+    }
+    column "udfstring01" {
+      type = "character varying(500)"
+    }
+    column "udfstring02" {
+      type = "character varying(500)"
+    }
+    column "udfstring03" {
+      type = "character varying(500)"
+    }
+    column "udfstring04" {
+      type = "character varying(500)"
+    }
+    column "udfstring05" {
+      type = "character varying(500)"
+    }
+    column "udfstring06" {
+      type = "character varying(500)"
+    }
+    column "udfstring07" {
+      type = "character varying(500)"
+    }
+    column "udfstring08" {
+      type = "character varying(500)"
+    }
+    column "udfstring09" {
+      type = "character varying(500)"
+    }
+    column "udfstring10" {
+      type = "character varying(500)"
+    }
+    column "udfnum01" {
+      type = "numeric(20,3)"
+    }
+    column "udfnum02" {
+      type = "numeric(20,3)"
+    }
+    column "udfnum03" {
+      type = "numeric(20,3)"
+    }
+    column "udfnum04" {
+      type = "numeric(20,3)"
+    }
+    column "udfnum05" {
+      type = "numeric(20,3)"
+    }
+    column "udfdate01" {
+      type = "timestamp(0) without time zone"
+    }
+    column "udfdate02" {
+      type = "timestamp(0) without time zone"
+    }
+    column "udfdate03" {
+      type = "timestamp(0) without time zone"
+    }
+    column "udfdate04" {
+      type = "timestamp(0) without time zone"
+    }
+    column "udfdate05" {
+      type = "timestamp(0) without time zone"
+    }
+  )
+}
+

@@ -1,0 +1,347 @@
+procedure "main"."db_pro_get_tds_rate(text, bigint, bigint, bigint, timestamp without time zone, bigint, bigint, numeric, character varying, character varying, character varying, bigint, bigint, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+ /*******************************************************************************************************************
+   No.                Date                    Author                Description
+   ---------        ----------           ----------------------     ------------------------------------------------------------------
+   CREATED BY                               DIPTIMAN
+   REV : 001        22/07/2014             MOUSUMI      (BUG ID : 1047        CERTIFICATE No. null when without exception
+   REV : 002       16-JUN-2016             MOUSUMI      (TFS ID : 17923)      TDS on Advance Payment  Exception Limit Check (Revised)
+   REV : 003       27-MAR-2017             MOUSUMI      (TFS ID : 26844)      Multi OU - Procurement
+   REV : 004       12-SEP-2018            MOUSUMI      (MANYAVAR)     TDS RATE EXCEPTION
+ *********************************************************************************************************************/
+    V_RATE                      FINTDSTAG.RATE%TYPE;
+    V_MAX_LIMIT                 FINTDS_EXCEPTION.MAX_LIMIT%TYPE;
+    V_CERTIFICATENO             FINTDS_EXCEPTION.CERTIFICATENO%TYPE;
+    V_DTFR                      timestamp;
+    V_DTTO                      timestamp;
+    V_TDS_APPAMT                double precision;
+    V_FINTDSTYPESRC_CODE        bigint;
+    V_TDSNAME                   FINTDSTYPE.TDSNAME%TYPE;
+    V_TDSSRCNAME                FINTDSSRC.TDSSRCNAME%TYPE;
+    V_ERROR                     varchar(1000);
+    V_ERRTYPE                   char(1);
+    V_SHOWVAL                   char(1) := 'N';
+
+BEGIN
+    IF V_SHOWVAL = 'Y' THEN
+       CALL ERRAUDIT('1','1','1',CHR(10)||
+                'P_DOCTYPE     = '||P_DOCTYPE||CHR(10)||
+                'P_TDSSRCCODE  = '||P_TDSSRCCODE||CHR(10)||
+                'P_TDSTYPECODE = '||P_TDSTYPECODE||CHR(10)||
+                'P_SLCODE      = '||P_SLCODE||CHR(10)||
+                'P_DOCDT       = '||P_DOCDT||CHR(10)||
+                'P_DOCAMT      = '||P_DOCAMT||CHR(10)||
+                'P_CMPCODE     = '||P_CMPCODE
+               );
+    END IF;
+    IF  P_DOCDT IS NULL THEN
+        V_ERRTYPE := 'S';
+        V_ERROR   := 'Document Date could not be NULL.';
+    END IF;
+    BEGIN
+        SELECT TDSSRCNAME INTO STRICT V_TDSSRCNAME
+        FROM   FINTDSSRC
+        WHERE  TDSSRCCODE = P_TDSSRCCODE;
+    EXCEPTION
+        WHEN no_data_found THEN
+             V_ERRTYPE := 'S';
+             V_ERROR   := 'Invalid TDS Source.';
+    END;
+    BEGIN
+        SELECT TDSNAME INTO STRICT V_TDSNAME
+        FROM   FINTDSTYPE
+        WHERE  TDSTYPECODE = P_TDSTYPECODE;
+    EXCEPTION
+        WHEN no_data_found THEN
+             V_ERRTYPE := 'S';
+             V_ERROR   := 'Invalid TDS Name.';
+    END;
+    BEGIN
+        SELECT CODE
+        INTO STRICT   V_FINTDSTYPESRC_CODE
+        FROM   FINTDSTYPESRC
+        WHERE  TDSTYPECODE = P_TDSTYPECODE
+        AND    TDSSRCCODE  = P_TDSSRCCODE
+        AND    CMPCODE     = P_CMPCODE;
+    EXCEPTION
+        WHEN no_data_found THEN
+             V_ERRTYPE := 'S';
+             V_ERROR   := 'TDS Source ( '||V_TDSSRCNAME||' ) is not tagged with selected TDS name. Unable to proceed.';
+    END;
+-- START REV : 004
+ --IF P_DOCTYPE = 'SRV' THEN
+ IF P_DOCTYPE IN ('SRV','VCHP','JRNE') THEN
+ -- END REV : 004
+    BEGIN
+        SELECT RATE, MAX_LIMIT, DTFR, DTTO, CERTIFICATENO
+        INTO STRICT   V_RATE, V_MAX_LIMIT, V_DTFR, V_DTTO, V_CERTIFICATENO
+        FROM   FINTDS_EXCEPTION
+        WHERE  SLCODE      = P_SLCODE
+        AND    TDSTYPECODE = P_TDSTYPECODE
+        AND    DTFR       <= P_DOCDT
+        AND    ADMOU_CODE = P_ADMOU_CODE -- REV : 003
+        AND ( DTTO >= P_DOCDT OR DTTO IS NULL );
+    EXCEPTION
+        WHEN no_data_found THEN
+             BEGIN
+                 SELECT RATE
+                 INTO STRICT   V_RATE
+                 FROM   FINTDSTAG
+                 WHERE  DTFR = (
+                                  SELECT MAX(C.DTFR)
+                                  FROM   FINTDSTAG C
+                                  WHERE  C.DTFR <= P_DOCDT
+                                  AND ( C.DTTO >= P_DOCDT OR C.DTTO IS NULL )
+                                  AND    C.FINTDSTYPESRC_CODE = V_FINTDSTYPESRC_CODE
+                              )
+                 AND    P_DOCTYPE NOT IN ('VCHP','JRNE')
+                 AND    FINTDSTYPESRC_CODE = V_FINTDSTYPESRC_CODE;
+                 -- START REV : 001
+                 V_CERTIFICATENO := NULL;
+                 -- END REV : 001
+             EXCEPTION
+                 WHEN no_data_found THEN NULL;
+             END;
+    END;
+   -- START REV : 004
+    IF P_DOCTYPE IN ('VCHP','JRNE')  THEN
+         V_MAX_LIMIT := NULL;
+    END IF;
+    IF  V_MAX_LIMIT IS NOT NULL THEN
+            -- START REV : 002
+            BEGIN
+               /* IF    P_DOCTYPE = 'JRN' THEN
+                      SELECT SUM(NVL(TDS_APPAMT,0)) INTO V_TDS_APPAMT
+                      FROM   FINJRNDET
+                      WHERE  JRNTYPE = 'T'
+                      AND    JRNDT >= V_DTFR
+                      AND    ( V_DTTO IS NULL OR JRNDT <= V_DTTO )
+                      AND    NVL(DAMOUNT,0) > 0
+                      AND    SLCODE = P_SLCODE
+                      AND    TDSTYPECODE = P_TDSTYPECODE
+                      AND    TDSSRCCODE  = P_TDSSRCCODE
+                      AND    TDSRATE     = V_RATE;
+                ELSIF P_DOCTYPE = 'SRV' THEN
+                      SELECT SUM(NVL(TDS_APPAMT,0)) INTO V_TDS_APPAMT
+                      FROM   PURSRVMAIN
+                      WHERE  TDS_APP = 'Y'
+                      AND    SRVDT >= V_DTFR
+                      AND    ( V_DTTO IS NULL OR SRVDT <= V_DTTO )
+                      AND    PCODE = P_SLCODE
+                      AND    TDSTYPECODE = P_TDSTYPECODE
+                      AND    TDSSRCCODE  = P_TDSSRCCODE
+                      AND    TDSRATE     = V_RATE;
+                END IF;*/
+                -- ERRAUDIT(3,3,3,V_DTFR||'*'||V_DTTO||'*'||P_SLCODE||'*'||P_TDSTYPECODE||'*'||P_TDSSRCCODE||'*'||P_YCODE||'*'||P_TDSGLCODE||'*'||P_TDSSLCODE);
+              --  IF P_DOCTYPE = 'SRV' THEN
+                      SELECT SUM(coalesce(TDS_APPAMT,0))
+                      INTO STRICT   V_TDS_APPAMT
+                      FROM   V_TDS_APP
+                      WHERE  entrydate >= V_DTFR
+                      AND ( V_DTTO IS NULL OR entrydate <= V_DTTO )
+                      AND    SLCODE = P_SLCODE
+                      AND    TDSTYPECODE = P_TDSTYPECODE
+                      AND    TDSSRCCODE  = P_TDSSRCCODE
+                      AND    YCODE       = P_YCODE
+                      AND    TDSGLCODE   = P_TDSGLCODE
+                      AND    TDSSLCODE   = P_TDSSLCODE;
+                     -- AND    TDS_RATE     = V_RATE;
+                  --   ERRAUDIT(1,1,1,V_TDS_APPAMT);
+                -- END IF;
+            EXCEPTION
+                WHEN no_data_found THEN NULL;
+            END;
+            -- END REV : 002
+            -- START REV : 002
+            IF  coalesce(V_TDS_APPAMT,0) >= coalesce(V_MAX_LIMIT,0) THEN
+                  -- IF (NVL(V_MAX_LIMIT,0)-NVL(V_TDS_APPAMT,0)) > 0 THEN
+                    --V_ERRTYPE := 'W';
+                 --   V_ERROR   := 'Applicable amount is exceeding the exception limit, allowed upto Rs. '||(NVL(V_MAX_LIMIT,0)-NVL(V_TDS_APPAMT,0)) ||'. Proceeding will change the rate as per normal rate. Do you want to proceed?';
+                 --  END IF;
+                BEGIN
+                    SELECT RATE
+                    INTO STRICT   V_RATE
+                    FROM   FINTDSTAG
+                    WHERE  DTFR = (
+                                      SELECT MAX(C.DTFR)
+                                      FROM   FINTDSTAG C
+                                      WHERE  C.DTFR <= P_DOCDT
+                                      AND ( C.DTTO >= P_DOCDT OR C.DTTO IS NULL )
+                                      AND    C.FINTDSTYPESRC_CODE = V_FINTDSTYPESRC_CODE
+                                  )
+                    AND    FINTDSTYPESRC_CODE = V_FINTDSTYPESRC_CODE;
+                     -- START REV : 001
+                     V_CERTIFICATENO := NULL;
+                     -- END REV : 001
+                EXCEPTION
+                    WHEN no_data_found THEN NULL;
+                END;
+            ELSE
+            -- END REV : 002
+                IF (coalesce(V_TDS_APPAMT,0) + coalesce(P_DOCAMT,0)) > coalesce(V_MAX_LIMIT,0) THEN
+                --IF (NVL(V_MAX_LIMIT,0)-(NVL(V_TDS_APPAMT,0) + NVL(P_DOCAMT,0))) > 0 THEN
+                    V_ERRTYPE := 'W';
+                    V_ERROR   := 'Applicable amount is exceeding the exception limit, allowed upto Rs. '||(coalesce(V_MAX_LIMIT,0)-(coalesce(V_TDS_APPAMT,0)))||'. Proceeding will change the rate as per normal rate. Do you want to proceed?';
+                  -- END IF;
+                    BEGIN
+                        SELECT RATE
+                        INTO STRICT   V_RATE
+                        FROM   FINTDSTAG
+                        WHERE  DTFR = (
+                                          SELECT MAX(C.DTFR)
+                                          FROM   FINTDSTAG C
+                                          WHERE  C.DTFR <= P_DOCDT
+                                          AND ( C.DTTO >= P_DOCDT OR C.DTTO IS NULL )
+                                          AND    C.FINTDSTYPESRC_CODE = V_FINTDSTYPESRC_CODE
+                                      )
+                        AND    FINTDSTYPESRC_CODE = V_FINTDSTYPESRC_CODE;
+                        -- START REV : 001
+                        V_CERTIFICATENO := NULL;
+                        -- END REV : 001
+                    EXCEPTION
+                        WHEN no_data_found THEN NULL;
+                    END;
+                END IF;
+            END IF;
+        END IF;
+        -- REV : 002
+ ELSE
+     -- CALL ERRAUDIT(999,999,999,999);
+        BEGIN
+            SELECT RATE
+            INTO STRICT   V_RATE
+            FROM   FINTDSTAG
+            WHERE  DTFR = (
+                              SELECT MAX(C.DTFR)
+                              FROM   FINTDSTAG C
+                              WHERE  C.DTFR <= P_DOCDT
+                              AND ( C.DTTO >= P_DOCDT OR C.DTTO IS NULL )
+                              AND    C.FINTDSTYPESRC_CODE = V_FINTDSTYPESRC_CODE
+                          )
+            AND    FINTDSTYPESRC_CODE = V_FINTDSTYPESRC_CODE;
+         -- START REV : 001
+         V_CERTIFICATENO := NULL;
+         -- END REV : 001
+        EXCEPTION
+            WHEN no_data_found THEN NULL;
+        END;
+  END IF;
+    IF  V_RATE IS NULL THEN
+        V_ERRTYPE := 'S';
+        V_ERROR   := 'TDS Rate is not defined for selected TDS source. Unable to proceed.';
+    END IF;
+    P_TDSRATE       := V_RATE;
+    P_CERTIFICATENO := V_CERTIFICATENO;
+    P_ERRTYPE       := V_ERRTYPE;
+    P_ERROR         := V_ERROR;
+EXCEPTION
+    WHEN no_data_found THEN
+         CALL ERRAUDIT(USER, 'DB_PRO_GET_TDS_RATE',SQLSTATE, SQLERRM);
+         P_ERRTYPE := 'S';
+         P_ERROR   := 'TDS Ledger is not tagged with TDS source. Unable to proceed.';
+    WHEN OTHERS THEN
+         CALL ERRAUDIT(USER, 'DB_PRO_GET_TDS_RATE',SQLSTATE, SQLERRM);
+END;
+"""
+  arguments = <
+    {
+      name = p_doctype
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_tdssrccode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_tdstypecode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_slcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_docdt
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_docamt
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_cmpcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_tdsrate
+      type = numeric
+      mode = INOUT
+    }
+
+    {
+      name = p_certificateno
+      type = character varying
+      mode = INOUT
+    }
+
+    {
+      name = p_errtype
+      type = character varying
+      mode = INOUT
+    }
+
+    {
+      name = p_error
+      type = character varying
+      mode = INOUT
+    }
+
+    {
+      name = p_ycode
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_tdsglcode
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_tdsslcode
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_admou_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+  >
+  language = plpgsql
+}
+

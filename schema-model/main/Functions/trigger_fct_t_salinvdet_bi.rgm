@@ -1,0 +1,52 @@
+function "main"."trigger_fct_t_salinvdet_bi()" {
+  text = """
+
+DECLARE
+   -- START REV : 002
+   V_ENTDT                  INVSTOCK.ENTDT%TYPE;
+   V_ADMSITE_CODE_OWNER     INVSTOCK.ADMSITE_CODE%TYPE;
+   -- END REV : 002
+BEGIN
+    /*******************************************************************************************************************
+      REV NO      DATE           OWNER            DESCRIPTION
+      ---------   -----------    -----------      ---------------------------------------------------------------------
+      REV : 001   10-OCT-2017    Diptiman         (TFS ID : 32259) Reference family code introduced.
+      REV : 002   13-NOV-2017    DIPTIMAN         (TFS ID : 32259) COGS costrate related changes.
+      REV : 003   06-JAN-2022    SIDDHARTHA       (TFS ID : XXXXX) Batch Serial Related Changes.
+    *******************************************************************************************************************/
+    IF TG_OP = 'INSERT' THEN
+       -- START REV : 002
+       SELECT INVDT, ADMSITE_CODE_OWNER
+       INTO STRICT   V_ENTDT, V_ADMSITE_CODE_OWNER
+       FROM   SALINVMAIN
+       WHERE  INVCODE = NEW.INVCODE;
+       -- END REV : 002
+       IF  NEW.CODE IS NULL THEN
+           SELECT  nextval('salinvdet_code')
+           INTO STRICT    NEW.CODE
+;
+       END IF;
+
+       -- START REV : 001
+       IF  NEW.REF_FAMILY_CODE IS NULL THEN
+           SELECT nextval('ref_family_code')
+           INTO STRICT   NEW.REF_FAMILY_CODE
+;
+       END IF;
+       -- END REV : 001
+       -- START REV : 002
+       -- START REV : 003
+       --:NEW.COSTRATE := NVL(DB_PKG_COGS.GET_ITEM_LAST_IN_RATE(V_ADMSITE_CODE_OWNER, :NEW.ICODE, V_ENTDT),0);
+       NEW.COSTRATE := coalesce(DB_PKG_COGS$GET_ITEM_LAST_IN_RATE(V_ADMSITE_CODE_OWNER, NEW.ICODE, V_ENTDT, NULL, NEW.INVBATCH_SERIAL_CODE),0);
+       -- END REV : 002
+       -- END REV : 003
+    END IF;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

@@ -1,0 +1,195 @@
+function "main"."t_admsite_cdc()" {
+  text = """
+
+DECLARE
+   tmpvar                  bigint;
+   v_ispromosend_blocked   char(1);
+
+   c1rec CURSOR FOR
+      SELECT admsite_code
+        FROM admsite_ou
+       WHERE repln_admsite_code = NEW.code;
+BEGIN
+   /********************************************************************************************************************************
+    REV NO         OWNER         DATE           DESCRIPTION
+    ---------     -----------    -----------    ---------------------------------------------------------------------
+    REV : 001     ANINDYA        22-JUN-2017    (TFS ID : 29634) GST Related changes.
+    REV : 002     SIDDHARTHA     09-FEB-2023    (TFS ID : XXXXX) DataSyncMode Related changes .
+  *********************************************************************************************************************************/
+   SELECT MAX(coalesce(ispromosend_blocked,  'N'))
+     INTO STRICT v_ispromosend_blocked
+     FROM promo_allocation
+    WHERE code = NEW.psite_promo_allocation_code;
+
+   IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE'
+   THEN
+      SELECT nextval('psite_dataversion') INTO STRICT tmpvar;
+      NEW.dataversion := tmpvar;
+
+      IF (NEW.installation_type <> 'ZPOS' OR NEW.installation_type IS NULL) AND NEW.datasyncmode IS NULL
+        THEN NEW.datasyncmode := 'W';
+      END IF;
+
+   END IF;
+
+   IF TG_OP = 'UPDATE'
+   THEN
+
+      IF TG_OP = 'UPDATE'
+      THEN
+         FOR c1 IN c1rec
+         LOOP
+            CALL db_pkg_npos_event.track(c1.admsite_code, 
+                                     'SITECHANGE', 
+                                     c1.admsite_code,
+                                     coalesce(NEW.datasyncmode,'W'));
+         END LOOP;
+      END IF;
+
+      IF NEW.ispos = 'Y'
+      THEN
+         IF     NEW.psite_ispublished = 'Y'
+            AND coalesce(OLD.psite_ispublished,  'N') = 'N'
+         THEN
+            CALL db_pkg_npos_event.track(NEW.code,  'SITEPUBLISH',  NEW.code, coalesce(NEW.DATASYNCMODE,'W'));
+            -- START REV :001
+            
+            /*UPDATE SALCHG
+            SET  BASIS = BASIS
+            WHERE SOURCE = 'G';*/
+            
+            -- END REV : 001
+            
+                -- START REV :002
+               DECLARE c2rec CURSOR FOR
+                  SELECT salchgcode
+                    FROM salchg
+                   WHERE source = 'G';
+                BEGIN
+                FOR c2 IN c2rec
+                    LOOP
+                    CALL db_pkg_npos_event.track(NULL,
+                              'GSTCHARGECHANGE',
+                               c2.SALCHGCODE,
+                               coalesce(NEW.datasyncmode,'W'));
+                    END LOOP;
+                END;
+                -- END REV : 002
+         END IF;
+
+         IF OLD.psite_ispublished = 'Y'
+         THEN
+            IF NEW.ext = 'Y' AND OLD.ext = 'N'
+            THEN
+               CAll db_pkg_npos_event.track(NEW.code,  'SITEEXTINCT',  NEW.code, coalesce(NEW.DATASYNCMODE,'W'));
+            END IF;
+
+            Call db_pkg_npos_event.track(NEW.code,  'SITECHANGE',  NEW.code, coalesce(NEW.DATASYNCMODE,'W'));
+
+            IF coalesce(NEW.psite_admcmptax_code,  0) !=
+                  coalesce(OLD.psite_admcmptax_code,  0)
+            THEN
+               CALL db_pkg_npos_event.track(NEW.code,  'VATASSIGN',  --:NEW.psite_admcmptax_code
+                                                                NEW.code, coalesce(NEW.DATASYNCMODE,'W'));
+            END IF;
+
+            IF coalesce(NEW.iscentrallymanaged,  0) !=
+                  coalesce(OLD.iscentrallymanaged,  0)
+            THEN
+               CALL db_pkg_npos_event.track(NEW.code,  'POLICYCHANGE',  0, coalesce(NEW.DATASYNCMODE,'W'));
+            END IF;
+
+            IF     coalesce(NEW.psite_localpolicy_code,  0) !=
+                      coalesce(OLD.psite_localpolicy_code,  0)
+               AND NEW.psite_localpolicy_code IS NOT NULL
+            THEN
+               CALL db_pkg_npos_event.track(NEW.code,  'POLICYASSIGN',  NEW.code, coalesce(NEW.DATASYNCMODE,'W'));
+            END IF;
+
+            IF     coalesce(NEW.psite_localpolicy_code,  0) = 0
+               AND coalesce(OLD.psite_localpolicy_code,  0) != 0
+            THEN
+               CALL db_pkg_npos_event.track(NEW.code,  'POLICYREMOVE',  NEW.code, coalesce(NEW.DATASYNCMODE,'W'));
+            END IF;
+
+            IF     coalesce(NEW.psite_allocation_code,  0) !=
+                      coalesce(OLD.psite_allocation_code,  0)
+               AND NEW.psite_allocation_code IS NOT NULL
+            THEN
+               CALL db_pkg_npos_event.track(NEW.code,
+                                        'ALLOCATIONASSIGN', 
+                                        NEW.psite_allocation_code, coalesce(NEW.DATASYNCMODE,'W'));
+            END IF;
+
+            IF     coalesce(OLD.ispromosend_blocked,  'N') = 'Y'
+               AND coalesce(NEW.ispromosend_blocked,  'N') = 'N'
+               AND coalesce(NEW.psite_promo_allocation_code,  0) != 0
+               AND v_ispromosend_blocked = 'N'
+            THEN
+               CALL db_pkg_npos_event.track(NEW.code,
+                                        'PROMOALLOCATIONASSIGN', 
+                                        NEW.psite_promo_allocation_code, coalesce(NEW.DATASYNCMODE,'W'));
+            END IF;
+
+            IF     coalesce(NEW.psite_promo_allocation_code,  0) !=
+                      coalesce(OLD.psite_promo_allocation_code,  0)
+               AND NEW.psite_promo_allocation_code IS NOT NULL
+            THEN
+               IF     v_ispromosend_blocked = 'N'
+                  AND coalesce(NEW.ispromosend_blocked,  'N') = 'N'
+               THEN
+                  CALL db_pkg_npos_event.track(NEW.code,
+                                           'PROMOALLOCATIONASSIGN', 
+                                           NEW.psite_promo_allocation_code, coalesce(NEW.DATASYNCMODE,'W'));
+               ELSIF     v_ispromosend_blocked = 'Y'
+                     AND coalesce(OLD.psite_promo_allocation_code,  0) != 0
+               THEN
+                  CALL db_pkg_npos_event.track(NEW.code,
+                                           'PROMOALLOCATIONREMOVE', 
+                                           NEW.code, coalesce(NEW.DATASYNCMODE,'W'));
+               END IF;
+            END IF;
+
+            IF     coalesce(NEW.psite_promo_allocation_code,  0) = 0
+               AND coalesce(OLD.psite_promo_allocation_code,  0) != 0
+            THEN
+               CALL db_pkg_npos_event.track(NEW.code,
+                                        'PROMOALLOCATIONREMOVE', 
+                                        NEW.code, coalesce(NEW.DATASYNCMODE,'W'));
+            END IF;
+
+            /*
+                        IF NVL (:NEW.psite_admcmptax_code,  0) !=
+                                                        NVL (:OLD.psite_admcmptax_code,  0)
+                        THEN
+                           db_pkg_npos_event.track (:NEW.code, 
+                                                    'VATASSIGN', 
+                                                    :NEW.psite_admcmptax_code
+                                                   );
+                        END IF;
+            */
+            IF     coalesce(OLD.iscentrallymanaged,  0) = 0
+               AND coalesce(NEW.iscentrallymanaged,  0) = 1
+            THEN
+               CALL db_pkg_npos_event.track(NEW.code,  'USERSECURITY',  NEW.code, coalesce(NEW.DATASYNCMODE,'W'));
+            END IF;
+
+            IF     coalesce(OLD.issalespersonmanaged,  0) = 0
+               AND coalesce(NEW.issalespersonmanaged,  0) = 1
+            THEN
+               CALL db_pkg_npos_event.track(NEW.code,
+                                        'SALESPERSONASSIGNCHANGE', 
+                                        NEW.code, coalesce(NEW.DATASYNCMODE,'W'));
+            END IF;
+         END IF;
+      END IF;
+   END IF;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

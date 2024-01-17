@@ -1,0 +1,179 @@
+function "main"."int$pkg_gstrates_int$pkg_gstrates_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        v_status    char(1);
+        errmsg      varchar(200);
+        errcode     bigint;
+BEGIN
+        -- Cannot update System master.
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GSTRATES', userid, 'Data Validation','System master cannot be modified.',clock_timestamp()
+        from    int$stg_gstrates    a,
+                invhsnsacmain       m
+        where   upper(m.hsn_sac_code) = upper(a.hsn_sac_code)
+        and     a.hsn_sac_code is not null
+        and     m.issystem = 'Y'
+        and     userid = p_userid;
+
+        -- invalid HSN_SAC_CODE [not exists in master]
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GSTRATES', userid, 'Data Validation','Invalid HSN SAC Code.',clock_timestamp()
+        FROM int$stg_gstrates a
+LEFT OUTER JOIN invhsnsacmain m ON (upper(a.hsn_sac_code) = upper(m.hsn_sac_code))
+WHERE a.hsn_sac_code is not null and m.hsn_sac_code is null and userid = p_userid;
+
+        -- HSN/SAC Code shouldn't be extinct.
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GSTRATES', userid, 'Data Validation','Rate modification not allowed for extinct HSN/SAC Code.',clock_timestamp()
+        from    int$stg_gstrates    a,
+                invhsnsacmain       m
+        where   upper(m.hsn_sac_code) = upper(a.hsn_sac_code)
+        and     a.hsn_sac_code is not null
+        and     m.extinct = 'Y'
+        and     userid = p_userid;
+
+        -- HSN/SAC Code shouldn't be null.
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GSTRATES', userid, 'Mandatory Validation','HSN/SAC Code is mandatory.',clock_timestamp()
+        from    int$stg_gstrates    a
+        where   a.hsn_sac_code is null
+        and     userid = p_userid;
+
+        -- HSN/SAC Code max 20 char allowed
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GSTRATES', userid, 'Data Validation','HSN/SAC Code cannot be more than 20 characters.',clock_timestamp()
+        from    int$stg_gstrates a
+        where   a.hsn_sac_code is not null
+        and     length(a.hsn_sac_code) > 20
+        and     userid = p_userid;
+
+        -- Effective Date shouldn't be null.
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GSTRATES', userid, 'Mandatory Validation','Effective date is mandatory.',clock_timestamp()
+        from    int$stg_gstrates a
+        where   a.effective_date is null
+        and     userid = p_userid;
+
+        -- valid Effective Date
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GSTRATES', userid, 'Data Validation','Effective Date should be a valid date.',clock_timestamp()
+        from    int$stg_gstrates a
+        where   a.effective_date is not null
+        and (
+                    (to_char(a.effective_date,'yyyy'))::numeric  < 4
+                    or
+                    (to_char(a.effective_date,'yyyymmdd'))::numeric  < 8
+                )
+        and     userid = p_userid;
+
+        --Multiple rows with same date cannot exists for one HSN/SAC Code in the excel.
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GSTRATES', userid, 'Row Validation','Multiple rows with same date cannot exists for one HSN/SAC Code.',clock_timestamp()
+        from    int$stg_gstrates a
+        where (a.hsn_sac_code,to_char(a.effective_date,'yyyymmdd')) in (
+                                            SELECT  tmp.hsn_sac_code,tmp.effdt
+                                            from (
+                                                    select  b.hsn_sac_code,to_char(b.effective_date,'yyyymmdd') effdt,row_number() over (partition by b.hsn_sac_code,to_char(b.effective_date,'yyyymmdd') order by b.hsn_sac_code,to_char(b.effective_date,'yyyymmdd')) rec_cnt
+                                                    from    int$stg_gstrates   b
+                                                    where   b.userid = p_userid
+                                                ) tmp
+                                            where   tmp.rec_cnt > 1
+                                        )
+        and     a.userid = p_userid;
+
+        -- GST Rate Name shouldn't be null.
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GSTRATES', userid, 'Mandatory Validation','GST Rate''s Tax Name is mandatory.',clock_timestamp()
+        from    int$stg_gstrates a
+        where   a.gst_rate_name is null
+        and     userid = p_userid;
+
+        -- GST Rate Name should be 50 char.
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GSTRATES', userid, 'Data Validation','GST Rate''s Tax Name cannot be more than 50 characters.',clock_timestamp()
+        from    int$stg_gstrates a
+        where   a.gst_rate_name is not null
+        and     length(a.gst_rate_name) > 50
+        and     userid = p_userid;
+
+        -- Should be a valid and non-extinct GST Rate.
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GSTRATES', userid, 'Data Validation','GST Rate is either extinct or invalid.',clock_timestamp()
+        FROM int$stg_gstrates a
+LEFT OUTER JOIN invgstrate r ON (upper(a.gst_rate_name) = upper(r.tax_name))
+WHERE (
+                    r.tax_name is null
+                    or
+                    r.extinct = 'Y'
+                ) and a.gst_rate_name is not null and userid = p_userid;
+
+        -- Remarks max 100 characters allowed
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GSTRATES', userid, 'Data Validation','Remarks cannot be more than 100 characters.',clock_timestamp()
+        from    int$stg_gstrates a
+        where   a.remarks is not null
+        and     length(a.remarks) > 100
+        and     userid = p_userid;
+
+        --COMMIT;
+
+        -- check whether records are valid or not
+        begin
+            select  'S'
+            into STRICT    v_status
+
+            where   exists (
+                            SELECT  'S'
+                            from    int$error_log
+                            where   userid = p_userid
+                            );
+            return('0');
+        exception
+            when no_data_found then
+            return('1');
+        end;
+    exception
+        when others then
+            errcode := SQLSTATE;
+            errmsg := sqlerrm;
+
+            insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            values (nextval('int$error_log_code'), 0, 'GSTRATES', p_userid, errcode, errmsg, clock_timestamp());
+            --COMMIT;
+
+            return('0');
+    end;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

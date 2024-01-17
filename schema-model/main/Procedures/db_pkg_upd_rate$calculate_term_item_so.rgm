@@ -1,0 +1,448 @@
+procedure "main"."db_pkg_upd_rate$calculate_term_item_so(bigint)" {
+  text = """
+
+DECLARE
+
+       dummy_appamt         double precision;
+       dummy_totchgamt      double precision;
+       dummy_chkchgamt      double precision;
+       dummy_chk            char(1);
+       dummy_prvchk         char(1);
+       dummy_sign           char(1);
+       v_rate               double precision;
+       v_taxcode            bigint;
+       v_tax_status         char(1);
+       v_item_chg           double precision := 0;
+       v_glcode             bigint;
+       v_slcode             bigint;
+       v_ordamt             double precision;
+       v_code               bigint;
+       v_sign               char(1);
+       v_cnt                bigint :=0;
+       v_taxamt             salorddet.taxamt%TYPE := 0;
+       v_range_appl         fintaxdet.range_appl%TYPE;
+       v_tax_basis          fintaxdet.tax_basis%TYPE;
+       v_taxdetcode         fintaxdet.taxdetcode%TYPE;
+       dup_rate             fintaxdet.rate%TYPE;
+       v_rangefrom          fintax_range.rangefrom%TYPE;
+       v_appamt             invgrcchg.appamt%TYPE;
+       v_flag               char(1) := 'N';
+
+      -- START REV : 001
+       V_FINTAX_RANGE_GLCODE	bigint;
+       V_FINTAX_RANGE_SLCODE	bigint;
+      -- END REV : 001
+	  
+        ERRCODE  varchar(50);
+        ERRMSG   varchar(2000);
+	  
+       C1 CURSOR FOR
+           SELECT code, icode, coalesce(rsp,0) rsp, coalesce(ordqty,0) qty, ROUND((coalesce(ordqty,0)*coalesce(rate,0))::numeric, 2) netamt,
+                  excisemain_code, ex_basis, ex_effrate, ex_abtfactor, ex_dutyfactor, ex_cessfactor, ex_appamt, ex_dutyamt, ex_cessamt
+                  -- START REV : 001
+                  ,M.ADMSITE_CODE_OWNER
+                  ,M.ADMSITE_CODE
+                  ,M.PCODE
+                  -- END REV : 001
+           FROM   salorddet D
+                  ,SALORDMAIN M
+           WHERE  D.ordcode = current_setting('db_pkg_upd_rate.g_ordcode')::bigint
+           AND    M.ORDCODE = D.ORDCODE
+           AND (p_code IS NULL OR code = p_code);
+
+       C2 CURSOR FOR
+           SELECT saltermdet.saltermcode,
+                  saltermdet.chgcode,
+                  coalesce(saltermdet.rate,0) rate,
+                  saltermdet.formulae,
+                  LENGTH(saltermdet.formulae) formlen,
+                  saltermdet.sign,
+                  coalesce(salchg.glcode,NULLIF(current_setting('db_pkg_upd_rate.g_glcode'),'')::bigint) glcode,
+                  salchg.formcode,
+                  salchg.roundoff,
+                  saltermdet.seq,
+                  salchg.basis,
+                  saltermdet.operation_level,
+                  salchg.istax,
+                  salchg.source,
+                  CASE WHEN salchg.glcode IS NULL THEN coalesce(salchg.slcode,NULLIF(current_setting('db_pkg_upd_rate.g_slcode'),'')::bigint)  
+				  ELSE salchg.slcode END  slcode,
+                  gst_component  -- rev : 001
+           FROM   saltermdet, salchg
+           WHERE  saltermdet.chgcode = salchg.salchgcode
+           AND    saltermcode = current_setting('db_pkg_upd_rate.g_saltermcode')::bigint
+           AND    saltermdet.operation_level = 'L'
+           ORDER BY seq;
+
+  i RECORD;
+
+BEGIN
+       DELETE FROM salordchg
+       WHERE  ordcode = current_setting('db_pkg_upd_rate.g_ordcode')::bigint
+       AND    operation_level = 'L';
+
+       IF p_code IS NULL THEN
+          DELETE FROM salordchg_item
+          WHERE  ordcode = current_setting('db_pkg_upd_rate.g_ordcode')::bigint;
+       END IF;
+
+       SELECT SUM(netamt)
+       INTO STRICT   v_ordamt
+       FROM   salorddet
+       WHERE  ordcode = current_setting('db_pkg_upd_rate.g_ordcode')::bigint
+       AND (p_code IS NULL OR code = p_code);
+
+       IF coalesce(v_ordamt,0) = 0 THEN
+          v_ordamt := 1;
+       END IF;
+
+       FOR c1rec IN c1 LOOP
+           FOR c2rec IN c2 LOOP
+               IF c2rec.SOURCE = 'E' AND c1rec.excisemain_code IS NOT NULL AND coalesce(current_setting('db_pkg_upd_rate.g_excise_appl')::char(1), 'N') = 'Y' 
+			   THEN
+                  INSERT INTO salordchg_item(ordcode, salorddet_code, seq, salchgcode, glcode, slcode, rate, basis
+                           ,SIGN, chgamt, appamt, formulae, istax, SOURCE)
+                  (SELECT current_setting('db_pkg_upd_rate.g_ordcode')::bigint, c1rec.code, c2rec.seq, c2rec.chgcode, c2rec.glcode, c2rec.slcode, c1rec.ex_dutyfactor,
+                          c2rec.basis, c2rec.SIGN, c1rec.ex_dutyamt, c1rec.ex_appamt, c2rec.formulae, c2rec.istax, c2rec.SOURCE
+                   FROM   salorddet
+                   WHERE  code = c1rec.code
+                   AND    excisemain_code = c1rec.excisemain_code);
+               ELSE
+                   IF c2rec.SOURCE = 'V' THEN
+                      SELECT taxcode
+                      INTO STRICT   v_taxcode
+                      FROM   invitem
+                      WHERE  icode = c1rec.icode;
+
+                      IF v_taxcode IS NOT NULL AND coalesce(c2rec.istax, 'N') = 'Y' THEN
+                         BEGIN
+                             SELECT t2.rate, saltax_glcode, saltax_slcode, t2.range_appl range_appl, t2.tax_basis tax_basis, t2.taxdetcode taxdetcode
+                             INTO STRICT   v_rate, v_glcode, v_slcode, v_range_appl, v_tax_basis, v_taxdetcode
+                             FROM invitem t1
+LEFT OUTER JOIN fintaxdet t2 ON (t1.taxcode = t2.taxcode)
+WHERE t1.icode = c1rec.icode  AND t2.admcmptax_code = current_setting('db_pkg_upd_rate.g_admcmptax_code_ou')::bigint AND t2.fintradegrp_code = current_setting('db_pkg_upd_rate.g_saltradegrp_code')::bigint AND t2.formcode = current_setting('db_pkg_upd_rate.g_formcode')::bigint AND (t1.taxcode IS NULL
+                                     OR
+                                     t2.taxdetcode = (SELECT taxdetcode
+                                                      FROM   fintaxdet b
+                                                      WHERE  t2.taxcode = b.taxcode
+                                                      AND    b.admcmptax_code = current_setting('db_pkg_upd_rate.g_admcmptax_code_ou')::bigint
+                                                      AND    b.fintradegrp_code = current_setting('db_pkg_upd_rate.g_saltradegrp_code')::bigint
+                                                      AND    b.formcode = current_setting('db_pkg_upd_rate.g_formcode')::bigint
+                                                      AND    b.dtfr = (SELECT MAX(c.dtfr)
+                                                                       FROM   fintaxdet c
+                                                                       WHERE  c.dtfr <= current_setting('db_pkg_upd_rate.g_orddt')::timestamp
+                                                                       AND (c.dtto >= current_setting('db_pkg_upd_rate.g_orddt')::timestamp
+                                                                               OR
+                                                                               c.dtto IS NULL)
+                                                                       AND    c.admcmptax_code = current_setting('db_pkg_upd_rate.g_admcmptax_code_ou')::bigint
+                                                                       AND    c.taxcode = t2.taxcode
+                                                                       AND    c.fintradegrp_code = current_setting('db_pkg_upd_rate.g_saltradegrp_code')::bigint
+                                                                       AND    c.formcode = current_setting('db_pkg_upd_rate.g_formcode')::bigint
+                                                                       )
+                                                    )
+                                    );
+
+                             IF coalesce(v_range_appl, 'N') = 'Y' AND v_tax_basis = 'M' THEN
+                                v_rangefrom := 0;
+                                v_flag      := 'N';
+
+                                SELECT coalesce(MIN(rangefrom), 0), MIN('Y')
+                                INTO STRICT   v_rangefrom, v_flag
+                                FROM   fintax_range r
+                                WHERE  taxdetcode = v_taxdetcode;
+
+                                IF v_flag = 'N' THEN
+                                   v_rate := 0;
+                                ELSE
+                                   IF c1rec.rsp >= v_rangefrom THEN
+                                      BEGIN
+                                          SELECT coalesce(rate, 0)
+                                          INTO STRICT   dup_rate
+                                          FROM   fintax_range r
+                                          WHERE  taxdetcode = v_taxdetcode
+                                          AND    c1rec.rsp BETWEEN coalesce(rangefrom, 0) AND coalesce(rangeto, 999999999999999999);
+
+                                          v_rate                     := dup_rate;
+                                      EXCEPTION
+                                          WHEN no_data_found THEN
+                                               v_rate := 0;
+                                          WHEN OTHERS THEN
+                                               v_rate := 0;
+                                      END;
+                                   ELSE
+                                      v_rate := 0;
+                                   END IF;
+                                END IF;
+                             END IF;
+                             v_tax_status := 'I';
+                         EXCEPTION
+                             WHEN no_data_found THEN
+                                  v_tax_status := 'C';
+                                  v_rate       := 0;
+                         END;
+                      ELSE
+                        v_tax_status := 'N';
+                      END IF;
+                    -- START REV : 001
+                   ELSIF 	C2REC.SOURCE = 'G' THEN
+
+                              V_TAX_STATUS 				:= 'I';
+                              V_GLCODE     := DB_FUNC_GET_GST_GL_SL( C2REC.GST_COMPONENT , C1REC.ADMSITE_CODE_OWNER,C2REC.ISTAX ,'OGL' ,NULL);
+                              V_SLCODE     := DB_FUNC_GET_GST_GL_SL( C2REC.GST_COMPONENT , C1REC.ADMSITE_CODE_OWNER,C2REC.ISTAX ,'OSL' ,NULL);
+                              V_RANGE_APPL              := 'N';
+
+                    -- END REV : 001
+                   ELSE
+                      IF c2rec.SOURCE = 'E' THEN
+                         v_tax_status := 'N';
+                      ELSE
+                         v_tax_status := 'C';
+                      END IF;
+                   END IF;
+
+                   IF v_tax_status <> 'N' THEN
+                      dummy_totchgamt := 0;
+
+                      FOR i IN 1 .. c2rec.formlen LOOP
+                          IF  MOD(i, 2) != 0 THEN
+                              dummy_chk := SUBSTR(c2rec.formulae, i, 1);
+                              dummy_chkchgamt := 0;
+
+                              IF  dummy_chk = 'B' THEN
+                                  dummy_chkchgamt := coalesce(c1rec.netamt, 0);
+                              ELSE
+                                  BEGIN
+                                     SELECT salordchg_item.chgamt
+                                     INTO STRICT   dummy_chkchgamt
+                                     FROM   saltermdet, salordchg_item
+                                     WHERE  saltermdet.chgcode = salordchg_item.salchgcode
+                                     AND    salordchg_item.salorddet_code = c1rec.code
+                                     AND    saltermdet.saltermcode = c2rec.saltermcode
+                                     AND    saltermdet.operation_level = 'L'
+                                     AND    saltermdet.seq = (dummy_chk)::numeric;
+                                  EXCEPTION
+                                     WHEN no_data_found THEN
+                                          dummy_chkchgamt := 0;
+                                   END;
+                              END IF;
+
+                              dummy_prvchk := SUBSTR(c2rec.formulae, i - 1, 1);
+
+                              IF    dummy_prvchk = '+' THEN
+                                    dummy_totchgamt := dummy_totchgamt + coalesce(dummy_chkchgamt, 0);
+                              ELSIF dummy_prvchk = '-' THEN
+                                    dummy_totchgamt := dummy_totchgamt - coalesce(dummy_chkchgamt, 0);
+                              ELSE
+                                    dummy_totchgamt := coalesce(dummy_chkchgamt, 0);
+                              END IF;
+                          END IF;
+                      END LOOP;
+
+                      dummy_appamt               := dummy_totchgamt;
+
+                        -- START REV : 001
+                        IF 	C2REC.SOURCE = 'G' THEN
+
+                                  V_RATE    := 0;
+
+                                  V_RATE 	:= DB_FUNC_GET_GST_TAX_RATE( C1REC.ICODE::text, 
+																		C2REC.GST_COMPONENT::text,
+																		current_setting('db_pkg_upd_rate.g_orddt')::timestamp without time zone, 
+																		C2REC.ISTAX::text,
+																		NULL::text,
+																		NULL::text,
+                                                                        C1REC.RSP::bigint,
+																		DUMMY_APPAMT::bigint,
+																		C1REC.QTY::bigint,
+																		C1REC.ADMSITE_CODE_OWNER::bigint,
+																		C1REC.ADMSITE_CODE::bigint,
+																		C1REC.PCODE::bigint
+                                                                         );
+                                  V_RANGE_APPL               := 'N';
+
+                         END IF;
+                        -- END REV : 001
+                      IF  coalesce(v_range_appl, 'N') = 'Y' AND v_tax_basis = 'N' THEN
+                          v_rangefrom  := 0;
+                          v_flag       := 'N';
+
+                          SELECT coalesce(MIN(rangefrom), 0), MIN('Y')
+                          INTO STRICT   v_rangefrom, v_flag
+                          FROM   fintax_range r
+                          WHERE  taxdetcode = v_taxdetcode;
+
+                          IF  v_flag = 'N' THEN
+                              v_rate := 0;
+                          ELSE
+                              v_appamt := 0;
+                              v_appamt := round((dummy_appamt / c1rec.qty)::numeric, 2);
+
+                              IF  v_appamt >= v_rangefrom THEN
+                                  BEGIN
+                                      SELECT coalesce(rate, 0)
+                                      INTO STRICT   dup_rate
+                                      FROM   fintax_range r
+                                      WHERE  taxdetcode = v_taxdetcode
+                                      AND    v_appamt BETWEEN coalesce(rangefrom, 0) AND coalesce(rangeto, 999999999999999999);
+
+                                      v_rate  := dup_rate;
+                                  EXCEPTION
+                                      WHEN no_data_found THEN
+                                         v_rate := 0;
+                                      WHEN OTHERS THEN
+                                         v_rate := 0;
+                                  END;
+                               ELSE
+                                  v_rate := 0;
+                              END IF;
+                          END IF;
+                      END IF;
+
+                      IF  c2rec.basis = 'P' THEN
+                          SELECT (CASE WHEN v_tax_status='C' THEN  c2rec.rate  ELSE v_rate END  / 100) * coalesce(dummy_totchgamt, 0)
+                          INTO STRICT   dummy_totchgamt
+;
+                      ELSE
+                          dummy_totchgamt := coalesce(c1rec.netamt, 0) * c2rec.rate / v_ordamt;
+                      END IF;
+
+                      IF  c2rec.SIGN = '-' AND dummy_totchgamt >= 0 THEN
+                          dummy_totchgamt            := -1 * coalesce(dummy_totchgamt, 0);
+                      END IF;
+
+                      IF    dummy_totchgamt < 0 THEN
+                            dummy_sign := '-';
+                      ELSIF dummy_totchgamt > 0 THEN
+                            dummy_sign := '+';
+                      ELSIF dummy_totchgamt = 0 THEN
+                            dummy_sign := c2rec.SIGN;
+                      END IF;
+
+                      IF c2rec.roundoff = 'Y' THEN
+                         dummy_totchgamt  := ROUND(dummy_totchgamt);
+                      END IF;
+
+                        -- START REV : 001
+                    /*    IF  V_TAX_STATUS = 'I' THEN
+
+                            IF	V_FINTAX_RANGE_GLCODE IS NULL THEN
+
+                                  IF V_GLCODE IS NULL THEN
+                                     V_FINAL_GLCODE := C2REC.GLCODE;
+                                     V_FINAL_SLCODE := C2REC.SLCODE;
+                                  ELSE
+                                     V_FINAL_GLCODE := V_GLCODE;
+                                     V_FINAL_SLCODE := V_SLCODE;
+                                  END IF;
+
+                            ELSE
+
+                                 V_FINAL_GLCODE := V_FINTAX_RANGE_GLCODE;
+                                 V_FINAL_SLCODE := V_FINTAX_RANGE_SLCODE;
+
+                            END IF;
+
+                      ELSE
+                                 V_FINAL_GLCODE := C2REC.GLCODE;
+                                 V_FINAL_SLCODE := C2REC.SLCODE;
+                      END IF;*/
+                        -- END REV : 001
+                      INSERT INTO salordchg_item(ordcode, salorddet_code, seq, salchgcode, glcode, slcode, rate
+                              ,basis, SIGN, chgamt, appamt, formulae, istax, SOURCE
+                              ,gst_component -- rev : 001
+                              )
+                      VALUES (current_setting('db_pkg_upd_rate.g_ordcode')::bigint, c1rec.code, c2rec.seq, c2rec.chgcode
+                      -- START REV : 001
+                              ,CASE WHEN v_tax_status='I' THEN  coalesce(v_glcode, c2rec.glcode)  ELSE c2rec.glcode END
+                              ,CASE WHEN v_tax_status='I' THEN  coalesce(v_slcode, c2rec.slcode)  ELSE c2rec.slcode END 
+                             -- ,V_FINAL_GLCODE
+                            --  ,V_FINAL_SLCODE
+                      -- END REV : 001
+                              ,CASE WHEN v_tax_status='C' THEN  c2rec.rate  ELSE v_rate END , c2rec.basis
+                              ,dummy_sign, dummy_totchgamt, dummy_appamt, c2rec.formulae
+                              ,c2rec.istax, c2rec.SOURCE
+                              ,c2rec.gst_component -- rev : 001
+                              );
+
+                            -- START REV : 001
+                            V_GLCODE := NULL;
+                            V_SLCODE := NULL;
+                            -- END REV : 001
+                      IF  c2rec.SOURCE <> 'E' THEN
+                          IF  c2rec.istax = 'N' THEN
+                              v_item_chg := v_item_chg + coalesce(dummy_totchgamt, 0);
+                          ELSE
+                              v_taxamt := v_taxamt + coalesce(dummy_totchgamt, 0);
+                          END IF;
+                      END IF;
+                   END IF;
+               END IF;
+           END LOOP;
+
+           UPDATE salorddet
+           SET    chgamt = coalesce(v_item_chg, 0),
+                  taxamt = coalesce(v_taxamt, 0)
+           WHERE  code = c1rec.code;
+
+           v_item_chg := 0;
+           v_taxamt   := 0;
+       END LOOP;
+
+       -- ADJUSTMENT OF ROUNDOFF ERROR ON APPORTION OF AMOUNT BASIS CHARGE
+       FOR i IN (SELECT salchgcode, istax, rate, tot
+                 FROM (SELECT salchgcode, istax, rate, ABS(SUM(chgamt)) tot
+                         FROM     salordchg_item
+                         WHERE    ordcode = current_setting('db_pkg_upd_rate.g_ordcode')::bigint
+                         AND      basis = 'A'
+                         AND      SOURCE <> 'E'
+                         GROUP BY salchgcode, istax, rate) alias3
+                 WHERE  coalesce(rate, 0) <> coalesce(tot, 0))
+       LOOP
+          SELECT MAX(code), MAX(SIGN)
+          INTO STRICT   v_code, v_sign
+          FROM   salordchg_item
+          WHERE  ordcode = current_setting('db_pkg_upd_rate.g_ordcode')::bigint
+          AND    salchgcode = i.salchgcode
+          AND    coalesce(rate, 0) = coalesce(i.rate, 0)
+          AND    ABS(chgamt) > ABS(i.rate - i.tot);
+
+          UPDATE salordchg_item
+          SET chgamt = CASE WHEN v_sign='-' THEN  chgamt - i.rate + i.tot  ELSE chgamt + i.rate - i.tot END
+          WHERE  code = v_code;
+
+          IF i.istax = 'N' THEN
+             UPDATE salorddet
+             SET chgamt = CASE WHEN v_sign='-' THEN  chgamt - i.rate + i.tot  ELSE chgamt + i.rate - i.tot END
+             WHERE  code = (SELECT salorddet_code
+                            FROM   salordchg_item
+                            WHERE  code = v_code);
+          ELSE
+             UPDATE salorddet
+             SET    taxamt = CASE WHEN v_sign='-' THEN  coalesce(taxamt, 0) - coalesce(i.rate, 0) + coalesce(i.tot, 0)  ELSE coalesce(taxamt, 0) + coalesce(i.rate, 0) - coalesce(i.tot, 0) END
+             WHERE  code = (SELECT salorddet_code FROM salordchg_item WHERE code = v_code);
+          END IF;
+       END LOOP;
+
+       CALL db_pkg_upd_rate_sumup_line_lvl_salordchg();
+
+   EXCEPTION
+       WHEN OTHERS THEN
+        ERRCODE     := SQLSTATE;
+        ERRMSG      := SQLERRM;
+        CALL erraudit(USER, 'db_pkg_upd_rate.calculate_term_item_so()', ERRCODE, ERRMSG);
+
+   END;
+
+"""
+  arguments = <
+    {
+      name = p_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+  >
+  language = plpgsql
+}
+

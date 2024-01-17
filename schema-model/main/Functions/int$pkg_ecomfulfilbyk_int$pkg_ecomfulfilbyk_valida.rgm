@@ -1,0 +1,2021 @@
+function "main"."int$pkg_ecomfulfilbyk_int$pkg_ecomfulfilbyk_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status   char(1);
+      errmsg     varchar(200);
+      errcode    text;
+      v_item_batch_separator char(1);
+BEGIN
+
+        select item_batch_separator into STRICT v_item_batch_separator from admcmpprof;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ecomfulfilbyk', userid, 'Data Validation', 'Please remove value from batch/serial column and try again.', clock_timestamp()
+        from   int$stg_ecomfulfilbyk a
+        where  a.item_barcode is not null
+        and    a.batch_serial_no is not null
+        and    coalesce((position(v_item_batch_separator in a.item_barcode)),0) <> 0
+        and    a.userid = p_userid;
+
+    declare 
+         c_separator CURSOR FOR
+                    SELECT *
+                    from   int$stg_ecomfulfilbyk 
+                    where  userid = p_userid
+                    and    item_barcode like '%'||v_item_batch_separator||'%'
+                    order by lineno;
+         begin
+           for c1 in c_separator
+           loop
+                   update int$stg_ecomfulfilbyk
+                   set    batch_serial_no = SUBSTR(item_barcode, INSTR(item_barcode,v_item_batch_separator, -1) + 1),
+                   item_barcode = SUBSTR(item_barcode, 1, position(v_item_batch_separator in item_barcode)-1)
+                   where  lineno = c1.lineno
+                   and    item_barcode like '%'||v_item_batch_separator||'%'
+                   and    userid = p_userid;
+           end loop;
+         end;
+
+    --COMMIT;
+		
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ecomfulfilbyk', userid, 'Data Validation', 'System Batch Serial is not allowed. Please remove and proceed.', clock_timestamp()
+        from   int$stg_ecomfulfilbyk a
+        where  UPPER(a.batch_serial_no) = 'SYSTEM BATCH SERIAL'
+        and    a.batch_serial_no is not null
+        and    a.userid = p_userid;
+
+      -- END REV : 024
+       
+      -- START REV : 021
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                'Cannot supply shipping detail if IsBillingShippingSame is Yes',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE     UPPER(a.ISBILLINGSHIPPINGSAME) = 'YES'
+                AND (   S_CUSTOMER_MOBILENO IS NOT NULL
+                     OR S_CUSTOMER_FIRSTNAME IS NOT NULL
+                     OR S_CUSTOMER_MIDDLENAME IS NOT NULL
+                     OR S_CUSTOMER_LASTNAME IS NOT NULL
+                     OR S_CUSTOMER_EMAIL IS NOT NULL
+                     OR S_CUSTOMER_GENDER IS NOT NULL
+                     OR S_CUSTOMER_ADDRESSLINE1 IS NOT NULL
+                     OR S_CUSTOMER_ADDRESSLINE2 IS NOT NULL
+                     OR S_CUSTOMER_ADDRESSLINE3 IS NOT NULL
+                     OR S_CUSTOMER_CITY IS NOT NULL
+                     OR S_CUSTOMER_PIN IS NOT NULL
+                     OR S_CUSTOMER_DISTRICT IS NOT NULL
+                     OR S_CUSTOMER_STATE IS NOT NULL
+                     OR S_CUSTOMER_COUNTRY IS NOT NULL
+                     OR S_CUST_GST_ID_NO IS NOT NULL
+                     OR S_CUST_GST_REG_DATE IS NOT NULL
+                     OR S_CUST_GST_STATE_NAME IS NOT NULL
+                     OR S_ISDCODE IS NOT NULL)
+                AND a.userid = p_userid;
+
+        INSERT INTO int$error_log(code,
+                                         lineno,
+                                         classname,
+                                         userid,
+                                         errortype,
+                                         errordesc,
+                                         createdon)
+                 SELECT nextval('int$error_log_code'),
+                        lineno,
+                        'ecomfulfilbyk',
+                        userid,
+                        'Data Validation',
+                        'IsBillingShippingSame should be Yes/No',
+                        clock_timestamp()
+                   FROM int$stg_ecomfulfilbyk a
+                  WHERE     UPPER(a.ISBILLINGSHIPPINGSAME) NOT IN ('YES','NO')
+                        AND a.userid = p_userid;
+
+      -- END REV : 021
+       
+       -- START REV : 016
+    -- scheme_doc_format checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                p_userid,
+                'Data Validation',
+                'Scheme_doc format is not applicable for site or it is extinct or it is not tagged at Fulfilled by Marketplace menu',
+                clock_timestamp()
+           FROM INT$STG_ECOMFULFILBYK x
+          WHERE     UPPER(scheme_doc_format) NOT IN (SELECT upper(docname)
+  FROM admdocscheme
+ WHERE     coalesce(ext, 'N') = 'N'
+       --AND NVL (manual, 'N') = 'N'
+       AND doccode IN (SELECT doccode
+                 FROM admmenu_docscheme
+                WHERE     mdmenushortcode = 'MCSEComMarketplace'
+                      AND NOT EXISTS (SELECT 1
+                                FROM admou_docscheme
+                               WHERE admsite_code = p_connect_site)
+
+UNION ALL
+
+               SELECT a.doccode
+                 FROM admmenu_docscheme a, admou_docscheme b
+                WHERE     a.doccode = b.doccode
+                      AND a.mdmenushortcode = 'MCSEComMarketplace'
+                      AND b.admsite_code = p_connect_site))
+                AND x.userid = p_userid;
+
+      
+
+      -- scheme_docno chking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                'Scheme Doc No is missing for "Manual" type document scheme format',
+                clock_timestamp()
+           FROM INT$STG_ECOMFULFILBYK a
+          WHERE (    UPPER(a.scheme_doc_format) IN ('MANUAL (GENERAL)', 'MANUAL (EXCISE)')
+                     AND a.scheme_docno IS NULL)
+                AND a.userid = p_userid;
+
+                
+                 INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                'Manual-Excise document scheme is not allowed. Please use applicable document scheme for this transaction.',
+                clock_timestamp()
+           FROM INT$STG_ECOMFULFILBYK a
+          WHERE         UPPER(a.scheme_doc_format) IN (SELECT upper(docname)
+  FROM admdocscheme
+ WHERE     coalesce(ext, 'N') = 'N'
+       and coalesce(ISEXCISE,'N')='Y'
+       --AND NVL (manual, 'N') = 'N'
+       AND doccode IN (SELECT doccode
+                 FROM admmenu_docscheme
+                WHERE     mdmenushortcode = 'MCSEComMarketplace'))        
+                AND a.userid = p_userid;
+
+      -- scheme_docno chking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                'Scheme Docno should be null, as it would be auto generated',
+                clock_timestamp()
+           FROM INT$STG_ECOMFULFILBYK a
+          WHERE (    UPPER(a.scheme_doc_format) NOT IN ('MANUAL (GENERAL)', 'MANUAL (EXCISE)')
+                     AND a.scheme_docno IS NOT NULL)
+                AND a.userid = p_userid;
+
+      -- scheme_docno chking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                p_userid,
+                'Data Validation',
+                'Scheme Docno already exists (' || x.scheme_docno || ')',
+                clock_timestamp()
+           FROM INT$STG_ECOMFULFILBYK x
+          WHERE x.scheme_docno IN
+          (SELECT b.scheme_docno from
+                   (  SELECT a.scheme_docno
+                        FROM INT$STG_ECOMFULFILBYK a, SALCSMAIN b
+                       WHERE     UPPER(a.scheme_docno) =
+                                    UPPER(b.scheme_docno)
+                             AND userid = p_userid
+                             AND ycode =
+                                    (SELECT ycode
+                                       FROM admyear
+                                      WHERE p_logging_date BETWEEN dtfr
+                                                               AND dtto)
+                    GROUP BY a.scheme_docno
+                      HAVING COUNT(DISTINCT a.scheme_docno) > 1) b
+		   			  GROUP BY b.scheme_docno
+                      having count(b.scheme_docno) > 1);
+
+       -- checking customer gender
+              INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                'BILLING_CUSTOMER_GENDER, is not valid. Please provide from the accepted list of values (Male, Female, Transgender and Undisclosed).',
+                clock_timestamp()
+           FROM INT$STG_ECOMFULFILBYK a
+          WHERE     upper(a.B_CUSTOMER_GENDER) not in ('MALE', 'FEMALE', 'TRANSGENDER', 'UNDISCLOSED') and a.B_CUSTOMER_GENDER is not null
+                AND a.userid = p_userid;
+        -- END REV : 016
+                                   
+
+      --Future date transaction is not allowed
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Date Validation',
+                'Future date transaction is not allowed.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE date_trunc('day', saledt) > date_trunc('day', clock_timestamp()) AND a.userid = p_userid;
+
+      --User lock days setting getting violated
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Date Validation',
+                'User lock days setting getting violated.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a, hrdemp b
+          WHERE     a.userid = b.ecode
+                AND date_trunc('day', a.saledt) NOT BETWEEN (CURRENT_DATE - locdays :: integer)
+                 AND CURRENT_DATE
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Date Validation',
+                'Billing Customer City PIN can not exceed more than 6 caracter.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE LENGTH(B_CUSTOMER_PIN) > 6 AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Date Validation',
+                'Billing Customer City PIN can not be negative.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE position('-' in B_CUSTOMER_PIN) <> 0 AND a.userid = p_userid;
+
+     -- START REV: 016
+     INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Date Validation',
+                'Shipping Customer City PIN can not exceed more than 6 caracter.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE LENGTH(S_CUSTOMER_PIN) > 6 AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Date Validation',
+                'Shipping Customer City PIN can not be negative.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE position('-' in S_CUSTOMER_PIN) <> 0 AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Date Validation',
+                'Month / Year is not in open state.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a, ADMMONTH m, ADMOU_MONTH b
+          WHERE     date_trunc('day', a.saledt) BETWEEN date_trunc('day', m.dtfr)
+                                         AND date_trunc('day', m.dtto)
+                AND B.ADMMONTH_CODE = M.MCODE
+                AND B.ADMOU_CODE = P_CONNECT_OU                   -- REV : 002
+                AND b.INV_MONTH_STATUS <> 'O'
+                AND a.userid = p_userid;
+
+      -- END REV : 003
+      --Tradegroup is mandatory.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Mandatory Validation',
+                'Tradegroup is mandatory.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE tradegroup_name IS NULL AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Mandatory Validation',
+                'Tradegroup is extinct.',
+                clock_timestamp()
+           FROM fintradegrp t, int$stg_ecomfulfilbyk a
+WHERE tradegroup_name IS NOT NULL  AND (T.NAME IS NULL OR coalesce(T.EXT, 'N') = 'Y') AND a.userid = p_userid;
+
+INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Mandatory Validation',
+                'Tradegroup Local is mandatory.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a ,
+			(
+			SELECT UPPER(GT.NAME) NAME
+				   FROM ADMGSTSTATE GT, ADMSITE S, ADMGSTIN G
+			WHERE S.ADMGSTIN_CODE = G.CODE
+				   AND G.ADMGSTSTATE_CODE = GT.CODE
+				   AND G.ADMGSTSTATE_CODE IS NOT NULL
+				   AND S.CODE = P_CONNECT_SITE
+			)st
+			WHERE UPPER(TRADEGROUP_NAME) <> 'LOCAL'
+			AND (A.B_CUST_GST_STATE_NAME IS NOT NULL 
+				  AND COALESCE(UPPER(A.B_CUST_GST_STATE_NAME),'@@@@@') = COALESCE(UPPER(ST.NAME),'@@@@@')
+				 OR A.B_CUST_GST_STATE_NAME IS NULL)
+			AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Mandatory Validation',
+                'Tradegroup Interstate is mandatory.',
+                clock_timestamp()
+           FROM fintradegrp t, (
+                 SELECT UPPER(GT.NAME) NAME
+                        FROM ADMGSTSTATE GT, ADMSITE S, ADMGSTIN G
+                 WHERE S.ADMGSTIN_CODE = G.CODE
+                        AND G.ADMGSTSTATE_CODE = GT.CODE
+                        AND G.ADMGSTSTATE_CODE IS NOT NULL
+                        AND S.CODE = P_CONNECT_SITE
+                 ) st, int$stg_ecomfulfilbyk a 
+WHERE UPPER(TRADEGROUP_NAME) <> 'INTER STATE'  AND T.CODE <> 2 AND (A.B_CUST_GST_STATE_NAME IS NOT NULL AND UPPER(A.B_CUST_GST_STATE_NAME) <> UPPER(ST.NAME)) AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Site Validation',
+                CASE
+                   WHEN(b.shrtname IS NULL OR coalesce(b.ext, 'N') = 'Y')
+                   THEN
+                      'Site should be valid and non-extinct.'
+                   WHEN sitetype <> 'US-CO-CM'
+                   THEN
+                      'Only unmanaged consignment mode site (US-CO-CM) is allowed here.'
+                END,
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a LEFT OUTER JOIN admsite b ON (UPPER(a.site_short_name) = UPPER(b.shrtname))
+WHERE ADMOU_CODE = P_CONNECT_OU                      -- REV : 002
+  AND (   b.shrtname IS NULL
+                     OR coalesce(b.ext, 'N') = 'Y'
+                     OR sitetype <> 'US-CO-CM') AND a.userid = p_userid;
+
+      -- Multiple sites found for this short name, unable to proceed
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Site Validation',
+                'Multiple sites found for this short name, unable to proceed.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a,
+                (  SELECT lineno, UPPER(b.shrtname), COUNT(1)
+                     FROM int$stg_ecomfulfilbyk a, admsite b
+                    WHERE     UPPER(a.site_short_name) = UPPER(b.shrtname)
+                          AND ADMOU_CODE = P_CONNECT_OU           -- REV : 002
+                          AND a.userid = p_userid
+                 GROUP BY lineno, UPPER(b.shrtname)
+                   HAVING COUNT(1) > 1) b
+          WHERE a.lineno = b.lineno AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Site Validation',
+                'VAT region is not defined in site.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a, admsite b
+          WHERE     UPPER(a.site_short_name) = UPPER(b.shrtname)
+                AND ADMOU_CODE = P_CONNECT_OU                     -- REV : 002
+                AND b.psite_admcmptax_code IS NULL
+                AND a.userid = p_userid;
+
+      --Consignment sale ledger is mandatory for the customer.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Site Validation',
+                'Consignment sale ledger is mandatory for the customer.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a, admsite b, finsl p
+          WHERE     UPPER(a.site_short_name) = UPPER(b.shrtname)
+                AND ADMOU_CODE = P_CONNECT_OU                     -- REV : 002
+                AND b.slcode = p.slcode
+                AND p.consignment_sales_glcode IS NULL
+                AND a.userid = p_userid;
+
+      -- START REV : 011
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                p_userid,
+                'Data Validation',
+                'Sales ledger is either invalid or extinct.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE     NOT EXISTS (SELECT NULL
+                          FROM FINGL
+                         WHERE     FINGL.EXT = 'N'
+                               AND UPPER(FINGL.GLNAME) = UPPER(a.GLNAME) -- AND      SRCTYPE   = 'G'
+                                                                          )
+                AND a.glname IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                p_userid,
+                'Data Validation',
+                'Nature of Sales ledger should be General.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE     NOT EXISTS (SELECT NULL
+                          FROM FINGL
+                         WHERE     UPPER(FINGL.GLNAME) = UPPER(a.GLNAME)
+                               AND SRCTYPE = 'G')
+                AND a.glname IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                p_userid,
+                'Data Validation',
+                'Sales Leder should be either Income or Expense type of ledger. ',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE     NOT EXISTS (SELECT NULL
+                          FROM FINGL
+                         WHERE     UPPER(FINGL.GLNAME) = UPPER(a.GLNAME)
+                               AND TYPE IN ('I', 'E'))
+                AND a.glname IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                p_userid,
+                'Data Validation',
+                'Sales Ledger is not tagged to the connected site.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a, FINGL GL
+          WHERE     UPPER(GL.GLNAME) = UPPER(a.GLNAME)
+                AND GL.COSTAPP = 'Y'
+                AND NOT EXISTS (SELECT NULL
+                          FROM FINGL_SITE SGL
+                         WHERE     GL.GLCODE = SGL.GLCODE
+                               AND SGL.ADMSITE_CODE = P_CONNECT_SITE)
+                AND a.glname IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                p_userid,
+                'Data Validation',
+                'Sub-Ledger Can not be null for given ledger',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE     EXISTS (SELECT NULL
+                          FROM FINGL
+                         WHERE     FINGL.EXT = 'N'
+                               AND UPPER(FINGL.GLNAME) = UPPER(a.GLNAME)
+                               AND SLAPP = 'Y')
+                AND a.slid IS NULL
+                AND a.GLNAME IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                p_userid,
+                'Data Validation',
+                'Sub-Ledger should be null for given ledger',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE     EXISTS (SELECT NULL
+                          FROM FINGL
+                         WHERE     FINGL.EXT = 'N'
+                               AND UPPER(FINGL.GLNAME) = UPPER(a.GLNAME)
+                               AND coalesce(SLAPP, 'N') = 'N')
+                AND a.slid IS NOT NULL
+                AND a.GLNAME IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                p_userid,
+                'Data Validation',
+                'Sales sub-ledger is not tagged with the selected Sales ledger',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE     EXISTS
+                       (SELECT NULL
+                          FROM FINSL, FINGL, FINSL_GL FGL
+                         WHERE     UPPER(FINSL.slid) = UPPER(a.slid)
+                               AND FINGL.GLCODE = FGL.GLCODE
+                               AND FGL.SLCODE = FINSL.SLCODE
+                               AND FGL.EXT = 'N'
+                               --  AND      FINSL.EXT      = 'N'
+                               AND FINGL.GLCODE =
+                                      (SELECT GLCODE
+                                         FROM FINGL
+                                        WHERE UPPER(GLNAME) =
+                                                 UPPER(A.GLNAME)))
+                AND a.slid IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                p_userid,
+                'Data Validation',
+                'Sales sub-ledger is either invalid or extinct.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE     EXISTS (SELECT NULL
+                          FROM FINSL
+                         WHERE     UPPER(FINSL.slid) = UPPER(a.slid)
+                               AND FINSL.EXT = 'N')
+                AND a.slid IS NOT NULL
+                AND a.userid = p_userid;
+
+      UPDATE int$stg_ecomfulfilbyk a
+         SET SLCODE =
+                (SELECT slcode
+                   FROM finsl b
+                  WHERE UPPER(b.slid) = UPPER(a.SLID))
+       WHERE a.SLID IS NOT NULL AND a.userid = p_userid;
+
+      UPDATE int$stg_ecomfulfilbyk a
+         SET GLCODE =
+                (SELECT GLCODE
+                   FROM FINGL b
+                  WHERE UPPER(b.GLNAME) = UPPER(a.GLNAME))
+       WHERE a.GLNAME IS NOT NULL AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Ledger Validation',
+                'Round off GL in Organization Unit is not provided.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a, admou b
+          WHERE (a.roundoff IS NOT NULL AND b.roundoff_glcode IS NULL)
+                AND B.CODE = P_CONNECT_OU                         -- REV : 002
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Item Data Validation',
+                'Item doesn''t exist or is extinct.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a 
+		   LEFT OUTER JOIN (SELECT icode, ext FROM invitem
+
+UNION
+
+                 SELECT barcode, ext FROM invitem) b ON (UPPER(a.item_barcode) = UPPER(b.icode))
+WHERE (b.icode IS NULL OR coalesce(b.ext, 'N') = 'Y') AND a.userid = p_userid;
+
+      -- Tax ledger is not defined.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                p_userid,
+                'Ledger Validation',
+                'Tax ledger is not defined.',
+                clock_timestamp()
+           FROM (SELECT lineno,
+                        -- START REV : 002
+                        --int$pkg_ecomfulfilbyk_db_fun_taxdetcode(i.icode, saledt, b.code, t.code) taxdetcode
+                        int$pkg_ecomfulfilbyk_db_fun_taxdetcode(i.icode,
+                                           saledt,
+                                           b.code,
+                                           t.code,
+                                           P_CONNECT_OU)
+                           taxdetcode                         -- END REV : 002
+                                     ,
+                        psite_admcmptax_code                -- START REV : 004
+                                            ,
+                        ICODE,
+                        SALEDT,
+                        INVHSNSACMAIN_CODE,
+                        CASE
+                           WHEN    B.SITETYPE LIKE '%OO-CM'
+                                OR B.SITETYPE = 'MS-CO-CM'
+                           THEN
+                              CASE WHEN ADMGSTIN_CODE IS NULL THEN  NULL  ELSE 'Y' END
+                           ELSE
+                              B.CP_GSTIN_NO
+                        END
+                           ADMGSTIN_CODE
+                   -- END REV : 004
+                   FROM int$stg_ecomfulfilbyk a,
+                        admsite               b,
+                        invitem               i,
+                        finsl                 p,
+                        fintradegrp           t
+                  WHERE     UPPER(a.site_short_name) = UPPER(b.shrtname)
+                        AND ADMOU_CODE = P_CONNECT_OU             -- REV : 002
+                        AND a.userid = p_userid
+                        AND (   UPPER(a.item_barcode) = UPPER(i.icode)
+                             OR UPPER(a.item_barcode) = UPPER(i.barcode))
+                        AND b.slcode = p.slcode
+                        AND coalesce(p.sale_post_method, 'E') = 'E'
+                        AND a.tradegroup_name = t.name) t1, fintaxdet t2
+LEFT OUTER JOIN (SELECT tr.taxdetcode, tr.SALTAX_GLCODE, tr.SALTAX_SLCODE
+                   FROM fintax_range tr) td ON (t2.TAXDETCODE = td.TAXDETCODE)
+WHERE t1.taxdetcode = t2.taxdetcode AND t1.psite_admcmptax_code = t2.admcmptax_code  AND coalesce(td.saltax_glcode, t2.saltax_glcode) IS NULL AND t2.taxcode <> 0 -- START REV : 004
+  AND (   (T1.ICODE NOT IN
+                            (SELECT ICODE
+                               FROM INVHSNSACDET D, INVITEM IT
+                              WHERE     D.INVHSNSACMAIN_CODE =
+                                           IT.INVHSNSACMAIN_CODE
+                                    AND D.INVHSNSACMAIN_CODE =
+                                           T1.INVHSNSACMAIN_CODE
+                                    AND D.CODE =
+                                           (SELECT DISTINCT D1.CODE
+                                              FROM INVHSNSACDET D1,
+                                                   INVITEM      IT1
+                                             WHERE     D1.INVHSNSACMAIN_CODE =
+                                                          IT1.INVHSNSACMAIN_CODE
+                                                   AND D1.INVHSNSACMAIN_CODE =
+                                                          T1.INVHSNSACMAIN_CODE
+                                                   AND EFFECTIVE_DATE =
+                                                          (SELECT MAX(
+                                                                     EFFECTIVE_DATE)
+                                                             FROM INVHSNSACDET
+                                                                  D3,
+                                                                  INVITEM IT3
+                                                            WHERE     D3.INVHSNSACMAIN_CODE =
+                                                                         IT3.INVHSNSACMAIN_CODE
+                                                                  AND D3.INVHSNSACMAIN_CODE =
+                                                                         T1.INVHSNSACMAIN_CODE
+                                                                  AND D3.EFFECTIVE_DATE <=
+                                                                         SALEDT))))
+                     OR ADMGSTIN_CODE IS NULL) -- END REV : 004
+  AND t2.fintradegrp_code = (SELECT code
+                                             FROM fintradegrp
+                                            WHERE UPPER(NAME) = 'LOCAL') AND coalesce(t2.formcode, 0) = 0;
+
+      --Item''s Net Amount cannot be negative
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Item Data Validation',
+                'Item''s Net Amount cannot be negative.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE     (    coalesce(item_qty, 0) > 0
+                     AND (  (coalesce(item_rate, 0) * coalesce(item_qty, 0))
+                          - coalesce(item_discountamt, 0)
+                          + coalesce(item_extra_taxamt, 0)
+                          + +coalesce(item_shipment_charges, 0)
+                          + coalesce(item_cod_charges, 0)
+                          + coalesce(item_gw_charges, 0)) < 0)
+                AND a.userid = p_userid;
+
+      --Item''s Net Amount cannot be positive
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Item Data Validation',
+                'Item''s Net Amount cannot be positive.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE     (    coalesce(item_qty, 0) < 0
+                     AND (  (coalesce(item_rate, 0) * coalesce(item_qty, 0))
+                          - coalesce(item_discountamt, 0)
+                          + coalesce(item_extra_taxamt, 0)
+                          + +coalesce(item_shipment_charges, 0)
+                          + coalesce(item_cod_charges, 0)
+                          + coalesce(item_gw_charges, 0)) > 0)
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Mandatory Validation',
+                'Item quantity cannot be 0.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE a.item_qty = 0 AND a.userid = p_userid;
+
+      --Item quantity should be in multiples of scan unit.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Item Data Validation',
+                'Item quantity should be in multiples of scan unit.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a, invitem b
+          WHERE (   UPPER(a.item_barcode) = UPPER(b.icode)
+                     OR UPPER(a.item_barcode) = UPPER(b.barcode))
+                AND MOD(a.item_qty, b.barunit) <> 0
+                AND b.item_management_mode  <> 'S'
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Item Data Validation',
+                'RSP must be >= 0.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE a.item_rsp < 0 AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Item Data Validation',
+                'Rate must be >= 0.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE a.item_rate < 0 AND a.userid = p_userid;
+
+      --Extra Tax should be <= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Item Data Validation',
+                'Shipment cahrge should be a negative value for return items.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE (    a.item_qty < 0
+                     AND a.item_shipment_charges IS NOT NULL
+                     AND a.item_shipment_charges > 0)
+                AND a.userid = p_userid;
+
+      --Extra Tax should be >= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Item Data Validation',
+                'Shipment cahrge should be a positive value for sale items.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE (    a.item_qty > 0
+                     AND a.item_shipment_charges IS NOT NULL
+                     AND a.item_shipment_charges < 0)
+                AND a.userid = p_userid;
+
+      --Extra Tax should be <= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Item Data Validation',
+                'CD charge should be a negative value for return items.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE (    a.item_qty < 0
+                     AND a.item_cod_charges IS NOT NULL
+                     AND a.item_cod_charges > 0)
+                AND a.userid = p_userid;
+
+      --Extra Tax should be >= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Item Data Validation',
+                'CD charge should be a positive value for sale items.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE (    a.item_qty > 0
+                     AND a.item_cod_charges IS NOT NULL
+                     AND a.item_cod_charges < 0)
+                AND a.userid = p_userid;
+
+      --Extra Tax should be <= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Item Data Validation',
+                'Gift Voucher should be a negative value for return items.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE (    a.item_qty < 0
+                     AND a.item_gw_charges IS NOT NULL
+                     AND a.item_gw_charges > 0)
+                AND a.userid = p_userid;
+
+      --Extra Tax should be >= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Item Data Validation',
+                'Gift Voucher should be a positive value for sale items.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE (    a.item_qty > 0
+                     AND a.item_gw_charges IS NOT NULL
+                     AND a.item_gw_charges < 0)
+                AND a.userid = p_userid;
+
+      --Discount should be <= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Item Data Validation',
+                'Discount should be a negative value for return items.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE (    a.item_qty < 0
+                     AND a.item_discountamt IS NOT NULL
+                     AND a.item_discountamt > 0)
+                AND a.userid = p_userid;
+
+      --Discount should be >= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Item Data Validation',
+                'Discount should be a positive value for sale items.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE (    a.item_qty > 0
+                     AND a.item_discountamt IS NOT NULL
+                     AND a.item_discountamt < 0)
+                AND a.userid = p_userid;
+
+      --Discount should be between 0 and gross amount.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Item Data Validation',
+                'Discount should be between 0 and gross amount.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE (    a.item_discountamt IS NOT NULL
+                     AND ABS(a.item_discountamt) NOT BETWEEN 0
+                                                          AND round((
+                                                                   coalesce(
+                                                                      item_rate,
+                                                                      0)
+                                                                 * coalesce(
+                                                                      ABS(
+                                                                         item_qty),
+                                                                      0))::numeric,
+                                                                 2))
+                AND a.userid = p_userid;
+
+      --Extra Tax should be <= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Item Data Validation',
+                'Extra Tax should be a negative value for return items.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE (    a.item_qty < 0
+                     AND a.item_extra_taxamt IS NOT NULL
+                     AND a.item_extra_taxamt > 0)
+                AND a.userid = p_userid;
+
+      --Extra Tax should be >= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Item Data Validation',
+                'Extra Tax should be a positive value for sale items.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE (    a.item_qty > 0
+                     AND a.item_extra_taxamt IS NOT NULL
+                     AND a.item_extra_taxamt < 0)
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Mandatory Validation',
+                'Billing customer Gender is mandatory for customer.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE (    a.B_CUSTOMER_MOBILENO IS NOT NULL
+                     AND B_CUSTOMER_GENDER IS NULL)
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                'SHIPPING_CUSTOMER_GENDER, is not valid. Please provide from the accepted list of values (Male, Female, Transgender and Undisclosed).',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE (    S_CUSTOMER_GENDER IS NOT NULL
+                     AND LOWER(S_CUSTOMER_GENDER) NOT IN ('male', 'female','transgender' ,'undisclosed'))
+                AND a.userid = p_userid;
+      --end rev : 016                
+      -- Email Id is invalid.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                'Billing Customer Email Id is invalid.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk
+          WHERE (    B_CUSTOMER_EMAIL IS NOT NULL
+                     AND (   B_CUSTOMER_EMAIL NOT LIKE '%@%'
+                          OR B_CUSTOMER_EMAIL NOT LIKE '%.%'))
+                AND userid = p_userid;
+
+   -- start rev : 016        
+ --Shipping Email Id is invalid.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                'Shipping Email Id is invalid.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk
+          WHERE (    S_CUSTOMER_EMAIL IS NOT NULL
+                     AND (   S_CUSTOMER_EMAIL NOT LIKE '%@%'
+                          OR S_CUSTOMER_EMAIL NOT LIKE '%.%'))
+                AND userid = p_userid;
+
+-- end rev : 016
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                'GST Identification No. should have exactly 15 characters.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          
+          WHERE     LENGTH(a.B_CUST_GST_ID_NO) <> 15
+                AND a.B_CUST_GST_ID_NO IS NOT NULL
+                AND a.B_CUSTOMER_MOBILENO IS NOT NULL
+                -- END REV : 011
+                AND a.userid = p_userid;
+
+       -- start rev  :016        
+         INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                'Shipping GST Identification No. should have exactly 15 characters.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a          
+          WHERE     LENGTH(a.S_CUST_GST_ID_NO) <> 15
+                AND a.S_CUST_GST_ID_NO IS NOT NULL
+                AND a.S_CUSTOMER_MOBILENO IS NOT NULL
+                --START REV: 021
+                AND UPPER(a.ISBILLINGSHIPPINGSAME) = 'NO'
+                --END REV: 021              
+                AND a.userid = p_userid;
+        -- end rev  :016         
+      --2
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                'Billing GST Identification No. is invalid as per Government prescribed format.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE     a.B_CUST_GST_ID_NO IS NOT NULL
+                AND db_fun_check_gstin_no(a.B_CUST_GST_ID_NO) =
+                       'F'
+                AND a.B_CUSTOMER_MOBILENO IS NOT NULL               -- REV : 010
+                AND a.userid = p_userid;
+
+        -- start rev : 016        
+       INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                ' Shipping GST Identification No. is invalid as per Government prescribed format.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE     a.S_CUST_GST_ID_NO IS NOT NULL
+                AND db_fun_check_gstin_no(a.S_CUST_GST_ID_NO) =
+                       'F'
+                AND a.S_CUSTOMER_MOBILENO IS NOT NULL
+                -- REV : 010
+                --START REV: 021
+                AND UPPER(a.ISBILLINGSHIPPINGSAME) = 'NO'
+                --END REV: 021              
+                AND a.userid = p_userid;
+         -- end rev : 016        
+      --3
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                'Unable to determine state as per inputted GST Identification No., State code is invalid.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+LEFT OUTER JOIN admgststate m ON (SUBSTR(a.B_CUST_GST_ID_NO, 1, 2) = m.code)
+WHERE a.userid = p_userid AND a.B_CUSTOMER_MOBILENO IS NOT NULL AND a.B_CUST_GST_ID_NO IS NOT NULL  AND M.code IS NULL;
+
+      -- END REV : 011
+      
+      -- start rev : 016         
+       INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                'Unable to determine state as per inputted Shipping GST Identification No., State code is invalid.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+LEFT OUTER JOIN admgststate m ON (SUBSTR(a.S_CUST_GST_ID_NO, 1, 2) = m.code)
+WHERE a.userid = p_userid AND a.S_CUSTOMER_MOBILENO IS NOT NULL AND a.S_CUST_GST_ID_NO IS NOT NULL  --START REV: 021
+  AND UPPER(a.ISBILLINGSHIPPINGSAME) = 'NO' --END REV: 021 
+  AND M.code IS NULL;
+  -- end rev : 016
+      --Customer GST Registration Date
+      --1
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                'GST Reg. Date cannot be provided without providing GST Identification No.',
+                clock_timestamp()
+           -- START REV : 011
+           FROM int$stg_ecomfulfilbyk a
+
+          WHERE     a.B_CUST_GST_REG_DATE IS NOT NULL
+                AND a.B_CUST_GST_ID_NO IS NULL
+                AND a.B_CUSTOMER_MOBILENO IS NOT NULL
+                AND a.userid = p_userid;
+
+         --start rev : 019
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                'GST Reg. Date cannot be provided without providing Shipping GST Identification No.',
+                clock_timestamp()           
+           FROM int$stg_ecomfulfilbyk  a          
+          WHERE     a.S_CUST_GST_REG_DATE IS NOT NULL
+                AND a.S_CUST_GST_ID_NO IS NULL
+                AND a.S_CUSTOMER_MOBILENO IS NOT NULL
+                --START REV: 021
+                AND UPPER(a.ISBILLINGSHIPPINGSAME) = 'NO'
+                --END REV: 021 
+                AND a.userid = p_userid;
+    --end rev : 019       
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                'GST Reg. date is not in valid format.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE     a.B_CUST_GST_REG_DATE IS NOT NULL
+                AND a.B_CUSTOMER_MOBILENO IS NOT NULL
+                AND (   (TO_CHAR(a.B_CUST_GST_REG_DATE, 'yyyy'))::numeric  <
+                           4
+                     OR (TO_CHAR(a.B_CUST_GST_REG_DATE, 'yyyymmdd'))::numeric  <
+                           8)
+                AND a.userid = p_userid;
+
+      -- END REV : 011
+      
+      
+      
+   -- start rev : 016
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                'Shipping GST Reg. date is not in valid format.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE     a.S_CUST_GST_REG_DATE IS NOT NULL
+                AND a.S_CUSTOMER_MOBILENO IS NOT NULL
+                AND (   (TO_CHAR(a.S_CUST_GST_REG_DATE, 'yyyy'))::numeric  <
+                           4
+                     OR (TO_CHAR(a.S_CUST_GST_REG_DATE, 'yyyymmdd'))::numeric  <
+                           8)
+                --START REV: 021
+                AND UPPER(a.ISBILLINGSHIPPINGSAME) = 'NO'
+                --END REV: 021 
+                AND a.userid = p_userid;
+      -- end rev : 016
+      --Customer GST State Name
+      --1
+      -- START REV : 011
+      -- GST state validation
+      -- CASE - I
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                'GST State provided is invalid.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a  LEFT OUTER JOIN admgststate gs ON (UPPER(a.B_CUST_GST_STATE_NAME) = UPPER(gs.name))
+WHERE a.B_CUST_GST_STATE_NAME IS NOT NULL AND gs.name IS NULL AND a.B_CUSTOMER_MOBILENO IS NOT NULL AND a.userid = p_userid;
+
+      -- start rev : 016
+       INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                'Shipping GST State provided is invalid.',
+                clock_timestamp()
+           FROM admgststate gs LEFT OUTER JOIN int$stg_ecomfulfilbyk a ON (UPPER(a.S_CUST_GST_STATE_NAME) = UPPER(gs.name))
+WHERE a.S_CUST_GST_STATE_NAME IS NOT NULL AND gs.name IS NULL AND a.S_CUSTOMER_MOBILENO IS NOT NULL --START REV: 021
+  AND UPPER(a.ISBILLINGSHIPPINGSAME) = 'NO' --END REV: 021 
+  AND a.userid = p_userid;
+
+          -- end rev : 016          
+      -- CASE - II
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                'GST State inputted is not at per with GST Identification No.''s state.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a, admgststate gs
+          WHERE     UPPER(a.B_CUST_GST_STATE_NAME) = UPPER(gs.name)
+                AND (SUBSTR(a.B_CUST_GST_ID_NO, 1, 2)) <> gs.code
+                AND a.B_CUST_GST_STATE_NAME IS NOT NULL
+                -- AND     a.B_CUST_GST_ID_NO  is not null
+                AND a.B_CUSTOMER_MOBILENO IS NOT NULL
+                AND a.userid = p_userid;
+
+      -- end rev : 004
+      
+      
+      -- start rev : 016
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                'Shipping GST State inputted is not at per with GST Identification No.''s state.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a, admgststate gs
+          WHERE     UPPER(a.S_CUST_GST_STATE_NAME) = UPPER(gs.name)
+                AND (SUBSTR(a.S_CUST_GST_ID_NO, 1, 2)) <> gs.code
+                AND a.S_CUST_GST_STATE_NAME IS NOT NULL
+                AND a.S_CUSTOMER_MOBILENO IS NOT NULL
+                --START REV: 021
+                AND UPPER(a.ISBILLINGSHIPPINGSAME) = 'NO'
+                --END REV: 021 
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                'Mobile number should contain digits.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE (    a.B_CUSTOMER_MOBILENO IS NOT NULL
+                     AND NULLIF(LTRIM(a.B_CUSTOMER_MOBILENO, '01234567890'), '')
+                            IS NOT NULL)
+                AND userid = p_userid;
+
+     
+-- start rev : 016
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          lineno,
+          'ecomfulfilbyk',
+          userid,
+          'Data Validation',
+          'Shipping Mobile number should contain digits.',
+          clock_timestamp()
+     FROM int$stg_ecomfulfilbyk a
+    WHERE (    a.S_CUSTOMER_MOBILENO IS NOT NULL
+                AND NULLIF(LTRIM(a.S_CUSTOMER_MOBILENO, '01234567890'),'') IS NOT NULL )
+                --START REV: 021
+                AND UPPER(a.ISBILLINGSHIPPINGSAME) = 'NO'
+                --END REV: 021 
+                AND userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                'Length of mobile number is not valid for the given ISD Code',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+LEFT OUTER JOIN admisd i ON (a.B_ISDCODE :: text = i.ISDCODE)
+WHERE i.ALLOW_MOBILENO_DIGIT IS NOT NULL AND LENGTH(a.B_CUSTOMER_MOBILENO)::text <> i.ALLOW_MOBILENO_DIGIT AND a.B_CUSTOMER_MOBILENO IS NOT NULL AND a.userid = p_userid;
+
+      -- END REV : 013
+      --End Rev 010
+      
+      -- start rev : 016
+ INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          lineno,
+          'ecomfulfilbyk',
+          userid,
+          'Data Validation',
+          'Length of Shipping mobile number is not valid for the given ISD Code',
+          clock_timestamp()
+     FROM int$stg_ecomfulfilbyk a
+LEFT OUTER JOIN admisd i ON (a.S_ISDCODE:: text = i.ISDCODE)
+WHERE i.ALLOW_MOBILENO_DIGIT IS NOT NULL AND LENGTH(a.S_CUSTOMER_MOBILENO):: text <> i.ALLOW_MOBILENO_DIGIT AND a.S_CUSTOMER_MOBILENO IS NOT NULL --START REV: 021
+  AND UPPER(a.ISBILLINGSHIPPINGSAME) = 'NO' --END REV: 021 
+  AND a.userid = p_userid;
+    -- start rev : 016
+    
+--Start rev : 23
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomfulfilbyk',
+                userid,
+                'Data Validation',
+                'Site Short Name is not valid.',
+                clock_timestamp()
+           FROM int$stg_ecomfulfilbyk a
+          WHERE (UPPER(a.site_short_name) not in (SELECT upper(shrtname) from admsite) OR a.site_short_name is NULL)
+                AND a.userid = p_userid;
+
+        --End rev : 23
+        --START REV : 024
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ecomfulfilbyk', userid, 'Data Validation', 'Batch/Serial information for item not defined.', clock_timestamp()
+        from   int$stg_ecomfulfilbyk a, invitem i
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        and    a.item_barcode is not null
+        and    a.batch_serial_no is null
+        and    i.item_management_mode in ('B','S')
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ecomfulfilbyk', userid, 'Data Validation', 'Batch/Serial information is not applicable for the item, Please delete batch/serial info and try again.', clock_timestamp()
+        from   int$stg_ecomfulfilbyk a, invitem i
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        and    a.item_barcode is not null
+        and    a.batch_serial_no is not null
+        and    i.item_management_mode = 'I'
+        and    a.userid = p_userid;
+
+       
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ecomfulfilbyk', userid, 'Data Validation', 'Item Quantity for serial managed items must be equal to scan unit of item.', clock_timestamp()
+        from   int$stg_ecomfulfilbyk a, invitem i
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        and    a.batch_serial_no is not null
+        and    i.item_management_mode = 'S'
+        and    coalesce(ABS(a.item_qty),0) <> coalesce(i.barunit,1)
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ecomfulfilbyk', userid, 'Data Validation', 'Serial No. can’t be duplicate.', clock_timestamp()
+        from   int$stg_ecomfulfilbyk a, invitem i,
+               (    SELECT icode, batch_serial_no from (select i.icode, sum(abs(item_qty)) as qty, batch_serial_no from int$stg_ecomfulfilbyk a, invitem i
+                                    where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+                                    and userid= p_userid group by i.icode, batch_serial_no) alias8
+                                    where qty <> 2
+                                    group by icode, batch_serial_no
+                    
+union
+
+                    select icode, batch_serial_no from (select i.icode, sum(item_qty) as qty, batch_serial_no from int$stg_ecomfulfilbyk a, invitem i
+                                    where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+                                    and userid= p_userid group by i.icode, batch_serial_no) alias13
+                                    where qty <> 0
+                                    group by icode, batch_serial_no
+                    EXCEPT
+                    select icode, batch_serial_no from int$stg_ecomfulfilbyk a, invitem i
+                    where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+                    and userid= p_userid
+                    GROUP BY icode, batch_serial_no
+                     HAVING count(*) = 1
+                    ) b
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        and    a.batch_serial_no is not null
+        and    i.item_management_mode = 'S'
+        and    i.icode = b.icode
+        and    UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no)
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ecomfulfilbyk', userid, 'Data Validation', 'Invalid Batch/Serial information or Batch/Serial No. not exists for this Item.', clock_timestamp()
+        FROM int$stg_ecomfulfilbyk a  
+		LEFT OUTER JOIN invbatch_serial b ON (UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no ))
+		LEFT OUTER JOIN invitem i ON (i.icode = b.icode)
+WHERE (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode) and a.batch_serial_no is not null   and (b.icode is null or b.batch_serial_no is null) and i.item_management_mode in ('B','S') and a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ecomfulfilbyk', userid, 'Data Validation', 'Invalid Batch/Serial information.', clock_timestamp()
+        FROM int$stg_ecomfulfilbyk a  LEFT OUTER JOIN invbatch_serial b ON (UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no))
+WHERE a.batch_serial_no is not null and b.batch_serial_no is null and a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ecomfulfilbyk', userid, 'Data Validation', 'Multi combination exist for the given batch/serial. Specify the icode to proceed.', clock_timestamp()
+        from   int$stg_ecomfulfilbyk a
+        where  a.item_barcode is null
+        and    a.batch_serial_no is not null
+        and    a.batch_serial_no in (SELECT distinct batch_serial_no from int$stg_ecomfulfilbyk where item_barcode is not null)
+        and    a.userid = p_userid;
+
+      --COMMIT;
+
+      --End Rev 009
+      -- Check whether records are valid or not
+      BEGIN
+         SELECT 'S'
+           INTO STRICT v_status
+
+          WHERE EXISTS (SELECT 'S'
+                      FROM int$error_log
+                     WHERE userid = p_userid);
+
+         RETURN('0');
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            RETURN('1');
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'ecomfulfilbyk',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+
+         RETURN('0');
+   END;
+
+   -- Create Store Franchise Consignment Sale after validation
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+
+function "main"."int$pkg_ecomfulfilbyk_int$pkg_ecomfulfilbyk_validate(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+ 
+DECLARE
+    -- Change this to reflect the dblink connection string
+    --v_conn_str  text := format('port=%s dbname=%s user=%s', current_setting('port'), current_database(), current_user);
+    v_srvname       name;
+    v_connname      text;
+    v_connstr       text;
+    v_conn_result   text;
+    v_query         text;
+
+    v_ret    text;
+BEGIN
+    v_srvname := 'foreign_pgbase';
+    v_connname := replace(uuid_generate_v4()::text,'-','');
+    v_connstr  := v_srvname;
+    
+    --Open the connection  
+    SELECT dblink_connect(v_connname,v_connstr) 
+    INTO v_conn_result;
+	v_query := 'SELECT * FROM int$pkg_ecomfulfilbyk_int$pkg_ecomfulfilbyk_validate_atx ( ' || quote_nullable(p_userid::text) || '::bigint,' || quote_nullable(p_connect_site::text) || '::bigint,' || quote_nullable(p_logging_date::text) || '::timestamp without time zone,' || quote_nullable(p_connect_ou::text) || '::bigint )';
+	SELECT * INTO v_ret FROM dblink(v_connname, v_query) AS p (ret text);
+
+	SELECT dblink_disconnect(v_connname) 
+    INTO v_conn_result;
+	
+	RETURN v_ret;
+EXCEPTION 
+   WHEN OTHERS THEN
+        SELECT dblink_disconnect(v_connname) 
+        INTO v_conn_result;
+
+END;
+"""
+  returnType = text
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

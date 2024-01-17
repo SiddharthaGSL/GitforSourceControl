@@ -1,0 +1,52 @@
+procedure "main"."p2_psite_pbmopdeno_bulk_ins(bigint, text)" {
+  text = """
+
+DECLARE
+
+   c1rec CURSOR FOR
+      SELECT pb.billno, pb.billdate, pbmd.gvleavesid,
+             p_sitecuid || '-' || pb.posbillid posbillid
+        FROM staging2_posbill pb, staging2_posbillmopdeno pbmd
+       WHERE pb.posbillid = pbmd.posbillid AND pbmd.gvleavesid IS NOT NULL;
+BEGIN
+   INSERT INTO psite_posbillmopdeno(code, admsite_code, psite_posbill_code,
+                psite_possession_code, psite_posbillmop_code, denono,
+                description, perunitvalue, noofunit, denoamt, gvleaves_code)
+      SELECT p_sitecuid || '-' || posbillmopdenoid, p_admsite_code,
+             p_sitecuid || '-' || posbillid,
+             p_sitecuid || '-' || possessionid,
+             p_sitecuid || '-' || posbillmopid, denono, description,
+             perunitvalue, noofunit, denoamt, gvleavesid
+        FROM staging2_posbillmopdeno;
+   FOR c1 IN c1rec
+   LOOP
+      UPDATE gvleaves
+         SET redeemed_admsite_code = p_admsite_code,
+             redeemedon = c1.billdate,
+             status = 'R',
+             redeemed_billtype = 'POSBill',
+             redeemed_billcode = c1.posbillid,
+             redeemed_billno = c1.billno,
+             lastmodifiedon = clock_timestamp(),
+             lastmodifiedby = 1
+       WHERE code = c1.gvleavesid AND status = 'I';
+   END LOOP;
+END;
+"""
+  arguments = <
+    {
+      name = p_admsite_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_sitecuid
+      type = text
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

@@ -1,0 +1,69 @@
+function "main"."int$pkg_pur_srv_inv_loc_fun_calc_tds_bill_amt(bigint, bigint)" {
+  text = """
+
+DECLARE
+
+      v_tot_srvamttds      double precision;
+      v_dis_tot_effc_chg   double precision;
+      v_tds_appamt         double precision;
+
+      c1_main CURSOR(p_srvcode bigint)
+      FOR
+         SELECT *
+           FROM pursrvmain
+          WHERE srvcode = p_srvcode;
+
+      c2_det CURSOR(p_srvcode bigint)
+      FOR
+           SELECT *
+             FROM pursrvdet
+            WHERE srvcode = p_srvcode
+         ORDER BY code;
+
+BEGIN
+      FOR i IN c1_main(p_srvcode)
+      LOOP
+         IF coalesce(i.tds_app, 'N') = 'Y' AND i.tdstypecode IS NOT NULL
+         THEN
+            SELECT SUM(coalesce(srvamt, 0))
+              INTO STRICT v_tot_srvamttds
+              FROM pursrvmain m, pursrvdet d
+             WHERE     m.srvcode = d.srvcode
+                   AND coalesce(m.tds_app, 'N') = 'Y'
+                   AND m.tdstypecode IS NOT NULL
+                   AND d.tdstypecode IS NOT NULL;
+
+            SELECT SUM(coalesce(chgamt, 0))
+              INTO STRICT v_dis_tot_effc_chg
+              FROM pursrvchg_item
+             WHERE     srvcode = i.srvcode
+                   AND coalesce(include_in_tds, 'N') = 'Y'
+                   AND pursrvdet_code IN (SELECT code
+                             FROM pursrvdet
+                            WHERE     srvcode = i.srvcode
+                                  AND tdstypecode IS NOT NULL);
+
+            v_tds_appamt := ROUND(v_tot_srvamttds + v_dis_tot_effc_chg);
+         END IF;
+      END LOOP;
+   END;
+
+"""
+  returnType = bigint
+  arguments = <
+    {
+      name = p_srvcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_pursrvdet_code
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

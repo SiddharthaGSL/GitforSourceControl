@@ -1,0 +1,282 @@
+function "main"."int$pkg_giftvoucher_int$pkg_giftvoucher_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        v_status    char(1);
+        errmsg      varchar(200);
+
+        errcode bigint;
+BEGIN
+        --Clear error log table before start validation process
+        DELETE FROM int$error_log WHERE userid = p_userid;
+		
+ --START REV : 003
+        DECLARE
+           c1 CURSOR FOR
+              SELECT DISTINCT gv_category
+                FROM integer$stg_giftvoucher a
+               WHERE userid = p_userid;
+           v_cnt               bigint;
+           v_gvcategory_code   gvcategory.code%TYPE;
+        BEGIN
+           FOR i IN c1
+           LOOP
+              SELECT code
+                INTO STRICT v_gvcategory_code
+                FROM gvcategory
+               WHERE name = i.gv_category;
+              SELECT COUNT(*)
+                INTO STRICT v_cnt
+                FROM int$stg_giftvoucher
+               WHERE userid = p_userid AND gv_category = i.gv_category;
+              INSERT INTO int$error_log(code,
+                                         lineno,
+                                         classname,
+                                         userid,
+                                         errortype,
+                                         errordesc,
+                                         createdon)
+                 SELECT nextval('int$error_log_code'),
+                        0,
+                        'GIFTVOUCHER',
+                        p_userid,
+                        'Data Validation',
+                        'In Excel Gvno count for the GV category '
+                        || i.gv_category
+                        || ' exceeds remaining GV count .',
+                        clock_timestamp()
+                   FROM gvcategory g
+                  WHERE     code = v_gvcategory_code
+                        AND coalesce(v_cnt, 0) >
+                               (POWER(10, g.seqsegmentlength) - 1) - g.lastno;
+           END LOOP;
+        END;
+--END REV : 003
+
+        -- Booklet no should not exist with 'Allocated/Used' status.
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GIFTVOUCHER', userid, 'Booklet Validation', 'Booklet <'||a.booklet_no||'> already Allocated/Used', clock_timestamp()
+        FROM    int$stg_giftvoucher a, gvbooklet b
+        WHERE   UPPER(a.booklet_no) = UPPER(b.bookletno)
+        AND     b.status IN ('A','U')
+        AND     a.userid = p_userid;
+
+        --Single Booklet cannot have GV Leaves of multiple Denomination
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GIFTVOUCHER', userid, 'Booklet Validation','Booklet <'||a.booklet_no||'> have GV with multiple denomination <'||a.denomination :: text||'>',clock_timestamp()
+        FROM    int$stg_giftvoucher a, (
+                                        SELECT bookletno
+                                        FROM (
+                                            SELECT bookletno , COUNT(1)
+                                            FROM (
+                                                SELECT  UPPER(booklet_no) bookletno,denomination, count(1)
+                                                FROM    int$stg_giftvoucher
+                                                WHERE   userid = p_userid
+                                                GROUP BY
+                                                        UPPER(booklet_no),denomination
+                                            ) alias7
+                                            GROUP BY bookletno
+                                            HAVING COUNT(1) > 1
+                                        ) alias9
+                                    ) b
+        WHERE   UPPER(a.booklet_no) = b.bookletno
+        AND userid = p_userid;
+
+        --Single Booklet cannot have Gv Leaves with multiple Days of Validity
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), a.lineno, 'GIFTVOUCHER', a.userid, 'Booklet Validation', 'Booklet <'||a.booklet_no||'> have GV of multiple days of Validity <'||a.validity_days :: text||'>',clock_timestamp()
+        FROM int$stg_giftvoucher a
+                                ,(
+                                    SELECT bookletno
+                                    FROM (
+                                        SELECT bookletno , COUNT(1)
+                                        FROM (
+                                            SELECT  UPPER(booklet_no) bookletno,validity_days, COUNT(1)
+                                            FROM   int$stg_giftvoucher
+                                            WHERE   userid = p_userid
+                                            GROUP BY  UPPER(booklet_no),validity_days
+                                        ) alias7
+                                        GROUP BY bookletno
+                                        HAVING COUNT(1)>1
+                                    ) alias9
+                                )  b
+        WHERE UPPER(a.booklet_no) = b.bookletno
+        AND a.userid = p_userid;
+
+        --Single Booklet cannot have Gv Leaves with multiple Expiry Date
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), a.lineno, 'GIFTVOUCHER', a.userid, 'Booklet Validation', 'Booklet <'||a.booklet_no||'> have GV of multiple Expiry Date <'||a.expireson :: text||'>', clock_timestamp()
+        FROM int$stg_giftvoucher a
+                           , (
+                                SELECT bookletno
+                                FROM (
+                                    SELECT bookletno , COUNT(1)
+                                    FROM (
+                                        SELECT  UPPER(booklet_no) bookletno,expireson, COUNT(1)
+                                        FROM   int$stg_giftvoucher
+                                        WHERE   userid = p_userid
+                                        GROUP BY  UPPER(booklet_no),expireson
+                                    ) alias7
+                                    GROUP BY bookletno
+                                    HAVING COUNT(1)>1
+                                ) alias9
+                            ) b
+        WHERE UPPER(a.booklet_no) = b.bookletno
+        AND   a.userid = p_userid;
+
+        --Single Booklet cannot have Gv Leaves from multiple allocated sites
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), a.lineno, 'GIFTVOUCHER', a.userid, 'Booklet Validation', 'Booklet <'||a.booklet_no||'> have GV from multiple allocated Site <'||a.allocated_site||'>', clock_timestamp()
+        FROM   int$stg_giftvoucher a
+                                ,(
+                                    SELECT bookletno
+                                    FROM (
+                                        SELECT bookletno , COUNT(1)
+                                        FROM (
+                                            SELECT  UPPER(booklet_no) bookletno,allocated_site, COUNT(1)
+                                            FROM    int$stg_giftvoucher
+                                            WHERE   userid = p_userid
+                                            GROUP BY  UPPER(booklet_no),allocated_site
+                                        ) alias7
+                                        GROUP BY bookletno
+                                        HAVING COUNT(1) > 1
+                                     ) alias9
+                                ) b
+        WHERE UPPER(a.booklet_no) = b.bookletno
+        AND a.userid = p_userid;
+
+        --GVNO cannot be NULL
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GIFTVOUCHER', userid, 'Mandatory Validation', 'GV No is Mandatory', clock_timestamp()
+        FROM    int$stg_giftvoucher
+        WHERE   gvno IS NULL
+        AND     userid = p_userid;
+
+        -- Restrict Duplicate GV No in GVLeaves Table
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GIFTVOUCHER', userid, 'GV Validation', 'GV No <'||a.gvno :: text||'> already exist', clock_timestamp()
+        FROM    int$stg_giftvoucher a, gvleaves b
+        WHERE   UPPER(a.gvno) = UPPER(b.gvno_udf)
+        AND     a.userid = p_userid;
+
+        -- Restrict Duplicate GV no in File
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GIFTVOUCHER', userid, 'GV Validation', 'GV No <'||a.gvno :: text||'> found multiple times in File', clock_timestamp()
+        FROM    int$stg_giftvoucher a, (
+                                        SELECT  UPPER(gvno) gvno
+                                        FROM int$stg_giftvoucher
+                                        WHERE userid = p_userid
+                                        GROUP BY UPPER(gvno) HAVING count(gvno) > 1
+                                    ) b
+        WHERE   UPPER(a.gvno) = b.gvno
+        AND     userid = p_userid;
+
+        --Denomination cannot be NULL
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GIFTVOUCHER', userid, 'Mandatory Validation', 'Denomination is Mandatory', clock_timestamp()
+        FROM    int$stg_giftvoucher
+        WHERE   denomination IS NULL
+        AND     userid = p_userid;
+
+        -- Restrict Denomination be Negative or Zero or greater than 99999 or in Fraction
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GIFTVOUCHER', userid, 'GV Validation', CASE WHEN denomination <= 0 THEN 'Denomination <'||denomination :: text||'> cannot be Negative or Zero'
+                                                                      WHEN denomination > 99999 THEN 'Denomination <'||denomination :: text||'> cannot be greater than 99999'
+                                                                      WHEN trunc(denomination) <> denomination THEN 'Denomination <'||denomination :: text||'> cannot be in Fraction'
+                                                                      ELSE NULL END , clock_timestamp()
+        FROM    int$stg_giftvoucher
+        WHERE (denomination <= 0 OR  denomination > 99999 OR trunc(denomination) <> denomination)
+        AND     userid = p_userid;
+
+        -- Restrict validity_days be Negative or Zero or greater than 99999 or in Fraction
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GIFTVOUCHER', userid, 'GV Validation', CASE WHEN validity_days <= 0 THEN 'Days of Validity <'||validity_days :: text||'> cannot be Negative or Zero'
+                                                                      WHEN validity_days > 99999 THEN 'Days of Validity <'||validity_days :: text||'> cannot be greater than 99999'
+                                                                      WHEN trunc( validity_days) <> validity_days THEN 'Days of Validity <'||validity_days :: text||'> cannot be in Fraction'
+                                                                      ELSE NULL END , clock_timestamp()
+        FROM    int$stg_giftvoucher
+        WHERE (validity_days <= 0 OR  validity_days > 99999 OR trunc(validity_days) <> validity_days)
+        AND     userid = p_userid;
+
+        -- Restrict expireson Should be greater than System Date
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GIFTVOUCHER', userid, 'GV Validation', 'GV No <'||gvno||'> already expired. [Note : Expiry date should be greater than System date' , clock_timestamp()
+        FROM    int$stg_giftvoucher
+        WHERE   expireson  <= clock_timestamp()
+        AND     userid = p_userid;
+
+        -- Invalid Site
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GIFTVOUCHER', userid, 'GV Validation',
+                                                CASE WHEN b.code IS NULL  THEN 'Allocated Site <'||a.allocated_site||'> not found'
+                                                     WHEN b.ext = 'Y' THEN 'Sites <'||a.allocated_site||'>  is extinct.'
+                                                     WHEN b.sitetype not like 'MS-%' THEN 'Allocated Site <'||a.allocated_site||'> is not a Managed Site' ELSE NULL END, clock_timestamp()
+        FROM int$stg_giftvoucher a
+LEFT OUTER JOIN admsite b ON (a.allocated_site = b.shrtname)
+WHERE a.userid = p_userid -- START REV : 002
+  AND a.allocated_site is not null -- END REV : 002
+  AND (b.code IS NULL OR b.ext = 'Y' OR b.sitetype not like 'MS-%');
+
+        --COMMIT;
+
+        -- Check whether records are valid or not
+        BEGIN
+            SELECT  'S'
+            INTO STRICT    v_status
+
+            WHERE   EXISTS (
+                            SELECT  'S'
+                            FROM    int$error_log
+                            WHERE   userid = p_userid
+                            );
+            RETURN('0');
+        EXCEPTION
+            WHEN no_data_found THEN
+                RETURN('1');
+        END;
+
+    EXCEPTION
+        WHEN OTHERS THEN
+            errcode := SQLSTATE;
+            errmsg := SQLERRM;
+
+            --Error log for Oracle Internal Error
+            INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            VALUES (nextval('int$error_log_code'), 0, 'GIFTVOUCHER', p_userid, errcode, errmsg, clock_timestamp());
+            --COMMIT;
+
+            RETURN('0');
+    END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

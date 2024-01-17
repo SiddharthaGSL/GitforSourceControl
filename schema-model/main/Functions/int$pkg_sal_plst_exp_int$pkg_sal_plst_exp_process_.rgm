@@ -1,0 +1,255 @@
+function "main"."int$pkg_sal_plst_exp_int$pkg_sal_plst_exp_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      errmsg               varchar(2000);
+      vsession             varchar(100);
+      vdetailtbl           varchar(2000);
+      vdetailrec           varchar(500);
+      errcode              TEXT;
+      vcount               bigint;
+      g_mark               varchar(50);
+
+      v_pricelistcode      bigint;
+      v_priority           bigint;
+      v_det_max_priority   bigint;
+      v_cmpcode            bigint;
+      v_exception_basis    char(1);c1 CURSOR FOR
+         SELECT DISTINCT
+                UPPER(a.price_list_name) sal_pricelistname,
+                a.behaviour,
+                b.pricelistcode
+           FROM int$stg_sal_plst_exp a, salpricelistmain b
+          WHERE     UPPER(a.price_list_name) = UPPER(b.pricelistname)
+          AND       userid = p_userid;
+
+      c2 CURSOR(
+         --p_sal_pricelistname    text
+	  p_sal_pricelistname  salpricelistmain.pricelistname%type)
+      FOR
+           SELECT * FROM (
+           SELECT a.*,bs.code as invbatch_serial_code
+                    FROM int$stg_sal_plst_exp a, invitem i
+LEFT OUTER JOIN invbatch_serial bs ON (i.icode = bs.icode)
+WHERE  (a.item_barcode = i.icode or a.item_barcode = i.barcode)  
+			   AND (a.batch_serial_no is null or UPPER(a.batch_serial_no) = UPPER(bs.batch_serial_no)) 
+			   AND a.item_barcode is not null 
+			   -- start rev : 101
+               AND upper(a.price_list_name) = upper(p_sal_pricelistname)
+               -- end rev : 101
+			   AND userid = p_userid
+UNION ALL
+           SELECT a.*, NULL as invbatch_serial_code
+                    FROM int$stg_sal_plst_exp a
+                WHERE     a.item_barcode is null
+			                       -- start rev : 101
+               AND upper(a.price_list_name) = upper(p_sal_pricelistname)
+                    -- end rev : 101
+                AND userid = p_userid
+           ) alias9
+           ORDER BY priority, lineno DESC;
+
+   
+BEGIN
+      g_mark := 'P01';
+
+      -- Deleting all log against the Purchase of Service creation for the user
+      DELETE FROM admerraudit a
+       WHERE     usrname = USER
+             AND prcname = 'SAL_PLST_EXP'
+             AND a.errcode = p_userid::TEXT;
+
+     /*call erraudit(USER,
+                'SAL_PLST_EXP',
+                p_userid,
+                '1 - Web import Purchase of Service creation start');*/
+
+      BEGIN
+         SELECT cmpcode INTO STRICT v_cmpcode FROM admcmp;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            NULL;
+      END;
+
+      FOR i IN c1
+      LOOP
+         IF UPPER(i.behaviour) = 'REMOVE EXISTING THEN ADD'
+         THEN
+            DELETE FROM salpricelistdet
+             WHERE pricelistcode = i.pricelistcode;
+         END IF;
+
+         SELECT MAX(priority)
+           INTO STRICT v_priority
+           FROM salpricelistdet
+          WHERE pricelistcode = i.pricelistcode;
+
+         FOR j IN c2(i.sal_pricelistname)
+         LOOP
+            v_priority := coalesce(v_priority, 0) + 1;
+
+            IF UPPER(j.exception_basis) = 'FIXED PRICE'
+            THEN
+               v_exception_basis := 'F';
+            ELSIF UPPER(j.exception_basis) = 'AS PER MASTER CONFIG'
+            THEN
+               v_exception_basis := 'P';
+            END IF;
+
+            INSERT INTO salpricelistdet(pricelistcode,
+                                         icode,
+                                         effdt,
+                                         price,
+                                         cmpcode,
+                                         division_grpcode,
+                                         section_grpcode,
+                                         dept_grpcode,
+                                         invarticle_code,
+                                         ccode1,
+                                         ccode2,
+                                         ccode3,
+                                         ccode4,
+                                         ccode5,
+                                         ccode6,
+                                         dtfr,
+                                         dtto,
+                                         discount_factor,
+                                         exception_basis,
+                                         pricefr,
+                                         priceto,
+                                         priority,
+                                         invbatch_serial_code,
+                                         batch_exp_date_fr,
+                                         batch_exp_date_to
+                                         )
+                 VALUES (i.pricelistcode,
+                         j.icode,
+                         NULL,
+                         NULL,
+                         v_cmpcode,
+                         j.division_code,
+                         j.section_code,
+                         j.department_code,
+                         j.article_code,
+                         j.ccode1,
+                         j.ccode2,
+                         j.ccode3,
+                         j.ccode4,
+                         j.ccode5,
+                         j.ccode6,
+                         j.date_from,
+                         j.date_to,
+                         j.factor_price,
+                         v_exception_basis,
+                         j.price_from,
+                         j.price_to,
+                         v_priority,
+                         j.invbatch_serial_code,
+                         j.batch_valid_from,
+                         j.batch_valid_to
+                         );
+         END LOOP;
+      END LOOP;
+
+      -- log to be added in history table
+      SELECT nextval('int$error_log_code') INTO STRICT vsession;
+
+      vdetailtbl :=
+            'create table ginarchive.sal_plst_exp_'
+         || vsession
+         || ' AS
+                select behaviour, price_list_name, to_char(date_from,''dd/mm/rrrr'') date_fr, to_char(date_to,''dd/mm/rrrr'') date_to, 
+                       exception_basis, factor_price, item_barcode, division, section, department, article, category1, category2, 
+                       category3, category4, category5, category6, price_from, price_to, priority
+                from   int$stg_sal_plst_exp a
+                where  userid = '
+         || p_userid::text
+         || ' '
+         || 'order by upper(price_list_name), priority, lineno';
+
+      EXECUTE vdetailtbl;
+
+      vdetailrec :=
+         'SELECT count(1) FROM ginarchive.sal_plst_exp_' || vsession::text;
+
+      EXECUTE vdetailrec INTO STRICT vcount;
+
+      INSERT INTO int$history(code,
+                               importedby,
+                               importedon,
+                               classname,
+                               summary,
+                               history_detail_tablename,
+                               history_detail_row_count)
+              VALUES (
+                        nextval('int$history_code'),
+                        p_userid,
+                        clock_timestamp(),
+                        'SAL_PLST_EXP',
+                           vcount::text
+                        || ' Price list exception(s) imported successfully.',
+                        'ginarchive.sal_plst_exp_' || vsession,
+                        vcount);
+
+      RETURN('1');
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         ROLLBACK;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'SAL_PLST_EXP',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

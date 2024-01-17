@@ -1,0 +1,69 @@
+function "main"."promo_erplastno_atx(text)" {
+  text = """
+
+DECLARE
+
+    ERRCODE         varchar(50);
+    ERRMSG          varchar(2000);
+    L_LASTNO        varchar(12);
+    L_CMPCODE       bigint; --:= LPAD(DB_PKG_UTIL.G_CMPCODE,3,'0');
+    L_LEN_CMPCODE   integer;/********************************************************************************************************************************
+      PURPOSE: Promotion Number Generation
+
+     REV NO     OWNER       DATE            DESCRIPTION
+     ---------  --------    -----------     ---------------------------------------------------------------------
+     REV : 001  SUJOY      02-NOV-2015     (FEATURE ID : 17345)      Handle of G_CMPCODE if call from web.
+
+*********************************************************************************************************************************/
+BEGIN
+    BEGIN
+        SELECT  LENGTH(CMPCODE::TEXT) INTO STRICT L_LEN_CMPCODE
+        FROM    ADMCMP;
+    EXCEPTION
+        WHEN OTHERS THEN
+             L_LEN_CMPCODE := 3;
+    END;
+    ---Rev 001 start
+    IF L_CMPCODE IS NULL THEN
+            SELECT        CMPCODE
+            INTO STRICT        L_CMPCODE
+            FROM        ADMCMP;
+    END IF;
+    ---Rev 001 end
+    IF      L_LEN_CMPCODE > 6 THEN
+            L_LEN_CMPCODE := 6;
+    ELSIF   L_LEN_CMPCODE < 3 THEN
+            L_LEN_CMPCODE := 3;
+    END IF;
+    UPDATE  PROMO_LASTNO
+    SET     LASTNO = coalesce(LASTNO,0) + 1
+    WHERE   TABLE_NAME = P_TABLENAME;
+    IF  NOT FOUND THEN
+        INSERT INTO PROMO_LASTNO(TABLE_NAME,LASTNO) VALUES (LTRIM(RTRIM(P_TABLENAME)),1);
+    END IF;
+
+    SELECT  LPAD((L_CMPCODE),L_LEN_CMPCODE,'0')||'-'||LPAD(LASTNO,5,0)
+    INTO STRICT    L_LASTNO
+    FROM    PROMO_LASTNO
+    WHERE   TABLE_NAME = LTRIM(RTRIM(P_TABLENAME));
+    RETURN(L_LASTNO);
+EXCEPTION
+    WHEN OTHERS THEN
+         ERRCODE := SQLSTATE;
+         ERRMSG  := SQLERRM;
+         CALL ERRAUDIT('CLIENT','PROMO_ERPLASTNO',ERRCODE,ERRMSG);
+         RETURN(NULL);
+END;
+"""
+  returnType = text
+  arguments = <
+    {
+      name = p_tablename
+      type = text
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

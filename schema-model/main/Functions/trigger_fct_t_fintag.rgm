@@ -1,0 +1,1111 @@
+function "main"."trigger_fct_t_fintag()" {
+  text = """
+
+DECLARE
+   ora2pg_rowcount integer;
+V_YCODE1   FINPOST.YCODE%TYPE;
+   V_YCODE2   FINPOST.YCODE%TYPE;
+   V_ADJAMT   PURSRVJRNMAIN.ADJAMT%TYPE;
+BEGIN
+  BEGIN
+   IF OLD.POSTCODE1 IS NOT NULL
+   THEN
+      BEGIN
+         SELECT YCODE
+           INTO STRICT V_YCODE1
+           FROM FINPOST
+          WHERE POSTCODE = OLD.POSTCODE1;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            NULL;
+      END;
+
+      BEGIN
+         SELECT YCODE
+           INTO STRICT V_YCODE2
+           FROM FINPOST
+          WHERE POSTCODE = OLD.POSTCODE2;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            NULL;
+      END;
+
+      IF coalesce(V_YCODE1, 0) = 1 OR coalesce(V_YCODE2, 0) = 1
+      THEN
+         UPDATE FINOPDOC
+            SET ADJAMT = coalesce(ADJAMT, 0) - coalesce(OLD.AMOUNT, 0)
+          WHERE     ENTCODE = OLD.ENTCODE1
+                AND ENTTYPE = OLD.ENTTYPE1
+                AND V_YCODE1 = 1;
+
+         UPDATE FINOPDOC
+            SET ADJAMT = coalesce(ADJAMT, 0) - coalesce(OLD.AMOUNT, 0)
+          WHERE     ENTCODE = OLD.ENTCODE2
+                AND ENTTYPE = OLD.ENTTYPE2
+                AND V_YCODE2 = 1;
+      END IF;
+
+      IF (coalesce(V_YCODE1, 0) = 1 AND coalesce(V_YCODE2, 0) = 1)
+      THEN
+         UPDATE FINPOST
+            SET ADJAMT = coalesce(ADJAMT, 0) - coalesce(OLD.AMOUNT, 0)
+          -- START REV : 004
+          -- WHERE  ENTCODE  = :OLD.ENTCODE1
+          WHERE ENTCODE = OLD.ENTCODE1::varchar -- END REV : 004
+                AND ENTTYPE = OLD.ENTTYPE1;
+
+         UPDATE FINPOST
+            -- START REV : 001
+            --SET    ADJAMT   = NVL(ADJAMT,0) - NVL(:OLD.AMOUNT,0)
+            SET ADJAMT = coalesce(ADJAMT, 0) - ABS(coalesce(OLD.AMOUNT, 0))
+          -- END REV : 001
+          -- START REV : 003
+          -- WHERE  ENTCODE  = :OLD.ENTCODE2
+          WHERE ENTCODE = OLD.ENTCODE2::varchar -- END REV : 003
+                AND ENTTYPE = OLD.ENTTYPE2;
+      END IF;
+
+      IF (coalesce(V_YCODE1, 0) <> 1 OR coalesce(V_YCODE2, 0) <> 1)
+      THEN
+         UPDATE FINPOST
+            SET ADJAMT = coalesce(ADJAMT, 0) - coalesce(OLD.AMOUNT, 0)
+          WHERE POSTCODE = OLD.POSTCODE1 -- START REV : 003
+                                          -- AND     ENTCODE = :OLD.ENTCODE1
+                AND ENTCODE = OLD.ENTCODE1::varchar -- END REV : 003
+                AND ENTTYPE = OLD.ENTTYPE1;
+
+         GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+         THEN
+            NULL;
+         END IF;
+
+         UPDATE FINPOST
+            -- START REV : 001
+            --SET     ADJAMT  = NVL(ADJAMT,0) - NVL(:OLD.AMOUNT,0)
+            SET ADJAMT = coalesce(ADJAMT, 0) - ABS(coalesce(OLD.AMOUNT, 0))
+          -- END REV : 001
+          WHERE POSTCODE = OLD.POSTCODE2 -- START REV : 003
+                                          -- AND     ENTCODE = :OLD.ENTCODE2
+                AND ENTCODE = OLD.ENTCODE2::varchar -- END REV : 003
+                AND ENTTYPE = OLD.ENTTYPE2;
+
+         GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+         THEN
+            NULL;
+         END IF;
+
+         IF OLD.ENTTYPE1 IN ('VDG', 'VDP', 'VDC')
+         THEN
+            UPDATE FINVCHDET
+               SET ADJAMT = coalesce(ADJAMT, 0) - coalesce(OLD.AMOUNT, 0)
+             WHERE VCHCODE = OLD.ENTCODE1 AND SLCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF OLD.ENTTYPE2 IN ('VDG', 'VDP', 'VDC')
+         THEN
+            UPDATE FINVCHDET
+               -- START REV : 001
+               --SET     ADJAMT  = NVL(ADJAMT,0) - NVL(:OLD.AMOUNT,0)
+               SET ADJAMT = coalesce(ADJAMT, 0) - ABS(coalesce(OLD.AMOUNT, 0))
+             -- END REV : 001
+             WHERE VCHCODE = OLD.ENTCODE2 
+			 AND SLCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF OLD.ENTTYPE1 IN ('JMD', 'JMC')
+         THEN
+            UPDATE FINJRNMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) - coalesce(OLD.AMOUNT, 0)
+             WHERE JRNCODE = OLD.ENTCODE1 AND SLCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF OLD.ENTTYPE2 IN ('JMD', 'JMC')
+         THEN
+            UPDATE FINJRNMAIN
+               -- START REV : 001
+               --SET     ADJAMT  = NVL(ADJAMT,0) - NVL(:OLD.AMOUNT,0)
+               SET ADJAMT = coalesce(ADJAMT, 0) - ABS(coalesce(OLD.AMOUNT, 0))
+             -- END REV : 001
+             WHERE JRNCODE = OLD.ENTCODE2 AND SLCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         -- START REV : 006
+         -- IF  :OLD.ENTTYPE1 IN ('JDJ','JDT') THEN -- REV : 002 'JDT' added
+         IF OLD.ENTTYPE1 IN ('JDJ', 'JDT', 'JDR')
+         THEN
+            -- END REV : 006
+            UPDATE FINJRNDET
+               SET ADJAMT = coalesce(ADJAMT, 0) - coalesce(OLD.AMOUNT, 0)
+             WHERE JRNCODE = OLD.ENTCODE1 AND SLCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         -- START REV : 006
+         --  IF  :OLD.ENTTYPE2 IN ('JDJ','JDT') THEN -- REV : 002 'JDT' added
+         IF OLD.ENTTYPE2 IN ('JDJ', 'JDT', 'JDR')
+         THEN                                         -- REV : 002 'JDT' added
+            -- END REV : 006
+            UPDATE FINJRNDET
+               -- START REV : 001
+               --SET     ADJAMT  = NVL(ADJAMT,0) - NVL(:OLD.AMOUNT,0)
+               SET ADJAMT = coalesce(ADJAMT, 0) - ABS(coalesce(OLD.AMOUNT, 0))
+             -- END REV : 001
+             WHERE JRNCODE = OLD.ENTCODE2 AND SLCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF OLD.ENTTYPE1 = 'PIM'
+         THEN
+            UPDATE PURINVMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) - coalesce(OLD.AMOUNT, 0)
+             WHERE INVCODE = OLD.ENTCODE1 AND PCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF OLD.ENTTYPE2 = 'PIM'
+         THEN
+            UPDATE PURINVMAIN
+               -- START REV : 001
+               --SET     ADJAMT  = NVL(ADJAMT,0) - NVL(:OLD.AMOUNT,0)
+               SET ADJAMT = coalesce(ADJAMT, 0) - ABS(coalesce(OLD.AMOUNT, 0))
+             -- END REV : 001
+             WHERE INVCODE = OLD.ENTCODE2 
+			 AND PCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF OLD.ENTTYPE1 = 'PRM'
+         THEN
+            UPDATE PURRTMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) - coalesce(OLD.AMOUNT, 0)
+             WHERE RTCODE = OLD.ENTCODE1 AND PCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF OLD.ENTTYPE2 = 'PRM'
+         THEN
+            UPDATE PURRTMAIN
+               -- START REV : 001
+               --SET     ADJAMT  = NVL(ADJAMT,0) - NVL(:OLD.AMOUNT,0)
+               SET ADJAMT = coalesce(ADJAMT, 0) - ABS(coalesce(OLD.AMOUNT, 0))
+             -- END REV : 001
+             WHERE RTCODE = OLD.ENTCODE2 AND PCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF OLD.ENTTYPE1 = 'PSM'
+         THEN
+            UPDATE PURSRVMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) - coalesce(OLD.AMOUNT, 0),
+                   JRNCODE  = NULL
+             WHERE SRVCODE = OLD.ENTCODE1 AND PCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF OLD.ENTTYPE2 = 'PSM'
+         THEN
+            UPDATE PURSRVMAIN
+               -- START REV : 001
+               --SET     ADJAMT  = NVL(ADJAMT,0) - NVL(:OLD.AMOUNT,0),
+               SET ADJAMT = coalesce(ADJAMT, 0) - ABS(coalesce(OLD.AMOUNT, 0)),
+                   -- END REV : 001
+                   JRNCODE  = NULL
+             WHERE SRVCODE = OLD.ENTCODE2 AND PCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         -- start rev : 008
+         IF OLD.ENTTYPE1 = 'PJM'
+         THEN
+            
+            UPDATE PURSRVJRNMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) - coalesce(OLD.AMOUNT, 0)
+             WHERE JRNCODE = OLD.ENTCODE1 AND PCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               
+               NULL;
+            END IF;
+         END IF;
+
+         IF OLD.ENTTYPE2 = 'PJM'
+         THEN
+           UPDATE PURSRVJRNMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) - ABS(coalesce(OLD.AMOUNT, 0))
+             WHERE JRNCODE = OLD.ENTCODE2 AND PCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+
+               NULL;
+            END IF;
+         END IF;
+         -- End Rev : 008
+         IF OLD.ENTTYPE1 = 'SIM'
+         THEN
+            UPDATE SALINVMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) - coalesce(OLD.AMOUNT, 0)
+             WHERE INVCODE = OLD.ENTCODE1 AND PCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF OLD.ENTTYPE2 = 'SIM'
+         THEN
+            UPDATE SALINVMAIN
+               -- START REV : 001
+               --SET     ADJAMT  = NVL(ADJAMT,0) - NVL(:OLD.AMOUNT,0)
+               SET ADJAMT = coalesce(ADJAMT, 0) - ABS(coalesce(OLD.AMOUNT, 0))
+             -- END REV : 001
+             WHERE INVCODE = OLD.ENTCODE2 AND PCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         -- START REV : 007
+         IF OLD.ENTTYPE1 = 'SSM'
+         THEN
+            UPDATE SALSRVMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) - coalesce(OLD.AMOUNT, 0)
+             WHERE SRVCODE = OLD.ENTCODE1 AND PCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF OLD.ENTTYPE2 = 'SSM'
+         THEN
+            UPDATE SALSRVMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) - ABS(coalesce(OLD.AMOUNT, 0))
+             WHERE SRVCODE = OLD.ENTCODE2 AND PCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         -- END REV : 007
+         IF OLD.ENTTYPE1 = 'CSM'
+         THEN
+            UPDATE SALCSMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) - coalesce(OLD.AMOUNT, 0)
+             WHERE CSCODE = OLD.ENTCODE1 
+			 --AND     PCODE = OLD.SLCODE;
+            AND     (
+                        TPCODE = OLD.SLCODE
+                        OR   
+                        PCODE = OLD.SLCODE
+                    );
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF OLD.ENTTYPE2 = 'CSM'
+         THEN
+            UPDATE SALCSMAIN
+               -- START REV : 001
+               --SET     ADJAMT  = NVL(ADJAMT,0) - NVL(:OLD.AMOUNT,0)
+               SET ADJAMT = coalesce(ADJAMT, 0) - ABS(coalesce(OLD.AMOUNT, 0))
+             -- END REV : 001
+             WHERE CSCODE = OLD.ENTCODE2 
+			 -- AND     PCODE  = OLD.SLCODE;
+            AND     (
+                        TPCODE = OLD.SLCODE
+                        OR   
+                        PCODE = OLD.SLCODE
+                    );
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF OLD.ENTTYPE1 = 'SRM'
+         THEN
+            UPDATE SALRTMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) - coalesce(OLD.AMOUNT, 0)
+             WHERE RTCODE = OLD.ENTCODE1 AND PCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF OLD.ENTTYPE2 = 'SRM'
+         THEN
+            UPDATE SALRTMAIN
+               -- START REV : 001
+               --SET     ADJAMT  = NVL(ADJAMT,0) - NVL(:OLD.AMOUNT,0)
+               SET ADJAMT = coalesce(ADJAMT, 0) - ABS(coalesce(OLD.AMOUNT, 0))
+             -- END REV : 001
+             WHERE RTCODE = OLD.ENTCODE2 AND PCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         -- START REV : 005
+         IF OLD.ENTTYPE1 IN ('SCM', 'SDM')
+         THEN
+            UPDATE SALINVJRNMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) - coalesce(OLD.AMOUNT, 0)
+             WHERE JRNCODE = OLD.ENTCODE1 AND PCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF OLD.ENTTYPE2 IN ('SCM', 'SDM')
+         THEN
+            UPDATE SALINVJRNMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) - ABS(coalesce(OLD.AMOUNT, 0))
+             WHERE JRNCODE = OLD.ENTCODE2 AND PCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF OLD.ENTTYPE1 IN ('PCM', 'PDM')
+         THEN
+            UPDATE PURINVJRNMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) - coalesce(OLD.AMOUNT, 0)
+             WHERE JRNCODE = OLD.ENTCODE1 AND PCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF OLD.ENTTYPE2 IN ('PCM', 'PDM')
+         THEN
+            UPDATE PURINVJRNMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) - ABS(coalesce(OLD.AMOUNT, 0))
+             WHERE JRNCODE = OLD.ENTCODE2 AND PCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         -- END REV : 005
+         -- START REV : 397
+         IF OLD.ENTTYPE1 = 'GVJ'
+         THEN
+            UPDATE GVISSUE_JOURNAL
+               SET ADJAMT = coalesce(ADJAMT, 0) - coalesce(OLD.AMOUNT, 0)
+             WHERE CODE = OLD.ENTCODE1 AND CUSTOMER_SLCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF OLD.ENTTYPE2 = 'GVJ'
+         THEN
+            UPDATE GVISSUE_JOURNAL
+               -- START REV : 001
+               --SET     ADJAMT          = NVL(ADJAMT,0) - NVL(:OLD.AMOUNT,0)
+               SET ADJAMT = coalesce(ADJAMT, 0) - ABS(coalesce(OLD.AMOUNT, 0))
+             -- END REV : 001
+             WHERE CODE = OLD.ENTCODE2 AND CUSTOMER_SLCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         --- END REV : 397
+         -- START REV : 411
+         IF OLD.ENTTYPE1 = 'PJN'
+         THEN
+            UPDATE POSJOURNAL
+               SET ADJAMT = coalesce(ADJAMT, 0) - coalesce(OLD.AMOUNT, 0)
+             WHERE CODE = OLD.ENTCODE1 AND CUSTOMER_SLCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF OLD.ENTTYPE2 = 'PJN'
+         THEN
+            UPDATE POSJOURNAL
+               -- START REV : 001
+               --SET     ADJAMT          = NVL(ADJAMT,0) - NVL(:OLD.AMOUNT,0)
+               SET ADJAMT = coalesce(ADJAMT, 0) - ABS(coalesce(OLD.AMOUNT, 0))
+             -- END REV : 001
+             WHERE CODE = OLD.ENTCODE2 AND CUSTOMER_SLCODE = OLD.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+      -- END REV : 411
+      END IF;
+   END IF;
+
+   IF NEW.POSTCODE1 IS NOT NULL
+   THEN
+      BEGIN
+         SELECT YCODE
+           INTO STRICT V_YCODE1
+           FROM FINPOST
+          WHERE POSTCODE = NEW.POSTCODE1;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            NULL;
+      END;
+
+      BEGIN
+         SELECT YCODE
+           INTO STRICT V_YCODE2
+           FROM FINPOST
+          WHERE POSTCODE = NEW.POSTCODE2;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            NULL;
+      END;
+
+      IF coalesce(V_YCODE1, 0) = 1 OR coalesce(V_YCODE2, 0) = 1
+      THEN
+         UPDATE FINOPDOC
+            SET ADJAMT = coalesce(ADJAMT, 0) + coalesce(NEW.AMOUNT, 0)
+          WHERE     ENTCODE = NEW.ENTCODE1
+                AND ENTTYPE = NEW.ENTTYPE1
+                AND V_YCODE1 = 1;
+
+         UPDATE FINOPDOC
+            -- START REV : 001
+            --SET     ADJAMT  = NVL(ADJAMT,0) + NVL(:NEW.AMOUNT,0)
+            SET ADJAMT = coalesce(ADJAMT, 0) + ABS(coalesce(NEW.AMOUNT, 0))
+          -- END REV : 001
+          WHERE     ENTCODE = NEW.ENTCODE2
+                AND ENTTYPE = NEW.ENTTYPE2
+                AND V_YCODE2 = 1;
+      END IF;
+
+      IF (coalesce(V_YCODE1, 0) = 1 AND coalesce(V_YCODE2, 0) = 1)
+      THEN
+         UPDATE FINPOST
+            SET ADJAMT = coalesce(ADJAMT, 0) + coalesce(NEW.AMOUNT, 0)
+          -- START REV : 003
+          -- WHERE  ENTCODE  =  :NEW.ENTCODE1
+          WHERE ENTCODE = NEW.ENTCODE1::varchar -- END REV : 003
+                AND ENTTYPE = NEW.ENTTYPE1;
+
+         UPDATE FINPOST
+            -- START REV : 001
+            --SET    ADJAMT   =  NVL(ADJAMT,0) + NVL(:NEW.AMOUNT,0)
+            SET ADJAMT = coalesce(ADJAMT, 0) + ABS(coalesce(NEW.AMOUNT, 0))
+          -- END REV : 001
+          -- START REV : 003
+          -- WHERE  ENTCODE  =  :NEW.ENTCODE2
+          WHERE ENTCODE = NEW.ENTCODE2::varchar -- END REV : 003
+                AND ENTTYPE = NEW.ENTTYPE2;
+      END IF;
+
+      IF (coalesce(V_YCODE1, 0) <> 1 OR coalesce(V_YCODE2, 0) <> 1)
+      THEN
+         UPDATE FINPOST
+            SET ADJAMT = coalesce(ADJAMT, 0) + coalesce(NEW.AMOUNT, 0)
+          WHERE POSTCODE = NEW.POSTCODE1 -- START REV : 003
+                                          -- AND     ENTCODE  =  :NEW.ENTCODE1
+                AND ENTCODE = NEW.ENTCODE1::varchar -- END REV : 003
+                AND ENTTYPE = NEW.ENTTYPE1;
+
+         GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+         THEN
+            NULL;
+         END IF;
+
+         UPDATE FINPOST
+            -- START REV : 001
+            --SET     ADJAMT   = NVL(ADJAMT,0) + NVL(:NEW.AMOUNT,0)
+            SET ADJAMT = coalesce(ADJAMT, 0) + ABS(coalesce(NEW.AMOUNT, 0))
+          -- END REV : 001
+          WHERE POSTCODE = NEW.POSTCODE2 -- START REV : 003
+                                          -- AND     ENTCODE  = :NEW.ENTCODE2
+                AND ENTCODE = NEW.ENTCODE2::varchar -- END REV : 003
+                AND ENTTYPE = NEW.ENTTYPE2;
+
+         GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+         THEN
+            NULL;
+         END IF;
+
+         IF NEW.ENTTYPE1 IN ('VDG', 'VDP', 'VDC')
+         THEN
+            UPDATE FINVCHDET
+               SET ADJAMT = coalesce(ADJAMT, 0) + coalesce(NEW.AMOUNT, 0)
+             WHERE VCHCODE = NEW.ENTCODE1 AND SLCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF NEW.ENTTYPE2 IN ('VDG', 'VDP', 'VDC')
+         THEN
+            UPDATE FINVCHDET
+               -- START REV : 001
+               --SET     ADJAMT  = NVL(ADJAMT,0) + NVL(:NEW.AMOUNT,0)
+               SET ADJAMT = coalesce(ADJAMT, 0) + ABS(coalesce(NEW.AMOUNT, 0))
+             -- END REV : 001
+             WHERE VCHCODE = NEW.ENTCODE2 AND SLCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF NEW.ENTTYPE1 IN ('JMD', 'JMC')
+         THEN
+            UPDATE FINJRNMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) + coalesce(NEW.AMOUNT, 0)
+             WHERE JRNCODE = NEW.ENTCODE1 AND SLCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF NEW.ENTTYPE2 IN ('JMD', 'JMC')
+         THEN
+            UPDATE FINJRNMAIN
+               -- START REV : 001
+               --SET     ADJAMT   =  NVL(ADJAMT,0) + NVL(:NEW.AMOUNT,0)
+               SET ADJAMT = coalesce(ADJAMT, 0) + ABS(coalesce(NEW.AMOUNT, 0))
+             -- END REV : 001
+             WHERE JRNCODE = NEW.ENTCODE2 AND SLCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         -- START REV : 006
+         --  IF  :NEW.ENTTYPE1 IN ('JDJ','JDT') THEN -- REV : 002 'JDT' added
+         IF NEW.ENTTYPE1 IN ('JDJ', 'JDT', 'JDR')
+         THEN                                         -- REV : 002 'JDT' added
+            -- END REV : 006
+            UPDATE FINJRNDET
+               SET ADJAMT = coalesce(ADJAMT, 0) + coalesce(NEW.AMOUNT, 0)
+             WHERE JRNCODE = NEW.ENTCODE1 AND SLCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         -- START REV : 006
+         -- IF  :NEW.ENTTYPE2 IN ('JDJ','JDT') THEN -- REV : 002 'JDT' added
+         IF NEW.ENTTYPE2 IN ('JDJ', 'JDT', 'JDR')
+         THEN                                         -- REV : 002 'JDT' added
+            -- END REV : 006
+            UPDATE FINJRNDET
+               -- START REV : 001
+               --SET     ADJAMT  = NVL(ADJAMT,0) + NVL(:NEW.AMOUNT,0)
+               SET ADJAMT = coalesce(ADJAMT, 0) + ABS(coalesce(NEW.AMOUNT, 0))
+             -- END REV : 001
+             WHERE JRNCODE = NEW.ENTCODE2 AND SLCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF NEW.ENTTYPE1 = 'PIM'
+         THEN
+            UPDATE PURINVMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) + coalesce(NEW.AMOUNT, 0)
+             WHERE INVCODE = NEW.ENTCODE1 AND PCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF NEW.ENTTYPE2 = 'PIM'
+         THEN
+            UPDATE PURINVMAIN
+               -- START REV : 001
+               --SET     ADJAMT  = NVL(ADJAMT,0) + NVL(:NEW.AMOUNT,0)
+               SET ADJAMT = coalesce(ADJAMT, 0) + ABS(coalesce(NEW.AMOUNT, 0))
+             -- END REV : 001
+             WHERE INVCODE = NEW.ENTCODE2 AND PCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF NEW.ENTTYPE1 = 'PRM'
+         THEN
+            UPDATE PURRTMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) + coalesce(NEW.AMOUNT, 0)
+             WHERE RTCODE = NEW.ENTCODE1 AND PCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF NEW.ENTTYPE2 = 'PRM'
+         THEN
+            UPDATE PURRTMAIN
+               -- START REV : 001
+               --SET     ADJAMT  =   NVL(ADJAMT,0) + NVL(:NEW.AMOUNT,0)
+               SET ADJAMT = coalesce(ADJAMT, 0) + ABS(coalesce(NEW.AMOUNT, 0))
+             -- END REV : 001
+             WHERE RTCODE = NEW.ENTCODE2 AND PCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF NEW.ENTTYPE1 = 'PSM'
+         THEN
+            UPDATE PURSRVMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) + coalesce(NEW.AMOUNT, 0)
+             WHERE SRVCODE = NEW.ENTCODE1 AND PCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF NEW.ENTTYPE2 = 'PSM'
+         THEN
+            UPDATE PURSRVMAIN
+               -- START REV : 001
+               --SET     ADJAMT  = NVL(ADJAMT,0) + NVL(:NEW.AMOUNT,0)
+               SET ADJAMT = coalesce(ADJAMT, 0) + ABS(coalesce(NEW.AMOUNT, 0))
+             -- END REV : 001
+             WHERE SRVCODE = NEW.ENTCODE2 AND PCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF NEW.ENTTYPE1 = 'SIM'
+         THEN
+            UPDATE SALINVMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) + coalesce(NEW.AMOUNT, 0)
+             WHERE INVCODE = NEW.ENTCODE1 AND PCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF NEW.ENTTYPE2 = 'SIM'
+         THEN
+            UPDATE SALINVMAIN
+               -- START REV : 001
+               --SET     ADJAMT  = NVL(ADJAMT,0) + NVL(:NEW.AMOUNT,0)
+               SET ADJAMT = coalesce(ADJAMT, 0) + ABS(coalesce(NEW.AMOUNT, 0))
+             -- END REV : 001
+             WHERE INVCODE = NEW.ENTCODE2 AND PCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         -- START REV : 007
+         IF NEW.ENTTYPE1 = 'SSM'
+         THEN
+            UPDATE SALSRVMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) + coalesce(NEW.AMOUNT, 0)
+             WHERE SRVCODE = NEW.ENTCODE1 AND PCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF NEW.ENTTYPE2 = 'SSM'
+         THEN
+            UPDATE SALSRVMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) + ABS(coalesce(NEW.AMOUNT, 0))
+             WHERE SRVCODE = NEW.ENTCODE2 AND PCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         -- END REV : 007
+         -- START REV : 003
+         IF NEW.ENTTYPE1 = 'CSM'
+         THEN
+            UPDATE SALCSMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) + coalesce(NEW.AMOUNT, 0)
+             WHERE CSCODE = NEW.ENTCODE1 
+			 --AND     PCODE = NEW.SLCODE;
+            AND     (
+                        TPCODE = NEW.SLCODE
+                        OR
+                        PCODE = NEW.SLCODE
+                    );
+            -- END REV : 010
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF NEW.ENTTYPE2 = 'CSM'
+         THEN
+            UPDATE SALCSMAIN
+               -- START REV : 001
+               --SET     ADJAMT  = NVL(ADJAMT,0) + NVL(:NEW.AMOUNT,0)
+               SET ADJAMT = coalesce(ADJAMT, 0) + ABS(coalesce(NEW.AMOUNT, 0))
+             -- END REV : 001
+             WHERE CSCODE = NEW.ENTCODE2 
+			 --AND     PCODE = NEW.SLCODE;
+            AND     (
+                        TPCODE = NEW.SLCODE
+                        OR
+                        PCODE = NEW.SLCODE
+                    );
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF NEW.ENTTYPE1 = 'SRM'
+         THEN
+            UPDATE SALRTMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) + coalesce(NEW.AMOUNT, 0)
+             WHERE RTCODE = NEW.ENTCODE1 AND PCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF NEW.ENTTYPE2 = 'SRM'
+         THEN
+            UPDATE SALRTMAIN
+               -- START REV : 001
+               --SET     ADJAMT  = NVL(ADJAMT,0) + NVL(:NEW.AMOUNT,0)
+               SET ADJAMT = coalesce(ADJAMT, 0) + ABS(coalesce(NEW.AMOUNT, 0))
+             -- END REV : 001
+             WHERE RTCODE = NEW.ENTCODE2 AND PCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         -- START REV : 005
+         IF NEW.ENTTYPE1 IN ('SDM', 'SCM')
+         THEN
+            UPDATE SALINVJRNMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) + coalesce(NEW.AMOUNT, 0)
+             WHERE JRNCODE = NEW.ENTCODE1 AND PCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF NEW.ENTTYPE2 IN ('SDM', 'SCM')
+         THEN
+            UPDATE SALINVJRNMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) + ABS(coalesce(NEW.AMOUNT, 0))
+             WHERE JRNCODE = NEW.ENTCODE2 AND PCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF NEW.ENTTYPE1 IN ('PDM', 'PCM')
+         THEN
+            UPDATE PURINVJRNMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) + coalesce(NEW.AMOUNT, 0)
+             WHERE JRNCODE = NEW.ENTCODE1 AND PCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF NEW.ENTTYPE2 IN ('PDM', 'PCM')
+         THEN
+            UPDATE PURINVJRNMAIN
+               SET ADJAMT = coalesce(ADJAMT, 0) + ABS(coalesce(NEW.AMOUNT, 0))
+             WHERE JRNCODE = NEW.ENTCODE2 AND PCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         -- END REV : 005
+         
+         -- start rev : 009 -- As Adjamt updation is done from Application end so it is commented in Trigger.
+         -- START REV : 008
+         /*
+         IF :NEW.ENTTYPE1 = 'PJM'
+         THEN
+            UPDATE PURSRVJRNMAIN
+               SET ADJAMT = NVL (ADJAMT, 0) + NVL (:NEW.AMOUNT, 0)
+             WHERE JRNCODE = :NEW.ENTCODE1 AND PCODE = :NEW.SLCODE;
+
+            IF SQL%ROWCOUNT = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+         */
+         -- END REV : 008
+         -- end rev : 009
+         -- START REV : 397
+         IF NEW.ENTTYPE1 = 'GVJ'
+         THEN
+            UPDATE GVISSUE_JOURNAL
+               SET ADJAMT = coalesce(ADJAMT, 0) + coalesce(NEW.AMOUNT, 0)
+             WHERE CODE = NEW.ENTCODE1 AND CUSTOMER_SLCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF NEW.ENTTYPE2 = 'GVJ'
+         THEN
+            UPDATE GVISSUE_JOURNAL
+               -- START REV : 001
+               --SET     ADJAMT          = NVL(ADJAMT,0) + NVL(:NEW.AMOUNT,0)
+               SET ADJAMT = coalesce(ADJAMT, 0) + ABS(coalesce(NEW.AMOUNT, 0))
+             -- END REV : 001
+             WHERE CODE = NEW.ENTCODE2 AND CUSTOMER_SLCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         -- END REV : 397
+         -- START REV : 411
+         IF NEW.ENTTYPE1 = 'PJN'
+         THEN
+            UPDATE POSJOURNAL
+               SET ADJAMT = coalesce(ADJAMT, 0) + coalesce(NEW.AMOUNT, 0)
+             WHERE CODE = NEW.ENTCODE1 AND CUSTOMER_SLCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+
+         IF NEW.ENTTYPE2 = 'PJN'
+         THEN
+            UPDATE POSJOURNAL
+               -- START REV : 001
+               --SET     ADJAMT          = NVL(ADJAMT,0) + NVL(:NEW.AMOUNT,0)
+               SET ADJAMT = coalesce(ADJAMT, 0) + ABS(coalesce(NEW.AMOUNT, 0))
+             -- END REV : 001
+             WHERE CODE = NEW.ENTCODE2 AND CUSTOMER_SLCODE = NEW.SLCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               NULL;
+            END IF;
+         END IF;
+      -- END REV : 411
+      END IF;
+   END IF;
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

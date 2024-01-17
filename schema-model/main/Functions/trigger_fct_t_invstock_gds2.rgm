@@ -1,0 +1,148 @@
+function "main"."trigger_fct_t_invstock_gds2()" {
+  text = """
+
+DECLARE
+/******************************************************************************
+NAME: T_INVSTOCK_GDS2
+
+PURPOSE:
+
+REVISIONS:
+Rev.       Date        Author                   Description
+---------  ----------  ----------------------   ---------------------------------------------------
+Author     XX/XX/XXXX  XXXXXXXXXXXXXXXXXXXXXX   XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+001        8/11/2019   ANINDYA               (TFS ID :34349 - INVENTORY_ARTICLE GDS Event related changes)
+002        29/11/2020  ANINDYA               (OMS - New GDS3 related site.inventory.item.updated EVENT introduction)
+******************************************************************************/
+   V_ISENABLED_SITE     bigint;
+   V_ISENABLED_STKPNT   bigint;
+   -- START REV : 001
+   V_ISENABLED_ARTICLE  bigint;
+   -- END REV : 001
+   -- START REV : 002
+   V_SUB_SITE           bigint;
+   -- END REV : 002
+BEGIN
+   SELECT COUNT(1)
+     INTO STRICT V_ISENABLED_SITE
+     FROM GDS2_SUBSCR_EVENT
+    WHERE EVENT_ID = 'INVENTORY_SITE';
+
+   SELECT COUNT(1)
+     INTO STRICT V_ISENABLED_STKPNT
+     FROM GDS2_SUBSCR_EVENT
+    WHERE EVENT_ID = 'INVENTORY_STOCKPOINT';
+
+    -- START REV : 001
+    SELECT COUNT(1)
+     INTO STRICT V_ISENABLED_ARTICLE
+     FROM GDS2_SUBSCR_EVENT
+    WHERE EVENT_ID = 'INVENTORY_ARTICLE';
+    -- END REV  : 001
+    
+    -- START REV : 002
+    SELECT COUNT(1)
+     INTO STRICT V_SUB_SITE
+     FROM GDS2_SUBSCR_EVENT
+    WHERE EVENT_ID = 'site.inventory.item.updated';
+    -- END REV : 002
+   IF TG_OP = 'INSERT'
+   THEN
+      IF V_ISENABLED_SITE > 0
+      THEN
+         call DB_PKG_GDS2_EVENT$TRACK(
+            'INVENTORY_SITE',
+            NEW.ICODE || '~' || NEW.ADMSITE_CODE::TEXT);
+      END IF;
+      -- START REV : 002
+      IF V_SUB_SITE > 0 AND coalesce(OLD.INVBIN_CODE, NEW.INVBIN_CODE) IS NULL
+      THEN
+         call DB_PKG_GDS2_EVENT$TRACK(
+            'site.inventory.item.updated',
+            NEW.ICODE || '~' || NEW.ADMSITE_CODE::TEXT);
+      END IF;
+
+      
+      IF V_ISENABLED_ARTICLE > 0
+      THEN
+         call DB_PKG_GDS2_EVENT$TRACK(
+            'INVENTORY_ARTICLE',
+            NEW.ICODE || '~' || NEW.ADMSITE_CODE::TEXT);
+      END IF;
+      -- END REV  : 001
+   END IF;
+
+   IF TG_OP = 'UPDATE'
+   THEN
+      IF V_ISENABLED_SITE > 0
+      THEN
+         call DB_PKG_GDS2_EVENT$TRACK(
+            'INVENTORY_SITE',
+            OLD.ICODE || '~' || OLD.ADMSITE_CODE::TEXT);
+         call DB_PKG_GDS2_EVENT$TRACK(
+            'INVENTORY_SITE',
+            NEW.ICODE || '~' || NEW.ADMSITE_CODE::TEXT);
+      END IF;
+
+      -- START REV : 002
+      IF V_SUB_SITE > 0 AND coalesce(OLD.INVBIN_CODE, NEW.INVBIN_CODE) IS NULL
+      THEN
+         call DB_PKG_GDS2_EVENT$TRACK(
+            'site.inventory.item.updated',
+            OLD.ICODE || '~' || OLD.ADMSITE_CODE::TEXT);
+         call DB_PKG_GDS2_EVENT$TRACK(
+            'site.inventory.item.updated',
+            NEW.ICODE || '~' || NEW.ADMSITE_CODE::TEXT);
+      END IF;
+      -- END REV : 002
+      IF V_ISENABLED_ARTICLE > 0
+      THEN
+         call DB_PKG_GDS2_EVENT$TRACK(
+            'INVENTORY_ARTICLE',
+            OLD.ICODE || '~' || OLD.ADMSITE_CODE::TEXT);
+         call DB_PKG_GDS2_EVENT$TRACK(
+            'INVENTORY_ARTICLE',
+            NEW.ICODE || '~' || NEW.ADMSITE_CODE::TEXT);
+      END IF;
+      --  END REV : 001
+   END IF;
+
+   IF TG_OP = 'DELETE'
+   THEN
+      IF V_ISENABLED_SITE > 0
+      THEN
+         call DB_PKG_GDS2_EVENT$TRACK(
+            'INVENTORY_SITE',
+            OLD.ICODE || '~' || OLD.ADMSITE_CODE::TEXT);
+      END IF;
+
+      -- START REV : 002
+      IF V_SUB_SITE > 0 AND coalesce(OLD.INVBIN_CODE, NEW.INVBIN_CODE) IS NULL
+      THEN
+         call DB_PKG_GDS2_EVENT$TRACK(
+            'site.inventory.item.updated',
+            OLD.ICODE || '~' || OLD.ADMSITE_CODE::TEXT);
+      END IF;
+      
+      IF V_ISENABLED_ARTICLE > 0
+      THEN
+         call DB_PKG_GDS2_EVENT$TRACK(
+            'INVENTORY_ARTICLE',
+            OLD.ICODE || '~' || OLD.ADMSITE_CODE::TEXT);
+      END IF;
+      -- END REV : 001
+   END IF;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

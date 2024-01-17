@@ -1,0 +1,130 @@
+view "main"."v_tds_app" {
+  text = """-
+SELECT m.srvcode AS entrycode,
+    m.srvdt AS entrydate,
+    m.ycode,
+    'ZEROTDSSERVICE'::text AS entrytype,
+    m.release_status AS doc_release_status,
+    m.pcode AS slcode,
+    m.tdstypecode,
+    m.tdssrccode,
+    m.tdssection,
+    m.certificateno AS certificate_no,
+    m.tdsglcode,
+    m.tdsslcode,
+    m.tdsrate AS tds_rate,
+    m.tds_appamt,
+    m.tds_grossamt,
+    m.tds_roundoff_amt,
+    m.tdsamt AS tds_amt
+   FROM main.pursrvmain m
+  WHERE ((COALESCE(m.tds_grossamt, (0)::numeric) = (0)::numeric) AND (m.tds_app = 'Y'::bpchar) AND (m.release_status = 'P'::bpchar))
+UNION ALL
+ SELECT m.srvcode AS entrycode,
+    m.srvdt AS entrydate,
+    m.ycode,
+    'ZEROTDSSERVICE'::text AS entrytype,
+    m.release_status AS doc_release_status,
+    m.pcode AS slcode,
+    m.tdstypecode,
+    m.tdssrccode,
+    m.tdssection,
+    m.certificateno AS certificate_no,
+    m.tdsglcode,
+    m.tdsslcode,
+    m.tdsrate AS tds_rate,
+    m.tds_appamt,
+    m.tds_grossamt,
+    m.tds_roundoff_amt,
+    m.tdsamt AS tds_amt
+   FROM main.pursrvmain m
+  WHERE ((COALESCE(m.tds_grossamt, (0)::numeric) > (0)::numeric) AND (m.tds_app = 'Y'::bpchar) AND (m.release_status = 'U'::bpchar))
+UNION ALL
+ SELECT m.jrncode AS entrycode,
+    m.jrndt AS entrydate,
+    m.ycode,
+    'TDSJOURNAL'::text AS entrytype,
+    m.release_status AS doc_release_status,
+    d.slcode,
+    d.tdstypecode,
+    d.tdssrccode,
+    d.tdssection,
+    d.certificateno AS certificate_no,
+    d1.glcode AS tdsglcode,
+    d1.slcode AS tdsslcode,
+    d.tdsrate AS tds_rate,
+    (COALESCE(d.tds_appamt, (0)::numeric) - COALESCE(dr.reverse_amt, (0)::numeric)) AS tds_appamt,
+    d.tds_grossamt,
+    d.tds_roundoff_amt,
+    d.damount AS tds_amt
+   FROM main.finjrndet d,
+    ( SELECT d1_1.jrncode,
+            d1_1.slcode,
+            d1_1.glcode
+           FROM main.finjrndet d1_1
+          WHERE ((COALESCE(d1_1.camount, (0)::numeric) > (0)::numeric) AND (d1_1.jrntype = 'T'::bpchar))) d1,
+    (( SELECT m2.jrncode AS m2_jrncode,
+            m2.reversed_jrncode,
+            sum(dd2.tds_appamt) AS reverse_amt
+           FROM main.finjrnmain m2,
+            main.finjrndet dd2
+          WHERE ((COALESCE(dd2.damount, (0)::numeric) > (0)::numeric) AND (m2.jrntype = 'R'::bpchar) AND (m2.jrncode = dd2.jrncode))
+          GROUP BY m2.jrncode, m2.reversed_jrncode) dr
+     RIGHT JOIN main.finjrnmain m ON ((m.jrncode = dr.reversed_jrncode)))
+  WHERE ((m.jrncode = d.jrncode) AND (m.jrntype = 'T'::bpchar) AND (COALESCE(d.damount, (0)::numeric) > (0)::numeric) AND (m.jrncode = d1.jrncode));
+"""
+  columns = (
+    column "entrycode" {
+      type = "bigint"
+    }
+    column "entrydate" {
+      type = "timestamp(0) without time zone"
+    }
+    column "ycode" {
+      type = "bigint"
+    }
+    column "entrytype" {
+      type = text
+    }
+    column "doc_release_status" {
+      type = "character(1)"
+    }
+    column "slcode" {
+      type = "bigint"
+    }
+    column "tdstypecode" {
+      type = "bigint"
+    }
+    column "tdssrccode" {
+      type = "bigint"
+    }
+    column "tdssection" {
+      type = "character varying(100)"
+    }
+    column "certificate_no" {
+      type = "character varying(100)"
+    }
+    column "tdsglcode" {
+      type = "bigint"
+    }
+    column "tdsslcode" {
+      type = "bigint"
+    }
+    column "tds_rate" {
+      type = "numeric(20,5)"
+    }
+    column "tds_appamt" {
+      type = "numeric"
+    }
+    column "tds_grossamt" {
+      type = "numeric(20,5)"
+    }
+    column "tds_roundoff_amt" {
+      type = "numeric(20,5)"
+    }
+    column "tds_amt" {
+      type = "numeric(20,2)"
+    }
+  )
+}
+

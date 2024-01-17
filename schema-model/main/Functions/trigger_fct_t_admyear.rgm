@@ -1,0 +1,122 @@
+function "main"."trigger_fct_t_admyear()" {
+  text = """
+
+DECLARE
+   count_month   bigint;
+   count_date    bigint;
+   counter       bigint    := 1;
+   
+   v_count1      bigint;
+   v_count2      bigint;
+   v_date        timestamp;
+/*****************************************************************************************************************************************************
+   NAME: T_ADMYEAR
+
+   PURPOSE:
+
+   REVISIONS:
+   No.		    Date            Author          Description
+   ---------    ----------      -------------   ---------------------------------------------------------------------
+   REV : 001    19/03/2008      DIPTIMAN	    (Bug ID : 537)      Genarating logic of PK altered.
+   REV : 002    24/07/2009      SHANKAR         (Bug ID : 1436)     MCODE was getting populated with null during setup.
+   REV : 003    12/04/2017      MANASH          (TFS ID : 21200)    Inventory Valuation  Revamp.
+   NOTES:
+*******************************************************************************************************************************************************/
+BEGIN
+  BEGIN
+
+    SELECT coalesce(MAX(MCODE),0) + 1
+    INTO STRICT COUNTER
+    FROM ADMMONTH;
+   -- END REV : 002
+   -- END REV : 001
+    SELECT  CEIL(MONTHS_BETWEEN((NEW.DTFR), (NEW.DTTO))) + 1
+    INTO STRICT    COUNT_MONTH;
+
+    
+    INSERT
+    INTO    ADMOU_YEAR(
+                ADMOU_CODE,
+                ADMYEAR_CODE,
+                ADMYEAR_STATUS
+            )
+    SELECT  OU.CODE,
+            NEW.YCODE,
+            'O'
+    FROM    ADMOU OU;
+
+    FOR I IN 1..COUNT_MONTH
+    LOOP
+        INSERT
+        INTO    ADMMONTH(
+                    MCODE,
+                    YCODE,
+                    MONTH_NAME,
+                    DTFR,
+                    DTTO,
+                    MONSTDT
+                )
+        VALUES
+                (
+                    COUNTER,
+                    NEW.YCODE,
+                    TO_CHAR(NEW.DTFR + interval '1 month'*I-interval '1 month'*1,'MON-YY'),
+                    (((date_trunc('month',(NEW.DTFR + interval '1 month'*I- interval '1 month'*1)::timestamp + interval '1 month'))::date - interval '1 day'*1) - INTERVAL '1 day'*(TO_CHAR(((date_trunc('month',(NEW.DTFR + interval '1 month'*I-interval '1 month'*1)::timestamp + interval '1 month'))::date - interval '1 days'),'DD'))::numeric ) + INTERVAL '1 day',
+                    ((date_trunc('month',(NEW.DTFR + interval '1 month'*I-interval '1 month'*1)::timestamp + interval '1 month'))::date - INTERVAL '1 day'),
+                    (((date_trunc('month',(NEW.DTFR + interval '1 month'*I-interval '1 month'*1)::timestamp + interval '1 month'))::date - interval '1 day') - interval '1 day'*(TO_CHAR(((date_trunc('month',(NEW.DTFR + interval '1 month'*3-interval '1 month'*1)::timestamp + interval '1 month'))::date - INTERVAL '1 day'),'DD'))::numeric ) + INTERVAL '1 day'
+                );
+
+        INSERT
+        INTO    ADMOU_MONTH (
+                    ADMMONTH_CODE,
+                    ADMOU_CODE,
+                    COGS_RUN_STATUS,
+                    INV_MONTH_STATUS,
+                    FIN_MONTH_STATUS
+                )
+        SELECT  COUNTER,
+                OU.CODE,
+                'P',
+                'O',
+                'O'
+        FROM    ADMOU OU;
+
+        COUNTER := COUNTER + 1;
+    END LOOP;
+    -- END REV : 003
+   FOR J IN 1 .. replace (((NEW.DTTO)-(NEW.DTFR))::text,' days','')::bigint + 1
+   LOOP
+        BEGIN
+            INSERT
+            INTO    ADMDAYBOOK(
+                        SALEDT,
+                        YCODE,
+                        DAY_STATUS
+                    )
+            VALUES (
+                    NEW.dtfr + INTERVAL '1 day'*j  - INTERVAL '1 day'*1,
+                    NEW.YCODE,
+                    CASE WHEN                            
+				         NEW.YCODE=1 THEN  'C'  
+				    ELSE -- START REV : 003
+                                'O'                                -- END REV : 003
+                    END
+                   );
+        EXCEPTION
+            WHEN OTHERS THEN
+            NULL;
+        END;
+   END LOOP;
+EXCEPTION
+   WHEN SQLSTATE '50001' THEN
+   RAISE EXCEPTION '%', '#Child Record Exist. Unable To Update.#' USING ERRCODE = '45201';
+  END;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

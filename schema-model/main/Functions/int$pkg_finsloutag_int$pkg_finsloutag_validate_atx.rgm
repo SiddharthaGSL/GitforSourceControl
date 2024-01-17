@@ -1,0 +1,513 @@
+function "main"."int$pkg_finsloutag_int$pkg_finsloutag_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status   char(1);
+      errmsg     varchar(200);
+      errcode    bigint;
+BEGIN
+--erraudit('xx','1','1',p_userid||','||p_connect_site||','||p_logging_date||','||p_connect_ou);
+        -- Organization Site Short name should be valid
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc,createdon)
+        -- START REV : 001
+        -- select  int$error_log_code.nextval, lineno, 'FINSLOUTAG', userid, 'Site Validation', 'Organization Site not found or is extinct.', sysdate
+        SELECT  nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Site Validation', a.ORG_SITE_SHORTNAME||': SITE SHORTNAME, is not valid or extinct.', clock_timestamp()
+        -- END REV : 001
+        FROM int$stg_finsloutag a
+LEFT OUTER JOIN admsite s ON (upper(a.ORG_SITE_SHORTNAME) = upper(s.SHRTNAME))
+WHERE (
+                    s.CODE is null
+                    or
+                    s.ext = 'Y'
+                ) and a.ORG_SITE_SHORTNAME is not null and a.userid = p_userid;
+
+        -- START REV : 001
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc,createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Site Validation', a.org_site_shortname||': SITE SHORTNAME, is not allowed with class type tagged with the given  Customer/Other id.', clock_timestamp()
+        from    int$stg_finsloutag a,
+                admsite            b,
+                finsl              c,
+                admcls             d
+        where   upper(a.org_site_shortname) = upper(b.shrtname)
+        and     upper(a.slid) = upper(c.slid)
+        and     c.clscode = d.clscode
+        and     (
+                    (
+                        d.clstype in ('S','T','J','A','E')
+                        and
+                        b.sitetype not in ('OS-OO-CM', 'MS-OO-CM', 'MS-CO-OM-TS')
+                    )
+                    or (
+                        d.clstype in ('C','O')
+                        and
+                        b.sitetype not in ('OS-OO-CM', 'MS-OO-CM')
+                    )
+                )
+        and     coalesce(b.ext,'N') = 'N'
+        and     a.org_site_shortname is not null
+        and     a.slid is not null
+        and     a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc,createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Site Validation', a.org_site_shortname||': SITE SHORTNAME, Sale details and Default stock point details are not allowed for Managed owner sites.', clock_timestamp()
+        from    int$stg_finsloutag a,
+                admsite            b
+        where   upper(a.org_site_shortname) = upper(b.shrtname)
+        and     b.sitetype = 'MS-OO-CM'
+        and     coalesce(b.ext,'N') = 'N'
+        and (
+                    a.sale_pricelist_name is not null
+                    or
+                    a.sale_term_name is not null
+                    or
+                    a.sale_form_name is not null
+                    or
+                    a.in_stockpoint is not null
+                    or
+                    a.out_stockpoint is not null
+                )
+        and     a.org_site_shortname is not null
+        and     a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc,createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Site Validation', a.org_site_shortname||': SITE SHORTNAME, Sale details and Default stock point details are not allowed for Managed Outright site.', clock_timestamp()
+        from    int$stg_finsloutag a,
+                admsite            b
+        where   upper(a.org_site_shortname) = upper(b.shrtname)
+        and     b.sitetype = 'MS-CO-OM-TS'
+        and     coalesce(b.ext,'N') = 'N'
+        and (
+                    a.sale_pricelist_name is not null
+                    or
+                    a.sale_term_name is not null
+                    or
+                    a.sale_form_name is not null
+                    or
+                    a.in_stockpoint is not null
+                    or
+                    a.out_stockpoint is not null
+                )
+        and     a.org_site_shortname is not null
+        and     a.userid = p_userid;
+        -- END REV : 001
+        -- Multiple sites found for this organization short name, unable to proceed
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+             SELECT nextval('int$error_log_code'), a.lineno, 'FINSLOUTAG', A.USERID,'Site Validation',
+                    -- START REV : 001
+                    -- 'Multiple sites found for this organization short name, unable to proceed.', SYSDATE
+                    a.org_site_shortname||': Multiple sites found for this organization short name, unable to proceed.', clock_timestamp()
+                    -- END REV : 001
+               FROM int$stg_FINSLOUTAG a
+                    ,(
+                        SELECT  lineno, upper(b.shrtname), count(1)
+                        FROM    int$stg_FINSLOUTAG a
+                                ,admsite       b
+                        WHERE   upper(a.ORG_SITE_SHORTNAME) = upper(b.shrtname)
+                        AND     a.userid = p_userid
+                        AND     A.ORG_SITE_SHORTNAME IS NOT NULL
+                        GROUP BY
+                                lineno, upper(b.shrtname)
+                        HAVING COUNT(1) > 1
+                    ) b
+            WHERE   A.ORG_SITE_SHORTNAME IS NOT NULL
+            AND     a.lineno = b.lineno
+            AND     a.userid = p_userid;
+
+        -- SLID should be valid
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc,createdon)
+        -- START REV : 001
+        -- select  int$error_log_code.nextval, lineno, 'FINSLOUTAG', userid, 'Vendor/Customer Validation', 'Vendor/Customer not found or is extinct.', sysdate
+        SELECT  nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Vendor/Customer Validation', a.SLID||': Sub ledger, is not valid or extinct.', clock_timestamp()
+        -- END REV : 001
+        FROM int$stg_finsloutag a
+LEFT OUTER JOIN finsl s ON (upper(a.SLID) = upper(s.SLID))
+WHERE (s.SLCODE is null or s.ext = 'Y') and a.userid = p_userid;
+
+        -- START REV : 001
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Site Validation', a.slid||': SLID, Sub ledger, class type is not allowed. ', clock_timestamp()
+        from    int$stg_finsloutag a,
+                admsite            b,
+                finsl              c,
+                admcls             d
+        where   upper(a.org_site_shortname) = upper(b.shrtname)
+        and     upper(a.slid) = upper(c.slid)
+        and     c.clscode = d.clscode
+        and     d.clstype not in ('S','T','J','A','E','C','O')
+        and     coalesce(b.ext,'N') = 'N'
+        and     a.org_site_shortname is not null
+        and     a.slid is not null
+        and     a.userid = p_userid;
+        -- END REV : 001
+      -- Multiple SLs found for this SLID, unable to proceed
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                       createdon)
+             SELECT nextval('int$error_log_code'), a.lineno, 'FINSLOUTAG', A.USERID,
+                    'Vendor/Customer Validation', 'Multiple vendor/customers found for this SLID, unable to proceed.', clock_timestamp()
+               FROM int$stg_FINSLOUTAG a
+                    ,(
+                        SELECT  lineno, upper(b.SLID), count(1)
+                        FROM    int$stg_FINSLOUTAG a
+                                ,finsl       b
+                        WHERE   upper(a.SLID) = upper(b.SLID)
+                        AND     a.userid = p_userid
+                        AND     A.SLID IS NOT NULL
+                        GROUP BY
+                                lineno, upper(b.SLID)
+                        HAVING COUNT(1) > 1
+                    ) b
+            WHERE   A.SLID IS NOT NULL
+            AND     a.lineno = b.lineno
+            AND     a.userid = p_userid;
+
+      --Same Organization Site with same SLID more than once in excel
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), a.lineno, 'FINSLOUTAG', userid,
+                'Data Validation',
+                'Same Organization site with same SLID specified more than once in the excel.',
+                clock_timestamp()
+           FROM int$stg_FINSLOUTAG a,
+                (SELECT   UPPER(A.ORG_SITE_SHORTNAME) ORG_SITE_SHORTNAME, UPPER(a.SLID) SLID, COUNT(1)
+                     FROM int$stg_FINSLOUTAG a
+                    WHERE a.SLID is not null
+                      AND A.ORG_SITE_SHORTNAME IS NOT NULL
+                      AND a.userid = p_userid
+                 GROUP BY UPPER(A.ORG_SITE_SHORTNAME), UPPER(a.SLID)
+                   HAVING COUNT(1) > 1) b
+          WHERE UPPER(a.SLID) = UPPER(b.SLID)
+          and   UPPER(A.ORG_SITE_SHORTNAME) = UPPER(b.ORG_SITE_SHORTNAME)
+          and   a.ORG_SITE_SHORTNAME is NOT NULL
+          and   a.SLID is not null
+          AND a.userid = p_userid;
+
+        -- Purchase Term Validation
+         INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+         -- START REV : 001
+         -- SELECT int$error_log_code.NEXTVAL, lineno, 'FINSLOUTAG', userid, 'Data Validation', 'Invalid Purchase Term Name / Extinct', SYSDATE
+         SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.PUR_TERM_NAME||': Purchase term, is not valid or extinct.', clock_timestamp()
+         -- END REV : 001
+         FROM int$stg_finsloutag a
+LEFT OUTER JOIN purtermmain b ON (UPPER(A.PUR_TERM_NAME) = UPPER(B.NAME))
+WHERE (b.NAME IS NULL OR B.EXT = 'Y') AND a.PUR_TERM_NAME IS NOT NULL AND a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.PUR_TERM_NAME||': Both Purchase term name and Purchase form name are required.', clock_timestamp()
+        FROM int$stg_finsloutag a inner join finsl c ON UPPER(A.SLID) = UPPER(C.SLID) 
+LEFT OUTER JOIN finsl_ou e ON (C.SLCODE = E.SLCODE)
+LEFT OUTER JOIN admsite d ON (D.CODE = E.ADMSITE_CODE)
+WHERE UPPER(ORG_SITE_SHORTNAME) = UPPER(D.SHRTNAME)   
+AND A.PUR_TERM_NAME IS NOT NULL 
+AND coalesce(A.PUR_FORM_NAME, E.PURFORMCODE::varchar) is null 
+AND a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.PUR_TERM_NAME||': Purchase term, is not allowed with given form name.', clock_timestamp()
+        FROM int$stg_finsloutag a inner join purtermmain b ON UPPER(A.PUR_TERM_NAME) = UPPER(B.NAME) 
+		inner join finsl c ON UPPER(A.SLID) = UPPER(C.SLID) 
+		inner join fintradegrp f ON B.FINTRADEGRP_CODE = F.CODE
+		LEFT OUTER JOIN finsl_ou e ON (C.SLCODE = E.SLCODE)
+		LEFT OUTER JOIN admsite d ON (D.CODE = E.ADMSITE_CODE)
+WHERE UPPER(ORG_SITE_SHORTNAME) = UPPER(D.SHRTNAME) 
+AND UPPER(F.NAME) = 'LOCAL' 
+AND UPPER(coalesce(A.PUR_FORM_NAME,(case when E.PURFORMCODE = 0 then 'NONE' else 'XX' end))) <> 'NONE' 
+AND coalesce(B.EXT,'N') = 'N' 
+AND a.userid = p_userid;
+
+        --PUR_FORM_NAME
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.PUR_FORM_NAME||': Purchase form, is not valid or extinct.', clock_timestamp()
+        FROM int$stg_finsloutag a
+LEFT OUTER JOIN finform b ON (UPPER(A.PUR_FORM_NAME) = UPPER(B.FORMNAME ))
+WHERE (b.FORMNAME IS NULL OR coalesce(B.EXT,'N') = 'Y') AND a.PUR_FORM_NAME IS NOT NULL AND a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.PUR_FORM_NAME||': Purchase form, this form is not allowed with LOCAL trade group.', clock_timestamp()
+        FROM fintradegrp f, purtermmain b, int$stg_finsloutag a, finsl c
+LEFT OUTER JOIN finsl_ou e ON (C.SLCODE = E.SLCODE) 
+LEFT OUTER JOIN admsite d ON (D.CODE = E.ADMSITE_CODE)
+WHERE UPPER(A.PUR_TERM_NAME) = UPPER(B.NAME) AND UPPER(A.SLID) = UPPER(C.SLID) AND UPPER(ORG_SITE_SHORTNAME) = UPPER(D.SHRTNAME) AND B.FINTRADEGRP_CODE = F.CODE   AND UPPER(F.NAME) = 'LOCAL' AND UPPER(coalesce(A.PUR_FORM_NAME,CASE WHEN E.PURFORMCODE::varchar='0' THEN  'NONE'  ELSE 'XX' END )) <> 'NONE' AND coalesce(B.EXT,'N') = 'N' AND a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.PUR_FORM_NAME||': Both Purchase term name and Purchase form name are required.', clock_timestamp()
+        FROM int$stg_finsloutag a, finsl c
+LEFT OUTER JOIN finsl_ou e ON (C.SLCODE = E.SLCODE)
+LEFT OUTER JOIN admsite d ON (D.CODE = E.ADMSITE_CODE)
+WHERE UPPER(A.SLID) = UPPER(C.SLID) AND UPPER(ORG_SITE_SHORTNAME) = UPPER(D.SHRTNAME)   AND A.PUR_FORM_NAME IS NOT NULL AND coalesce(A.PUR_TERM_NAME, E.PURTERMMAIN_CODE::varchar) is null AND a.userid = p_userid;
+        -- END REV : 001
+        -- Sale Price List Validation
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        -- START REV : 001
+        -- SELECT int$error_log_code.NEXTVAL, lineno, 'FINSLOUTAG', userid, 'Data Validation', 'Invalid Sales Pricelist Name.', SYSDATE
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.SALE_PRICELIST_NAME||': Price list name, is not valid.', clock_timestamp()
+        -- END REV : 001
+        FROM int$stg_finsloutag a
+LEFT OUTER JOIN salpricelistmain b ON (UPPER(A.SALE_PRICELIST_NAME) = UPPER(b.pricelistname))
+WHERE a.SALE_PRICELIST_NAME IS NOT NULL AND b.pricelistname IS NULL AND a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.SALE_PRICELIST_NAME||': All Sale details are required.', clock_timestamp()
+        FROM salpricelistmain b, int$stg_finsloutag a, finsl c
+LEFT OUTER JOIN finsl_ou e ON (C.SLCODE = E.SLCODE)
+LEFT OUTER JOIN admsite d ON (D.CODE = E.ADMSITE_CODE)
+WHERE UPPER(A.SALE_PRICELIST_NAME) = UPPER(B.PRICELISTNAME) AND UPPER(A.SLID) = UPPER(C.SLID) AND UPPER(ORG_SITE_SHORTNAME) = UPPER(D.SHRTNAME)   AND (coalesce(A.SALE_TERM_NAME,E.TERMCODE::varchar) IS NULL or coalesce(A.SALE_FORM_NAME,E.SALFORMCODE::varchar) IS NULL) AND a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.SALE_PRICELIST_NAME||': Sales pricelist is not allowed if mode of operation is not defined in the customer master.', clock_timestamp()
+        FROM   INT$STG_FINSLOUTAG A, FINSL B
+        WHERE  UPPER(A.SLID) = UPPER(B.SLID)
+        AND    B.SALETYPE IS NULL
+        AND    A.SALE_PRICELIST_NAME IS NOT NULL
+        AND    a.userid = p_userid;
+        -- END REV : 001
+        -- Sale Term Validation
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        -- START REV : 001
+        -- SELECT int$error_log_code.NEXTVAL, lineno, 'FINSLOUTAG', userid, 'Data Validation', 'Invalid Sales Term Name / Extinct', SYSDATE
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.SALE_TERM_NAME||': Sale term name, is not valid or extinct.', clock_timestamp()
+        -- END REV : 001
+        FROM int$stg_finsloutag a
+LEFT OUTER JOIN saltermmain b ON (UPPER(A.SALE_TERM_NAME) = UPPER(B.saltermNAME))
+WHERE (b.saltermNAME IS NULL OR B.EXT = 'Y') AND a.SALE_TERM_NAME IS NOT NULL AND a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.SALE_TERM_NAME||': All Sale details are required.', clock_timestamp()
+        FROM saltermmain b, int$stg_finsloutag a, finsl c
+LEFT OUTER JOIN finsl_ou e ON (C.SLCODE = E.SLCODE)
+LEFT OUTER JOIN admsite d ON (D.CODE = E.ADMSITE_CODE)
+WHERE UPPER(A.SALE_TERM_NAME) = UPPER(B.SALTERMNAME) AND UPPER(A.SLID) = UPPER(C.SLID) AND UPPER(ORG_SITE_SHORTNAME) = UPPER(D.SHRTNAME)   AND coalesce(B.EXT,'N') = 'N' AND (coalesce(A.SALE_PRICELIST_NAME,E.PRICELISTCODE::varchar) IS NULL OR coalesce(A.SALE_FORM_NAME,E.SALFORMCODE::varchar) IS NULL) AND a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.SALE_TERM_NAME||': Sales term is not allowed if mode of operation is not defined in the customer master.', clock_timestamp()
+        FROM   INT$STG_FINSLOUTAG A, FINSL B
+        WHERE  UPPER(A.SLID) = UPPER(B.SLID)
+        AND    B.SALETYPE IS NULL
+        AND    A.SALE_TERM_NAME IS NOT NULL
+        AND    a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.SALE_TERM_NAME||': Sale term, is not allowed with given form name.', clock_timestamp()
+        FROM fintradegrp f, saltermmain b, int$stg_finsloutag a, finsl c
+LEFT OUTER JOIN finsl_ou e ON (C.SLCODE = E.SLCODE)
+LEFT OUTER JOIN admsite d ON (D.CODE = E.ADMSITE_CODE)
+WHERE UPPER(A.SALE_TERM_NAME) = UPPER(B.SALTERMNAME) AND UPPER(A.SLID) = UPPER(C.SLID) AND UPPER(ORG_SITE_SHORTNAME) = UPPER(D.SHRTNAME) AND B.FINTRADEGRP_CODE = F.CODE   AND UPPER(F.NAME) = 'LOCAL' AND UPPER(coalesce(A.SALE_FORM_NAME,CASE WHEN E.SALFORMCODE::varchar='0' THEN  'NONE'  ELSE 'XX' END )) <> 'NONE' AND coalesce(B.EXT,'N') = 'N' AND a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.SALE_FORM_NAME||': Sale form, this form is not allowed with LOCAL trade group.', clock_timestamp()
+        FROM fintradegrp f, saltermmain b, int$stg_finsloutag a, finsl c
+LEFT OUTER JOIN finsl_ou e ON (C.SLCODE = E.SLCODE)
+LEFT OUTER JOIN admsite d ON (D.CODE = E.ADMSITE_CODE)
+WHERE UPPER(A.SALE_TERM_NAME) = UPPER(B.SALTERMNAME) AND UPPER(A.SLID) = UPPER(C.SLID) AND UPPER(ORG_SITE_SHORTNAME) = UPPER(D.SHRTNAME) AND B.FINTRADEGRP_CODE = F.CODE   AND UPPER(F.NAME) = 'LOCAL' AND UPPER(coalesce(A.SALE_FORM_NAME,CASE WHEN E.SALFORMCODE::varchar='0' THEN  'NONE'  ELSE 'XX' END )) <> 'NONE' AND coalesce(B.EXT,'N') = 'N' AND a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.SALE_FORM_NAME||': Sale form, is not valid or extinct.', clock_timestamp()
+        FROM int$stg_finsloutag a
+LEFT OUTER JOIN finform b ON (UPPER(A.SALE_FORM_NAME) = UPPER(B.FORMNAME ))
+WHERE (b.FORMNAME IS NULL OR coalesce(B.EXT,'N') = 'Y') AND a.SALE_FORM_NAME IS NOT NULL AND a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.SALE_FORM_NAME||': All Sale details are required.', clock_timestamp()
+        FROM finform b, int$stg_finsloutag a, finsl c
+LEFT OUTER JOIN finsl_ou e ON (C.SLCODE = E.SLCODE)
+LEFT OUTER JOIN admsite d ON (D.CODE = E.ADMSITE_CODE)
+WHERE UPPER(A.SALE_FORM_NAME) = UPPER(B.FORMNAME) AND UPPER(A.SLID) = UPPER(C.SLID) AND UPPER(ORG_SITE_SHORTNAME) = UPPER(D.SHRTNAME)   AND coalesce(B.EXT,'N') = 'N' AND (coalesce(A.SALE_TERM_NAME,E.TERMCODE::varchar) IS NULL OR coalesce(A.SALE_PRICELIST_NAME,E.PRICELISTCODE::varchar) IS NULL) AND a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.SALE_FORM_NAME||': Sales form is not allowed if mode of operation is not defined in the customer master.', clock_timestamp()
+        FROM   INT$STG_FINSLOUTAG A, FINSL B
+        WHERE  UPPER(A.SLID) = UPPER(B.SLID)
+        AND    B.SALETYPE IS NULL
+        AND    A.SALE_FORM_NAME IS NOT NULL
+        AND    a.userid = p_userid;
+
+        -- IN_STOCKPOINTA
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.IN_STOCKPOINT||': In stock point, is not valid or extinct.', clock_timestamp()
+        FROM admsite c, finsl b, int$stg_finsloutag a
+LEFT OUTER JOIN invloc d ON (UPPER(A.IN_STOCKPOINT) = UPPER(D.LOCNAME))
+WHERE UPPER(A.SLID) = UPPER(B.SLID) AND UPPER(A.ORG_SITE_SHORTNAME) = UPPER(C.SHRTNAME)  AND (D.LOCNAME IS NULL OR D.EXT = 'Y' OR D.LOCTYPE <> 'W' OR C.CODE <> coalesce(D.ADMSITE_CODE,0)) AND A.IN_STOCKPOINT IS NOT NULL AND a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.IN_STOCKPOINT||': In stock point, can be of max 100 char.', clock_timestamp()
+        from   int$STG_FINSLOUTAG a
+        where  length(IN_STOCKPOINT) > 100
+        and    a.userid = p_userid;
+
+        -- OUT_STOCKPOINT
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.OUT_STOCKPOINT||': Out stock point, is not valid or extinct.', clock_timestamp()
+        FROM admsite c, finsl b, int$stg_finsloutag a
+LEFT OUTER JOIN invloc d ON (UPPER(A.OUT_STOCKPOINT) = UPPER(D.LOCNAME))
+WHERE UPPER(A.SLID) = UPPER(B.SLID) AND UPPER(A.ORG_SITE_SHORTNAME) = UPPER(C.SHRTNAME)  AND (D.LOCNAME IS NULL OR D.EXT = 'Y' OR D.LOCTYPE <> 'W' OR C.CODE <> coalesce(D.ADMSITE_CODE,0)) AND A.OUT_STOCKPOINT IS NOT NULL AND a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.OUT_STOCKPOINT||': In stock point, can be of max 100 char.', clock_timestamp()
+        from   int$STG_FINSLOUTAG a
+        where  length(OUT_STOCKPOINT) > 100
+        and    a.userid = p_userid;
+
+        -- IN_LGT_APPL
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.IN_LGT_APPL||': Incoming logistics applicable, is not valid.', clock_timestamp()
+        from   int$stg_finsloutag a
+        where  upper(in_lgt_appl) not in ('YES','NO')
+        and    in_lgt_appl is not null
+        and    a.userid = p_userid;
+
+        -- IN_PERMIT_APPL
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.IN_PERMIT_APPL||': Incoming logistics applicable, is not valid.', clock_timestamp()
+        from   int$stg_finsloutag a
+        where  upper(in_permit_appl) not in ('YES','NO')
+        and    in_permit_appl is not null
+        and    a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.IN_PERMIT_APPL||': Incoming permit applicable, is allowed only if incoming logistics applicable is - ''Yes''.', clock_timestamp()
+        FROM int$stg_finsloutag a, finsl c
+LEFT OUTER JOIN finsl_ou e ON (c.slcode = e.slcode)
+LEFT OUTER JOIN admsite d ON (d.code = e.admsite_code)
+WHERE upper(a.slid) = upper(c.slid) and upper(a.org_site_shortname) = upper(d.shrtname)   and (
+                    substr(upper(a.in_permit_appl),1,1) = 'Y'
+                    and
+                    upper(substr(coalesce(coalesce(a.in_lgt_appl,e.lgt_appl::varchar),'XX'),1,1)) <> 'Y'
+                ) and a.userid = p_userid;
+
+        -- SHIPMENT_TRACKING_APPL
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', a.shipment_tracking_appl||': Shipment tracking applicable, is not valid.', clock_timestamp()
+        from   int$stg_finsloutag a
+        where  upper(shipment_tracking_appl) not in ('YES','NO')
+        and    a.shipment_tracking_appl is not null
+        and    a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', a.in_permit_appl||': Incoming permit applicable, is allowed only if incoming logistics applicable is - ''Yes''.', clock_timestamp()
+        FROM int$stg_finsloutag a, finsl c
+LEFT OUTER JOIN finsl_ou e ON (c.slcode = e.slcode)
+LEFT OUTER JOIN admsite d ON (d.code = e.admsite_code)
+WHERE upper(a.slid) = upper(c.slid) and upper(a.org_site_shortname) = upper(d.shrtname)   and (
+                    substr(upper(a.shipment_tracking_appl),1,1) = 'Y'
+                    and
+                    upper(substr(coalesce(coalesce(a.in_lgt_appl,e.lgt_appl::varchar),'XX'),1,1)) <> 'Y'
+                ) and a.userid = p_userid;
+
+        -- BALE_WISE_LRQTY
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.BALE_WISE_LRQTY_APPL||': Bale wise LR Qty applicable, is not valid.', clock_timestamp()
+        from   int$stg_finsloutag a
+        where  upper(bale_wise_lrqty_appl) not in ('YES','NO')
+        and    a.bale_wise_lrqty_appl is not null
+        and    a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.BALE_WISE_LRQTY_APPL||': Bale wise LR Qty applicable, is allowed only if Incoming logistics applicable is - ''Yes''.', clock_timestamp()
+        FROM int$stg_finsloutag a, finsl c
+LEFT OUTER JOIN finsl_ou e ON (c.slcode = e.slcode)
+LEFT OUTER JOIN admsite d ON (d.code = e.admsite_code)
+WHERE upper(a.slid) = upper(c.slid) and upper(a.org_site_shortname) = upper(d.shrtname)   and (
+                    substr(upper(a.bale_wise_lrqty_appl),1,1) = 'Y'
+                    and
+                    upper(substr(coalesce(coalesce(a.in_lgt_appl,e.lgt_appl::varchar),'XX'),1,1)) <> 'Y'
+                ) and a.userid = p_userid;
+
+        -- GATEIN_APPL
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.GATEIN_APPL||': Gate entry applicable, is not valid.', clock_timestamp()
+        from   int$stg_finsloutag a
+        where  upper(gatein_appl) not in ('YES','NO')
+        and    a.gatein_appl is not null
+        and    a.userid = p_userid;
+
+        -- OUT_LGT_APPL
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.OUT_LGT_APPL||': Outward logistics applicable, is not valid.', clock_timestamp()
+        from   int$stg_finsloutag a
+        where  upper(out_lgt_appl) not in ('YES','NO')
+        and    a.out_lgt_appl is not null
+        and    a.userid = p_userid;
+
+        -- OUT_PERMIT_APPL
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.OUT_PERMIT_APPL||': Outward permit applicable, is not valid.', clock_timestamp()
+        from   int$stg_finsloutag a
+        where  upper(out_permit_appl) not in ('YES','NO')
+        and    a.out_permit_appl is not null
+        and    a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'FINSLOUTAG', userid, 'Data Validation', A.OUT_PERMIT_APPL||': Outward permit applicable, is allowed only if Outward logistics applicable is - ''Yes''.', clock_timestamp()
+        FROM int$stg_finsloutag a, finsl c
+LEFT OUTER JOIN finsl_ou e ON (c.slcode = e.slcode)
+LEFT OUTER JOIN admsite d ON (d.code = e.admsite_code)
+WHERE upper(a.slid) = upper(c.slid) and upper(a.org_site_shortname) = upper(d.shrtname)   and a.out_permit_appl is not null and (
+                    substr(upper(a.out_permit_appl),1,1) = 'Y'
+                    and
+                    upper(substr(coalesce(coalesce(a.out_lgt_appl,e.out_lgt_appl::varchar),'XX'),1,1)) <> 'Y'
+                ) and a.userid = p_userid;
+        -- END REV : 001
+      -- Check whether records are valid or not
+      BEGIN
+         SELECT 'S'
+           INTO STRICT v_status
+           
+          WHERE EXISTS (SELECT 'S'
+                          FROM int$error_log
+                         WHERE userid = p_userid);
+
+         RETURN('0');
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            RETURN('1');
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code, lineno, classname,
+                      userid, errortype, errordesc, createdon
+                     )
+              VALUES (nextval('int$error_log_code'), 0, 'FINSLOUTAG',
+                      p_userid, errcode, errmsg, clock_timestamp()
+                     );
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

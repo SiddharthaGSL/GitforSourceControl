@@ -1,0 +1,206 @@
+procedure "main"."db_pro_upd_salorddet()" {
+  text = """
+
+DECLARE
+
+/*****************************************************************************************************************
+   NAME: DB_PRO_CALCULATE_TERM
+
+   PURPOSE:
+
+   REVISIONS:
+   No.         Date        Author                   Description
+   ---------  ----------  ----------------------   -------------------------------------------------------------------
+   REV : 001  12/02/2018  DIPTIMAN                 (TFS ID : 37648, 36870) Cancel qty, dc qty and invqty not getting
+                                                   updated properly in sales order.
+   REV : 002  13/03/2018  DIPTIMAN                 (TFS ID : 39186) Temp Staging table not get clear even after Sales 
+                                                   Order updation job has completed its execution.
+   
+   NOTES:
+*****************************************************************************************************************/
+    -- START REV : 001
+    G_MARK      varchar(2000);
+    -- END REV : 001
+    V_ERRCODE varchar(50);
+    V_ERRMSG  varchar(2000);
+    -- START REV : 001
+    -- END REV : 001
+BEGIN
+    G_MARK := 'Updating invqty.';
+    --===================================================================
+    -- INVQTY ERROR
+    --===================================================================
+    UPDATE     SALORDDET A
+    SET     A.INVQTY = (
+                            SELECT  SUM(coalesce(I.INVQTY,0)) QTY
+                            FROM    INVDCDET D, SALINVDET I
+                            WHERE   D.CODE = I.INVDCDET_CODE
+                            AND     D.SALORDDET_CODE = A.CODE
+                        )
+    WHERE     A.CODE IN (
+                        SELECT  DISTINCT SALORDDET_CODE
+                        FROM (
+                                    SELECT  CODE SALORDDET_CODE, coalesce(INVQTY,0) QTY
+                                    FROM    SALORDDET
+                                    WHERE     coalesce(INVQTY,0) != 0
+                                    EXCEPT
+                                    SELECT  D.SALORDDET_CODE, SUM(coalesce(I.INVQTY,0)) QTY
+                                    FROM    INVDCDET D, SALINVDET I
+                                    WHERE   D.CODE = I.INVDCDET_CODE
+                                    AND     D.SALORDDET_CODE IS NOT NULL
+                                    GROUP BY D.SALORDDET_CODE
+                                ) alias7
+                    );
+    G_MARK := 'Updating invqty..';
+    UPDATE  SALORDDET A
+    SET     A.INVQTY = (
+                            SELECT B.QTY
+                            FROM (
+                                        SELECT  D.SALORDDET_CODE, SUM(coalesce(I.INVQTY,0)) QTY
+                                        FROM    INVDCDET D, SALINVDET I
+                                        WHERE   D.CODE = I.INVDCDET_CODE
+                                        AND     D.SALORDDET_CODE IS NOT NULL
+                                        GROUP BY D.SALORDDET_CODE
+                                        EXCEPT
+                                        SELECT  CODE, coalesce(INVQTY,0) QTY
+                                        FROM    SALORDDET
+                                   ) B
+                            WHERE  B.SALORDDET_CODE = A.CODE
+                        )
+    WHERE     A.CODE IN (
+                        SELECT DISTINCT SALORDDET_CODE
+                        FROM (
+                                    SELECT  D.SALORDDET_CODE, SUM(coalesce(I.INVQTY,0)) QTY
+                                    FROM    INVDCDET D, SALINVDET I
+                                    WHERE   D.CODE = I.INVDCDET_CODE
+                                    AND     D.SALORDDET_CODE IS NOT NULL
+                                    GROUP BY D.SALORDDET_CODE
+                                    EXCEPT
+                                    SELECT  CODE, coalesce(INVQTY,0) QTY
+                                    FROM    SALORDDET
+                                ) alias8
+                    );
+    --===================================================================
+    COMMIT;
+    --===================================================================
+    --===================================================================
+    --DQTY ERROR
+    --===================================================================
+    G_MARK := 'Updating dqty.';
+    UPDATE     SALORDDET A
+    SET     A.DQTY = (
+                        SELECT  SUM(coalesce(D.ISQTY,0))
+                        FROM    INVDCDET D
+                        WHERE   D.SALORDDET_CODE = A.CODE
+                     )
+    WHERE     A.CODE IN (
+                    SELECT DISTINCT SALORDDET_CODE
+                    FROM (
+                                SELECT  CODE SALORDDET_CODE, coalesce(DQTY,0) QTY
+                                FROM    SALORDDET
+                                WHERE     coalesce(DQTY,0) != 0
+                                EXCEPT
+                                SELECT  D.SALORDDET_CODE, SUM(coalesce(D.ISQTY,0)) QTY
+                                FROM    INVDCDET D
+                                WHERE   D.SALORDDET_CODE IS NOT NULL
+                                GROUP BY D.SALORDDET_CODE
+                            ) alias7
+                );
+    G_MARK := 'Updating dqty..';
+    UPDATE     SALORDDET A
+    SET     A.DQTY = (
+                        SELECT B.QTY
+                        FROM (
+                                    SELECT  D.SALORDDET_CODE, SUM(coalesce(D.ISQTY,0)) QTY
+                                    FROM    INVDCDET D
+                                    WHERE   D.SALORDDET_CODE IS NOT NULL
+                                    GROUP BY D.SALORDDET_CODE
+                                    EXCEPT
+                                    SELECT  CODE, coalesce(DQTY,0) QTY
+                                    FROM    SALORDDET
+                               )    B
+                        WHERE  B.SALORDDET_CODE = A.CODE
+                      )
+    WHERE     A.CODE IN (
+                    SELECT DISTINCT SALORDDET_CODE
+                    FROM (
+                                SELECT  D.SALORDDET_CODE, SUM(coalesce(D.ISQTY,0)) QTY
+                                FROM    INVDCDET D
+                                WHERE   D.SALORDDET_CODE IS NOT NULL
+                                GROUP BY D.SALORDDET_CODE
+                                EXCEPT
+                                SELECT  CODE, coalesce(DQTY,0) QTY
+                                FROM    SALORDDET
+                            ) alias8
+                );
+    --===================================================================
+    COMMIT;
+    --===================================================================
+    G_MARK := 'Updating cnlqty.';
+    --===================================================================
+    --CNLQTY ERROR
+    --===================================================================
+    UPDATE  SALORDDET A
+    SET     A.CNLQTY = (
+                            SELECT  SUM(coalesce(C.CNLQTY,0))
+                            FROM    SALORDCNLDET C
+                            WHERE   C.SALORDDET_CODE = A.CODE
+                        )
+    WHERE   A.CODE IN (
+                    SELECT DISTINCT SALORDDET_CODE
+                    FROM (
+                                SELECT  CODE SALORDDET_CODE, coalesce(CNLQTY,0) QTY
+                                FROM    SALORDDET
+                                WHERE     coalesce(CNLQTY,0) != 0
+                                EXCEPT
+                                SELECT  C.SALORDDET_CODE, SUM(coalesce(C.CNLQTY,0)) QTY
+                                FROM    SALORDCNLDET C
+                                GROUP BY C.SALORDDET_CODE
+                            ) alias7
+                );
+    G_MARK := 'Updating cnlqty..';
+    UPDATE  SALORDDET A
+    SET     A.CNLQTY = (
+                            SELECT B.QTY
+                            FROM (
+                                        SELECT  C.SALORDDET_CODE, SUM(coalesce(C.CNLQTY,0)) QTY
+                                        FROM    SALORDCNLDET C
+                                        GROUP BY C.SALORDDET_CODE
+                                        EXCEPT
+                                        SELECT  CODE, coalesce(CNLQTY,0) QTY
+                                        FROM    SALORDDET
+                                    ) B
+                            WHERE   B.SALORDDET_CODE = A.CODE
+                        )
+    WHERE     A.CODE IN (
+                    SELECT  DISTINCT SALORDDET_CODE
+                    FROM (
+                                SELECT  C.SALORDDET_CODE, SUM(coalesce(C.CNLQTY,0)) QTY
+                                FROM    SALORDCNLDET C
+                                GROUP BY C.SALORDDET_CODE
+                                EXCEPT
+                                SELECT  CODE, coalesce(CNLQTY,0) QTY
+                                FROM    SALORDDET
+                            ) alias8
+                );
+    --===================================================================
+    COMMIT;
+    --===================================================================
+    -- START REV : 002
+    DELETE FROM TEMP_SALINVDET_STAGING;
+    --===================================================================
+    COMMIT;
+    -- END REV : 002
+    --===================================================================
+EXCEPTION
+    WHEN OTHERS THEN
+    V_ERRCODE := SQLSTATE;
+    V_ERRMSG  := SQLERRM;
+    CALL ERRAUDIT(USER,'DB_PRO_UPD_SALORDDET',V_ERRCODE,V_ERRMSG||'~'||G_MARK);
+END;
+"""
+  arguments = [
+  ]
+  language = plpgsql
+}
+

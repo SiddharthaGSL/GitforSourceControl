@@ -1,0 +1,131 @@
+function "main"."int$pkg_mrulealloc_int$pkg_mrulealloc_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        errmsg              varchar(500);
+        vsession            varchar(100);
+        vdetailtbl          varchar(1000);
+        vdetailrec          varchar(500);
+        errcode             text;
+        vmaxno              bigint;
+        vcount              bigint;
+BEGIN
+        -- if site short name is provided in cexcel
+        INSERT INTO invmmrule_allocation(code,admsite_code,invarticle_code,invmmrule_code,slcode)
+            SELECT 
+                                nextval('erp01') as code,
+                                src.admsite_code,
+                                src.article_code,
+                                src.rlcode invmmrule_code,
+                                src.slcode
+                            FROM
+                            (SELECT         rl.code     rlcode,
+                                            s.code      admsite_code,
+                                            f.slcode    slcode,
+                                            r.code      article_code
+                                    from    int$stg_mrulealloc  a,
+                                            invmmrule           rl,
+                                            admsite             s,
+                                            finsl               f,
+                                            invarticle          r
+                                    where   upper(a.margin_rule)    = upper(rl.name)
+                                    and     upper(a.site_short_name)= upper(s.shrtname)
+                                    and     upper(a.supplier_slid)  = upper(f.slid)
+                                    and     upper(a.article_name)   = upper(r.name)
+                                    and     a.site_short_name is not null
+                                    and     a.userid = p_userid
+                          ) src
+        ON CONFLICT (admsite_code,slcode,invarticle_code)
+        DO UPDATE
+        SET invmmrule_code = EXCLUDED.invmmrule_code;
+		
+        -- if site short name is not provided in cexcel
+        INSERT INTO invarticle_finsl_mm(code,invarticle_code,invmmrule_code,slcode)
+            SELECT 
+                            nextval('erp01') as code,
+                            src.article_code,
+                            src.rlcode invmmrule_code,
+                            src.slcode
+                            FROM
+                            (SELECT         rl.code     rlcode,
+                                            f.slcode    slcode,
+                                            r.code      article_code
+                                    from    int$stg_mrulealloc  a,
+                                            invmmrule           rl,
+                                            finsl               f,
+                                            invarticle          r
+                                    where   upper(a.margin_rule)    = upper(rl.name)
+                                    and     upper(a.supplier_slid)  = upper(f.slid)
+                                    and     upper(a.article_name)   = upper(r.name)
+                                    and     a.site_short_name is null
+                                    and     a.userid = p_userid
+                          ) src
+        ON CONFLICT (slcode,invarticle_code)
+        DO UPDATE
+        SET invmmrule_code = EXCLUDED.invmmrule_code;
+        ----COMMIT;
+
+        -- log to be added in history table
+        select  nextval('int$error_log_code')
+        into STRICT    vsession;
+
+        --vdetailtbl := 'create table mrulealloc_'||vsession||' as select distinct site_short_name,supplier_slid,article_name,margin_rule from int$stg_mrulealloc where userid ='|| p_userid::text;
+        vdetailtbl := 'create table ginarchive.mrulealloc_'||vsession::text||' as select distinct site_short_name,supplier_slid,article_name,margin_rule from int$stg_mrulealloc where userid ='||p_userid::text;
+        EXECUTE vdetailtbl;
+
+        vdetailrec := 'select count(1) from ginarchive.mrulealloc_'||vsession::text;
+        EXECUTE vdetailrec into STRICT vcount;
+
+        insert into int$history(code, importedby, importedon, classname, summary, history_detail_tablename, history_detail_row_count)
+        values (nextval('int$history_code'), p_userid, clock_timestamp(), 'MRULEALLOC', vcount::text||' Data updated successfully.', 'ginarchive.mrulealloc_'||vsession::text, vcount);
+
+        ----COMMIT;
+
+        return('1');
+
+    exception
+        when others then
+        errcode := SQLSTATE;
+        errmsg  := sqlerrm;
+
+        -- error log for oracle internal error
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        values (nextval('int$error_log_code'), 0, 'MRULEALLOC', p_userid, errcode, errmsg, clock_timestamp());
+        ----COMMIT;
+
+        return('0');
+    end;
+
+    -- clear stagging table
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

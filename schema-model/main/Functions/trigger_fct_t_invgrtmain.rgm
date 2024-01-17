@@ -1,0 +1,113 @@
+function "main"."trigger_fct_t_invgrtmain()" {
+  text = """
+
+DECLARE
+
+V_SID                        bigint;
+V_PROGRAM                    varchar(50);
+BEGIN
+  BEGIN
+ /**************************************************************************************************************
+ REV NO     OWNER           DATE         DESCRIPTION
+ ---------  ----------      -----------  ---------------------------------------------------------------------
+ REV : 001  RAJKUMAR        23-AUG-2010  (BUG ID : 0842)    SCHEME DOC NO .
+ REV : 002  MANASH          17-NOV-2010  (BUG ID : 2261)    Item rate, amount, and scheme doc number is not
+                                                            getting inserted in Stock table.
+ REV : 003  DIPTIMAN        06-FEB-2012  (BUG ID : 216)     Site related changes.
+ REV : 004  DIPTIMAN        25-FEB-2013  (BUG ID : 502)     PSITE STOCKPOINT related changes.
+ REV : 005  MANASH          02-MAY-2019  (TFS ID : 16213)   Previous Years Data not accessible.
+ REV : 006  MOUSUMI         21-FEB-2020  (TFS ID : 4271)    GRT MIGRATION
+ REV : 007  MOUSUMI         02-06-2020   (TFS ID : XXX)     GRT MIGRATION (DELETE)
+ **************************************************************************************************************/
+   IF TG_OP = 'UPDATE'
+   THEN
+
+      -- START REV : 004
+      -- END REV : 004
+      /* STOCK AND COSTING REFLECTION */
+	<<END_UPD>>
+	BEGIN
+	 IF  NEW.PSITE_STOCKPOINT_CODE IS NOT NULL AND NEW.AUTH_ECODE IS NULL THEN
+          EXIT END_UPD;
+	   END IF;
+      -- START REV : 005
+      IF (
+                coalesce(NEW.GRTCODE,0) <> coalesce(OLD.GRTCODE, coalesce(NEW.GRTCODE,0)) OR
+                coalesce(NEW.GRTNO,0) <> coalesce(OLD.GRTNO, coalesce(NEW.GRTNO,0)) OR
+                NEW.GRTDT <> OLD.GRTDT OR
+                coalesce(NEW.LOCCODE,0) <> coalesce(OLD.LOCCODE,coalesce(NEW.LOCCODE,0)) OR
+                coalesce(NEW.YCODE,0) <> coalesce(OLD.YCODE,coalesce(NEW.YCODE,0)) OR
+                coalesce(NEW.PCODE,0) <> coalesce(OLD.PCODE, coalesce(NEW.PCODE,0)) OR
+                coalesce(NEW.GENO,'@@') <> coalesce(OLD.GENO,coalesce(NEW.GENO,'@@')) OR
+                coalesce(NEW.SCHEME_DOCNO,'@@') <> coalesce(OLD.SCHEME_DOCNO, coalesce(NEW.SCHEME_DOCNO,'@@')) OR
+                coalesce(NEW.ADMOU_CODE,0) <> coalesce(OLD.ADMOU_CODE, coalesce(NEW.ADMOU_CODE,0)) OR
+                coalesce(NEW.ADMSITE_CODE,0) <> coalesce(OLD.ADMSITE_CODE, coalesce(NEW.ADMSITE_CODE,0)) OR
+                coalesce(NEW.PSITE_STOCKPOINT_CODE,'@@') <> coalesce(OLD.PSITE_STOCKPOINT_CODE, coalesce(NEW.PSITE_STOCKPOINT_CODE,'@@'))
+            ) THEN
+      -- END REV : 005
+              CALL db_pkg_stock$reflect(
+                                NEW.grtcode,
+                                NEW.grtno,
+                                NEW.grtdt,
+                                'GRT',
+                                NEW.loccode,
+                                NEW.ycode,
+                                NEW.pcode,
+                                NULL,
+                                NULL,
+                                NULL,
+                                NULL,
+                                NULL,
+                                NEW.geno,
+                                NULL,
+                                -- START REV : 002
+                                NEW.SCHEME_DOCNO,
+                                -- END REV : 002
+                                -- START REV : 003
+                                NULL,
+                                NEW.ADMOU_CODE,
+                                NEW.ADMSITE_CODE
+                                -- END REV : 003
+                                -- START REV : 004
+                                ,NULL
+                                ,NEW.PSITE_STOCKPOINT_CODE
+                                -- END REV : 004
+                            );
+        -- START REV : 005
+        END IF;
+        -- END REV : 005
+      -- START REV : 004
+      -- END REV : 004
+   END;
+   END IF;
+
+      -- START REV : 006
+  IF TG_OP = 'DELETE' THEN -- REV : 007
+        SELECT PG_BACKEND_PID() INTO STRICT V_SID;
+        SELECT APPLICATION_NAME INTO STRICT V_PROGRAM FROM PG_STAT_ACTIVITY WHERE PID=V_SID;
+        
+
+IF not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+      THEN
+         RAISE EXCEPTION 'del_from_wrong_application' USING ERRCODE = '50001';
+      END IF;
+    END IF;
+EXCEPTION
+ WHEN SQLSTATE '50001' THEN
+    RAISE EXCEPTION '%', 'T_INVGRTMAIN == >> Deletion from other application except GINESYS WEB not allowed.' USING ERRCODE = '45112';
+   -- END REV : 006
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

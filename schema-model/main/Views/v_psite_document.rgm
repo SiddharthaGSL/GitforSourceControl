@@ -1,0 +1,112 @@
+view "main"."v_psite_document" {
+  text = """-
+SELECT inv.invcode AS documentid,
+    inv.scheme_docno AS documentno,
+    inv.invdt AS documentdate,
+    sl.slname AS customer,
+    site.name AS site,
+        CASE
+            WHEN (inv.authorize_ecode IS NULL) THEN 'Unauthorized'::text
+            ELSE 'Authorized'::text
+        END AS status,
+    sum(COALESCE(det.invqty, (0)::numeric)) AS qty,
+    inv.netamt,
+    inv.authorize_time AS authorizedon,
+    inv.authorize_ecode AS authorizedbyid,
+    u1.fname AS authorizedby,
+    inv.datasendon,
+        CASE
+            WHEN (COALESCE((pg.invcode)::numeric, ('-10'::integer)::numeric) = ('-10'::integer)::numeric) THEN 'Not Received'::text
+            ELSE 'Received'::text
+        END AS receivestatus,
+    inv.release_status AS releasestatus,
+        CASE
+            WHEN (inv.release_status = 'P'::bpchar) THEN 'Posted'::text
+            WHEN (inv.release_status = 'U'::bpchar) THEN 'UnPosted'::text
+            WHEN (inv.release_status = 'R'::bpchar) THEN 'Reversed'::text
+            ELSE 'Received'::text
+        END AS releasestatusdisplay,
+    inv.release_time AS releasetime,
+    inv.release_ecode AS releaseecode,
+    a.code AS oucode,
+    a.name AS ouname,
+    site.sitetype
+   FROM ((((main.salinvmain inv
+     LEFT JOIN main.finsl sl ON ((inv.pcode = sl.slcode)))
+     LEFT JOIN main.hrdemp u1 ON ((inv.authorize_ecode = u1.ecode)))
+     LEFT JOIN main.salinvdet det ON ((inv.invcode = det.invcode)))
+     LEFT JOIN ( SELECT DISTINCT psite_grc.invcode
+           FROM main.psite_grc) pg ON ((inv.invcode = pg.invcode))),
+    (main.admsite site
+     LEFT JOIN main.admou a ON ((site.admou_code = a.code)))
+  WHERE ((inv.admsite_code = site.code) AND (COALESCE(site.ispos, 'N'::bpchar) = 'Y'::bpchar))
+  GROUP BY inv.invcode, inv.scheme_docno, inv.invdt, sl.slname, site.name, inv.authorize_ecode, inv.netamt, inv.authorize_time, u1.fname, inv.datasendon,
+        CASE
+            WHEN (COALESCE((pg.invcode)::numeric, ('-10'::integer)::numeric) = ('-10'::integer)::numeric) THEN 'Not Received'::text
+            ELSE 'Received'::text
+        END, inv.release_status, inv.release_time, inv.release_ecode, a.code, a.name, site.sitetype;
+"""
+  columns = (
+    column "documentid" {
+      type = "bigint"
+    }
+    column "documentno" {
+      type = "character varying(25)"
+    }
+    column "documentdate" {
+      type = "timestamp(0) without time zone"
+    }
+    column "customer" {
+      type = "character varying(100)"
+    }
+    column "site" {
+      type = "character varying(100)"
+    }
+    column "status" {
+      type = text
+    }
+    column "qty" {
+      type = "numeric"
+    }
+    column "netamt" {
+      type = "numeric(20,2)"
+    }
+    column "authorizedon" {
+      type = "timestamp(0) without time zone"
+    }
+    column "authorizedbyid" {
+      type = "bigint"
+    }
+    column "authorizedby" {
+      type = "character varying(100)"
+    }
+    column "datasendon" {
+      type = "timestamp(0) without time zone"
+    }
+    column "receivestatus" {
+      type = text
+    }
+    column "releasestatus" {
+      type = "character(1)"
+    }
+    column "releasestatusdisplay" {
+      type = text
+    }
+    column "releasetime" {
+      type = "timestamp(0) without time zone"
+    }
+    column "releaseecode" {
+      type = "bigint"
+    }
+    column "oucode" {
+      type = "bigint"
+    }
+    column "ouname" {
+      type = "character varying(100)"
+    }
+    column "sitetype" {
+      type = "character varying(15)"
+    }
+  )
+}
+

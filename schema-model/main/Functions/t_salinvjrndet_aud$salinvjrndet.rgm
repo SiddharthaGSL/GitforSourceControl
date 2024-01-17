@@ -1,0 +1,167 @@
+function "main"."t_salinvjrndet_aud$salinvjrndet()" {
+  text = """
+
+DECLARE
+    V_RECORD_OLD AUD_SALINVJRNDET%ROWTYPE;
+	V_RECORD_NEW AUD_SALINVJRNDET%ROWTYPE;
+    V_SID DOUBLE PRECISION;
+    V_TRNID CHARACTER VARYING(50);
+    V_ACTION CHARACTER VARYING(10);
+    I RECORD;    
+	V_AUDIT_USER CHARACTER VARYING (100);
+	V_LOGINUSER  CHARACTER VARYING (100);
+	V_PROGRAM    CHARACTER VARYING (100);
+	V_REC_COUNT  BIGINT; 
+   
+BEGIN
+       SELECT current_setting('audit.AUDIT_USER', true) INTO V_AUDIT_USER;
+	   IF NULLIF(V_AUDIT_USER,'') IS NOT NULL THEN  
+		   BEGIN
+				SELECT FULLNAME
+				INTO   STRICT V_LOGINUSER
+				FROM   APPUSER
+				WHERE  ID =  substring (V_AUDIT_USER,8,position(';' in V_AUDIT_USER)-8)::NUMERIC; 
+		   EXCEPTION
+				WHEN no_data_found
+				THEN
+					V_LOGINUSER := 'System';
+			END;			
+		ELSE
+			V_LOGINUSER := 'SYSTEM';
+		END IF;
+	   
+	   select application_name
+	   INTO   V_PROGRAM
+	   from pg_stat_activity where pid = pg_backend_pid();
+
+       V_ACTION:=TG_OP;
+	   
+       SELECT TXID_CURRENT() INTO V_TRNID;
+       
+        IF TG_OP = 'INSERT' OR  TG_OP = 'UPDATE' THEN 
+	   
+           V_RECORD_NEW.ACTION := V_ACTION;
+           V_RECORD_NEW.ACTION_SUBTYPE := 'NEW';
+           V_RECORD_NEW.TRANSACTION_ID := V_TRNID::TEXT;		   
+		   V_RECORD_NEW.code := NEW.code;
+            V_RECORD_NEW.jrncode := NEW.jrncode;
+            V_RECORD_NEW.salinvdet_code := NEW.salinvdet_code;
+            V_RECORD_NEW.icode := NEW.icode;
+            V_RECORD_NEW.qty := NEW.qty;
+            V_RECORD_NEW.rate := NEW.rate;
+            V_RECORD_NEW.amount := NEW.amount;
+            V_RECORD_NEW.remarks := NEW.remarks;
+            V_RECORD_NEW.chgamt := NEW.chgamt;
+            V_RECORD_NEW.hsn_sac_code := NEW.hsn_sac_code;
+            V_RECORD_NEW.rsp := NEW.rsp;
+            V_RECORD_NEW.taxamt := NEW.taxamt;
+            V_RECORD_NEW.gl_cc_appl := NEW.gl_cc_appl;
+            V_RECORD_NEW.glcode := NEW.glcode;
+            V_RECORD_NEW.slcode := NEW.slcode;
+            V_RECORD_NEW.dataversion := NEW.dataversion;
+          END IF;  
+            
+         IF TG_OP = 'UPDATE' OR TG_OP = 'DELETE' THEN 
+	   
+            V_RECORD_OLD.ACTION := V_ACTION;
+            V_RECORD_OLD.ACTION_SUBTYPE := 'OLD';
+            V_RECORD_OLD.TRANSACTION_ID := V_TRNID::TEXT;			
+			V_RECORD_OLD.code := OLD.code;
+            V_RECORD_OLD.jrncode := OLD.jrncode;
+            V_RECORD_OLD.salinvdet_code := OLD.salinvdet_code;
+            V_RECORD_OLD.icode := OLD.icode;
+            V_RECORD_OLD.qty := OLD.qty;
+            V_RECORD_OLD.rate := OLD.rate;
+            V_RECORD_OLD.amount := OLD.amount;
+            V_RECORD_OLD.remarks := OLD.remarks;
+            V_RECORD_OLD.chgamt := OLD.chgamt;
+            V_RECORD_OLD.hsn_sac_code := OLD.hsn_sac_code;
+            V_RECORD_OLD.rsp := OLD.rsp;
+            V_RECORD_OLD.taxamt := OLD.taxamt;
+            V_RECORD_OLD.gl_cc_appl := OLD.gl_cc_appl;
+            V_RECORD_OLD.glcode := OLD.glcode;
+            V_RECORD_OLD.slcode := OLD.slcode;
+            V_RECORD_OLD.dataversion := OLD.dataversion;
+          END IF;  
+
+    IF TG_OP = 'INSERT' THEN
+	    V_REC_COUNT := 1;
+        INSERT INTO AUD_SALINVJRNDET SELECT V_RECORD_NEW.*;
+    END IF;
+
+    IF TG_OP = 'UPDATE' THEN
+	FOR I IN (
+		SELECT 
+		V_RECORD_OLD.slcode,
+                  V_RECORD_OLD.glcode,
+                  V_RECORD_OLD.gl_cc_appl,
+                  V_RECORD_OLD.taxamt,
+                  V_RECORD_OLD.hsn_sac_code,
+                  V_RECORD_OLD.chgamt,
+                  V_RECORD_OLD.remarks,
+                  V_RECORD_OLD.amount,
+                  V_RECORD_OLD.rate,
+                  V_RECORD_OLD.qty
+		EXCEPT
+		SELECT 
+		V_RECORD_NEW.slcode,
+                  V_RECORD_NEW.glcode,
+                  V_RECORD_NEW.gl_cc_appl,
+                  V_RECORD_NEW.taxamt,
+                  V_RECORD_NEW.hsn_sac_code,
+                  V_RECORD_NEW.chgamt,
+                  V_RECORD_NEW.remarks,
+                  V_RECORD_NEW.amount,
+                  V_RECORD_NEW.rate,
+                  V_RECORD_NEW.qty
+			 )
+	LOOP
+	  V_REC_COUNT := 1; 
+		INSERT INTO AUD_SALINVJRNDET SELECT V_RECORD_OLD.*;
+       INSERT INTO AUD_SALINVJRNDET SELECT V_RECORD_NEW.*;    
+	END LOOP;   
+    END IF;
+
+    IF TG_OP = 'DELETE' THEN
+		V_REC_COUNT := 1;
+		INSERT INTO AUD_SALINVJRNDET SELECT V_RECORD_OLD.*;
+    END IF;
+	
+	IF V_REC_COUNT >  0
+	THEN
+	   BEGIN
+            INSERT INTO AUD_TRANSACTION (TRANSACTION_ID, TRANSACTION_DATE, LOGIN_USER, PROGRAM, MODULE_SHORTCODE, MODULE_TYPE)
+            VALUES (V_TRNID,   current_date,V_LOGINUSER, V_PROGRAM, 'Sales DN/CN', 'Sales DN/CN');
+       EXCEPTION WHEN unique_violation THEN
+            NULL;
+       END;  
+
+       BEGIN  
+             INSERT INTO AUD_TRANSACTION_TABLE (TRANSACTION_ID, TABLE_NAME)
+             VALUES (V_TRNID,  'SALINVJRNDET');
+       EXCEPTION WHEN unique_violation THEN
+             NULL;
+       END; 
+	END IF;   
+    
+
+    IF TG_OP = 'INSERT' THEN
+        RETURN NEW;
+    ELSIF TG_OP = 'UPDATE' THEN
+        RETURN NEW;
+    ELSIF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    EXCEPTION
+        WHEN others THEN
+            CALL main.erraudit(SESSION_USER::text, 'T_SALINVJRNDET_AUD'::CHARACTER, SQLSTATE::text, SQLERRM);
+			RAISE;
+			RETURN NULL;
+END;
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

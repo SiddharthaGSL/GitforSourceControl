@@ -1,0 +1,280 @@
+function "main"."int$pkg_glimport_int$pkg_glimport_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      errmsg       varchar(500);
+      vsession     varchar(100);
+      vdetailtbl   varchar(1000);
+      vdetailrec   varchar(500);
+      errcode      bigint;
+      vmaxno       bigint;
+      vcount       bigint;C1 RECORD;
+  c1_loop RECORD;
+
+BEGIN
+   --START REV : 004
+      FOR C1 IN (SELECT a.glcode,
+                         a.glname,
+                         a.abbre,
+                         a.chartofaccounts,
+                         a.addr,
+                         a.ctname,
+                         a.pin,
+                         a.ph1,
+                         a.ph2,
+                         a.ph3,
+                         a.ph4,
+                         a.fx1,
+                         a.fx2,
+                         a.email,
+                         a.website,
+                         a.cp,
+                         a.lstno,
+                         a.cstno,
+                         a.pan,
+                         a.intrate,
+                         a.sourcetype,
+                         a.siteapplicable,
+                         a.ext,
+                         a.chqlabel,
+                         a.sl_applicable,
+                         a.cash_bank_owner_site,
+                         a.glseq
+                    FROM int$stg_glimport a
+                   WHERE a.glcode IS NOT NULL AND a.userid = p_userid
+                 )
+      LOOP
+            UPDATE FINGL gl
+            SET     glname = coalesce(c1.glname, gl.glname),
+                    abbre = coalesce(c1.abbre, gl.abbre),
+                    addr = coalesce(c1.addr, gl.addr),
+                    ctname = coalesce(c1.ctname, gl.ctname),
+                    pin = coalesce(c1.pin, gl.pin),
+                    ph1 = coalesce(c1.ph1, gl.ph1),
+                    ph2 = coalesce(c1.ph2, gl.ph2),
+                    ph3 = coalesce(c1.ph3, gl.ph3),
+                    ph4 = coalesce(c1.ph4, gl.ph4),
+                    fx1 = coalesce(c1.fx1, gl.fx1),
+                    fx2 = coalesce(c1.fx2, gl.fx2),
+                    email = coalesce(c1.email, gl.email),
+                    website = coalesce(c1.website, gl.website),
+                    cp = coalesce(c1.cp, gl.cp),
+                    lstno = coalesce(c1.lstno, gl.lstno),
+                    cstno = coalesce(c1.cstno, gl.cstno),
+                    pan = coalesce(c1.pan, gl.pan),
+                    intrate = coalesce(c1.intrate, gl.intrate),
+                    ext = CASE WHEN UPPER(c1.ext) = 'YES' THEN 'Y' ELSE 'N' END,
+                    chqlabel = coalesce(c1.chqlabel, gl.chqlabel),
+                    admsite_code_owner =
+                       coalesce(c1.cash_bank_owner_site, gl.admsite_code_owner),
+                    glseq = coalesce(c1.glseq, glseq)
+        WHERE glcode = c1.glcode;
+    END LOOP;
+
+      INSERT INTO fingl (glcode,
+                            glname,
+                            abbre,
+                            TYPE,
+                            grpcode,
+                            addr,
+                            ctname,
+                            pin,
+                            ph1,
+                            ph2,
+                            ph3,
+                            ph4,
+                            fx1,
+                            fx2,
+                            email,
+                            website,
+                            cp,
+                            lstno,
+                            cstno,
+                            pan,
+                            intrate,
+                            srctype,
+                            costapp,
+                            ext,
+                            chqlabel,
+                            cmpcode,
+                            slapp,
+                            admsite_code_owner,
+                            glseq)
+         SELECT nextval('fingl_glcode'),
+                a.glname,
+                a.abbre,
+                grp.TYPE,
+                grp.grpcode,
+                a.addr,
+                a.ctname,
+                a.pin,
+                a.ph1,
+                a.ph2,
+                a.ph3,
+                a.ph4,
+                a.fx1,
+                a.fx2,
+                a.email,
+                a.website,
+                a.cp,
+                a.lstno,
+                a.cstno,
+                a.pan,
+                a.intrate,
+                CASE
+                   WHEN UPPER(a.sourcetype) = 'CASH' THEN 'C'
+                   WHEN UPPER(a.sourcetype) = 'BANK' THEN 'B'
+                   WHEN UPPER(a.sourcetype) = 'GENERAL' THEN 'G'
+                   ELSE 'R'
+                END,
+                CASE
+                   WHEN UPPER(a.siteapplicable) = 'YES' THEN 'Y'
+                   ELSE 'N'
+                END,
+                CASE WHEN UPPER(a.ext) = 'YES' THEN 'Y' ELSE 'N' END,
+                a.chqlabel,
+                1,
+                CASE
+                   WHEN UPPER(a.sl_applicable) = 'YES' THEN 'Y'
+                   ELSE 'N'
+                END,
+                a.cash_bank_owner_site,
+                  -- START REV : 003
+                  --nvl(a.glseq,(
+                  --                case when fgl.mseq = 0 then 999 else fgl.mseq end
+                  --            ) + row_number() over(partition by upper(a.chartofaccounts) order by upper(a.chartofaccounts))
+                  --  )
+                  coalesce(a.glseq,
+                       (SELECT coalesce(MAX(GLSEQ), 0) + 1
+                          FROM FINGL
+                         WHERE GRPCODE = grp.GRPCODE))
+                + ROW_NUMBER()
+                  OVER (PARTITION BY UPPER(a.chartofaccounts)
+                        ORDER BY UPPER(a.chartofaccounts))
+
+           FROM int$stg_glimport a, fingrp grp
+LEFT OUTER JOIN (  SELECT gl.grpcode, coalesce(MAX(gl.glseq), 0) mseq
+                     FROM fingl gl
+                 GROUP BY grpcode) fgl ON (grp.grpcode = fgl.grpcode)
+WHERE UPPER(a.chartofaccounts) = UPPER(grp.grpname) AND a.glname IS NOT NULL AND a.glcode IS NULL  AND a.userid = p_userid;
+
+      --COMMIT;
+
+      FOR c1_loop
+         IN (SELECT gl.glcode
+               FROM int$stg_glimport a, fingl gl
+              WHERE     a.userid = p_userid
+                    AND UPPER(a.glname) = UPPER(gl.glname)
+                    AND a.glname IS NOT NULL
+                    AND a.glcode IS NULL
+                    AND gl.costapp = 'Y')
+      LOOP
+         INSERT INTO fingl_site (glcode, admsite_code)
+            SELECT c1_loop.glcode, s.code
+              FROM admsite s
+             WHERE s.sitetype IN ('OS-OO-CM', 'MS-OO-CM') AND s.ext = 'N';
+      END LOOP;
+
+      --COMMIT;
+
+      -- log to be added in history table
+      SELECT nextval('int$error_log_code') INTO STRICT vsession;
+
+      -- start rev : 001
+      --vdetailtbl := 'create table glimport_'||vsession||' as select distinct glname,abbre from int$stg_glimport where userid ='|| p_userid::text;
+      vdetailtbl :=
+            'create table ginarchive.glimport_'
+         || vsession
+         || ' as select distinct glname,abbre from int$stg_glimport where userid ='
+         || p_userid::text;
+
+      -- end rev : 001
+      EXECUTE vdetailtbl;
+
+      -- start rev : 001
+      --vdetailrec := 'select count(1) from glimport_'||vsession;
+      vdetailrec := 'select count(1) from ginarchive.glimport_' || vsession::text;
+
+      -- end rev : 001
+      EXECUTE vdetailrec INTO STRICT vcount;
+
+      INSERT INTO int$history(code,
+                               importedby,
+                               importedon,
+                               classname,
+                               summary,
+                               history_detail_tablename,
+                               history_detail_row_count)
+           -- start rev : 001
+           --values (int$history_code.nextval, p_userid, sysdate, 'GLIMPORT', vcount::TEXT||' Data updated successfully.', 'glimport_'||vsession, vcount);
+           VALUES (nextval('int$history_code'),
+                   p_userid,
+                   clock_timestamp(),
+                   'GLIMPORT',
+                   vcount::TEXT || ' Data updated successfully.',
+                   'ginarchive.glimport_' || vsession,
+                   vcount);
+
+      -- end rev : 001
+      --COMMIT;
+
+      RETURN('1');
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         -- error log for oracle internal error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'GLIMPORT',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

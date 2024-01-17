@@ -1,0 +1,272 @@
+procedure "main"."db_pkg_check_routine_ym_close$loc_pro_check_inv_month_close(bigint, bigint, timestamp without time zone, character varying)" {
+  text = """
+
+DECLARE
+
+      c1 CURSOR FOR
+           SELECT mn.dtfr,
+                  mn.dtto,
+                  TO_CHAR(mn.dtfr, 'yyyy') yy,
+                  TO_CHAR(mn.dtfr, 'Month') mon,
+                  om.admou_code,
+                  om.admmonth_code,
+                  om.code                  admou_month_code,
+                  om.cogs_last_run_time,
+                  mn.ycode
+             FROM admou_month om, admmonth mn
+            WHERE     om.admmonth_code = mn.mcode
+                  AND om.admou_code = p_admou_code
+                  AND om.admmonth_code <= p_mcode
+                  AND om.inv_month_status = 'O'
+         ORDER BY om.admmonth_code;
+      v_prv_month_status   admou_month.fin_month_status%TYPE;
+      v_cnt                bigint := 0;
+      v_err_flag           char(1) := 'N';
+      v_err_msg            admou_year.validation_error%TYPE;
+      v_pos_stlm_cnt       numeric(20) := 0;
+      v_error_cnt          bigint := 0;
+
+BEGIN
+      -- db_pkg_ginesys_context.set_attribute('INV_MN_CLS', 'S');
+      -- db_pkg_ginesys_context.set_attribute('INV_MN_CLS_DT',
+                                            -- TO_CHAR(p_dtto, 'YYYYMMDD'));
+      UPDATE admou_month om
+         SET validation_error  = NULL
+       WHERE     om.admou_code = p_admou_code
+             AND position('[INV]' in validation_error) <> 0;
+      FOR c1_loop IN c1
+      LOOP
+         v_err_flag := 'N';
+         v_cnt := 0;
+         v_err_msg := '[INV]';
+         v_prv_month_status := NULL;
+         -- previous month status check
+         IF TO_CHAR(c1_loop.dtfr, 'mm') = '04'
+         THEN
+            BEGIN
+               SELECT inv_month_status
+                 INTO STRICT v_prv_month_status
+                 FROM admou_month um, admmonth mn
+                WHERE     um.admmonth_code = mn.mcode
+                      AND um.admou_code = p_admou_code
+                      AND mn.ycode != 1
+                      AND um.admmonth_code =
+                             (SELECT coalesce(MAX(um1.admmonth_code), 0)
+                                FROM admou_month um1
+                               WHERE     um1.admou_code = p_admou_code
+                                     AND um1.admmonth_code <
+                                            c1_loop.admmonth_code);
+               IF v_prv_month_status <> 'C'
+               THEN
+                  v_err_flag := 'Y';
+                  v_err_msg :=
+                        v_err_msg
+                     || '['
+                     || clock_timestamp()
+                     || ']'
+                     || ' Previous Year ['
+                     || c1_loop.yy
+                     || '] months are in Open state. Please close previous year months before closing the month of April.';
+               END IF;
+            EXCEPTION
+               WHEN OTHERS
+               THEN
+                  NULL;
+            END;
+         END IF;
+         -- checking for any unposted document in HO
+         v_cnt := 0;
+         SELECT coalesce(COUNT(1), 0)
+           INTO STRICT v_cnt
+           FROM ginview.lv_unposted_inventory ui
+          WHERE     coalesce(ui.admou_code, p_admou_code) = p_admou_code
+                AND ui.entry_date BETWEEN c1_loop.dtfr AND c1_loop.dtto;
+         IF v_cnt <> 0
+         THEN
+            v_err_flag := 'Y';
+            v_err_msg :=
+                  v_err_msg
+               || '~'
+               || '['
+               || clock_timestamp()
+               || ']'
+               || ' There are ['
+               || v_cnt
+               || '] unauthorize document(s) in HO. Please authorize those document(s) before closing selected inventory month.';
+         END IF;
+         -- checking for HO settlement for non extinct site(s)
+         v_cnt := 0;
+         SELECT coalesce(COUNT(1), 0)
+           INTO STRICT v_cnt
+           FROM admsite s
+          WHERE     coalesce(s.admou_code, p_admou_code) = p_admou_code
+                AND UPPER(s.sitetype) LIKE 'MS%'
+                AND s.operationstartdate <= c1_loop.dtto
+                AND s.psite_ispublished = 'Y'
+                AND s.ext <> 'Y';
+         v_pos_stlm_cnt := 0;
+            -- start rev : 004
+            --select  nvl (count (1), 0)
+            select  count(distinct s.code)
+            -- end rev : 004
+            INTO STRICT    v_pos_stlm_cnt
+            FROM    admsite s, psite_posstlm pt
+            WHERE   pt.admsite_code = s.code
+            AND     coalesce(s.admou_code, p_admou_code) = p_admou_code
+            AND     UPPER(s.sitetype) LIKE 'MS%'
+            AND     pt.status = 'C'
+            AND     s.operationstartdate <= c1_loop.dtto
+            AND     pt.stlmfor = c1_loop.dtto
+            AND     s.psite_ispublished = 'Y'
+            AND     s.ext <> 'Y';
+         IF coalesce(v_cnt, 0) <> coalesce(v_pos_stlm_cnt, 0)
+         THEN
+            v_err_flag := 'Y';
+            v_err_msg :=
+                  v_err_msg
+               || '~'
+               || '['
+               || clock_timestamp()
+               || ']'
+               || ' There are few non extinct sites not yet settled in HO. Please settle the same before closing selected inventory month.';
+         END IF;
+         -- checking for HO settlement for extinct site(s)
+         v_cnt := 0;
+        -- start rev : 004
+        --select  nvl (count (1), 0)
+        select count(distinct s.code)
+        -- end rev : 004
+        INTO STRICT    v_cnt
+        FROM    psite_posstlm pt, admsite s
+        WHERE   pt.admsite_code = s.code
+        AND     coalesce(s.admou_code, p_admou_code) = p_admou_code
+        AND     pt.status <> 'C'
+        AND     s.ext = 'Y'
+        AND     UPPER(s.sitetype) LIKE 'MS%'
+        AND     pt.stlmfor BETWEEN c1_loop.dtfr AND c1_loop.dtto;
+         IF coalesce(v_cnt, 0) <> 0
+         THEN
+            v_err_flag := 'Y';
+            v_err_msg :=
+                  v_err_msg
+               || '~'
+               || '['
+               || clock_timestamp()
+               || ']'
+               || ' There are ['
+               || v_cnt
+               || '] extinct sites, settlement of which are not yet posted in HO. Please settle the same before closing selected inventory month.';
+         END IF;
+         -- check month dtto is less than sysdate
+         IF date_trunc('day', clock_timestamp()) <= date_trunc('day', c1_loop.dtto)
+         THEN
+            v_err_flag := 'Y';
+            v_err_msg :=
+                  v_err_msg
+               || '~'
+               || '['
+               || clock_timestamp()
+               || ']'
+               || ' Closure of current month is not allowed.';
+         END IF;
+         -- recalculate Tax is pending
+         -- start rev : 002
+         /*
+         select  nvl(count(1),0)
+         into    v_cnt
+         from    tax_recalc_history  th,
+                 admsite             s
+         where   th.admsite_code = s.code
+         and     nvl(s.admou_code,p_admou_code) = p_admou_code
+         and     th.recalcdate between c1_loop.dtfr and c1_loop.dtto
+         and     th.status      <> 'PH';
+         */
+         SELECT coalesce(COUNT(1), 0)
+           INTO STRICT v_cnt
+           FROM tax_recalc_history th1
+          WHERE     th1.status <> 'PH'
+                AND th1.requestid IN (SELECT rqid
+                          FROM (  SELECT MAX(th.requestid) rqid, th.recalcdate
+                                    FROM tax_recalc_history th, admsite s
+                                   WHERE     th.admsite_code = s.code
+                                         AND coalesce(s.admou_code, p_admou_code) =
+                                                p_admou_code
+                                         AND th.recalcdate BETWEEN c1_loop.dtfr
+                                                               AND c1_loop.dtto
+                                GROUP BY th.recalcdate) alias4);
+         -- end rev : 002
+         IF v_cnt <> 0
+         THEN
+            v_err_flag := 'Y';
+            v_err_msg :=
+                  v_err_msg
+               || '~'
+               || '['
+               || clock_timestamp()
+               || ']'
+               || ' Recalculate Tax process is pending. Unable to close selected inventory month.';
+         END IF;
+         IF v_err_flag = 'Y'
+         THEN
+            v_error_cnt := 1;
+            UPDATE admou_month um
+               SET validation_error = v_err_msg, inv_month_status = 'O'
+             WHERE     um.admou_code = p_admou_code
+                   AND um.code = c1_loop.admou_month_code;
+         ELSE
+            -- if all chks pass the close.
+            UPDATE admou_month um
+               SET inv_month_status = 'C',
+                   validation_error  = NULL,
+                   inv_month_modified_by = p_user_id,
+                   inv_month_modified_time = clock_timestamp()
+             WHERE     um.inv_month_status = 'O'
+                   AND um.admou_code = p_admou_code
+                   AND um.code = c1_loop.admou_month_code;
+         END IF;
+         COMMIT;
+      END LOOP;
+      -- COMMIT;
+      -- db_pkg_ginesys_context.set_attribute('INV_MN_CLS', 'N');
+      -- db_pkg_ginesys_context.set_attribute('INV_MN_CLS_DT', NULL);
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         -- db_pkg_ginesys_context.set_attribute('INV_MN_CLS', 'N');
+         -- db_pkg_ginesys_context.set_attribute('INV_MN_CLS_DT', NULL);
+         CALL erraudit(
+            USER,
+            'db_pkg_check_routine_ym_close_loc_pro_check_inv_month_close',
+            SQLSTATE,
+            SQLERRM);
+   END;
+"""
+  arguments = <
+    {
+      name = p_admou_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_mcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_dtto
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_user_id
+      type = character varying
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

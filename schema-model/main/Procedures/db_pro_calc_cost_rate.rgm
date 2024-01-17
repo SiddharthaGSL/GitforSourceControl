@@ -1,0 +1,254 @@
+procedure "main"."db_pro_calc_cost_rate(timestamp without time zone, timestamp without time zone, bigint, character, bigint)" {
+  text = """
+
+DECLARE
+
+ /*************************************************************************************************************************************************
+   No.            Date        Author                    Description
+   ---------   ----------   ----------------------      -----------------------------------------------------------------------
+   REV : 001   21/10/2014   MOUSUMI                     (BUG ID : XXX) Recalculate in COGS
+   REV : 002   20/02/2015   MAANSH                      (BUG ID : LSV-220-58538) AND production cost re-calculation.
+   REV : 003   10/09/2015   MANASH                      (BUG ID : XXX) Generic Production Release.
+   REV : 004   17/04/2017	MANASH                      (TFS ID : 21200) Inventory Valuation Revamp.
+   REV : 005   28/02/2018   DIPTIMAN                    (TFS ID : 32061) Production rate updation from forms as well as COGS.
+ ***************************************************************************************************************************************************/
+    V_DUMMY     bigint;
+    V_FGRATE    PRDJRCDET.RATE%TYPE;
+    V_CNT       bigint := 0;
+    V_CNT_ST    bigint := 0;
+    ERRCODE     varchar(50);
+    ERRMSG      varchar(2000);
+    -- START REV : 004
+    V_COGS_STATE    char(1);
+    -- END REV : 004
+  c1_loop RECORD;
+  
+
+BEGIN
+       -- START REV : 005
+       -- p_tranmain_code present means it is called from from
+       -- p_tranmain_code absent means it is called from COGS PKG
+       --ERRAUDIT('CLIENT','DB_PRO_CAL_COST_RATE',NULL,'Start Re-populating Staging Table');
+       if  p_tranmain_code is null then
+           CALL ERRAUDIT('CLIENT','DB_PRO_CAL_COST_RATE',NULL,'Start Re-populating Staging Table');
+       end if;
+       -- END REV : 005
+       --DB_PKG_COST_CALCULATION.STOP_FIFO_SCHEDULE;
+       --DB_PKG_COST_CALCULATION.START_FIFO_SCHEDULE;
+       -- ============================================================================================================================
+       -- populate staging table
+       -- ============================================================================================================================
+       -- START REV : 005
+       -- delete from temp_prd_rate_staging s;
+       if  p_tranmain_code is not null then
+           delete FROM temp_prd_rate_staging
+           where  tranmain_code = p_tranmain_code;
+       else
+           delete from temp_prd_rate_staging s;
+       end if;
+	   
+       if  p_tranmain_code is null then
+           insert into temp_prd_rate_staging (tranmain_code,txn_date,jobcode,lotcode,assembly_icode,prcode,operation_seq)
+           SELECT   rd.jrccode          tranmain_code,
+                    rm.jrc_date         ent_date,
+                    rd.jobcode          jobcode,
+                    rd.lotcode          lotcode,
+                    rd.assembly_icode   assembly_icode,
+                    rm.prcode           prcode,
+                    jd.operation_seq    op_seq
+           from     prdjrcmain  rm,
+                    prdjrcdet   rd,
+                    prdjobdet   jd,
+                    invitem i
+           where    rm.code         = rd.jrccode
+           and      rd.jobdet_code  = jd.code
+           and      rm.admou_code   = coalesce(p_oucode,rm.admou_code)
+           and      rd.assembly_icode = i.icode
+           and      i.material_type = p_material_type
+           and      rm.jrc_date between p_dt_fr and p_dt_to
+union all
+           SELECT   wd.wiptxn_code      tranmain_code,
+                    wm.wip_date         ent_date,
+                    wd.jobcode          jobcode,
+                    wd.lotcode          lotcode,
+                    wd.assembly_icode   assembly_icode,
+                    wm.prcode           prcode,
+                    jb.operation_seq    op_seq
+           from     prdwipmain wm,
+                    prdwipdet  wd,
+                    prdjobbom  jb,
+                    invitem i
+           where    wm.code         = wd.wiptxn_code
+           and      wd.jobbom_code  = jb.code
+           and      wm.admou_code   = coalesce(p_oucode,wm.admou_code)
+           and      wd.assembly_icode = i.icode
+           and      i.material_type = p_material_type
+           and      wm.wip_date between p_dt_fr and p_dt_to      
+union all
+           select   cd.wipclrmain_code      tranmain_code,
+                    cm.refdt                ent_date,
+                    null                    jobcode,
+                    cd.lotcode              lotcode,
+                    cd.prc_assembly_icode   assembly_icode,
+                    cd.prcode               prcode,
+                    operation_seq           op_seq
+           from     prdwipclrmain cm,
+                    prdwipclrdet  cd,
+                    invitem i
+           where    cm.code = cd.wipclrmain_code
+           and      cm.admou_code = coalesce(p_oucode,cm.admou_code)
+           and      cd.prc_assembly_icode = i.icode
+           and      i.material_type = p_material_type
+           and      date_trunc('day', cm.time) between p_dt_fr and p_dt_to;
+       else
+           insert into temp_prd_rate_staging (tranmain_code,txn_date,jobcode,lotcode,assembly_icode,prcode,operation_seq)
+           SELECT   rd.jrccode          tranmain_code,
+                    rm.jrc_date         ent_date,
+                    rd.jobcode          jobcode,
+                    rd.lotcode          lotcode,
+                    rd.assembly_icode   assembly_icode,
+                    rm.prcode           prcode,
+                    jd.operation_seq    op_seq
+           from     prdjrcmain  rm,
+                    prdjrcdet   rd,
+                    prdjobdet   jd
+           where    rm.code         = rd.jrccode
+           and      rd.jobdet_code  = jd.code
+           and      rm.admou_code   = coalesce(p_oucode,rm.admou_code)
+           and      rm.code         = p_tranmain_code
+union all
+           SELECT   wd.wiptxn_code      tranmain_code,
+                    wm.wip_date         ent_date,
+                    wd.jobcode          jobcode,
+                    wd.lotcode          lotcode,
+                    wd.assembly_icode   assembly_icode,
+                    wm.prcode           prcode,
+                    jb.operation_seq    op_seq
+           from     prdwipmain wm,
+                    prdwipdet  wd,
+                    prdjobbom  jb
+           where    wm.code         = wd.wiptxn_code
+           and      wd.jobbom_code  = jb.code
+           and      wm.admou_code   = coalesce(p_oucode,wm.admou_code)
+           and      wm.code         = p_tranmain_code       
+union all
+           select   cd.wipclrmain_code      tranmain_code,
+                    cm.refdt                ent_date,
+                    null                    jobcode,
+                    cd.lotcode              lotcode,
+                    cd.prc_assembly_icode   assembly_icode,
+                    cd.prcode               prcode,
+                    operation_seq           op_seq
+           from     prdwipclrmain cm,
+                    prdwipclrdet  cd
+           where    cm.code = cd.wipclrmain_code
+           and      cm.admou_code = coalesce(p_oucode,cm.admou_code)
+           and      cm.code       = p_tranmain_code;
+       end if;
+       -- end rev : 005
+       --commit;
+       --ERRAUDIT('CLIENT','DB_PRO_CAL_COST_RATE',NULL,'Re-populating Staging table successfully.');
+       --ERRAUDIT('CLIENT','DB_PRO_CAL_COST_RATE',NULL,'Start Cost Calculation...');
+       begin
+	   		 
+            for c1_loop in (
+                            SELECT  distinct tranmain_code,jobcode,lotcode,assembly_icode,prcode,operation_seq,txn_date
+                            from    temp_prd_rate_staging s 
+                            order by
+                                    txn_date,tranmain_code
+                        )
+            loop
+                -- step I
+                CALL db_pkg_production_cost_calc$calc_fifo_iss_psd(
+                                                    c1_loop.jobcode,c1_loop.lotcode,c1_loop.assembly_icode,c1_loop.tranmain_code,
+                                                    -- START REV : 004
+                                                    v_cogs_state
+                                                    -- END REV : 004
+                                                );
+                -- step II
+                CALL db_pkg_production_cost_calc$calc_fifo_ret_rec_was_com(
+                                                    c1_loop.jobcode,c1_loop.lotcode,c1_loop.assembly_icode,c1_loop.tranmain_code,
+                                                    -- START REV : 004
+                                                    v_cogs_state
+                                                    -- END REV : 004
+                                                );
+                -- step III
+                CALL db_pkg_production_cost_calc$calc_fifo_rec_ret_ass(
+                                                    c1_loop.jobcode,c1_loop.lotcode,c1_loop.assembly_icode,c1_loop.tranmain_code,
+                                                    -- START REV : 004
+                                                    v_cogs_state
+                                                    -- END REV : 004
+                                                );
+                -- step IV
+                CALL db_pkg_production_cost_calc$calc_rec_psd(
+                                                    c1_loop.jobcode,c1_loop.lotcode,c1_loop.assembly_icode,c1_loop.tranmain_code,
+                                                    -- START REV : 004
+                                                    v_cogs_state
+                                                    -- END REV : 004
+                                                );
+                -- step V
+                CALL db_pkg_production_cost_calc$calc_fifo_wcl_psd(
+                                                    c1_loop.jobcode,c1_loop.lotcode,c1_loop.assembly_icode,c1_loop.prcode,c1_loop.operation_seq,c1_loop.tranmain_code,
+                                                    -- START REV : 004
+                                                    v_cogs_state
+                                                    -- END REV : 004
+                                                );
+                -- step VI
+                CALL db_pkg_production_cost_calc$calc_rec_fg(
+                                                    c1_loop.jobcode,c1_loop.lotcode,c1_loop.assembly_icode,c1_loop.tranmain_code,
+                                                    -- START REV : 004
+                                                    v_cogs_state
+                                                    -- END REV : 004
+                                                );
+               -- commit;
+            end loop;
+           -- commit;
+        end;
+        delete
+        from    temp_prd_rate_staging s;
+       -- commit;
+        CALL ERRAUDIT('CLIENT','DB_PRO_CAL_COST_RATE',NULL,'Cost Re-calculated successfully...');
+EXCEPTION WHEN OTHERS THEN
+    ERRCODE := SQLSTATE;
+    ERRMSG  := SQLERRM;
+    CALL Erraudit('CLIENT','DB_PRO_CAL_COST_RATE',ERRCODE,ERRMSG);
+END;
+"""
+  arguments = <
+    {
+      name = p_dt_fr
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_dt_to
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_oucode
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_material_type
+      type = character
+      mode = IN
+      default = NULL::bpchar
+    }
+
+    {
+      name = p_tranmain_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+  >
+  language = plpgsql
+}
+

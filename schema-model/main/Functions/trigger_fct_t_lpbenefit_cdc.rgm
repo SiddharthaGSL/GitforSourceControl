@@ -1,0 +1,58 @@
+function "main"."trigger_fct_t_lpbenefit_cdc()" {
+  text = """
+
+DECLARE
+   tmpvar   bigint;
+BEGIN
+   -- Auto CODE generation from Sequence
+   IF TG_OP = 'INSERT'
+   THEN
+      IF coalesce(NEW.code, 0) <= 0
+      THEN
+         SELECT nextval('psite_master_code')
+           INTO STRICT tmpvar
+;
+
+         NEW.code := tmpvar;
+      END IF;
+   END IF;
+
+   -- Update DataVersion when anything changes
+   IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE'
+   THEN
+      SELECT nextval('psite_dataversion')
+        INTO STRICT tmpvar
+;
+
+      NEW.dataversion := tmpvar;
+   END IF;
+
+   -- Site Event tracking (Site wise distribution will be done in
+   -- DB_PRO_POPULATE_EVENT
+   CALL db_pkg_npos_event$track(NULL, 'BENEFITCHANGE', NEW.code);
+
+   -- WebEvent tracking (No Site wise distribution is required)
+   IF TG_OP = 'INSERT'
+   THEN
+     CALL db_pkg_npos_event$webtrack('BENEFITADDWEB', NEW.code);
+   END IF;
+
+   IF TG_OP = 'UPDATE'
+   THEN
+     CALL db_pkg_npos_event$webtrack('BENEFITCHANGEWEB', NEW.code);
+   END IF;
+
+   -- Separate EXTINCT event tracking.
+   IF coalesce(OLD.isextinct, 0) = 0 AND coalesce(NEW.isextinct, 0) = 1
+   THEN
+     CALL db_pkg_npos_event$track(NULL, 'BENEFITEXTINCT', NEW.code);
+   END IF;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

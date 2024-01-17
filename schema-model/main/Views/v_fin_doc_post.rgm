@@ -1,0 +1,508 @@
+view "main"."v_fin_doc_post" {
+  text = """-
+SELECT DISTINCT 'V'::text AS entry_group,
+        CASE
+            WHEN (finvchmain.vchtype = 'C'::bpchar) THEN 'N'::bpchar
+            WHEN (finvchmain.vchtype = 'G'::bpchar) THEN 'V'::bpchar
+            ELSE finvchmain.vchtype
+        END AS entry_type,
+    finvchmain.vchcode AS code,
+    finvchmain.scheme_docno AS entno,
+    finvchmain.vchdt AS entdt,
+    finvchmain.refno AS docno,
+    NULL::timestamp without time zone AS docdt,
+    finvchmain.release_status,
+        CASE
+            WHEN (COALESCE(finvchmain.damount, (0)::numeric) = (0)::numeric) THEN COALESCE(finvchmain.camount, (0)::numeric)
+            ELSE finvchmain.damount
+        END AS amount,
+    'FINVCHMAIN'::text AS table_name,
+    'VCHCODE'::text AS pk_code_name,
+    finvchmain.glcode,
+    NULL::bigint AS slcode,
+    finvchmain.ecode,
+    finvchmain.admsite_code_owner,
+    finvchmain.doccode,
+        CASE
+            WHEN (finvchmain.vchtype = 'R'::bpchar) THEN 'AR Vouchers'::text
+            WHEN (finvchmain.vchtype = 'P'::bpchar) THEN 'AP Vouchers'::text
+            WHEN (finvchmain.vchtype = 'C'::bpchar) THEN 'Contra Vouchers'::text
+            WHEN (finvchmain.vchtype = 'G'::bpchar) THEN 'General Vouchers'::text
+            WHEN (finvchmain.vchtype = 'B'::bpchar) THEN 'AR/AP Vouchers'::text
+            ELSE NULL::text
+        END AS entry_type_display,
+    NULL::text AS sitetype,
+    finvchmain.release_time,
+    NULL::bigint AS pcode,
+    NULL::bigint AS admsite_code,
+    finvchmain.admou_code
+   FROM main.finvchmain
+  WHERE (finvchmain.vchtype <> 'B'::bpchar)
+UNION ALL
+ SELECT DISTINCT 'J'::text AS entry_group,
+    finjrnmain.jrntype AS entry_type,
+    finjrnmain.jrncode AS code,
+    finjrnmain.scheme_docno AS entno,
+    finjrnmain.jrndt AS entdt,
+    finjrnmain.refno AS docno,
+    NULL::timestamp without time zone AS docdt,
+    finjrnmain.release_status,
+        CASE
+            WHEN (COALESCE(finjrnmain.damount, (0)::numeric) = (0)::numeric) THEN COALESCE(finjrnmain.camount, (0)::numeric)
+            ELSE finjrnmain.damount
+        END AS amount,
+    'FINJRNMAIN'::text AS table_name,
+    'JRNCODE'::text AS pk_code_name,
+    finjrnmain.glcode,
+    finjrnmain.slcode,
+    finjrnmain.ecode,
+    finjrnmain.admsite_code_owner,
+    finjrnmain.doccode,
+        CASE
+            WHEN (finjrnmain.jrntype = 'D'::bpchar) THEN 'Debit Journal'::text
+            WHEN (finjrnmain.jrntype = 'C'::bpchar) THEN 'Credit Journal'::text
+            WHEN (finjrnmain.jrntype = 'J'::bpchar) THEN 'General Journal'::text
+            WHEN (finjrnmain.jrntype = 'T'::bpchar) THEN 'TDS Journal'::text
+            WHEN (finjrnmain.jrntype = 'G'::bpchar) THEN 'AR/AP Journal'::text
+            ELSE NULL::text
+        END AS entry_type_display,
+    NULL::text AS sitetype,
+    finjrnmain.release_time,
+    NULL::bigint AS pcode,
+    NULL::bigint AS admsite_code,
+    finjrnmain.admou_code
+   FROM main.finjrnmain
+  WHERE (finjrnmain.jrntype = ANY (ARRAY['C'::bpchar, 'D'::bpchar]))
+UNION ALL
+ SELECT DISTINCT 'J'::text AS entry_group,
+        CASE
+            WHEN (m.jrntype = 'T'::bpchar) THEN 'T'::bpchar
+            WHEN (m.jrntype = 'R'::bpchar) THEN 'E'::bpchar
+            ELSE
+            CASE
+                WHEN (m.is_interparty = 'N'::bpchar) THEN m.jrntype
+                WHEN (m.is_interparty = 'Y'::bpchar) THEN 'G'::bpchar
+                ELSE NULL::bpchar
+            END
+        END AS entry_type,
+    m.jrncode AS code,
+    m.scheme_docno AS entno,
+    m.jrndt AS entdt,
+    m.refno AS docno,
+    NULL::timestamp without time zone AS docdt,
+    m.release_status,
+    sum(COALESCE(d.damount, (0)::numeric)) AS amount,
+    'FINJRNMAIN'::text AS table_name,
+    'JRNCODE'::text AS pk_code_name,
+    m.glcode,
+    m.slcode,
+    m.ecode,
+    m.admsite_code_owner,
+    m.doccode,
+        CASE
+            WHEN (m.jrntype = 'D'::bpchar) THEN 'Debit Journal'::text
+            WHEN (m.jrntype = 'C'::bpchar) THEN 'Credit Journal'::text
+            WHEN (m.jrntype = 'J'::bpchar) THEN 'General Journal'::text
+            WHEN (m.jrntype = 'T'::bpchar) THEN 'TDS Journal'::text
+            WHEN (m.jrntype = 'R'::bpchar) THEN 'TDS Reversal Journal'::text
+            WHEN (m.jrntype = 'G'::bpchar) THEN 'AR/AP Journal'::text
+            ELSE NULL::text
+        END AS entry_type_display,
+    NULL::text AS sitetype,
+    m.release_time,
+    NULL::bigint AS pcode,
+    NULL::bigint AS admsite_code,
+    m.admou_code
+   FROM main.finjrnmain m,
+    main.finjrndet d
+  WHERE ((m.jrntype = ANY (ARRAY['J'::bpchar, 'T'::bpchar, 'R'::bpchar])) AND (m.jrncode = d.jrncode))
+  GROUP BY 'J'::text,
+        CASE
+            WHEN (m.jrntype = 'T'::bpchar) THEN 'T'::bpchar
+            WHEN (m.jrntype = 'R'::bpchar) THEN 'E'::bpchar
+            ELSE
+            CASE
+                WHEN (m.is_interparty = 'N'::bpchar) THEN m.jrntype
+                WHEN (m.is_interparty = 'Y'::bpchar) THEN 'G'::bpchar
+                ELSE NULL::bpchar
+            END
+        END, m.jrncode, m.scheme_docno, m.jrndt, m.refno, m.release_status, 'FINJRNMAIN'::text, 'JRNCODE'::text, m.glcode, m.ecode, m.admsite_code_owner, m.doccode, m.slcode,
+        CASE
+            WHEN (m.jrntype = 'D'::bpchar) THEN 'Debit Journal'::text
+            WHEN (m.jrntype = 'C'::bpchar) THEN 'Credit Journal'::text
+            WHEN (m.jrntype = 'J'::bpchar) THEN 'General Journal'::text
+            WHEN (m.jrntype = 'T'::bpchar) THEN 'TDS Journal'::text
+            WHEN (m.jrntype = 'R'::bpchar) THEN 'TDS Reversal Journal'::text
+            WHEN (m.jrntype = 'G'::bpchar) THEN 'AR/AP Journal'::text
+            ELSE NULL::text
+        END, m.release_time, m.admou_code
+UNION ALL
+ SELECT DISTINCT 'P'::text AS entry_group,
+    'P'::text AS entry_type,
+    purinvmain.invcode AS code,
+    purinvmain.scheme_docno AS entno,
+    purinvmain.invdt AS entdt,
+    purinvmain.docno,
+    purinvmain.docdt,
+    purinvmain.release_status,
+    COALESCE(purinvmain.netamt, (0)::numeric) AS amount,
+    'PURINVMAIN'::text AS table_name,
+    'INVCODE'::text AS pk_code_name,
+    purinvmain.glcode,
+    purinvmain.slcode,
+    purinvmain.ecode,
+    purinvmain.admsite_code AS admsite_code_owner,
+    purinvmain.doccode,
+    'Purchase Invoice'::text AS entry_type_display,
+    NULL::text AS sitetype,
+    purinvmain.release_time,
+    purinvmain.pcode,
+    NULL::bigint AS admsite_code,
+    purinvmain.admou_code
+   FROM main.purinvmain
+  WHERE (COALESCE(purinvmain.whether_consignment, 'N'::bpchar) = 'N'::bpchar)
+UNION ALL
+ SELECT DISTINCT 'P'::text AS entry_group,
+        CASE
+            WHEN (purinvjrnmain.jrntype = 'C'::bpchar) THEN 'T'::text
+            WHEN (purinvjrnmain.jrntype = 'D'::bpchar) THEN 'D'::text
+            ELSE NULL::text
+        END AS entry_type,
+    purinvjrnmain.jrncode AS code,
+    purinvjrnmain.scheme_docno AS entno,
+    purinvjrnmain.jrndt AS entdt,
+    purinvjrnmain.docno,
+    purinvjrnmain.docdt,
+    purinvjrnmain.release_status,
+    COALESCE(purinvjrnmain.netamt, (0)::numeric) AS amount,
+    'PURINVJRNMAIN'::text AS table_name,
+    'JRNCODE'::text AS pk_code_name,
+    purinvjrnmain.jrnglcode AS glcode,
+    purinvjrnmain.jrnslcode AS slcode,
+    purinvjrnmain.ecode,
+    purinvjrnmain.admsite_code_owner,
+    purinvjrnmain.doccode,
+        CASE
+            WHEN (purinvjrnmain.jrntype = 'C'::bpchar) THEN 'Purchase Credit Note'::text
+            WHEN (purinvjrnmain.jrntype = 'D'::bpchar) THEN 'Purchase Debit Note'::text
+            ELSE NULL::text
+        END AS entry_type_display,
+    NULL::text AS sitetype,
+    purinvjrnmain.release_time,
+    purinvjrnmain.pcode,
+    NULL::bigint AS admsite_code,
+    purinvjrnmain.admou_code
+   FROM main.purinvjrnmain
+UNION ALL
+ SELECT DISTINCT 'P'::text AS entry_group,
+    'R'::text AS entry_type,
+    purrtmain.rtcode AS code,
+    purrtmain.scheme_docno AS entno,
+    purrtmain.rtdt AS entdt,
+    purrtmain.docno,
+    purrtmain.docdt,
+    purrtmain.release_status,
+    COALESCE(purrtmain.netamt, (0)::numeric) AS amount,
+    'PURRTMAIN'::text AS table_name,
+    'RTCODE'::text AS pk_code_name,
+    purrtmain.glcode,
+    purrtmain.slcode,
+    purrtmain.ecode,
+    purrtmain.admsite_code AS admsite_code_owner,
+    purrtmain.doccode,
+    'Purchase Return'::text AS entry_type_display,
+    NULL::text AS sitetype,
+    purrtmain.release_time,
+    purrtmain.pcode,
+    NULL::bigint AS admsite_code,
+    purrtmain.admou_code
+   FROM main.purrtmain
+UNION ALL
+ SELECT DISTINCT 'P'::text AS entry_group,
+    'C'::text AS entry_type,
+    purinvmain.invcode AS code,
+    purinvmain.scheme_docno AS entno,
+    purinvmain.invdt AS entdt,
+    purinvmain.docno,
+    purinvmain.docdt,
+    purinvmain.release_status,
+    COALESCE(purinvmain.netamt, (0)::numeric) AS amount,
+    'PURINVMAIN'::text AS table_name,
+    'INVCODE'::text AS pk_code_name,
+    purinvmain.glcode,
+    purinvmain.slcode,
+    purinvmain.ecode,
+    purinvmain.admsite_code AS admsite_code_owner,
+    purinvmain.doccode,
+    'Consignment Invoice'::text AS entry_type_display,
+    NULL::text AS sitetype,
+    purinvmain.release_time,
+    purinvmain.pcode,
+    NULL::bigint AS admsite_code,
+    purinvmain.admou_code
+   FROM main.purinvmain
+  WHERE (COALESCE(purinvmain.whether_consignment, 'N'::bpchar) = 'Y'::bpchar)
+UNION ALL
+ SELECT DISTINCT 'P'::text AS entry_group,
+    'S'::text AS entry_type,
+    m.srvcode AS code,
+    m.scheme_docno AS entno,
+    m.srvdt AS entdt,
+    m.docno,
+    m.docdt,
+    m.release_status,
+    COALESCE(m.netamt, (0)::numeric) AS amount,
+    'PURSRVMAIN'::text AS table_name,
+    'SRVCODE'::text AS pk_code_name,
+    NULL::bigint AS glcode,
+    NULL::bigint AS slcode,
+    m.ecode,
+    m.admsite_code_owner,
+    m.doccode,
+    'Service Invoice'::text AS entry_type_display,
+    NULL::text AS sitetype,
+    m.release_time,
+    m.pcode,
+    NULL::bigint AS admsite_code,
+    m.admou_code
+   FROM main.pursrvmain m
+UNION ALL
+ SELECT DISTINCT 'P'::text AS entry_group,
+    'J'::text AS entry_type,
+    m.jrncode AS code,
+    m.scheme_docno AS entno,
+    m.jrndt AS entdt,
+    m.docno,
+    m.docdt,
+    m.release_status,
+    COALESCE(m.netamt, (0)::numeric) AS amount,
+    'PURSRVJRNMAIN'::text AS table_name,
+    'JRNCODE'::text AS pk_code_name,
+    NULL::bigint AS glcode,
+    NULL::bigint AS slcode,
+    m.ecode,
+    m.admsite_code_owner,
+    m.doccode,
+    'Service Debite Note'::text AS entry_type_display,
+    NULL::text AS sitetype,
+    m.release_time,
+    m.pcode,
+    NULL::bigint AS admsite_code,
+    m.admou_code
+   FROM main.pursrvjrnmain m
+UNION ALL
+ SELECT DISTINCT 'S'::text AS entry_group,
+        CASE
+            WHEN (salinvmain.saletype = 'O'::bpchar) THEN 'S'::text
+            WHEN (salinvmain.saletype = 'C'::bpchar) THEN 'O'::text
+            ELSE NULL::text
+        END AS entry_type,
+    salinvmain.invcode AS code,
+    salinvmain.scheme_docno AS entno,
+    salinvmain.invdt AS entdt,
+    salinvmain.docno,
+    salinvmain.docdt,
+    salinvmain.release_status,
+    COALESCE(salinvmain.netamt, (0)::numeric) AS amount,
+    'SALINVMAIN'::text AS table_name,
+    'INVCODE'::text AS pk_code_name,
+    salinvmain.glcode,
+    salinvmain.slcode,
+    salinvmain.ecode,
+    salinvmain.admsite_code_owner,
+    salinvmain.doccode,
+        CASE
+            WHEN (salinvmain.saletype = 'O'::bpchar) THEN 'Sales Invoice'::text
+            WHEN (salinvmain.saletype = 'C'::bpchar) THEN 'Transfer Out'::text
+            ELSE NULL::text
+        END AS entry_type_display,
+    main.db_fun_get_sitetype(salinvmain.admsite_code) AS sitetype,
+    salinvmain.release_time,
+    salinvmain.pcode,
+    salinvmain.admsite_code,
+    salinvmain.admou_code
+   FROM main.salinvmain
+UNION ALL
+ SELECT DISTINCT 'S'::text AS entry_group,
+        CASE
+            WHEN (salinvjrnmain.jrntype = 'C'::bpchar) THEN 'T'::text
+            WHEN (salinvjrnmain.jrntype = 'D'::bpchar) THEN 'D'::text
+            ELSE NULL::text
+        END AS entry_type,
+    salinvjrnmain.jrncode AS code,
+    salinvjrnmain.scheme_docno AS entno,
+    salinvjrnmain.jrndt AS entdt,
+    salinvjrnmain.docno,
+    salinvjrnmain.docdt,
+    salinvjrnmain.release_status,
+    COALESCE(salinvjrnmain.netamt, (0)::numeric) AS amount,
+    'SALINVJRNMAIN'::text AS table_name,
+    'JRNCODE'::text AS pk_code_name,
+    salinvjrnmain.jrnglcode AS glcode,
+    salinvjrnmain.jrnslcode AS slcode,
+    salinvjrnmain.ecode,
+    salinvjrnmain.admsite_code_owner,
+    salinvjrnmain.doccode,
+        CASE
+            WHEN (salinvjrnmain.jrntype = 'C'::bpchar) THEN 'Sales Credit Note'::text
+            WHEN (salinvjrnmain.jrntype = 'D'::bpchar) THEN 'Sales Debit Note'::text
+            ELSE NULL::text
+        END AS entry_type_display,
+    main.db_fun_get_sitetype(salinvjrnmain.admsite_code) AS sitetype,
+    salinvjrnmain.release_time,
+    salinvjrnmain.pcode,
+    salinvjrnmain.admsite_code,
+    salinvjrnmain.admou_code
+   FROM main.salinvjrnmain
+UNION ALL
+ SELECT DISTINCT 'S'::text AS entry_group,
+        CASE
+            WHEN (salrtmain.saletype = 'O'::bpchar) THEN 'R'::text
+            WHEN (salrtmain.saletype = 'C'::bpchar) THEN 'I'::text
+            ELSE NULL::text
+        END AS entry_type,
+    salrtmain.rtcode AS code,
+    salrtmain.scheme_docno AS entno,
+    salrtmain.rtdt AS entdt,
+    salrtmain.docno,
+    salrtmain.docdt,
+    salrtmain.release_status,
+    COALESCE(salrtmain.netamt, (0)::numeric) AS amount,
+    'SALRTMAIN'::text AS table_name,
+    'RTCODE'::text AS pk_code_name,
+    salrtmain.glcode,
+    salrtmain.slcode,
+    salrtmain.ecode,
+    salrtmain.admsite_code_owner,
+    salrtmain.doccode,
+        CASE
+            WHEN (salrtmain.saletype = 'O'::bpchar) THEN 'Sales Return'::text
+            WHEN (salrtmain.saletype = 'C'::bpchar) THEN 'Transfer In'::text
+            ELSE NULL::text
+        END AS entry_type_display,
+    NULL::text AS sitetype,
+    salrtmain.release_time,
+    salrtmain.pcode,
+    salrtmain.admsite_code,
+    salrtmain.admou_code
+   FROM main.salrtmain
+UNION ALL
+ SELECT DISTINCT 'S'::text AS entry_group,
+    'C'::text AS entry_type,
+    salcsmain.cscode AS code,
+    salcsmain.scheme_docno AS entno,
+    salcsmain.csdate AS entdt,
+    NULL::text AS docno,
+    NULL::timestamp without time zone AS docdt,
+    salcsmain.release_status,
+    COALESCE(salcsmain.netamt, (0)::numeric) AS amount,
+    'SALCSMAIN'::text AS table_name,
+    'CSCODE'::text AS pk_code_name,
+    salcsmain.consignment_glcode AS glcode,
+    NULL::bigint AS slcode,
+    salcsmain.ecode,
+    salcsmain.admsite_code_owner,
+    salcsmain.doccode,
+    'Consignment Sales'::text AS entry_type_display,
+    NULL::text AS sitetype,
+    salcsmain.release_time,
+    salcsmain.pcode,
+    salcsmain.admsite_code,
+    salcsmain.admou_code
+   FROM main.salcsmain
+  WHERE (salcsmain.status = 'C'::bpchar)
+UNION ALL
+ SELECT DISTINCT 'S'::text AS entry_group,
+    'Z'::text AS entry_type,
+    salsrvmain.srvcode AS code,
+    salsrvmain.scheme_docno AS entno,
+    salsrvmain.srvdt AS entdt,
+    salsrvmain.docno,
+    salsrvmain.docdt,
+    salsrvmain.release_status,
+    COALESCE(salsrvmain.netamt, (0)::numeric) AS amount,
+    'SALSRVMAIN'::text AS table_name,
+    'SRVCODE'::text AS pk_code_name,
+    salsrvmain.pglcode AS glcode,
+    NULL::bigint AS slcode,
+    salsrvmain.ecode,
+    salsrvmain.admsite_code_owner,
+    salsrvmain.doccode,
+    'Sale Service Invoice'::text AS entry_type_display,
+    main.db_fun_get_sitetype(salsrvmain.admsite_code) AS sitetype,
+    salsrvmain.release_time,
+    salsrvmain.pcode,
+    salsrvmain.admsite_code,
+    salsrvmain.admou_code
+   FROM main.salsrvmain;
+"""
+  columns = (
+    column "entry_group" {
+      type = text
+    }
+    column "entry_type" {
+      type = bpchar
+    }
+    column "code" {
+      type = "bigint"
+    }
+    column "entno" {
+      type = "character varying(25)"
+    }
+    column "entdt" {
+      type = "timestamp(0) without time zone"
+    }
+    column "docno" {
+      type = "character varying"
+    }
+    column "docdt" {
+      type = "timestamp without time zone"
+    }
+    column "release_status" {
+      type = "character(1)"
+    }
+    column "amount" {
+      type = "numeric"
+    }
+    column "table_name" {
+      type = text
+    }
+    column "pk_code_name" {
+      type = text
+    }
+    column "glcode" {
+      type = "bigint"
+    }
+    column "slcode" {
+      type = "bigint"
+    }
+    column "ecode" {
+      type = "bigint"
+    }
+    column "admsite_code_owner" {
+      type = "bigint"
+    }
+    column "doccode" {
+      type = "bigint"
+    }
+    column "entry_type_display" {
+      type = text
+    }
+    column "sitetype" {
+      type = text
+    }
+    column "release_time" {
+      type = "timestamp(0) without time zone"
+    }
+    column "pcode" {
+      type = "bigint"
+    }
+    column "admsite_code" {
+      type = "bigint"
+    }
+    column "admou_code" {
+      type = "bigint"
+    }
+  )
+}
+

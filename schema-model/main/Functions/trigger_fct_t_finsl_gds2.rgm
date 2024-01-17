@@ -1,0 +1,131 @@
+function "main"."trigger_fct_t_finsl_gds2()" {
+  text = """
+
+DECLARE
+   SUB_COUNT_TRA     smallint;
+   SUB_COUNT_CNL     smallint;
+   SUB_COUNT_CLS     char(1);
+   V_SUB_COUNT_TRA   smallint;
+   V_SUB_COUNT_CNL   smallint;
+   SUB_COUNT_CUS     smallint;
+BEGIN
+   SELECT COUNT(1)
+     INTO STRICT SUB_COUNT_TRA
+     FROM GDS2_SUBSCR_EVENT
+    WHERE EVENT_ID = 'TRANSPORTER';
+
+   SELECT COUNT(1)
+     INTO STRICT SUB_COUNT_CNL
+     FROM GDS2_SUBSCR_EVENT
+    WHERE EVENT_ID = 'CHANNEL';
+
+   SELECT COUNT(1)
+     INTO STRICT V_SUB_COUNT_TRA
+     FROM GDS2_SUBSCR_EVENT
+    WHERE EVENT_ID IN ('transporter.added',
+                       'transporter.updated',
+                       'transporter.extinct.marked',
+                       'transporter.extinct.unmarked');
+
+   SELECT COUNT(1)
+     INTO STRICT V_SUB_COUNT_CNL
+     FROM GDS2_SUBSCR_EVENT
+    WHERE EVENT_ID IN ('integration.channel.added',
+                       'integration.channel.updated',
+                       'integration.channel.extinct.marked',
+                       'integration.channel.extinct.unmarked');
+
+   SELECT COUNT(1)
+     INTO STRICT SUB_COUNT_CUS
+     FROM GDS2_SUBSCR_EVENT
+    WHERE EVENT_ID IN ('snd.customer.updated');
+
+   SELECT CLSTYPE
+     INTO STRICT SUB_COUNT_CLS
+     FROM ADMCLS
+    WHERE CLSCODE = NEW.CLSCODE;
+
+   IF coalesce(SUB_COUNT_TRA, 0) > 0 AND SUB_COUNT_CLS = 'H'
+   THEN
+      CALL DB_PKG_GDS2_EVENT$TRACK('CHANNEL', NEW.SLCODE);
+   END IF;
+
+   IF coalesce(SUB_COUNT_CNL, 0) > 0 AND SUB_COUNT_CLS = 'T'
+   THEN
+      CALL DB_PKG_GDS2_EVENT$TRACK('TRANSPORTER', NEW.SLCODE);
+   END IF;
+
+   IF TG_OP = 'INSERT'
+   THEN
+      IF coalesce(V_SUB_COUNT_TRA, 0) > 0 AND SUB_COUNT_CLS = 'H'
+      THEN
+        CALL DB_PKG_GDS2_EVENT$TRACK('integration.channel.added', NEW.SLCODE);
+      END IF;
+
+      IF coalesce(V_SUB_COUNT_CNL, 0) > 0 AND SUB_COUNT_CLS = 'T'
+      THEN
+        CALL DB_PKG_GDS2_EVENT$TRACK('transporter.added', NEW.SLCODE);
+      END IF;
+   END IF;
+
+   IF TG_OP = 'UPDATE'
+   THEN
+      IF coalesce(V_SUB_COUNT_TRA, 0) > 0 AND SUB_COUNT_CLS = 'H'
+      THEN
+        CALL DB_PKG_GDS2_EVENT$TRACK('integration.channel.updated', NEW.SLCODE);
+      END IF;
+
+      IF coalesce(V_SUB_COUNT_TRA, 0) > 0
+         AND SUB_COUNT_CLS = 'H'
+         AND coalesce(OLD.EXT, 'N') = 'N'
+         AND coalesce(NEW.EXT, 'N') = 'Y'
+      THEN
+        CALL DB_PKG_GDS2_EVENT$TRACK('integration.channel.extinct.marked',
+                                  NEW.SLCODE);
+      END IF;
+
+      IF coalesce(V_SUB_COUNT_TRA, 0) > 0
+         AND SUB_COUNT_CLS = 'H'
+         AND coalesce(OLD.EXT, 'N') = 'Y'
+         AND coalesce(NEW.EXT, 'N') = 'N'
+      THEN
+        CALL DB_PKG_GDS2_EVENT$TRACK('integration.channel.extinct.unmarked',
+                                  NEW.SLCODE);
+      END IF;
+
+      IF coalesce(V_SUB_COUNT_TRA, 0) > 0 AND SUB_COUNT_CLS = 'T'
+      THEN
+        CALL DB_PKG_GDS2_EVENT$TRACK('transporter.updated', NEW.SLCODE);
+      END IF;
+
+      IF coalesce(V_SUB_COUNT_TRA, 0) > 0
+         AND SUB_COUNT_CLS = 'T'
+         AND coalesce(OLD.EXT, 'N') = 'N'
+         AND coalesce(NEW.EXT, 'N') = 'Y'
+      THEN
+        CALL DB_PKG_GDS2_EVENT$TRACK('transporter.extinct.marked', NEW.SLCODE);
+      END IF;
+
+      IF coalesce(V_SUB_COUNT_TRA, 0) > 0
+         AND SUB_COUNT_CLS = 'T'
+         AND coalesce(OLD.EXT, 'N') = 'Y'
+         AND coalesce(NEW.EXT, 'N') = 'N'
+      THEN
+        CALL DB_PKG_GDS2_EVENT$TRACK('transporter.extinct.unmarked',
+                                  NEW.SLCODE);
+      END IF;
+
+      IF coalesce(SUB_COUNT_CUS, 0) > 0 AND SUB_COUNT_CLS = 'C'
+      THEN
+        CALL DB_PKG_GDS2_EVENT$TRACK('snd.customer.updated', NEW.SLCODE);
+      END IF;
+   END IF;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

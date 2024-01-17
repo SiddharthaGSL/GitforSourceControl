@@ -1,0 +1,101 @@
+procedure "main"."p2_psite_posbill_bulk_del(text)" {
+  text = """
+
+DECLARE
+
+   c1rec CURSOR FOR
+      SELECT lpcardno, lppointsearned
+        FROM psite_posbill
+       WHERE code IN (SELECT p_sitecuid || '-' || posbillid
+                        FROM staging2_posbill)
+         AND lpcard_benefit_point_code IS NOT NULL;
+BEGIN
+/***************************************************************************************************
+REVISION : 002      MOUSUMI (TFS ID :  38829)     Auto Settlement of POS Sale in Finance and Inventory at HO.
+REVISION : 003      ANINDYA (TFS ID :  XXXXX)     Any Store Return related changes.
+***************************************************************************************************/
+   DELETE FROM psite_posbillmopdeno
+         WHERE psite_posbill_code IN (SELECT p_sitecuid || '-' || posbillid
+                                        FROM staging2_posbill);
+   DELETE FROM psite_posbillmop
+         WHERE psite_posbill_code IN (SELECT p_sitecuid || '-' || posbillid
+                                        FROM staging2_posbill);
+ -- START REV : 002
+   DELETE FROM psite_posbillmop_PARK
+         WHERE psite_posbill_code IN (SELECT p_sitecuid || '-' || posbillid
+                                        FROM staging2_posbill);
+ -- END REV : 002
+--   DELETE FROM psite_posbillcnadj
+--         WHERE psite_posbillcn_code IN (
+--                  SELECT code
+--                    FROM psite_posbillcn
+--                   WHERE cni_psite_posbill_code IN (
+--                                        SELECT p_sitecuid || '-' || posbillid
+--                                          FROM staging2_posbill));
+   --   DELETE FROM psite_posbillcn
+--         WHERE cni_psite_posbill_code IN (
+--                                        SELECT p_sitecuid || '-' || posbillid
+--                                          FROM staging2_posbill);
+   DELETE FROM psite_posbilldn
+         WHERE dni_bill_code IN (SELECT p_sitecuid || '-' || posbillid
+                                   FROM staging2_posbill);
+   -- START REV : 003
+   DELETE FROM psite_posbillitemreturn
+   WHERE  RET_STORECUID  = p_sitecuid
+   AND    RET_PSITE_POSBILLITEM_CODE IN (SELECT p_sitecuid||'-'||posbillitemid
+                                         FROM   staging2_posbillitem);
+   -- END REV : 003                                
+   DELETE FROM psite_posbillitem
+         WHERE psite_posbill_code IN (SELECT p_sitecuid || '-' || posbillid
+                                        FROM staging2_posbill);
+   -- START REV : 002
+   DELETE FROM psite_posbillitem_PARK
+         WHERE psite_posbill_code IN (SELECT p_sitecuid || '-' || posbillid
+                                        FROM staging2_posbill);
+   -- END REV : 002
+   FOR c1 IN c1rec
+   LOOP
+      UPDATE lpcard_point
+         SET earned = coalesce(earned, 0) - coalesce(c1.lppointsearned, 0),
+             closing =
+                  coalesce(opening, 0)
+                + coalesce(earned, 0)
+                - coalesce(c1.lppointsearned, 0)
+                - coalesce(redeemed, 0)
+       WHERE cardno = c1.lpcardno;
+   END LOOP;
+   DELETE FROM psite_deliveryslipitem
+         WHERE psite_deliveryslip_code IN (
+                  SELECT code
+                    FROM psite_deliveryslip
+                   WHERE psite_posbill_code IN (
+                                         SELECT p_sitecuid || '-' || posbillid
+                                           FROM staging2_posbill));
+   DELETE FROM psite_deliveryslip
+         WHERE psite_posbill_code IN (SELECT p_sitecuid || '-' || posbillid
+                                        FROM staging2_posbill);
+   DELETE FROM psite_posreprintbillaudit
+         WHERE psite_posbill_code IN (SELECT p_sitecuid || '-' || posbillid
+                                        FROM staging2_posreprintbillaudit);
+--========DELETE
+   DELETE FROM psite_posbill
+         WHERE code IN (SELECT p_sitecuid || '-' || posbillid
+                          FROM staging2_posbill);
+   -- START REV : 002
+   DELETE FROM psite_posbill_PARK
+         WHERE code IN (SELECT p_sitecuid || '-' || posbillid
+                          FROM staging2_posbill);
+   -- END REV : 002
+END;
+"""
+  arguments = <
+    {
+      name = p_sitecuid
+      type = text
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

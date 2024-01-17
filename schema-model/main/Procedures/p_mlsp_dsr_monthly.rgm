@@ -1,0 +1,93 @@
+procedure "main"."p_mlsp_dsr_monthly(timestamp without time zone, refcursor)" {
+  text = """
+
+BEGIN
+/******************************************************************************
+001        22/02/2019         JIT CHATTERJEE (Reviewed by Mousumi di)               
+(Bug 12338 - There has been introduced a new status which is 'U' for auto settlement. For the new status, the report data was not generating for the DSR report )
+******************************************************************************/
+   OPEN refcur FOR
+            SELECT  admsite.name                                                        store
+                    ,sum(target)                                                        target
+                    ,sum(saleamt)                                                       saleamt
+                    ,round((CASE WHEN sum(target)=0 THEN 0  ELSE (sum(saleamt)/sum(target))*100 END )::numeric,3)   achv_perc
+                    ,sum(footfall)                                                      footfall
+                    ,sum(no_of_inv)                                                     no_of_inv
+                    ,round((CASE WHEN sum(footfall)=0 THEN 0  ELSE (sum(no_of_inv)/sum(footfall))*100 END )::numeric,3)    conv_perc
+                    ,round((CASE WHEN sum(no_of_inv)=0 THEN 0  ELSE sum(saleamt)/sum(no_of_inv) END )::numeric,2)             avg_sale_amt
+            FROM
+                (
+                    SELECT  costcode                sitecode
+                            ,sum(coalesce(budcamt,0))    target
+                            ,0                      saleamt
+                            ,0                      footfall
+                            ,0                      no_of_inv
+                    FROM    finglbud
+                    WHERE   glcode  = 37
+                    AND     mcode   = (
+                                        SELECT  mcode
+                                        FROM    admmonth
+                                        WHERE   to_char(monstdt, 'MON-YY') = to_char(to_date(to_char(reportdate,'DD-MON-YY'), 'DD-MON-RR')-1,'MON-YY')
+                                        AND     ycode = (
+                                                            SELECT  ycode
+                                                            FROM    admyear
+                                                            WHERE   to_date(to_char(reportdate,'DD-MON-YY'), 'DD-MON-RR')-1 BETWEEN dtfr AND dtto
+                                                         )
+                                      )
+                    GROUP BY
+                            costcode
+
+UNION ALL
+
+                    SELECT  p.admsite_code
+                            ,0
+                            ,sum(coalesce(netpayable,0))
+                            ,0
+                            ,count(billno)
+                    FROM    psite_posbill   p
+                            ,psite_posstlm  m
+                    WHERE   to_date(to_char(billdate,'DD-MON-YY'),'DD-MON-RR') = to_date(to_char(stlmfor,'DD-MON-YY'),'DD-MON-RR')
+                    AND     p.admsite_code = m.admsite_code
+                    AND     status IN ('O','C','U') --REV:001
+                    AND     to_date(to_char(billdate,'DD-MON-YY'),'DD-MON-RR') BETWEEN to_date('01-'||to_char(to_date(to_char(reportdate,'DD-MON-YY'), 'DD-MON-RR')-1,'MON-YY'))
+                                                                                        AND to_date(to_char(reportdate,'DD-MON-YY'), 'DD-MON-RR')-1
+                    GROUP BY
+                            p.admsite_code
+                    
+UNION ALL
+
+                    SELECT  admsite_code
+                            ,0
+                            ,0
+                            ,sum(footfall)
+                            ,0
+                    FROM   psite_posstlm
+                    WHERE  status IN ('O','C','U') --REV:001
+                    AND    to_date(to_char(stlmfor,'DD-MON-YY'),'DD-MON-RR') BETWEEN to_date('01-'||to_char(to_date(to_char(reportdate,'DD-MON-YY'), 'DD-MON-RR')-1,'MON-YY'))
+                                                                                        AND to_date(to_char(reportdate,'DD-MON-YY'), 'DD-MON-RR')-1
+                    GROUP BY
+                            admsite_code
+                ) t1
+                ,admsite
+            WHERE   t1.sitecode = admsite.code
+            GROUP BY
+                    admsite.name;
+END;
+"""
+  arguments = <
+    {
+      name = reportdate
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = refcur
+      type = refcursor
+      mode = INOUT
+    }
+
+  >
+  language = plpgsql
+}
+

@@ -1,0 +1,82 @@
+procedure "main"."db_pro_populate_item(character)" {
+  text = """
+
+DECLARE
+
+/*******************************************************************************************************************
+   NAME: Db_Pro_Populate_ITEM
+
+   PURPOSE:
+
+   REVISIONS:
+   No.         Date        Author                   Description
+   --------- ----------  ----------------------   ------------------------------------------------------------------
+   REV : 000 31/08/2010  DIPTIMAN                 (BUG ID : 2083) Items are populated from import excel utility.
+   						   		  new procedure created.
+
+   NOTES:
+*******************************************************************************************************************/
+	vcErrcode 		varchar(50);
+	vcErrmsg 		varchar(2000);
+	i				record;
+	v_table_rec		type_rec_db_pro_populate_item[];
+	v_code			bigint;
+
+BEGIN
+v_code := 0;
+LOOP 
+	SELECT ARRAY_REMOVE(v_table_rec);
+	SELECT ARRAY_AGG(t)
+		STRICT INTO v_table_rec
+		FROM
+		(
+			SELECT 	CODE, ICODE, coalesce(BARCODE,ICODE) BARCODE,
+					CNAME1, CNAME2, CNAME3,
+					CNAME4, CNAME5, CNAME6,
+					RATE, WSP, MRP, LISTED_MRP
+			FROM 	int$ITEM
+			WHERE 	coalesce(CREATE_MASTER,'N') = 'Y'
+			AND 	TERMINALNAME = P_TERMINALNAME
+			AND 	position('CREATED SUCCESSFULLY' in UPPER(STATUS_DESCRIPTION)) > 0
+			AND 	CODE > v_code
+			ORDER BY CODE ASC
+			LIMIT 100
+		) t;
+		
+		EXIT WHEN COALESCE(ARRAY_LENGTH(v_table_rec),0) = 0;
+
+		FOR var IN ARRAY_LOWER(v_table_rec, 1)..ARRAY_UPPER(v_table_rec, 1)
+		LOOP
+			INSERT INTO GLOBAL_CREATE_ITEM
+						(
+						   ICODE, BARCODE, CNAME1, CNAME2, CNAME3,
+						   CNAME4, CNAME5, CNAME6, RATE, WSP, MRP, LISTED_MRP
+						 )
+					   VALUES (
+						   v_table_rec[var].ICODE, v_table_rec[var].BARCODE, v_table_rec[var].CNAME1,
+						   v_table_rec[var].CNAME2, v_table_rec[var].CNAME3, v_table_rec[var].CNAME4,
+						   v_table_rec[var].CNAME5, v_table_rec[var].CNAME6, v_table_rec[var].RATE,
+						   v_table_rec[var].WSP, v_table_rec[var].MRP, v_table_rec[var].LISTED_MRP
+						 );
+					v_code := v_table_rec[var].CODE;
+			END LOOP;
+END LOOP;
+EXCEPTION
+	WHEN OTHERS THEN
+	     VCERRCODE := SQLSTATE;
+	     VCERRMSG  := SQLERRM;
+	     CALL ERRAUDIT(USER, 'DB_PRO_POPULATE_ITEM', VCERRCODE, VCERRMSG);
+	     RAISE EXCEPTION '%', 'Item could not be inserted. '|| VCERRMSG USING ERRCODE = '45100';
+END;
+"""
+  arguments = <
+    {
+      name = p_terminalname
+      type = character
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

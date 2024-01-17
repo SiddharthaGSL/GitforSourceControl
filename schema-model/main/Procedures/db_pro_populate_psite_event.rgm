@@ -1,0 +1,1096 @@
+procedure "main"."db_pro_populate_psite_event(bigint)" {
+  text = """
+
+DECLARE
+
+--==========================================================================================
+--  REV TEMP 01 : To idetify how same document code is getting tracked multiple times
+--                in PSITE_EVENT for TRANSFER eventtype
+--  REV 002 : DxSessionLogId parameter inclusion in this procedure to avoid data  missing from sync process
+--==========================================================================================
+/********************************************************************************************************************************
+      PURPOSE: Cost Calculation
+
+     REV NO     OWNER           DATE         DESCRIPTION
+     ---------  ----------      ----------- ---------------------------------------------------------------------
+     REV : 001  ANINDYA         02/03/2015   (SP ID : 2095 ) Event Gathering process change
+     REV : 002  ANINDYA         13/03/2017   (TSF ID :  26179) DxSessionLogId wise event transfer.
+     REV : 003  ANINDYA         22/07/2017   (TFS ID :  22670) Kerala Cess Implementation.
+     REV : 004  ANINDYA         11/04/2020   (TFS ID : GIN-1061) Zwing POS Inbound related changes.
+     REV : 005  SIDDHARTHA      25/05/2021   (TFS ID : GIN-3447) Plugin related changes.
+     REV : 006  MANASH          02/03/2022   (MNTS : 1514)       Data sync has failed due to oracle type cast error .
+
+     REV : 007  SIDDHARTHA      03/03/2022   (TFS ID : GIN-XXXX) Batch Serial changes.
+**********************************************************************************************************************************/
+   c1rec CURSOR(pncode bigint, pnDxSessionLogId bigint)
+   FOR
+      SELECT   seq, eventtype, sitecode_yn
+          FROM (SELECT DISTINCT eventtype,
+                                CASE
+                                   WHEN eventtype = 'SITEPUBLISH'
+                                      THEN '1'
+                                   ELSE '2'
+                                END seq,
+                                CASE
+                                   WHEN admsite_code IS NULL
+                                      THEN 'N'
+                                   ELSE 'Y'
+                                END sitecode_yn
+                           FROM psite_event_tracking
+                          WHERE code <= pncode
+                          -- START REV : 002
+                          AND   DxSessionLogId = pnDXSessionLogId
+                          --  END REV : 002
+                          AND (   admsite_code IS NULL
+                                 OR admsite_code IN (
+                                                   SELECT code
+                                                     FROM admsite
+                                                    WHERE coalesce(psite_ispublished, 'N') = 'Y'
+                                                    -- START REV :  004
+                                                    AND   coalesce(INSTALLATION_TYPE,'DPOS') <>  'ZPOS'
+                                                    -- START REV : 004
+                                                    -- START REV : API DataSync Changes
+                                                    --AND   COALESCE(DATASYNCMODE,'W') = 'W'
+                                                    -- END REV : API DataSync Changes
+                                                    )
+                                )) alias5
+      ORDER BY seq;
+   c2rec CURSOR(pceventtype CHAR)
+   FOR
+      SELECT srcname, srcrefcolumn
+        FROM psite_event_data
+       WHERE eventtype = pceventtype;
+   -- NOT IN ('TRANSFER','ALLOCATEITEM') Condition added for the following reason
+   -- NOT IN TRANSFER TO AVOID SNED SAME TRANSFER DATA MULTIPLE TIMES WHICH WAS TRACKED
+   -- MULTIPLE TIMES DUE TO SOME UNIDENTIFIED ERROR
+   -- NOT IN (ALLOCATEITEM TO AVOID SENDING ADHOC ITEM ALLOCATION WITH SITE PUBLISH
+   c3rec CURSOR(pceventtype CHAR, pncode bigint)
+   FOR
+      SELECT   code, admsite_code, eventtype, refcode, TIME
+          FROM psite_event_tracking
+         WHERE code <= pncode
+           -- START REV : 002
+           AND DxSessionLogId = pnDXSessionLogId
+           -- END REV : 002
+           AND eventtype = pceventtype
+           AND eventtype NOT IN ('TRANSFER', 'ALLOCATEITEM', 'CARDALLOCATE',
+                   'CUSTOMERDISTRIBUTE', 'GVALLOCATE')
+           AND admsite_code IN (SELECT code
+                                  FROM admsite
+                                 WHERE coalesce(psite_ispublished, 'N') = 'Y'
+                                 -- START REV : API DataSync Changes
+                                 AND   coalesce(DATASYNCMODE,'W') = 'W'
+                                 -- END REV : API DataSync Changes
+                                 )
+
+UNION ALL
+
+      -- TO AVOID INSERTION OF A TRANSFER INTO PSITE_EVENT WHICH IS ALREADY
+      -- INSERTED INTO PSITE_EVENT IN LAST SESSION
+      SELECT   code, admsite_code, eventtype, refcode, TIME
+          FROM psite_event_tracking
+         WHERE code <= pncode
+           -- START REV : 002
+           AND   DxSessionLogId = pnDXSessionLogId
+           -- START REV : 002
+           AND eventtype = pceventtype
+           AND eventtype = 'TRANSFER'
+           AND refcode NOT IN (SELECT refcode
+                                 FROM psite_event
+                                WHERE eventtype = 'TRANSFER')
+           AND admsite_code IN (SELECT code
+                                  FROM admsite
+                                 WHERE coalesce(psite_ispublished, 'N') = 'Y'
+                                 -- START REV : 004
+                                 AND coalesce(INSTALLATION_TYPE, 'DPOS') <> 'ZPOS'
+                                 -- END REV : 004
+                                 -- START REV : API DataSync Changes
+                                 AND coalesce(DATASYNCMODE,'W') = 'W'
+                                 -- END REV : API DataSync Changes
+                                 )
+      /*
+      UNION ALL
+      -- TO AVOID SENDING ADHOC ITEM ALLOCATION WITH SITE PUBLISH
+      SELECT  T1.CODE,T1.ADMSITE_CODE, T1.EVENTTYPE, T1.REFCODE, T1.TIME
+      FROM    PSITE_EVENT_TRACKING T1
+      WHERE   CODE <= pnCode
+      AND     EVENTTYPE = pcEventType
+      AND     EVENTTYPE = 'ALLOCATEITEM'
+      AND     ADMSITE_CODE NOT IN (
+                                   SELECT DISTINCT T2.ADMSITE_CODE
+                                   FROM   PSITE_EVENT_TRACKING T2
+                                   WHERE  T2.EVENTTYPE = 'SITEPUBLISH'
+                                  )
+       */
+      ORDER BY code;
+   vnmaxcode              bigint;
+   icursor0               integer;
+   irowsprocessed         integer;
+   vnsitecode             bigint;
+   vceventtype            varchar(50);
+   vcrefcode              varchar(50);
+   vdtime                 timestamp;
+   v_sql                  varchar(32767);
+   vnmaxeventcode         bigint           := 0;
+   vcsrcname              varchar(30);
+   vcsrcrefcolumn         varchar(30);
+   vcprogram              varchar(50);
+   vccallerexe            varchar(50);
+   vneventtrackcode       bigint;
+   vcitemeventtrackcode   varchar(50);
+--PRAGMA AUTONOMOUS_TRANSACTION;
+BEGIN
+   SELECT TO_CHAR(clock_timestamp(), 'DDMMYYYY') || TO_CHAR(clock_timestamp(), 'HH24MISS')
+     INTO STRICT vcitemeventtrackcode
+;
+   -- START REV : TEMP01
+   SELECT program
+     INTO STRICT vcprogram
+     FROM v_$session
+    WHERE SID = (SELECT SID
+                   FROM v_$mystat LIMIT 1) AND status != 'KILLED';
+   -- END REV : TEMP01
+   SELECT coalesce(MAX(code), 0)
+     INTO STRICT vnmaxcode
+     FROM psite_event_tracking;
+   -- START REV : 002
+   update psite_event_tracking
+    set DxSessionLogId = pnDXSessionLogId
+    where code <= vnmaxcode;
+     -- END REV : 002
+   SELECT coalesce(MAX(code), 0)
+     INTO STRICT vnmaxeventcode
+     FROM psite_event;
+   FOR c1 IN c1rec(vnmaxcode, pnDxSessionLogId)
+   LOOP
+      IF c1.eventtype = 'POLICYCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_POLICY';
+         vcsrcrefcolumn := 'SITE_CODE :: TEXT';
+      ELSIF c1.eventtype = 'ALLOCATIONCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_ALLOCATION';
+         vcsrcrefcolumn := 'ALLOCATION_CODE :: TEXT';
+      ELSIF c1.eventtype = 'DISCOUNTCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_DISCOUNT';
+         vcsrcrefcolumn := 'DISCOUNTID :: TEXT';
+      ELSIF c1.eventtype = 'MOPCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_MOP';
+         vcsrcrefcolumn := 'MOPID :: TEXT';
+      ELSIF c1.eventtype = 'CURRENCYCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_CURRENCY';
+         vcsrcrefcolumn := 'CURRENCYID :: TEXT';
+      ELSIF c1.eventtype = 'DOCSCHEMECHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_DOCSCHEME';
+         vcsrcrefcolumn := 'DOCSCHEMEID :: TEXT';
+      ELSIF c1.eventtype IN ('PROMOCHANGE')
+      THEN
+         vcsrcname := 'V_NPOS_PROMOASSIGN';
+         vcsrcrefcolumn := 'PROMOAPPLICABLEID :: TEXT';
+--      ELSIF c1.eventtype IN
+--              ('PROMOCHANGE', 'PROMOALLOCATIONCHANGE', 'PROMOADDTOALLOCATION')
+--      THEN
+--         vcsrcname := 'V_NPOS_PROMOALLOCATION';
+--         vcsrcrefcolumn := 'PROMOAPPLICABLEID';
+      /*
+      ELSIF c1.eventtype = 'STLMPARAMACC'
+      THEN
+         vcsrcname := 'V_NPOS_STLMPARAMACC';
+         vcsrcrefcolumn := 'DAYSTLMPARAMACCID';
+      */
+      ELSIF c1.eventtype = 'STLMPARAMOTH'
+      THEN
+         vcsrcname := 'V_NPOS_STLMPARAMOTH';
+         vcsrcrefcolumn := 'DAYSTLMPARAMOTHID :: TEXT';
+      ELSIF c1.eventtype = 'VATCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_VATCHANGE';
+         vcsrcrefcolumn := 'ADMCMPTAX_CODE :: TEXT';
+      ELSIF c1.eventtype = 'DIVISIONCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_DIVISION';
+         vcsrcrefcolumn := 'DIVISIONID :: TEXT';
+      ELSIF c1.eventtype = 'SECTIONCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_SECTION';
+         vcsrcrefcolumn := 'SECTIONID :: TEXT';
+      ELSIF c1.eventtype = 'DEPARTMENTCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_DEPARTMENT';
+         vcsrcrefcolumn := 'DEPARTMENTID :: TEXT';
+      ELSIF c1.eventtype = 'ARTICLECHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_ARTICLE';
+         vcsrcrefcolumn := 'ARTICLEID :: TEXT';
+      ELSIF c1.eventtype = 'ITEMCHANGE'
+      THEN
+         vcsrcname := 'V_PSITE_ALLOC_ITEM';
+         vcsrcrefcolumn := 'ITEMID :: TEXT';
+      ELSIF c1.eventtype = 'CHARGECHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_CHARGEALLOCATION';
+         vcsrcrefcolumn := 'CHARGEID :: TEXT';
+      ELSIF c1.eventtype = 'REASON'
+      THEN
+         vcsrcname := 'V_NPOS_REASON';
+         vcsrcrefcolumn := 'REASONID :: TEXT';
+      ELSIF c1.eventtype = 'PIVOTLAYOUTCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_PIVOTREPORTLAYOUT';
+         vcsrcrefcolumn := 'PARENTLAYOUTID :: TEXT';
+      ELSIF c1.eventtype = 'REPORTLAYOUTCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_REPORTLAYOUT';
+         vcsrcrefcolumn := 'LAYOUTID :: TEXT';
+      ELSIF c1.eventtype = 'TERMCHANGE'
+      THEN
+--=============================================================================
+-- This view is required only for site wise distribution
+-- If such a term is assigned to a site which term hame one or multiple term and
+-- later all charges are deleted from the term then TERMCHANGE event will be tracked
+-- in Event_tracking but it will not get distributed sitewise because v_npos_storereplnsourceterm
+-- was defined as source where outer join was not present, as because in the above situation
+-- the view was returning no records against that particulat site . So we have created this
+-- view with outer join.
+--=============================================================================
+         vcsrcname := 'V_NPOS_STOREREPLNSOURCETERM_D';
+         vcsrcrefcolumn := 'TERMCODE :: TEXT';
+      ELSIF c1.eventtype = 'BENEFITCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_LPBENEFIT';
+         vcsrcrefcolumn := 'LPBENEFITID :: TEXT';
+      ELSIF c1.eventtype = 'AUDITPLANCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_AUDITPLAN';
+         vcsrcrefcolumn := 'AUDITPLANID :: TEXT';
+      ELSIF c1.eventtype = 'PTCHEADCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_PTCHEAD';
+         vcsrcrefcolumn := 'PTCHEADID :: TEXT';
+      ELSIF c1.eventtype = 'LOYALTYCONFIGCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_LOYALTYCONFIGURATION';
+         vcsrcrefcolumn := 'SITE_CODE :: TEXT';
+      ELSIF c1.eventtype = 'PRICELISTCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_PRICELIST';
+         vcsrcrefcolumn := 'PRICELISTID :: TEXT';
+      ELSIF c1.eventtype = 'USERCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_GLOBAL_APPUSER';
+         vcsrcrefcolumn := 'USERID :: TEXT :: TEXT';
+      ELSIF c1.eventtype = 'ROLECHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_GLOBAL_ROLE';
+         vcsrcrefcolumn := 'ROLEID :: TEXT';
+      ELSIF c1.eventtype = 'ROLEPOLICYCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_GLOBAL_LOCALPOLICY';
+         vcsrcrefcolumn := 'LOCALPOLICYID :: TEXT';
+      ELSIF c1.eventtype = 'SALESPERSONCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_GLOBAL_SALESPERSON';
+         vcsrcrefcolumn := 'SALESPERSONID :: TEXT';
+      ELSIF c1.eventtype = 'POSSMSCONFIG'
+      THEN
+         vcsrcname := 'V_NPOS_POSSMSGATEWAY';
+         vcsrcrefcolumn := 'ID :: TEXT';
+      ELSIF c1.eventtype = 'SMSTASKCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_POSSMSTASKS';
+         vcsrcrefcolumn := 'TASKID :: TEXT';
+      ELSIF c1.eventtype = 'COUPONOFFERCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_COUPONOFFER';
+         vcsrcrefcolumn := 'COUPONOFFERID :: TEXT';
+      ELSIF c1.eventtype = 'UDFCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_UDFCONFIGDETAIL';
+         vcsrcrefcolumn := 'UDFID :: TEXT';
+      ELSIF c1.eventtype = 'GSTRATECHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_INVGSTRATE';
+         vcsrcrefcolumn := 'SITE_CODE :: TEXT';
+      ELSIF c1.eventtype = 'HSNSACCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_INVHSNSACMAIN';
+         vcsrcrefcolumn := 'HSNSACMASTERID :: TEXT';
+      ELSIF c1.eventtype = 'GSTCHARGECHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_GSTCHARGE';
+         vcsrcrefcolumn := 'CHARGEID :: TEXT';
+      ELSIF c1.eventtype = 'BULKHSNCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_DEPTHSN';
+         vcsrcrefcolumn := 'DEPTHSNCHANGELOGID :: TEXT';
+      -- START REV :  003
+      ELSIF c1.eventtype = 'GSTADDCESSCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_INVGSTADDCESSRATE';
+         vcsrcrefcolumn := 'SITE_CODE :: TEXT';
+      -- END REV :  003
+      -- START REV :  005
+      ELSIF c1.eventtype = 'PLUGINCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_PLUGIN';
+         vcsrcrefcolumn := 'PLUGINID :: TEXT';
+      ELSIF c1.eventtype = 'PLUGINCONFIGCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_PLUGINCONFIGREPO';
+         vcsrcrefcolumn := 'PLUGINCONFIGREPOID :: TEXT';
+      -- END REV :  003
+      -- START REV :  007  
+      ELSIF c1.eventtype = 'BATCHCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_BATCH';
+         vcsrcrefcolumn := 'BATCHSERIALID :: TEXT';
+       -- END REV :  007
+      ELSIF c1.eventtype = 'CUSTOMERCONFIGCHANGE'
+      THEN
+         vcsrcname := 'V_NPOS_CUSTOMERCONFIG';
+         vcsrcrefcolumn := 'SITE_CODE :: TEXT';
+       -- END REV :  007
+      END IF;
+      IF c1.eventtype = 'SITEPUBLISH'
+      THEN
+         FOR c3 IN c3rec(c1.eventtype, vnmaxcode)
+         LOOP
+            INSERT INTO psite_event(admsite_code, eventtype, refcode, TIME,
+                         event_track_code
+                        )
+                 VALUES (c3.admsite_code, c3.eventtype, c3.refcode, c3.TIME,
+                         c3.code
+                        );
+         END LOOP;
+         CALL populate_allocation_info(c1.eventtype, vnmaxeventcode);
+         -- if SITEPUBLISH event is tracked against a site then tracking of others
+         -- events are not required because with SITEPUBLISH event all data
+         -- which will be required to initiate a site will send .
+         -- we are using EVENTTYPE <> SITEPULISH filter in the delete statement becase
+         -- at the time of event tracking through trigger ,in some cases site_code is not
+         -- getting populated. So using this delete statement we are able to delete only those
+         -- event records where site code is already derived. But where site_code will be derived
+         -- from sync view in later ,in that case also we need to skip
+         -- all other EVENTS except SITEPUBLISH and obviously if the site selected in that
+         -- particular JOB session ans SITEPUBLISH is one of the event for that site .
+         -- Not in ALLOCATEITEM condition is added because ALLOCATE item will not send with
+         -- SITEPUBLISH . Tracked ALLOCATEITEM will send in next session of dataexchange
+         DELETE FROM psite_event_tracking
+               WHERE code <= vnmaxcode
+                 -- START REV : 002
+                 AND   DxSessionLogId = pnDXSessionLogId
+                 -- END REV : 002
+                 AND admsite_code IN (SELECT DISTINCT admsite_code
+                                                 FROM psite_event_tracking
+                                                WHERE eventtype =
+'SITEPUBLISH')
+                 AND eventtype NOT IN ('SITEPUBLISH', 'ALLOCATEITEM', 'CARDALLOCATE',
+                         'CUSTOMERDISTRIBUTE', 'GVALLOCATE'
+                         -- START   GST CHANGE
+                         ,'GSTCHARGECHANGE'
+                         -- END GST CHANGE
+                         );
+      ELSIF SUBSTR(c1.eventtype, -6) = 'REMOVE'
+      THEN
+         IF c1.eventtype = 'DIVISIONREMOVE'
+         THEN
+            INSERT INTO psite_event(admsite_code, eventtype, refcode, TIME,
+                         event_track_code)
+               SELECT pad.admsite_code, c1.eventtype, et.refcode, et.TIME,
+                      et.code
+                 FROM psite_alloc_division pad, psite_event_tracking et
+                WHERE pad.grpcode = et.refcode
+                  AND et.eventtype = 'DIVISIONREMOVE'
+                  AND et.code <= vnmaxcode
+                  -- START REV : 002
+                  AND DxSessionLogId = pnDXSessionLogId
+                  -- END REV : 002
+                  -- START REV : API DataSync Changes
+                  AND pad.admsite_code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W');
+                  -- END REV : API DataSync Changes
+         ELSIF c1.eventtype = 'SECTIONREMOVE'
+         THEN
+            INSERT INTO psite_event(admsite_code, eventtype, refcode, TIME,
+                         event_track_code)
+               SELECT pas.admsite_code, c1.eventtype, et.refcode, et.TIME,
+                      et.code
+                 FROM psite_alloc_section pas, psite_event_tracking et
+                WHERE pas.grpcode = et.refcode
+                  AND et.eventtype = 'SECTIONREMOVE'
+                  AND et.code <= vnmaxcode
+                  -- START REV : 002
+                  AND DxSessionLogId = pnDXSessionLogId
+                  -- END REV : 002
+                  -- START REV : API DataSync Changes
+                  AND pas.admsite_code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W');
+                  -- END REV : API DataSync Changes
+         ELSIF c1.eventtype = 'DEPARTMENTREMOVE'
+         THEN
+            INSERT INTO psite_event(admsite_code, eventtype, refcode, TIME,
+                         event_track_code)
+               SELECT pad.admsite_code, c1.eventtype, et.refcode, et.TIME,
+                      et.code
+                 FROM psite_alloc_department pad, psite_event_tracking et
+                WHERE pad.grpcode = et.refcode
+                  AND et.eventtype = 'DEPARTMENTREMOVE'
+                  AND et.code <= vnmaxcode
+                  -- START REV : 002
+                  AND   DxSessionLogId = pnDXSessionLogId
+                  -- END REV : 002
+                  -- START REV : API DataSync Changes
+                  AND pad.admsite_code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W');
+                  -- END REV : API DataSync Changes
+         ELSE
+            FOR c3 IN c3rec(c1.eventtype, vnmaxcode)
+            LOOP
+               INSERT INTO psite_event(admsite_code, eventtype, refcode,
+                            TIME, event_track_code
+                           )
+                    VALUES (c3.admsite_code, c3.eventtype, c3.refcode,
+                            c3.TIME, c3.code
+                           );
+            END LOOP;
+         END IF;
+      ELSIF c1.eventtype = 'ALLOCATIONCHANGE'
+      THEN
+         INSERT INTO psite_event(admsite_code, eventtype, refcode, TIME,
+                      event_track_code)
+            SELECT src.site_code, c1.eventtype, et.refcode, et.TIME, et.code
+              FROM psite_event_tracking et, v_npos_allocation src
+             WHERE et.refcode = src.allocation_code
+               AND et.eventtype = 'ALLOCATIONCHANGE'
+               AND et.code <= vnmaxcode
+               -- START REV : 002
+               AND   DxSessionLogId = pnDXSessionLogId
+               -- END REV : 002
+               -- START REV : API DataSync Changes
+               AND src.site_code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W');
+               -- END REV : API DataSync Changes
+      ELSE
+         IF c1.sitecode_yn = 'Y'
+         THEN
+            -- START REV : TEMP01
+            IF c1.eventtype = 'TRANSFER'
+            THEN
+               vccallerexe := vcprogram;
+            ELSE
+               vccallerexe := NULL;
+            END IF;
+            -- END REV : TEMP01
+            IF c1.eventtype = 'ALLOCATEITEM'
+            THEN
+               INSERT INTO temp_alloc_item(code, admsite_code, eventtype, icode)
+                  SELECT vcitemeventtrackcode || t1.admsite_code || 'AI',
+                         t1.admsite_code, 'ALLOCATEITEM', t1.refcode
+                    FROM psite_event_tracking t1
+                   WHERE code <= vnmaxcode
+                     -- START REV : 002
+                     AND   DxSessionLogId = pnDXSessionLogId
+                     -- END REV : 002
+                     AND eventtype = 'ALLOCATEITEM'
+                     -- TO AVOID SENDING ADHOC ITEM ALLOCATION WITH SITE PUBLISH
+                     AND admsite_code NOT IN (
+                                            SELECT DISTINCT t2.admsite_code
+                                                       FROM psite_event_tracking t2
+                                                      WHERE t2.eventtype =
+                                                                        'SITEPUBLISH')
+                     -- START REV : API DataSync Changes
+                     AND admsite_code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W');
+                     -- END REV : API DataSync Changes
+               INSERT INTO psite_event(admsite_code, eventtype, refcode, TIME, callerexe,
+                            event_track_code)
+                  SELECT   t1.admsite_code, 'ALLOCATEITEM',
+                           vcitemeventtrackcode || t1.admsite_code || 'AI',
+                           MIN(TIME), vccallerexe, MIN(code)
+                      FROM psite_event_tracking t1
+                     WHERE code <= vnmaxcode
+                       -- START REV : 002
+                       AND   DxSessionLogId = pnDXSessionLogId
+                       -- END REV : 002
+                       AND eventtype = 'ALLOCATEITEM'
+                       -- TO AVOID SENDING ADHOC ITEM ALLOCATION WITH SITE PUBLISH
+                       AND admsite_code NOT IN (
+                                            SELECT DISTINCT t2.admsite_code
+                                                       FROM psite_event_tracking t2
+                                                      WHERE t2.eventtype =
+                                                'SITEPUBLISH')
+                       -- START REV : API DataSync Changes
+                       AND admsite_code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W')
+                       -- END REV : API DataSync Changes                         
+                  GROUP BY t1.admsite_code;
+            ELSIF c1.eventtype = 'CARDALLOCATE'
+            THEN
+               INSERT INTO temp_alloc_lpcard(code, admsite_code, eventtype, cardno)
+                  SELECT vcitemeventtrackcode || t1.admsite_code || 'CA',
+                         t1.admsite_code, 'CARDALLOCATE', t1.refcode
+                    FROM psite_event_tracking t1
+                   WHERE code <= vnmaxcode
+                     -- START REV : 002
+                     AND   DxSessionLogId = pnDXSessionLogId
+                     --- END REV : 002
+                     AND eventtype = 'CARDALLOCATE'
+                     -- TO AVOID SENDING CARD ALLOCATION WITH SITE PUBLISH
+                     AND admsite_code NOT IN (
+                                            SELECT DISTINCT t2.admsite_code
+                                                       FROM psite_event_tracking t2
+                                                      WHERE t2.eventtype =
+                                                'SITEPUBLISH')
+                     -- START REV : API DataSync Changes
+                     AND admsite_code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W');
+                     -- END REV : API DataSync Changes                                                 
+               INSERT INTO psite_event(admsite_code, eventtype, refcode, TIME, callerexe,
+                            event_track_code)
+                  SELECT   t1.admsite_code, 'CARDALLOCATE',
+                           vcitemeventtrackcode || t1.admsite_code || 'CA',
+                           MIN(TIME), vccallerexe, MIN(code)
+                      FROM psite_event_tracking t1
+                     WHERE code <= vnmaxcode
+                       -- START REV : 002
+                       AND   DxSessionLogId = pnDXSessionLogId
+                       -- END REV : 002
+                       AND eventtype = 'CARDALLOCATE'
+                       -- TO AVOID SENDING ADHOC ITEM ALLOCATION WITH SITE PUBLISH
+                       AND admsite_code NOT IN (
+                                            SELECT DISTINCT t2.admsite_code
+                                                       FROM psite_event_tracking t2
+                                                      WHERE t2.eventtype =
+                                                'SITEPUBLISH')
+                       -- START REV : API DataSync Changes
+                       AND admsite_code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W')
+                       -- END REV : API DataSync Changes                         
+                  GROUP BY t1.admsite_code;
+            ELSIF c1.eventtype = 'GVALLOCATE'
+            THEN
+               INSERT INTO temp_alloc_gvleaves(code, admsite_code, eventtype, gvleavescode)
+                  SELECT vcitemeventtrackcode || t1.admsite_code || 'GV',
+                         t1.admsite_code, 'GVALLOCATE', t1.refcode
+                    FROM psite_event_tracking t1
+                   WHERE code <= vnmaxcode
+                     -- START REV : 002
+                     AND   DxSessionLogId = pnDXSessionLogId
+                     -- END REV : 002
+                     AND eventtype = 'GVALLOCATE'
+                     -- TO AVOID SENDING GV ALLOCATION WITH SITE PUBLISH
+                     AND admsite_code NOT IN (
+                                            SELECT DISTINCT t2.admsite_code
+                                                       FROM psite_event_tracking t2
+                                                      WHERE t2.eventtype =
+                                                'SITEPUBLISH')
+                     -- START REV : API DataSync Changes
+                     AND admsite_code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W');
+                     -- END REV : API DataSync Changes                           
+               INSERT INTO psite_event(admsite_code, eventtype, refcode, TIME, callerexe,
+                            event_track_code)
+                  SELECT   t1.admsite_code, 'GVALLOCATE',
+                           vcitemeventtrackcode || t1.admsite_code || 'GV',
+                           MIN(TIME), vccallerexe, MIN(code)
+                      FROM psite_event_tracking t1
+                     WHERE code <= vnmaxcode
+                       -- START REV : 002
+                       AND   DxSessionLogId = pnDXSessionLogId
+                       -- END REV : 002
+                       AND eventtype = 'GVALLOCATE'
+                       -- TO AVOID SENDING GV  ALLOCATION WITH SITE PUBLISH
+                       AND admsite_code NOT IN (
+                                            SELECT DISTINCT t2.admsite_code
+                                                       FROM psite_event_tracking t2
+                                                      WHERE t2.eventtype =
+                                            'SITEPUBLISH')
+                        -- START REV : API DataSync Changes
+                        AND admsite_code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W')
+                        -- END REV : API DataSync Changes                     
+                  GROUP BY t1.admsite_code;
+            ELSIF c1.eventtype = 'GVCHANGE'
+            THEN
+               INSERT INTO temp_alloc_gvleaves(code, admsite_code, eventtype, gvleavescode)
+                  SELECT vcitemeventtrackcode || t1.admsite_code || 'GC',
+                         t1.admsite_code, 'GVCHANGE', t1.refcode
+                    FROM psite_event_tracking t1
+                   WHERE code <= vnmaxcode
+                   -- START REV : 002
+                   AND   DxSessionLogId = pnDXSessionLogId
+                   -- END REV : 002
+                   AND eventtype = 'GVCHANGE'
+                   -- START REV : API DataSync Changes
+                   AND t1.admsite_code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W');
+                   --END REV : API DataSync Changes 
+               INSERT INTO psite_event(admsite_code, eventtype, refcode, TIME,
+                            callerexe, event_track_code)
+                  SELECT   t1.admsite_code, 'GVCHANGE',
+                           vcitemeventtrackcode || t1.admsite_code || 'GC',
+                           MIN(TIME), vccallerexe, MIN(code)
+                      FROM psite_event_tracking t1
+                     WHERE code <= vnmaxcode
+                     -- START REV : 002
+                     AND   DxSessionLogId = pnDXSessionLogId
+                     -- END REV : 002
+                     AND eventtype = 'GVCHANGE'
+                     -- START REV : API DataSync Changes
+                     AND t1.admsite_code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W')
+                     -- END REV : API DataSync Changes 
+                  GROUP BY t1.admsite_code;
+            ELSIF c1.eventtype = 'CUSTOMERDISTRIBUTE'
+            THEN
+               INSERT INTO temp_alloc_customer(code, admsite_code, eventtype, customer_code)
+                  SELECT vcitemeventtrackcode || t1.admsite_code || 'CD',
+                         t1.admsite_code, 'CUSTOMERDISTRIBUTE', t1.refcode
+                    FROM psite_event_tracking t1
+                   WHERE code <= vnmaxcode
+                     -- START REV : 002
+                     AND   DxSessionLogId = pnDXSessionLogId
+                     -- END REV :  002
+                     AND eventtype = 'CUSTOMERDISTRIBUTE'
+                     -- TO AVOID SENDING CARD ALLOCATION WITH SITE PUBLISH
+                     AND admsite_code NOT IN (
+                                            SELECT DISTINCT t2.admsite_code
+                                                       FROM psite_event_tracking t2
+                                                      WHERE t2.eventtype =
+                                            'SITEPUBLISH')
+                     -- START REV : API DataSync Changes
+                     AND t1.admsite_code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W');
+                     -- END REV : API DataSync Changes 
+               INSERT INTO psite_event(admsite_code, eventtype, refcode, TIME, callerexe,
+                            event_track_code)
+                  SELECT   t1.admsite_code, 'CUSTOMERDISTRIBUTE',
+                           vcitemeventtrackcode || t1.admsite_code || 'CD',
+                           MIN(TIME), vccallerexe, MIN(code)
+                      FROM psite_event_tracking t1
+                     WHERE code <= vnmaxcode
+                       -- START REV : 002
+                       AND   DxSessionLogId = pnDXSessionLogId
+                       -- END REV : 002
+                       AND eventtype = 'CUSTOMERDISTRIBUTE'
+                       -- TO AVOID SENDING ADHOC ITEM ALLOCATION WITH SITE PUBLISH
+                       AND admsite_code NOT IN (
+                                            SELECT DISTINCT t2.admsite_code
+                                                       FROM psite_event_tracking t2
+                                                      WHERE t2.eventtype =
+                                                'SITEPUBLISH')
+                       -- START REV : API DataSync Changes
+                       AND t1.admsite_code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W')
+                       -- END REV : API DataSync Changes                          
+                  GROUP BY t1.admsite_code;
+            ELSE
+               FOR c3 IN c3rec(c1.eventtype, vnmaxcode)
+               LOOP
+                  INSERT INTO psite_event(admsite_code, eventtype, refcode,
+                               TIME, callerexe, event_track_code
+                              )
+                       VALUES (c3.admsite_code, c3.eventtype, c3.refcode,
+                               c3.TIME, vccallerexe, c3.code
+                              );
+               END LOOP;
+            END IF;
+         ELSIF c1.sitecode_yn = 'N'
+         THEN
+            IF c1.eventtype IN ('POLICYCHANGE', 'ENFORCEDVERSIONCHANGE',
+                   'LOYALTYCONFIGCHANGE', 'WEBDBCONFIGURATIONCHANGE','UDFASSIGNCHANGE','MAILSERVERCHANGE','GSTRATECHANGE','EMRCONFIGCHANGE','APICONFIGCHANGE'
+                   -- START REV : 003
+                   ,'GSTADDCESSCHANGE', 'CUSTOMERCONFIGCHANGE'
+                   -- END REV : 003
+                   )
+            THEN
+               INSERT INTO psite_event(admsite_code, eventtype, refcode, TIME,
+                            event_track_code)
+                  SELECT s.code, et.eventtype, et.refcode, clock_timestamp(), et.code
+                    FROM (SELECT eventtype, refcode, code
+                            FROM psite_event_tracking
+                           WHERE eventtype = c1.eventtype
+                             AND refcode = '0'
+                             AND code <= vnmaxcode
+                             -- START REV : 002
+                             AND   DxSessionLogId = pnDXSessionLogId ) et,
+                             -- END REV : 002
+                         (SELECT code
+                            FROM admsite
+                           WHERE coalesce(psite_ispublished, 'N') = 'Y'
+                           -- START REV : 004
+                           AND   coalesce(INSTALLATION_TYPE ,'DPOS') <> 'ZPOS'
+                           -- END REV: 004
+                           -- START REV : API DataSync Changes
+                           AND code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W')
+                           -- END REV : API DataSync Changes 
+                          ) s;
+               DELETE FROM psite_event_tracking
+
+               WHERE       eventtype = c1.eventtype
+                       AND refcode = '0'
+                       AND code <= vnmaxcode
+                       -- START REV : 002
+                       AND   DxSessionLogId = pnDXSessionLogId;
+                       --END REV :  002
+            ELSIF c1.eventtype = 'ITEMCHANGE'
+            THEN
+                -- START REV : 001
+               /*
+               INSERT INTO temp_alloc_item
+                           (code, admsite_code, eventtype, icode)
+                  SELECT DISTINCT vcitemeventtrackcode || src.site_code
+                                  || 'IC',
+                                  src.site_code, 'ITEMCHANGE', et.refcode
+                             FROM psite_event_tracking et,
+                                  v_psite_alloc_item src
+                            WHERE et.refcode = src.itemid
+                              AND et.eventtype = 'ITEMCHANGE'
+                              AND et.code <= vnmaxcode
+                              -- Using this filter we are skipping site wise all other EVENTS
+                              -- except' SITEPUBLISH when SITE_CODE is derived from SYNC view not
+                              -- from trigger and SITEPUBLISH is one of the event for that site .
+                              AND src.site_code NOT IN (
+                                               SELECT DISTINCT admsite_code
+                                                          FROM psite_event_tracking
+                                                         WHERE eventtype =
+'SITEPUBLISH');
+                */
+               INSERT INTO temp_alloc_item(code, admsite_code, eventtype, icode)
+                  SELECT DISTINCT site_refcode.detailentryid, src.site_code,
+                                  'ITEMCHANGE', et.refcode
+                             FROM psite_event_tracking et,
+                                  v_psite_alloc_item src,
+                                  (SELECT admsite_code, refcode detailentryid
+                                     FROM psite_event
+                                    WHERE eventtype = 'ITEMCHANGE'
+                                      AND dxsendid IS NULL
+                                    -- START REV : API DataSync Changes
+                                      AND admsite_code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W')
+                                    -- END REV : API DataSync Changes   
+UNION ALL
+
+                                   SELECT s.code,
+                                             vcitemeventtrackcode
+                                          || s.code
+                                          || 'IC' detailentryid
+                                     FROM admsite s
+                                    WHERE code NOT IN (
+                                             SELECT admsite_code
+                                               FROM psite_event
+                                              WHERE eventtype = 'ITEMCHANGE'
+                                                AND dxsendid IS NULL)
+                                    -- START REV : API DataSync Changes
+                                    AND coalesce(DATASYNCMODE,'W') = 'W'
+                                    -- END REV : API DataSync Changes             
+                                    ) site_refcode
+                            WHERE et.refcode = src.itemid
+                              AND et.eventtype = 'ITEMCHANGE'
+                              AND src.site_code = site_refcode.admsite_code
+                              AND et.code <= vnmaxcode
+                              -- START REV : 002
+                              AND   et.DxSessionLogId = pnDXSessionLogId
+                              -- END REV : 002
+                              -- Using this filter we are skipping site wise all other EVENTS
+                              -- except' SITEPUBLISH when SITE_CODE is derived from SYNC view not
+                              -- from trigger and SITEPUBLISH is one of the event for that site .
+                              AND src.site_code NOT IN (
+                                               SELECT DISTINCT admsite_code
+                                                          FROM psite_event_tracking
+                                                         WHERE eventtype =
+                                                    'SITEPUBLISH')
+                  EXCEPT
+                  SELECT code, admsite_code, 'ITEMCHANGE', icode
+                    FROM temp_alloc_item;
+               -- END REV : 001
+               INSERT INTO psite_event(admsite_code, eventtype, refcode, TIME,
+                            event_track_code)
+                  SELECT   src.site_code, 'ITEMCHANGE',
+                           vcitemeventtrackcode || src.site_code || 'IC',
+                           -- start GST related changes
+                           --MIN (et.TIME), MIN (et.code) event_track_code
+                           MAX(et.TIME), MAX(et.code) event_track_code
+                           -- end GST related changes
+                      FROM psite_event_tracking et, v_psite_alloc_item src
+                     WHERE et.refcode = src.itemid
+                       AND et.eventtype = 'ITEMCHANGE'
+                       AND et.code <= vnmaxcode
+                       -- START REV : 002
+                       AND   et.DxSessionLogId = pnDXSessionLogId
+                       -- END REV : 002
+                       -- Using this filter we are skipping site wise all other EVENTS
+                       -- except' SITEPUBLISH when SITE_CODE is derived from SYNC view not
+                       -- from trigger and SITEPUBLISH is one of the event for that site .
+                       AND src.site_code NOT IN (
+                                               SELECT DISTINCT admsite_code
+                                                          FROM psite_event_tracking
+                                                         WHERE eventtype =
+                                                'SITEPUBLISH')
+                       -- START REV : 001
+                       -- START REV : API DataSync Changes
+                       AND src.site_code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W')
+                       -- END REV : API DataSync Changes 
+                       AND src.site_code NOT IN (
+                              SELECT admsite_code
+                                FROM psite_event
+                               WHERE eventtype = 'ITEMCHANGE'
+                                 AND dxsendid IS NULL)
+                  -- END REV : 001
+                  GROUP BY src.site_code;
+            ELSIF c1.eventtype = 'ARTICLECHANGE'
+            THEN
+               INSERT INTO temp_alloc_article(code, admsite_code, eventtype, invarticle_code)
+                  SELECT DISTINCT vcitemeventtrackcode || src.site_code
+                                  || 'AC',
+                                  src.site_code, 'ARTICLECHANGE', et.refcode
+                             FROM psite_event_tracking et,
+                                  v_psite_alloc_article src
+                            WHERE et.refcode = src.articleid
+                              AND et.eventtype = 'ARTICLECHANGE'
+                              AND et.code <= vnmaxcode
+                              -- START REV :002
+                              AND et.DxSessionLogId = pnDXSessionLogId
+                              -- END REV : 002
+                              -- START REV : API DataSync Changes
+                              AND src.site_code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W')
+                              -- END REV : API DataSync Changes 
+                              -- Using this filter we are skipping site wise all other EVENTS
+                              -- except' SITEPUBLISH when SITE_CODE is derived from SYNC view not
+                              -- from trigger and SITEPUBLISH is one of the event for that site .
+                              AND src.site_code NOT IN (
+                                               SELECT DISTINCT admsite_code
+                                                          FROM psite_event_tracking
+                                                         WHERE eventtype =
+                                                'SITEPUBLISH');
+               INSERT INTO psite_event(admsite_code, eventtype, refcode, TIME,
+                            event_track_code)
+                  SELECT   src.site_code, 'ARTICLECHANGE',
+                           vcitemeventtrackcode || src.site_code || 'AC',
+                           MIN(et.TIME), MIN(et.code) event_track_code
+                      FROM psite_event_tracking et, v_psite_alloc_article src
+                     WHERE et.refcode = src.articleid
+                       AND et.eventtype = 'ARTICLECHANGE'
+                       AND et.code <= vnmaxcode
+                       -- START REV : 002
+                       AND et.DxSessionLogId = pnDXSessionLogId
+                       -- END REV : 002
+                       -- START REV : API DataSync Changes
+                       AND src.site_code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W')
+                       -- END REV : API DataSync Changes 
+                       -- Using this filter we are skipping site wise all other EVENTS
+                       -- except' SITEPUBLISH when SITE_CODE is derived from SYNC view not
+                       -- from trigger and SITEPUBLISH is one of the event for that site .
+                       AND src.site_code NOT IN (
+                                               SELECT DISTINCT admsite_code
+                                                          FROM psite_event_tracking
+                                                         WHERE eventtype =
+                            'SITEPUBLISH')
+                   GROUP BY src.site_code;
+            ELSIF c1.eventtype = 'CARDINFOCHANGE'
+            THEN
+               INSERT INTO temp_alloc_lpcard(code, admsite_code, eventtype, cardno)
+                  SELECT DISTINCT    vcitemeventtrackcode
+                                  || src.allocated_admsite_code
+                                  || 'LC',
+                                  src.allocated_admsite_code,
+                                  'CARDINFOCHANGE', et.refcode
+                             FROM psite_event_tracking et, lpcard src
+                            WHERE et.refcode = src.cardno
+                              AND et.eventtype = 'CARDINFOCHANGE'
+                              --  START REV : 002
+                              AND et.DxSessionLogId = pnDXSessionLogId
+                              -- END REV : 002
+                              AND et.code <= vnmaxcode
+                              AND src.status = 'A'
+                              -- START REV : API DataSync Changes
+                              AND src.allocated_admsite_code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W')
+                              -- END REV : API DataSync Changes 
+UNION ALL
+
+                  SELECT DISTINCT    vcitemeventtrackcode
+                                  || pcd.admsite_code
+                                  || 'LC',
+                                  pcd.admsite_code, 'CARDINFOCHANGE',
+                                  et.refcode
+                             FROM psite_event_tracking et,
+                                  lpcard src,
+                                  psite_customer_dist pcd
+                            WHERE et.refcode = src.cardno
+                              AND src.psite_customer_code =
+pcd.psite_customer_code
+                              AND et.eventtype = 'CARDINFOCHANGE'
+                              -- START REV : 002
+                              AND et.DxSessionLogId = pnDXSessionLogId
+                              -- END REV :  002
+                              AND et.code <= vnmaxcode
+                              AND src.status = 'I'
+                              AND pcd.admsite_code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W');
+               INSERT INTO psite_event(admsite_code, eventtype, refcode, TIME,
+                            event_track_code)
+                  SELECT   src.allocated_admsite_code, 'CARDINFOCHANGE',
+                              vcitemeventtrackcode
+                           || src.allocated_admsite_code
+                           || 'LC',
+                           MIN(et.TIME), MIN(et.code) event_track_code
+                      FROM psite_event_tracking et, lpcard src
+                     WHERE et.refcode = src.cardno
+                       AND et.eventtype = 'CARDINFOCHANGE'
+                       AND et.code <= vnmaxcode
+                       -- START REV : 002
+                       AND et.DxSessionLogId = pnDXSessionLogId
+                       -- END REV : 002
+                       AND src.status = 'A'
+                       AND src.allocated_admsite_code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W')
+                  GROUP BY src.allocated_admsite_code
+
+UNION ALL
+
+                  SELECT   pcd.admsite_code, 'CARDINFOCHANGE',
+                           vcitemeventtrackcode || pcd.admsite_code || 'LC',
+                           MIN(et.TIME), MIN(et.code) event_track_code
+                      FROM psite_event_tracking et,
+                           lpcard src,
+                           psite_customer_dist pcd
+                     WHERE et.refcode = src.cardno
+                       AND src.psite_customer_code = pcd.psite_customer_code
+                       AND et.eventtype = 'CARDINFOCHANGE'
+                       -- START REV : 002
+                       AND et.DxSessionLogId = pnDXSessionLogId
+                       -- END REV : 002
+                       AND et.code <= vnmaxcode
+                       AND src.status = 'I'
+                       AND pcd.admsite_code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W')
+                  GROUP BY pcd.admsite_code;
+                  --#######################################################################################################333
+--=============================================================================
+            ELSIF c1.eventtype = 'CUSTOMERCHANGE'
+            THEN
+               INSERT INTO temp_alloc_customer(code, admsite_code, eventtype, customer_code)
+                  SELECT DISTINCT    vcitemeventtrackcode
+                                  || src.admsite_code
+                                  || 'CC',
+                                  src.admsite_code, 'CUSTOMERCHANGE',
+                                  et.refcode
+                             FROM psite_event_tracking et,
+                                  psite_customer_dist src
+                            WHERE et.refcode = src.psite_customer_code
+                              AND et.eventtype = 'CUSTOMERCHANGE'
+                              AND et.code <= vnmaxcode
+                              -- START REV : 002
+                              AND et.DxSessionLogId = pnDXSessionLogId
+                              AND src.admsite_code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W');
+                              -- END REV : 002
+               INSERT INTO psite_event(admsite_code, eventtype, refcode, TIME,
+                            event_track_code)
+                  SELECT   src.admsite_code, 'CUSTOMERCHANGE',
+                           vcitemeventtrackcode || src.admsite_code || 'CC',
+                           MIN(et.TIME), MIN(et.code) event_track_code
+                      FROM psite_event_tracking et, psite_customer_dist src
+                     WHERE et.refcode = src.psite_customer_code
+                       AND et.eventtype = 'CUSTOMERCHANGE'
+                       AND et.code <= vnmaxcode
+                       -- START REV : 002
+                       AND et.DxSessionLogId = pnDXSessionLogId
+                       -- END REV : 002
+                       AND src.admsite_code IN (SELECT code FROM ADMSITE WHERE coalesce(DATASYNCMODE,'W') = 'W')
+                  GROUP BY src.admsite_code;
+--====================================================================================
+            ELSE
+               v_sql :='INSERT INTO psite_event (admsite_code, eventtype, refcode, time, event_track_code)' || CHR(10)
+                  ||   'SELECT DISTINCT SITE_CODE,EVENTTYPE,REFCODE,TIME,EVENT_TRACK_CODE'
+                  || CHR(10)
+                  || 'FROM'
+                  || CHR(10)
+                  || '      ('
+                  || CHR(10)
+                  || '       SELECT DISTINCT SRC.SITE_CODE,ET.EVENTTYPE,ET.REFCODE,ET.TIME, ET.CODE EVENT_TRACK_CODE'
+                  || CHR(10)
+                  || '       FROM PSITE_EVENT_TRACKING ET ,'
+                  || vcsrcname
+                  || ' SRC'
+                  -- start rev : 006
+                  /*|| CHR (10)
+                  || '       WHERE  ET.REFCODE = SRC.'
+                  || vcsrcrefcolumn
+                  */
+                  || CHR(10)
+                  || '       WHERE  ET.REFCODE = to_char(SRC.'
+                  || vcsrcrefcolumn
+                  || ')'
+                  -- start rev : 006
+                  || CHR(10)
+                  || '       AND    ET.EVENTTYPE = '
+                  || CHR(39)
+                  || c1.eventtype
+                  || CHR(39)
+                  || CHR(10)
+                  || '       AND    ET.CODE <= '
+                  || vnmaxcode
+                  || CHR(10)
+                  -- START REV : 002
+                  ||' AND   DxSessionLogId = '||pnDXSessionLogId
+                  || CHR(10)
+                  -- Using this filter we are skipping site wise all other EVENTS
+                  -- except' SITEPUBLISH when SITE_CODE is derived from SYNC view not
+                  -- from trigger and SITEPUBLISH is one of the event for that site .
+                  || '       AND    SRC.SITE_CODE NOT IN (SELECT DISTINCT ADMSITE_CODE'
+                  || CHR(10)
+                  || '                                    FROM PSITE_EVENT_TRACKING'
+                  || CHR(10)
+                  || '                                    WHERE EVENTTYPE = '
+                  || CHR(39)
+                  || 'SITEPUBLISH'
+                  || CHR(39)
+                  -- START REV : 004
+                  || ' UNION ALL' || CHR(10)
+                  || ' SELECT CODE FROM ADMSITE WHERE COALESCE(INSTALLATION_TYPE,''DPOS'') = ''ZPOS'''||CHR(10)
+                  -- END REV : 004
+                  || ')'
+                  || CHR(10)
+                  || '       AND    SRC.SITE_CODE IN (SELECT CODE FROM ADMSITE WHERE COALESCE(DATASYNCMODE,''W'') = ''W'')'
+                  || CHR(10)
+                  || '       ORDER BY ET.CODE'
+                  || CHR(10)
+                  || '       )';
+				  
+				  
+				  EXECUTE v_sql;
+            END IF;
+         END IF;
+         IF c1.eventtype IN ('ITEMCHANGE', 'TRANSFER', 'AUTOTRANSFER', 'ALLOCATEITEM',
+                'OPNSTOCK', 'SITECHANGE', 'TERMCHANGE', 'LOCALPURCHASE',
+                'LOCALPURCHASERETURN', 'LOCALCONVERSION','MISCISSUE')
+         THEN
+            CALL populate_allocation_info(c1.eventtype, vnmaxeventcode);
+         END IF;
+      END IF;
+   END LOOP;
+   -- DELETE ALL EVENTTYPE EXCEPT ALLOCATE ITEM FOR THOSE SITES AGAINST
+   -- WHICH PUBLIST DATA IS GETTING SYNCHRONIZE WITH THE CURRENT SESSION
+   -- OF DATAEXCHANGE
+   -- THE MAIN MOTO OF THIS COMPLEX QUERY TO AVOID SENDING OF ADHOC ITEM ALLOCATION
+   -- DATA WITH SITEPUBLISH DATA
+   DELETE FROM psite_event_tracking
+         WHERE code <= vnmaxcode
+           -- START REV : 002
+           AND   DxSessionLogId = pnDXSessionLogId
+           -- END REV : 002
+           AND (   eventtype NOT IN ('ALLOCATEITEM', 'CARDALLOCATE', 'CUSTOMERDISTRIBUTE',
+                       'GVALLOCATE')
+                OR (    eventtype IN ('ALLOCATEITEM', 'CARDALLOCATE',
+                            'CUSTOMERDISTRIBUTE', 'GVALLOCATE')
+                    AND admsite_code NOT IN (
+                           SELECT DISTINCT admsite_code
+                                      FROM psite_event
+                                     WHERE eventtype = 'SITEPUBLISH'
+                                       AND dxsendid IS NULL)
+                   )
+               );
+    -- START REV : 004
+    DELETE FROM psite_event
+    WHERE  admsite_code IN (SELECT CODE FROM ADMSITE WHERE coalesce(INSTALLATION_TYPE,'DPOS') = 'ZPOS');
+    -- END REV : 004
+   COMMIT;
+END;
+"""
+  arguments = <
+    {
+      name = pndxsessionlogid
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

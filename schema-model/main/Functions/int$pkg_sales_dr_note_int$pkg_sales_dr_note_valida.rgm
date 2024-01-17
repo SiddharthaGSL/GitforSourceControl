@@ -1,0 +1,1010 @@
+function "main"."int$pkg_sales_dr_note_int$pkg_sales_dr_note_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status                 char(1);
+      errmsg                   varchar(200);
+      errcode                  text;
+      -- v_ycode    NUMBER (20)    := 0;
+      v_grcdt                  timestamp;
+      v_icode                  varchar(9);
+      v_barcode                varchar(50);
+      v_pono                   varchar(25) := NULL;
+      v_cnt                    bigint;
+      v_userid                 bigint;
+      v_profcode               bigint;
+      v_rlcode                 bigint;
+      v_doccode                bigint;
+      v_allow_grc_against_po   char(1);
+BEGIN
+      /*---------------------------------------------------------------------------------------------------
+                                       GRC DATE RELATED VALIDATIONS
+      */
+      --Future date transaction is not allowed
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                userid,
+                'Date Validation',
+                'Future date transaction is not allowed.',
+                clock_timestamp()
+           FROM int$stg_SALES_DR_NOTE a
+          WHERE date_trunc('day', ENTRY_DATE) > date_trunc('day', clock_timestamp()) AND a.userid = p_userid;
+
+      --User lock days setting getting violated
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                userid,
+                'Date Validation',
+                'User lock days setting getting violated.',
+                clock_timestamp()
+           FROM int$stg_SALES_DR_NOTE a, hrdemp b
+          WHERE     a.userid = b.ecode
+                AND date_trunc('day', a.ENTRY_DATE) NOT BETWEEN (CURRENT_DATE - locdays::INTEGER)
+                                                 AND (CURRENT_DATE + locdays::INTEGER)
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                userid,
+                'Date Validation',
+                'Month / Year is not in open state.',
+                clock_timestamp()
+           FROM int$stg_SALES_DR_NOTE a, ADMMONTH m, ADMOU_MONTH b
+          WHERE     date_trunc('day', a.ENTRY_DATE) BETWEEN date_trunc('day', m.dtfr)
+                                             AND date_trunc('day', m.dtto)
+                AND B.ADMMONTH_CODE = M.MCODE
+                AND B.ADMOU_CODE = P_CONNECT_OU
+                AND b.FIN_MONTH_STATUS <> 'O'
+                AND a.userid = p_userid;
+
+      -- DOCUMENT NUMBER
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                userid,
+                'Document Validation',
+                'Document Number should not exceed 16 char',
+                clock_timestamp()
+           FROM int$stg_SALES_DR_NOTE a
+          WHERE     LENGTH(DOCUMENT_NUMBER) > 16
+                AND DOCUMENT_NUMBER IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                userid,
+                'Document Validation',
+                'document date cannot be greater/future date than Entry Date',
+                clock_timestamp()
+           FROM int$stg_SALES_DR_NOTE a
+          WHERE     DOCUMENT_date > entry_date
+                AND DOCUMENT_date IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'SALES_DR_NOTE',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'Document date different for same Document Number - '
+                        || a.document_number
+                           dup_fld
+                   FROM int$stg_SALES_DR_NOTE a
+                  WHERE     a.userid = p_userid
+                        AND a.document_number IS NOT NULL
+                        AND a.document_number IN (SELECT x.DOCUMENT_NUMBER
+                                  FROM (  SELECT m.DOCUMENT_NUMBER,
+                                                 COUNT(
+                                                    DISTINCT m.DOCUMENT_DATE),
+                                                 SITE_SHORT_NAME
+                                            FROM int$stg_SALES_DR_NOTE m
+                                           WHERE     USERID = P_USERID
+                                                 AND DOCUMENT_NUMBER
+                                                        IS NOT NULL
+                                        GROUP BY m.DOCUMENT_NUMBER,
+                                                 SITE_SHORT_NAME
+                                          HAVING COUNT(
+                                                    DISTINCT m.DOCUMENT_DATE) >
+                                                    1) x)) alias7;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'SALES_DR_NOTE',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'Sales Invoice Number different for same Document Number - '
+                        || a.document_number
+                           dup_fld
+                   FROM int$stg_SALES_DR_NOTE a
+                  WHERE     a.userid = p_userid
+                        AND a.document_number IS NOT NULL
+                        AND a.document_number IN (SELECT x.DOCUMENT_NUMBER
+                                  FROM (  SELECT m.DOCUMENT_NUMBER,
+                                                 COUNT(
+                                                    DISTINCT m.SALES_INVOICE_NUMBER),
+                                                 SITE_SHORT_NAME
+                                            FROM int$stg_SALES_DR_NOTE m
+                                           WHERE     USERID = P_USERID
+                                                 AND DOCUMENT_NUMBER
+                                                        IS NOT NULL
+                                        GROUP BY m.DOCUMENT_NUMBER,
+                                                 SITE_SHORT_NAME
+                                          HAVING COUNT(
+                                                    DISTINCT m.SALES_INVOICE_NUMBER) >
+                                                    1) x)) alias7;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                userid,
+                'Document Validation',
+                'If Document Number is given then Document Date should not be null and Vise versa.',
+                clock_timestamp()
+           FROM int$stg_SALES_DR_NOTE a
+          WHERE     (   (    DOCUMENT_NUMBER IS NOT NULL
+                         AND DOCUMENT_DATE IS NULL)
+                     OR (    DOCUMENT_NUMBER IS NULL
+                         AND DOCUMENT_DATE IS NOT NULL))
+                AND a.userid = p_userid;
+
+      -- REASON
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                userid,
+                'Reason Validation',
+                'Invalid reason description',
+                clock_timestamp()
+           FROM int$stg_sales_dr_note a
+LEFT OUTER JOIN admgstjrnreason b ON (UPPER(a.REASON) = UPPER(b.REASON))
+WHERE (B.REASON IS NULL OR coalesce(ext, 'N') = 'Y') AND a.userid = p_userid;
+
+      -- SITE
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                userid,
+                'Site Validation',
+                'Site should be valid and non-extinct.',
+                clock_timestamp()
+           FROM  int$stg_sales_dr_note a
+LEFT OUTER JOIN admsite b ON (UPPER(a.SITE_SHORT_NAME) = UPPER(b.SHRTNAME))
+WHERE a.site_short_name IS NOT NULL AND (   (ADMOU_CODE IS NOT NULL AND ADMOU_CODE = P_CONNECT_OU)
+                     OR ADMOU_CODE IS NULL) AND (b.CODE IS NULL OR coalesce(ext, 'N') = 'Y') AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                userid,
+                'Site Validation',
+                'Invalid/extinct site name or not out-right mode operated site.',
+                clock_timestamp()
+           FROM  int$stg_sales_dr_note a
+LEFT OUTER JOIN admsite b ON (UPPER(a.SITE_SHORT_NAME) = UPPER(b.SHRTNAME))
+WHERE b.code NOT IN
+                       (SELECT S.CODE
+                          FROM admsite s, fingl g, finsl p
+LEFT OUTER JOIN finsl a ON (P.AGCODE = A.SLCODE)
+LEFT OUTER JOIN finsl t ON (P.TRPCODE = T.SLCODE)
+LEFT OUTER JOIN admcls ON (P.CLSCODE = ADMCLS.CLSCODE)
+WHERE S.SLCODE = P.SLCODE    AND P.GLCODE = G.GLCODE AND P.SALETYPE = 'O' AND coalesce(P.EXT, 'N') = 'N' AND coalesce(S.EXT, 'N') = 'N' AND G.SRCTYPE = 'R' AND S.SITETYPE IN ('MS-CO-OM-TS',
+                                       'US-CO-OM',
+                                       'US-CO-OM-TS') AND (   (       S.ISPOS = 'N'
+                                           AND (S.CODE IN (SELECT SITE_CODE
+                                                      FROM FINSL_OU_SITE A,
+                                                           FINSL_OU      B
+                                                     WHERE     A.FINSL_OU_CODE =
+                                                                  B.CODE
+                                                           AND B.ADMSITE_CODE =
+                                                                  P_CONNECT_SITE
+                                                           AND coalesce(
+                                                                  A.STRICTLY_FOLLOW_TRANSIT_ROUTE,
+                                                                  0) = 0))
+                                        OR (    S.SLCODE NOT IN (SELECT SLCODE
+                                                      FROM FINSL_OU)
+                                            AND S.SITETYPE <> 'MS-CO-OM-TS')
+                                        OR (    S.SLCODE IN (SELECT DISTINCT SLCODE
+                                                      FROM FINSL_OU
+                                                     WHERE     ADMSITE_CODE =
+                                                                  P_CONNECT_SITE
+                                                           AND S.CODE NOT IN (SELECT DISTINCT
+                                                                          A.SITE_CODE
+                                                                     FROM FINSL_OU_SITE
+                                                                          A,
+                                                                          FINSL_OU
+                                                                          B
+                                                                    WHERE     A.FINSL_OU_CODE =
+                                                                                 B.CODE
+                                                                          AND B.ADMSITE_CODE =
+                                                                                 P_CONNECT_SITE))
+                                            AND S.SITETYPE <> 'MS-CO-OM-TS'))
+                                    OR (    S.ISPOS = 'Y'
+                                        AND S.CODE IN (SELECT ADMSITE_CODE
+                                                  FROM ADMSITE_OU
+                                                 WHERE     REPLN_ADMSITE_CODE =
+                                                              P_CONNECT_SITE
+                                                       AND STRICTLY_FOLLOW_TRANSIT_ROUTE =
+                                                              0
+                                                       AND EXT = 'N'))) AND (   S.SITETYPE = 'MS-CO-OM-TS'
+                                    OR (       S.SITETYPE IN ('US-CO-OM', 'US-CO-OM-TS')
+                                           AND (   (S.SLCODE IN (SELECT SLCODE
+                                                          FROM FINSL_OU
+                                                         WHERE ADMSITE_CODE =
+                                                                  P_CONNECT_SITE))
+                                                OR (S.SLCODE NOT IN (SELECT SLCODE
+                                                          FROM FINSL_OU)))
+                                        OR (S.CODE NOT IN (SELECT SITE_CODE
+                                                  FROM FINSL_OU_SITE)))) );
+
+      -- Sales Invoice number
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                userid,
+                'Item Data Validation',
+                   'Invalid Sales invocie number '
+                || Sales_Invoice_number
+                || ' or is un-posted state or not applicable for the site name < '
+                || Site_Short_name
+                || '>',
+                clock_timestamp()
+           FROM int$stg_sales_dr_note a LEFT OUTER JOIN
+		   (SELECT m.scheme_docno, SHRTNAME, ST.CODE SITE_CODE
+                   FROM SALINVMAIN m, ADMSITE ST, int$stg_SALES_DR_NOTE a1
+                  WHERE     M.ADMSITE_CODE = ST.CODE
+                        AND M.INVDT <= A1.ENTRY_DATE
+                        AND M.ADMOU_CODE = P_CONNECT_OU
+                        AND RELEASE_STATUS = 'P'
+                        AND M.SALETYPE = 'O'
+                        AND M.ADMSITE_CODE_OWNER = P_CONNECT_SITE
+                        AND UPPER(a1.SITE_SHORT_NAME) = UPPER(ST.SHRTNAME)
+                        AND UPPER(m.scheme_docno) =
+                               UPPER(A1.Sales_Invoice_number)) p
+ ON (UPPER(a.Sales_Invoice_number) = UPPER(p.scheme_docno))
+WHERE a.userid = P_USERID  --AND    UPPER (a.SITE_SHORT_NAME)  = UPPER (P.SHRTNAME)
+  AND P.scheme_docno IS NULL;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                userid,
+                'Item Data Validation',
+                   'Invalid Sales invocie number not applicable for the site name < '
+                || Site_Short_name
+                || '>',
+                clock_timestamp()
+           FROM  int$stg_sales_dr_note a
+LEFT OUTER JOIN admsite p ON (UPPER(a.SITE_SHORT_NAME) = UPPER(P.SHRTNAME))
+WHERE a.userid = P_USERID  AND P.SHRTNAME IS NULL;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                userid,
+                'Item Data Validation',
+                'GST document numering schemen must be selected for GST item sales Debit note.',
+                clock_timestamp()
+           FROM int$stg_SALES_DR_NOTE a, ADMDOCSCHEME D, SALINVMAIN M
+          WHERE     a.userid = P_USERID
+                AND UPPER(DOCUMENT_SCHEME) = UPPER(D.DOCNAME)
+                AND UPPER(a.Sales_Invoice_number) = UPPER(M.scheme_docno)
+                AND (   (    coalesce(M.GSTAPPL, 'N') <> 'N'
+                         AND coalesce(D.GSTAPPL, 'N') = 'N')
+                     OR (    coalesce(M.GSTAPPL, 'N') = 'N'
+                         AND coalesce(D.GSTAPPL, 'N') <> 'N'));
+
+      --FUTURE DATE SI
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                userid,
+                'Data Validation',
+                'Future date Sales Invoice are not allowed.',
+                clock_timestamp()
+           FROM  int$stg_sales_dr_note a
+LEFT OUTER JOIN salinvmain b ON (UPPER(a.SALES_INVOICE_NUMBER) = UPPER(b.scheme_docno))
+WHERE a.ENTRY_DATE < b.INVDT AND a.userid = p_userid;
+
+      --Item doesn't exist or is extinct.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                userid,
+                'Item Data Validation',
+                'Item doesn''t exist',
+                clock_timestamp()
+           FROM int$stg_sales_dr_note a 
+		   LEFT OUTER JOIN 
+		   (SELECT icode, ext FROM invitem
+
+UNION
+
+                 SELECT barcode, ext FROM invitem) b
+ ON (UPPER(a.barcode) = UPPER(b.icode))
+WHERE (b.icode IS NULL) AND a.userid = p_userid;
+
+      --Item doesn't belong to PO
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                userid,
+                'Item Data Validation',
+                'Item doesn''t exist in the specified invoice',
+                clock_timestamp()
+           FROM int$stg_sales_dr_note a 
+		   LEFT OUTER JOIN 
+		   (SELECT i.ICODE                         icode,
+                        d.icode                         icode1,
+                        UPPER(a1.SALES_INVOICE_NUMBER) SALES_INVOICE_NUMBER
+                   FROM SALINVDET             d,
+                        SALINVMAIN            m,
+                        int$stg_SALES_DR_NOTE a1,
+                        invitem               i
+                  WHERE     d.INVCODE = m.INVCODE
+                        AND UPPER(m.scheme_docno) =
+                               UPPER(a1.SALES_INVOICE_NUMBER)
+                        AND ADMOU_CODE = P_CONNECT_OU
+                        AND a1.userid = p_userid
+                        AND i.icode = d.icode
+
+UNION ALL
+
+                 SELECT i.barcode icode,
+                        d.icode   icode1,
+                        UPPER(a1.SALES_INVOICE_NUMBER)
+                   FROM SALINVDET             d,
+                        SALINVMAIN            m,
+                        int$stg_SALES_DR_NOTE a1,
+                        invitem               i
+                  WHERE     d.INVCODE = m.INVCODE
+                        AND UPPER(m.scheme_docno) =
+                               UPPER(a1.SALES_INVOICE_NUMBER)
+                        AND ADMOU_CODE = P_CONNECT_OU
+                        AND a1.userid = p_userid
+                        AND i.icode = d.icode) i
+						ON (UPPER(a.SALES_INVOICE_NUMBER) = UPPER(i.SALES_INVOICE_NUMBER) AND UPPER(a.barcode) = UPPER(i.icode))
+WHERE i.icode1 IS NULL AND a.userid = p_userid;
+
+      --Item quantity cannot be 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                userid,
+                'Mandatory Validation',
+                'Item quantity cannot be negative',
+                clock_timestamp()
+           FROM int$stg_SALES_DR_NOTE a
+          WHERE     coalesce(a.item_qty, 0) < 0
+                AND coalesce(a.item_qty, 0) <> 0
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                userid,
+                'Mandatory Validation',
+                'Item qty. becomes mandatory,if Item rate value is provided.',
+                clock_timestamp()
+           FROM int$stg_SALES_DR_NOTE a
+          WHERE     coalesce(a.item_qty, 0) = 0
+                AND coalesce(a.item_RATE, 0) <> 0
+                AND a.userid = p_userid;
+
+      --Item quantity should be in multiples of scan unit.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                userid,
+                'Item Data Validation',
+                'Item quantity should be in multiples of scan unit.',
+                clock_timestamp()
+           FROM int$stg_SALES_DR_NOTE a, invitem b
+          WHERE (   UPPER(a.barcode) = UPPER(b.icode)
+                     OR UPPER(a.barcode) = UPPER(b.barcode))
+                AND MOD(a.item_qty, b.barunit) <> 0
+                AND a.userid = p_userid;
+
+      --Item RATE cannot be 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                userid,
+                'Mandatory Validation',
+                'Item Rate cannot be negative',
+                clock_timestamp()
+           FROM int$stg_SALES_DR_NOTE a
+          WHERE     coalesce(a.item_RATE, 0) < 0
+                AND coalesce(a.item_RATE, 0) <> 0
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                userid,
+                'Mandatory Validation',
+                'Item Rate. becomes mandatory,if Item Qty value is provided.',
+                clock_timestamp()
+           FROM int$stg_SALES_DR_NOTE a
+          WHERE     coalesce(a.item_RATE, 0) = 0
+                AND coalesce(a.item_QTY, 0) <> 0
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                userid,
+                'Mandatory Validation',
+                'Amount becomes mandatory,if Item qty. and item rate value is not provided.',
+                clock_timestamp()
+           FROM int$stg_SALES_DR_NOTE a
+          WHERE     coalesce(a.item_RATE, 0) = 0
+                AND coalesce(a.item_QTY, 0) = 0
+                AND coalesce(a.AMOUNT, 0) = 0
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                userid,
+                'Mandatory Validation',
+                   'Invalid amount for the item of an invocie number '
+                || Sales_INVOICE_number,
+                clock_timestamp()
+           FROM int$stg_SALES_DR_NOTE a
+          WHERE     coalesce(a.item_RATE, 0) <> 0
+                AND coalesce(a.item_QTY, 0) <> 0
+                AND coalesce(a.AMOUNT, 0) <> 0
+                AND (coalesce(a.item_QTY, 0) * coalesce(a.item_RATE, 0)) <>
+                       coalesce(a.AMOUNT, 0)
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SALES_DR_NOTE',
+                userid,
+                'Data Validation',
+                   'Same Item multiple time found in Single '
+                || SALES_INVOICE_NUMBER,
+                clock_timestamp()
+           FROM int$stg_SALES_DR_NOTE a,
+                (  SELECT                                         -- a.lineno,
+                         A.SITE_SHORT_NAME,
+                          b.scheme_docno,
+                          COUNT(1),
+                          d.icode,
+                          i.barcode,
+                          a.document_number,
+                          a.sales_ledger,
+                          a.sales_sub_ledger,
+                          a.remarks,
+                          a.reason,
+                          a.DOCUMENT_SCHEME
+                     FROM int$stg_SALES_DR_NOTE a,
+                          SALINVMAIN          b,
+                          SALINVDET           d,
+                          invitem             i
+                    WHERE     UPPER(a.SALES_INVOICE_NUMBER) =
+                                 UPPER(b.scheme_docno)
+                          AND d.INVCODE = b.INVCODE
+                          AND ADMOU_CODE = P_CONNECT_OU
+                          AND d.icode = i.icode
+                          AND a.userid = p_userid
+                          AND (   UPPER(a.barcode) = UPPER(i.icode)
+                               OR UPPER(a.barcode) = UPPER(i.barcode))
+                 GROUP BY                                          --a.lineno,
+                         A.SITE_SHORT_NAME,
+                          b.scheme_docno,
+                          d.icode,
+                          i.barcode,
+                          a.document_number,
+                          a.sales_ledger,
+                          a.sales_sub_ledger,
+                          a.remarks,
+                          a.reason,
+                          a.DOCUMENT_SCHEME                 -- start rev : 003
+                                           ,
+                          d.dccode
+                   -- end rev : 003
+                   HAVING COUNT(1) > 1) b
+          WHERE     UPPER(a.SALES_INVOICE_NUMBER) = UPPER(b.scheme_docno)
+                AND UPPER(a.SITE_SHORT_NAME) = UPPER(b.SITE_SHORT_NAME)
+                AND (   UPPER(a.barcode) = UPPER(b.icode)
+                     OR UPPER(a.barcode) = UPPER(b.barcode))
+                AND a.userid = p_userid;
+
+      -- start rev : 003
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SALES_DR_NOTE',
+                userid,
+                'Data Validation',
+                   'Same Item '
+                || a.barcode
+                || ' multiple times found in Single '
+                || a.SALES_INVOICE_NUMBER
+                || ',Unable to proceed.',
+                clock_timestamp()
+           FROM int$stg_sales_dr_note a,
+                (  SELECT a.document_date,
+                          a.document_number,
+                          a.document_scheme,
+                          a.entry_date,
+                          a.item_remarks,
+                          a.barcode,
+                          i.icode,
+                          a.reason,
+                          a.remarks,
+                          a.sales_invoice_number,
+                          a.sales_ledger,
+                          a.sales_sub_ledger,
+                          a.site_short_name,
+                          COUNT(1)
+                     FROM int$stg_sales_dr_note a, invitem i
+                    WHERE     a.userid = p_userid
+                          AND (   UPPER(a.barcode) = UPPER(i.icode)
+                               OR UPPER(a.barcode) = UPPER(i.barcode))
+                 GROUP BY a.document_date,
+                          a.document_number,
+                          a.document_scheme,
+                          a.entry_date,
+                          a.item_remarks,
+                          a.barcode,
+                          i.icode,
+                          a.reason,
+                          a.remarks,
+                          a.sales_invoice_number,
+                          a.sales_ledger,
+                          a.sales_sub_ledger,
+                          a.site_short_name
+                   HAVING COUNT(1) > 1) b
+          WHERE (   UPPER(a.barcode) = UPPER(b.icode)
+                     OR UPPER(a.barcode) = UPPER(b.barcode))
+                AND a.userid = p_userid;
+
+      -- END REV : 003
+     
+      -- ledger
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                p_userid,
+                'Data Validation',
+                'Invalid Ledger Name (' || a.SALES_LEDGER || ')',
+                clock_timestamp()
+           FROM int$stg_SALES_DR_NOTE a
+          WHERE     NOT EXISTS
+                       (SELECT NULL
+                          FROM FINGL G
+                         WHERE     G.EXT = 'N'
+                               AND UPPER(G.GLNAME) = UPPER(a.SALES_LEDGER)
+                               AND SRCTYPE = 'G'
+                               AND (   (    g.admsite_code_owner IS NOT NULL
+                                        AND g.admsite_code_owner =
+                                               p_connect_site)
+                                    OR g.admsite_code_owner IS NULL))
+                AND a.SALES_LEDGER IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                p_userid,
+                'Data Validation',
+                'Sub-Ledger Can not be null for given ledger',
+                clock_timestamp()
+           FROM int$stg_SALES_DR_NOTE a
+          WHERE     EXISTS (SELECT NULL
+                          FROM FINGL
+                         WHERE     FINGL.EXT = 'N'
+                               AND UPPER(FINGL.GLNAME) =
+                                      UPPER(a.SALES_LEDGER)
+                               AND SLAPP = 'Y')
+                AND a.SALES_SUB_LEDGER IS NULL
+                AND a.SALES_LEDGER IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                p_userid,
+                'Data Validation',
+                'Sub-Ledger should be null for given ledger',
+                clock_timestamp()
+           FROM int$stg_SALES_DR_NOTE a
+          WHERE     EXISTS (SELECT NULL
+                          FROM FINGL
+                         WHERE     FINGL.EXT = 'N'
+                               AND UPPER(FINGL.GLNAME) =
+                                      UPPER(a.SALES_LEDGER)
+                               AND coalesce(SLAPP, 'N') = 'N')
+                AND a.SALES_SUB_LEDGER IS NOT NULL
+                AND a.SALES_LEDGER IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SALES_DR_NOTE',
+                p_userid,
+                'Data Validation',
+                'Invalid Sub-Ledger (' || a.SALES_SUB_LEDGER || ')',
+                clock_timestamp()
+           FROM int$stg_SALES_DR_NOTE a
+          WHERE     NOT EXISTS
+                       (SELECT NULL
+                          FROM FINSL, FINGL, FINSL_GL FGL
+                         WHERE     UPPER(FINSL.SLNAME) =
+                                      UPPER(a.SALES_SUB_LEDGER)
+                               AND FINGL.GLCODE = FGL.GLCODE
+                               AND FGL.SLCODE = FINSL.SLCODE
+                               AND FGL.EXT = 'N'
+                               AND FINSL.EXT = 'N'
+                               AND FINGL.GLCODE =
+                                      (SELECT GLCODE
+                                         FROM FINGL
+                                        WHERE UPPER(GLNAME) =
+                                                 UPPER(A.SALES_LEDGER)))
+                AND a.SALES_SUB_LEDGER IS NOT NULL
+                AND a.userid = p_userid;
+
+      -- Check whether records are valid or not
+      BEGIN
+         SELECT 'S'
+           INTO STRICT v_status
+           
+          WHERE EXISTS (SELECT 'S'
+                      FROM int$error_log
+                     WHERE userid = p_userid);
+
+         RETURN('0');
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            RETURN('1');
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'V' || 'SALES_DR_NOTE',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+   --  PROMPT CREATE GRC against PO after validation
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+
+function "main"."int$pkg_sales_dr_note_int$pkg_sales_dr_note_validate(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+ 
+DECLARE
+    -- Change this to reflect the dblink connection string
+    --v_conn_str  text := format('port=%s dbname=%s user=%s', current_setting('port'), current_database(), current_user);
+    v_srvname       name;
+    v_connname      text;
+    v_connstr       text;
+    v_conn_result   text;
+    v_query         text;
+
+    v_ret    text;
+BEGIN
+    v_srvname := 'foreign_pgbase';
+    v_connname := replace(uuid_generate_v4()::text,'-','');
+    v_connstr  := v_srvname;
+    
+    --Open the connection  
+    SELECT dblink_connect(v_connname,v_connstr) 
+    INTO v_conn_result;
+	
+	v_query := 'SELECT * FROM int$pkg_sales_dr_note_int$pkg_sales_dr_note_validate_atx ( ' || quote_nullable(p_userid::text) || '::bigint,' || quote_nullable(p_connect_site::text) || '::bigint,' || quote_nullable(p_logging_date::text) || '::timestamp without time zone,' || quote_nullable(p_connect_ou::text) || '::bigint )';
+	SELECT * INTO v_ret FROM dblink(v_connname, v_query) AS p (ret text);
+
+	
+	SELECT dblink_disconnect(v_connname) 
+    INTO v_conn_result;
+	
+	RETURN v_ret;
+EXCEPTION 
+   WHEN OTHERS THEN
+        SELECT dblink_disconnect(v_connname) 
+        INTO v_conn_result;
+
+END;
+"""
+  returnType = text
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

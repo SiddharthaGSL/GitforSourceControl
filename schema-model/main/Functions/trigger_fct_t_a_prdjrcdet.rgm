@@ -1,0 +1,849 @@
+function "main"."trigger_fct_t_a_prdjrcdet()" {
+  text = """
+
+/****************************************************************************************************************
+   NAME: T_A_PRDJRCDET
+   PURPOSE:
+   REVISIONS:
+   No.          Date            Author      Description
+   ---------    ----------      ----------  -------------------------------------------------------------------
+    REV : 000   25-JUL-2013     MANASH      (BUG ID : 825)  V11 Production.
+    REV : 001   07-DEC-2013     DIPTIMAN    (BUG ID : 924) Advance production related changes.
+    REV : 002   25-APR-2014     MANASH      (BUG ID : KBN-690-90209) Data not removing from stock after delete job receipt.
+    REV : 003   11-JUL-2014     MANASH      (BUG ID : 1408) Workbench.
+    REV : 004   09-FEB-2015     MANASH      (BUG ID : 2368)  Production Alternate Item changes.
+    REV : 005   14-NOV-2017     DIPTIMAN    (TFS ID : 32259) COGS costrate related changes.
+    REV : 006   06-APR-2018     DIPTIMAN    (TFS ID : 40172) Pending job order and recepit rate update should not in closed month.
+    REV : 007   08-JAN-2019     ANINDYA     (TFS ID : 6779 ) Non trading item costing related changes.
+    REV : 008   17-AUG-2020     MOUSUMI     (TFS ID : MIGRATION ) MIGRATION RELATED CHANGES
+    REV : 009   12-APR-2022     SIDDHARTHA  (TFS ID : XXXX) Introduction of Batch Serial Code
+****************************************************************************************************************/
+DECLARE
+   V_IS_CONSIDER_IN_WIP         char(1);
+   V_JOBTYPE                    PRDJOBMAIN.JOBTYPE%TYPE;
+   V_TYPE                       varchar(100);
+   V_DETAIL_CODE                INVSTOCK.DETAIL_CODE%TYPE;
+   V_ENTCODE                    INVSTOCK.ENTCODE%TYPE;
+   V_ENTNO                      INVSTOCK.ENTNO%TYPE;
+   V_SCHEME_DOCNO               INVSTOCK.SCHEME_DOCNO%TYPE;
+   V_ENTDT                      INVSTOCK.ENTDT%TYPE;
+   V_ENTTYPE                    INVSTOCK.ENTTYPE%TYPE;
+   V_YCODE                      INVSTOCK.YCODE%TYPE;
+   V_REFDOCNO                   INVSTOCK.REFDOCNO%TYPE;
+   V_REFPCODE                   INVSTOCK.REFPCODE%TYPE;
+   V_NEW_ICODE                  INVSTOCK.ICODE%TYPE;
+   V_OLD_ICODE                  INVSTOCK.ICODE%TYPE;
+   V_NEW_QTY                    INVSTOCK.QTY%TYPE;
+   V_OLD_QTY                    INVSTOCK.QTY%TYPE;
+   V_NEW_RATE                   INVSTOCK.RATE%TYPE;
+   V_OLD_RATE                   INVSTOCK.RATE%TYPE;
+   V_LOCCODE                    INVSTOCK.LOCCODE%TYPE;
+   V_REFLOCCODE                 INVSTOCK.REFLOCCODE%TYPE;
+   V_REFCMPCODE                 INVSTOCK.REFCMPCODE%TYPE;
+   V_REFGLCODE                  INVSTOCK.REFGLCODE%TYPE;
+   V_REFDEPTCODE                INVSTOCK.REFDEPTCODE%TYPE;
+   V_REFPRCODE                  INVSTOCK.REFPRCODE%TYPE;
+   V_REFPKGCODE                 INVSTOCK.REFPKGCODE%TYPE;
+   V_REFDCCODE                  INVSTOCK.REFDCCODE%TYPE;
+   V_OTHER_RATE                 INVSTOCK.COSTRATE%TYPE;
+   V_CNT                        bigint;
+   V_OP_SEQ                     PRDWIPTRANS.OPERATION_SEQ%TYPE;
+   V_OVR_QTY                    PRDJOBDET.QTY%TYPE;
+   
+   V_OP_SEQ_1                   PRDWIPTRANS.OPERATION_SEQ%TYPE := NULL;
+   V_REFPRCODE_1                INVSTOCK.REFPRCODE%TYPE := NULL;
+   V_PRV_PRCODE                 PRDLOTOPERATION.PRCODE%TYPE := NULL;
+   V_COM_EXISTS                 char(1) := 'N';
+   V_PREV_SEQ                   PRDLOTOPERATION.OPERATION_SEQ%TYPE;
+   V_QTY                        PRDLOTOPERATION.AVAILABLE_TO_FORWARD%TYPE;
+   V_ADMSITE_CODE               PRDJRCMAIN.ADMSITE_CODE%TYPE;
+   V_MAX_OP_SEQ_SAI             PRDJOBDET.OPERATION_SEQ%TYPE;
+   V_IS_LAST_PROCESS            char(1);
+   --START REV : 007
+   V_ADMOU_CODE                 PRDJOBMAIN.ADMOU_CODE%TYPE;
+   --END REV : 007
+   -- START REV : 017
+   
+   V_SID                        bigint;
+   V_PROGRAM                    varchar(50);
+   V_ENTRY_SOURCE               varchar(25) := NULL;
+-- END REV : 017
+BEGIN
+  BEGIN
+   IF TG_OP = 'INSERT'
+   THEN
+      V_TYPE := 'INSERTING';
+   ELSIF TG_OP = 'UPDATE'
+   THEN
+      V_TYPE := 'UPDATING';
+   ELSIF TG_OP = 'DELETE'
+   THEN
+      V_TYPE := 'DELETING';
+   END IF;
+
+   SELECT ENTNO,
+          JRCNO,
+          JRC_DATE,
+          'PRR',
+          YCODE,
+          REFNO,
+          PCODE,
+          PRCODE,
+          ADMSITE_CODE,
+          -- START REV : 007
+          ADMOU_CODE                                          -- END REV : 007
+                    ,
+          ENTRY_SOURCE
+     INTO STRICT V_ENTNO,
+          V_SCHEME_DOCNO,
+          V_ENTDT,
+          V_ENTTYPE,
+          V_YCODE,
+          V_REFDOCNO,
+          V_REFPCODE,
+          V_REFPRCODE,
+          V_ADMSITE_CODE,
+          -- START REV : 007
+          V_ADMOU_CODE                                      -- START REV : 007
+                      ,
+          V_ENTRY_SOURCE
+     FROM PRDJRCMAIN
+    WHERE CODE = coalesce(OLD.JRCCODE, NEW.JRCCODE);
+
+   SELECT CONSIDER_IN_WIP,
+          OPERATION_SEQ,
+          coalesce(COMPLETED_QTY, 0) - coalesce(QTY, 0),
+          -- START REV : 004
+          PREV_PRCODE,
+          PREV_OPERATION_SEQ
+     -- END REV : 004
+     INTO STRICT V_IS_CONSIDER_IN_WIP,
+          V_OP_SEQ,
+          V_OVR_QTY,
+          -- START REV : 004
+          V_PRV_PRCODE,
+          V_PREV_SEQ
+     -- END REV : 004
+     FROM PRDJOBDET
+    WHERE CODE = coalesce(NEW.JOBDET_CODE, OLD.JOBDET_CODE);
+
+   IF coalesce(NEW.LOTCODE, OLD.LOTCODE) IS NOT NULL
+   THEN
+      BEGIN
+         SELECT CONSIDER_IN_WIP
+           INTO STRICT V_IS_CONSIDER_IN_WIP
+           FROM PRDLOTOPERATION LO
+          WHERE     LO.LOTCODE = coalesce(NEW.LOTCODE, OLD.LOTCODE)
+                AND LO.ASSEMBLY_ICODE =
+                       coalesce(NEW.ASSEMBLY_ICODE, OLD.ASSEMBLY_ICODE)
+                AND coalesce(LO.ASS_SAITEM_CODE, 0) =
+                       coalesce(
+                          NEW.ASS_SAITEM_CODE,
+                          coalesce(OLD.ASS_SAITEM_CODE,
+                               coalesce(LO.ASS_SAITEM_CODE, 0)))
+                AND LO.PRCODE = V_REFPRCODE
+                AND LO.OPERATION_SEQ = V_OP_SEQ;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            V_IS_CONSIDER_IN_WIP := 'Y';
+      END;
+   END IF;
+
+   -- START REV : 017
+SELECT PG_BACKEND_PID() INTO STRICT V_SID;   
+SELECT APPLICATION_NAME INTO STRICT V_PROGRAM FROM PG_STAT_ACTIVITY WHERE PID=V_SID;
+
+   IF     coalesce(V_ENTRY_SOURCE, 'XX') <> 'WEB'
+AND not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+   THEN
+      -- END REV : 017
+      IF OLD.LOTCODE IS NOT NULL
+      THEN
+         IF     OLD.JOB_ASSEMBLY_ICODE IS NOT NULL
+            AND (OLD.ASSEMBLY_ICODE <> OLD.JOB_ASSEMBLY_ICODE)
+         THEN
+            SELECT MAX(TRUNC(OPERATION_SEQ))
+              INTO STRICT V_MAX_OP_SEQ_SAI
+              FROM PRDLOTOPERATION
+             WHERE     LOTCODE = OLD.LOTCODE
+                   AND ASSEMBLY_ICODE = OLD.JOB_ASSEMBLY_ICODE;
+
+            UPDATE PRDLOTOPERATION LO
+               SET ALTERNATE_QTY = coalesce(ALTERNATE_QTY, 0) - coalesce(OLD.QTY, 0)
+             WHERE     LOTCODE = OLD.LOTCODE
+                   AND ASSEMBLY_ICODE = OLD.ASSEMBLY_ICODE
+                   AND LO.OPERATION_SEQ = V_OP_SEQ;
+         ELSIF     OLD.JOB_ASSEMBLY_ICODE IS NOT NULL
+               AND (OLD.ASSEMBLY_ICODE = OLD.JOB_ASSEMBLY_ICODE)
+         THEN
+            SELECT MAX(TRUNC(OPERATION_SEQ))
+              INTO STRICT V_MAX_OP_SEQ_SAI
+              FROM PRDLOTOPERATION
+             WHERE     LOTCODE = OLD.LOTCODE
+                   AND ASSEMBLY_ICODE = OLD.ASSEMBLY_ICODE
+                   AND coalesce(ASS_SAITEM_CODE, 0) =
+                          coalesce(OLD.ASS_SAITEM_CODE,
+                               coalesce(ASS_SAITEM_CODE, 0));
+         END IF;
+      END IF;
+   END IF;
+
+   SELECT JOBTYPE
+     INTO STRICT V_JOBTYPE
+     FROM PRDJOBMAIN
+    WHERE CODE = coalesce(NEW.JOBCODE, OLD.JOBCODE);
+
+   IF TG_OP = 'UPDATE' OR TG_OP = 'DELETE'
+   THEN
+      -- START REV : 017
+      IF     coalesce(V_ENTRY_SOURCE, 'XX') <> 'WEB'
+AND not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+      THEN
+         -- END REV : 017
+         IF coalesce(OLD.LOTCODE, 0) <> 0
+         THEN
+            IF OLD.ASSEMBLY_ICODE = OLD.JOB_ASSEMBLY_ICODE
+            THEN
+               UPDATE PRDLOTOPERATION
+                  SET COMPLETED_QTY =
+                         coalesce(COMPLETED_QTY, 0) - coalesce(OLD.QTY, 0)
+                WHERE     LOTCODE = OLD.LOTCODE
+                      AND ASSEMBLY_ICODE = OLD.ASSEMBLY_ICODE
+                      AND coalesce(ASS_SAITEM_CODE, 0) =
+                             coalesce(OLD.ASS_SAITEM_CODE,
+                                  coalesce(ASS_SAITEM_CODE, 0))
+                      AND OPERATION_SEQ = V_OP_SEQ
+                      AND PRCODE = V_REFPRCODE;
+            END IF;
+
+            IF V_JOBTYPE = 'LS' AND V_IS_CONSIDER_IN_WIP <> 'Y'
+            THEN
+               UPDATE PRDMPLANALLOC
+                  SET COMPLETED_QTY =
+                         coalesce(COMPLETED_QTY, 0) - coalesce(OLD.QTY, 0)
+                WHERE CODE =
+                         (SELECT PRDMPLANALLOC_CODE
+                            FROM PRDLOTDET
+                           WHERE CODE =
+                                    (SELECT LOTDET_CODE
+                                       FROM PRDLOTOPERATION
+                                      WHERE     LOTCODE = OLD.LOTCODE
+                                            AND ASSEMBLY_ICODE =
+                                                   OLD.JOB_ASSEMBLY_ICODE
+                                            AND CONSIDER_IN_WIP = 'N'
+                                            AND OPERATION_SEQ = V_OP_SEQ
+                                            AND PRCODE = V_REFPRCODE));
+            END IF;
+
+            -- if alternate item received
+            IF     V_IS_CONSIDER_IN_WIP <> 'N'
+               AND OLD.JOB_ASSEMBLY_ICODE IS NOT NULL
+               AND (OLD.ASSEMBLY_ICODE <> OLD.JOB_ASSEMBLY_ICODE)
+            THEN
+               UPDATE PRDLOTOPERATION
+                  SET AVAILABLE_TO_FORWARD =
+                         coalesce(AVAILABLE_TO_FORWARD, 0) - coalesce(OLD.QTY, 0)
+                WHERE     LOTCODE = OLD.LOTCODE
+                      AND ASSEMBLY_ICODE = OLD.ASSEMBLY_ICODE
+                      -- START REV : 004
+                      --AND     OPERATION_SEQ   =   V_OP_SEQ
+                      --AND     PRCODE          =   V_REFPRCODE;
+                      AND OPERATION_SEQ = TRUNC(V_OP_SEQ);
+            -- END REV : 004
+            -- if same item received
+            ELSIF     V_IS_CONSIDER_IN_WIP <> 'N'
+                  AND OLD.JOB_ASSEMBLY_ICODE IS NOT NULL
+                  AND (OLD.ASSEMBLY_ICODE = OLD.JOB_ASSEMBLY_ICODE)
+            THEN
+               UPDATE PRDLOTOPERATION
+                  SET AVAILABLE_TO_FORWARD =
+                         coalesce(AVAILABLE_TO_FORWARD, 0) - coalesce(OLD.QTY, 0)
+                WHERE     LOTCODE = OLD.LOTCODE
+                      AND ASSEMBLY_ICODE = OLD.ASSEMBLY_ICODE
+                      AND coalesce(ASS_SAITEM_CODE, 0) =
+                             coalesce(OLD.ASS_SAITEM_CODE,
+                                  coalesce(ASS_SAITEM_CODE, 0))
+                      AND OPERATION_SEQ = TRUNC(V_OP_SEQ)
+                      AND CONSIDER_IN_WIP <> 'N';
+            -- END REV : 004
+            END IF;
+         END IF;
+
+         IF     OLD.ASSEMBLY_ICODE <> OLD.JOB_ASSEMBLY_ICODE
+            AND OLD.JOB_ASSEMBLY_ICODE IS NOT NULL
+         THEN
+            UPDATE PRDJOBDET D
+               SET D.ALTERNATE_QTY =
+                      coalesce(D.ALTERNATE_QTY, 0) - coalesce(OLD.QTY, 0)
+             WHERE D.CODE = OLD.JOBDET_CODE;
+
+            -- START REV : 004
+            UPDATE PRDJOBBOM JB
+               SET ALTERNATE_CNL_QTY =
+                      ROUND (
+                           coalesce(ALTERNATE_CNL_QTY, 0)
+                         - (  (  (coalesce(JB.BOM_QTY, 0) * coalesce(OLD.QTY, 0))
+                               * 100)
+                            / (100 - coalesce(SHRINKAGE, 0))),
+                         3)
+             WHERE     JB.PRDJOBDET_CODE = OLD.JOBDET_CODE
+                   AND ASSEMBLY_ICODE = OLD.JOB_ASSEMBLY_ICODE
+                   AND COMPONENT_ICODE <> OLD.JOB_ASSEMBLY_ICODE;
+
+            -- END REV : 004
+            IF coalesce(OLD.LOTCODE, 0) <> 0
+            THEN
+               UPDATE PRDLOTBOM LB
+                  SET QTY =
+                         CASE
+                            WHEN (ROUND (
+                                       coalesce(QTY, 0)
+                                     - (coalesce(OLD.QTY, 0) * coalesce(BOM_QTY, 0)),
+                                     3)) < 0
+                            THEN
+                               0
+                            ELSE
+                               (ROUND (
+                                     coalesce(QTY, 0)
+                                   - (coalesce(OLD.QTY, 0) * coalesce(BOM_QTY, 0)),
+                                   3))
+                         END
+                WHERE     LB.LOTCODE = OLD.LOTCODE
+                      AND LB.ASSEMBLY_ICODE = OLD.ASSEMBLY_ICODE
+                      AND LB.PRCODE = V_REFPRCODE
+                      AND LB.OPERATION_SEQ = V_OP_SEQ;
+            END IF;
+         ELSE
+            UPDATE PRDJOBDET D
+               SET D.COMPLETED_QTY =
+                      coalesce(D.COMPLETED_QTY, 0) - coalesce(OLD.QTY, 0)
+             WHERE D.CODE = OLD.JOBDET_CODE;
+         END IF;
+      END IF;
+   END IF;
+
+   IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE'
+   THEN
+      -- START REV : 017
+      IF     coalesce(V_ENTRY_SOURCE, 'XX') <> 'WEB'
+AND not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+      THEN
+         -- END REV : 017
+         IF NEW.LOTCODE IS NOT NULL
+         THEN
+            IF     NEW.JOB_ASSEMBLY_ICODE IS NOT NULL
+               AND (NEW.ASSEMBLY_ICODE <> NEW.JOB_ASSEMBLY_ICODE)
+            THEN
+               SELECT MAX(OPERATION_SEQ)
+                 INTO STRICT V_MAX_OP_SEQ_SAI
+                 FROM PRDLOTOPERATION
+                WHERE     LOTCODE = NEW.LOTCODE
+                      AND ASSEMBLY_ICODE = NEW.JOB_ASSEMBLY_ICODE;
+
+               UPDATE PRDLOTOPERATION LO
+                  SET ALTERNATE_QTY =
+                         coalesce(ALTERNATE_QTY, 0) + coalesce(NEW.QTY, 0)
+                WHERE     LOTCODE = NEW.LOTCODE
+                      AND ASSEMBLY_ICODE = NEW.ASSEMBLY_ICODE
+                      AND LO.OPERATION_SEQ = V_OP_SEQ;
+            ELSIF     NEW.JOB_ASSEMBLY_ICODE IS NOT NULL
+                  AND (NEW.ASSEMBLY_ICODE = NEW.JOB_ASSEMBLY_ICODE)
+            THEN
+               SELECT MAX(OPERATION_SEQ)
+                 INTO STRICT V_MAX_OP_SEQ_SAI
+                 FROM PRDLOTOPERATION
+                WHERE     LOTCODE = NEW.LOTCODE
+                      AND ASSEMBLY_ICODE = NEW.ASSEMBLY_ICODE
+                      AND coalesce(ASS_SAITEM_CODE, 0) =
+                             coalesce(NEW.ASS_SAITEM_CODE,
+                                  coalesce(ASS_SAITEM_CODE, 0));
+            END IF;
+         END IF;
+
+         IF coalesce(NEW.LOTCODE, 0) <> 0
+         THEN
+            IF NEW.ASSEMBLY_ICODE = NEW.JOB_ASSEMBLY_ICODE
+            THEN
+               UPDATE PRDLOTOPERATION
+                  SET COMPLETED_QTY =
+                         coalesce(COMPLETED_QTY, 0) + coalesce(NEW.QTY, 0)
+                WHERE     LOTCODE = NEW.LOTCODE
+                      AND ASSEMBLY_ICODE = NEW.ASSEMBLY_ICODE
+                      AND coalesce(ASS_SAITEM_CODE, 0) =
+                             coalesce(NEW.ASS_SAITEM_CODE,
+                                  coalesce(ASS_SAITEM_CODE, 0))
+                      AND OPERATION_SEQ = V_OP_SEQ
+                      AND PRCODE = V_REFPRCODE;
+            END IF;
+
+            IF V_JOBTYPE = 'LS' AND V_IS_CONSIDER_IN_WIP <> 'Y'
+            THEN
+               UPDATE PRDMPLANALLOC
+                  SET COMPLETED_QTY =
+                         coalesce(COMPLETED_QTY, 0) + coalesce(NEW.QTY, 0)
+                WHERE CODE =
+                         (SELECT PRDMPLANALLOC_CODE
+                            FROM PRDLOTDET
+                           WHERE CODE =
+                                    (SELECT LOTDET_CODE
+                                       FROM PRDLOTOPERATION
+                                      WHERE     LOTCODE = NEW.LOTCODE
+                                            AND ASSEMBLY_ICODE =
+                                                   NEW.JOB_ASSEMBLY_ICODE
+                                            AND CONSIDER_IN_WIP = 'N'
+                                            AND OPERATION_SEQ = V_OP_SEQ
+                                            AND PRCODE = V_REFPRCODE));
+            END IF;
+         END IF;
+
+         -- if alternate item received
+         IF     V_IS_CONSIDER_IN_WIP <> 'N'
+            AND NEW.JOB_ASSEMBLY_ICODE IS NOT NULL
+            AND (NEW.ASSEMBLY_ICODE <> NEW.JOB_ASSEMBLY_ICODE)
+         THEN
+            UPDATE PRDLOTOPERATION
+               SET AVAILABLE_TO_FORWARD =
+                      coalesce(AVAILABLE_TO_FORWARD, 0) + coalesce(NEW.QTY, 0)
+             WHERE     LOTCODE = NEW.LOTCODE
+                   AND ASSEMBLY_ICODE = NEW.ASSEMBLY_ICODE
+                   AND OPERATION_SEQ = TRUNC(V_OP_SEQ);
+         -- END REV : 004
+         -- if same item received
+         ELSIF     V_IS_CONSIDER_IN_WIP <> 'N'
+               AND NEW.JOB_ASSEMBLY_ICODE IS NOT NULL
+               AND (NEW.ASSEMBLY_ICODE = NEW.JOB_ASSEMBLY_ICODE)
+         THEN
+            UPDATE PRDLOTOPERATION
+               SET AVAILABLE_TO_FORWARD =
+                      coalesce(AVAILABLE_TO_FORWARD, 0) + coalesce(NEW.QTY, 0)
+             WHERE     LOTCODE = NEW.LOTCODE
+                   AND ASSEMBLY_ICODE = NEW.ASSEMBLY_ICODE
+                   AND coalesce(ASS_SAITEM_CODE, 0) =
+                          coalesce(NEW.ASS_SAITEM_CODE,
+                               coalesce(ASS_SAITEM_CODE, 0))
+                   AND OPERATION_SEQ = TRUNC(V_OP_SEQ)
+                   AND CONSIDER_IN_WIP <> 'N';
+         END IF;
+      -- END REV : 004
+      END IF;
+   END IF;
+
+   -- START REV : 017
+   IF     coalesce(V_ENTRY_SOURCE, 'XX') <> 'WEB'
+AND not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+   THEN
+      -- END REV : 017
+      IF     NEW.ASSEMBLY_ICODE <> NEW.JOB_ASSEMBLY_ICODE
+         AND NEW.JOB_ASSEMBLY_ICODE IS NOT NULL
+      THEN
+         UPDATE PRDJOBDET D
+            SET D.ALTERNATE_QTY =
+                   coalesce(D.ALTERNATE_QTY, 0) + coalesce(NEW.QTY, 0)
+          WHERE D.CODE = NEW.JOBDET_CODE;
+
+         -- START REV : 004
+         UPDATE PRDJOBBOM JB
+            SET ALTERNATE_CNL_QTY =
+                   ROUND (
+                        coalesce(ALTERNATE_CNL_QTY, 0)
+                      + (  ( (coalesce(JB.BOM_QTY, 0) * coalesce(NEW.QTY, 0)) * 100)
+                         / (100 - coalesce(SHRINKAGE, 0))),
+                      3)
+          WHERE     JB.PRDJOBDET_CODE = NEW.JOBDET_CODE
+                AND ASSEMBLY_ICODE = NEW.JOB_ASSEMBLY_ICODE
+                AND COMPONENT_ICODE <> NEW.JOB_ASSEMBLY_ICODE;
+
+         -- END REV : 004
+         IF coalesce(NEW.LOTCODE, 0) <> 0
+         THEN
+            UPDATE PRDLOTBOM LB
+               SET QTY =
+                      CASE
+                         WHEN (ROUND (
+                                    coalesce(QTY, 0)
+                                  + (coalesce(NEW.QTY, 0) * coalesce(BOM_QTY, 0)),
+                                  3)) < 0
+                         THEN
+                            0
+                         ELSE
+                            (ROUND (
+                                  coalesce(QTY, 0)
+                                + (coalesce(NEW.QTY, 0) * coalesce(BOM_QTY, 0)),
+                                3))
+                      END
+             WHERE     LB.LOTCODE = NEW.LOTCODE
+                   AND LB.ASSEMBLY_ICODE = NEW.ASSEMBLY_ICODE
+                   AND LB.OPERATION_SEQ >= V_OP_SEQ
+                   AND PRCODE = V_REFPRCODE;
+         END IF;
+      ELSE
+         UPDATE PRDJOBDET D
+            SET D.COMPLETED_QTY =
+                   coalesce(D.COMPLETED_QTY, 0) + coalesce(NEW.QTY, 0)
+          WHERE D.CODE = NEW.JOBDET_CODE;
+      END IF;
+   END IF;                                                        -- REV : 017
+   -- Receive Posting in WIP
+   CALL DB_PKG_PRODUCTION$POST_WIP_TRANSACTION(
+      V_ADMSITE_CODE,
+      V_TYPE,
+      'REC',
+      OLD.CODE,
+      NEW.CODE,
+      NEW.LOTCODE,
+      NEW.JOBCODE,
+      NULL,
+      coalesce(NEW.JRCCODE, OLD.JRCCODE),
+      V_OP_SEQ,
+      V_REFPCODE,
+      V_REFPRCODE,
+      coalesce(NEW.JOB_ASSEMBLY_ICODE, NEW.ASSEMBLY_ICODE),
+      NULL,
+      'SER',
+      0 - NEW.QTY,
+      NULL,
+      NEW.JOB_RATE,
+      NULL,
+      V_ENTDT,
+      NEW.ASS_SAITEM_CODE,
+      NULL,
+      NEW.JOB_ASSEMBLY_ICODE,
+      -- START REV : 009
+      NULL,
+      coalesce(NEW.INVBATCH_SERIAL_CODE,OLD.INVBATCH_SERIAL_CODE)
+      --END REV : 009
+      );
+
+   IF V_IS_CONSIDER_IN_WIP = 'N'
+   THEN
+      -- if alternate item received and if the alternate item not present in lot then
+      -- at the time of posting any selection for alternate item from lot will return no rows, for this conside_in_wip set to 'Y'
+      -- so REC-PSD record will inserted for alternate item for this received whether it last process or not
+      -- at the time of saving alternate item will get insertted in lot with order item's route or it's own defined route
+      -- then it will then find that the current process is FG or not
+      -- this satement will delete previously inserted REC-PSD record for FG process at the time of saving for alternate item
+      DELETE FROM PRDWIPTRANS T
+            WHERE     JRCCODE = coalesce(NEW.JRCCODE, OLD.JRCCODE)
+                  AND DET_CODE = coalesce(NEW.CODE, OLD.CODE)
+                  AND JOBCODE = coalesce(NEW.JOBCODE, OLD.JOBCODE)
+                  AND TXN_TYPE = 'REC'
+                  AND ITEM_TYPE = 'PSD';
+
+      -- end
+      -- WIP posting for finished item type
+      CALL DB_PKG_PRODUCTION$POST_WIP_TRANSACTION(
+         V_ADMSITE_CODE,
+         V_TYPE,
+         'REC',
+         OLD.CODE,
+         NEW.CODE,
+         NEW.LOTCODE,
+         NEW.JOBCODE,
+         NULL,
+         coalesce(NEW.JRCCODE, OLD.JRCCODE),
+         CASE
+            WHEN coalesce(NEW.LOTCODE, 0) = 0 AND coalesce(V_OP_SEQ_1, V_OP_SEQ) < 1
+            THEN
+               coalesce(V_OP_SEQ_1, V_OP_SEQ)
+            ELSE
+               TRUNC(coalesce(V_OP_SEQ_1, V_OP_SEQ))
+         END,
+         NULL,
+         CASE
+            WHEN     coalesce(V_OP_SEQ_1, V_OP_SEQ) <>
+                        FLOOR(coalesce(V_OP_SEQ_1, V_OP_SEQ))
+                 AND coalesce(V_OP_SEQ_1, V_OP_SEQ) > 1
+            THEN
+               V_PRV_PRCODE
+            ELSE
+               coalesce(V_REFPRCODE_1, V_REFPRCODE)
+         END,
+         NEW.ASSEMBLY_ICODE,
+         NEW.ASSEMBLY_ICODE,
+         'FG',
+         NEW.QTY,
+         NEW.QTY,
+         NULL,
+         NULL,
+         V_ENTDT,
+         NEW.ASS_SAITEM_CODE,
+         NEW.ASS_SAITEM_CODE,
+         NEW.JOB_ASSEMBLY_ICODE,
+         -- START REV : 009
+         NULL,
+         coalesce(NEW.INVBATCH_SERIAL_CODE,OLD.INVBATCH_SERIAL_CODE)
+         --END REV : 009
+         );
+
+      -- reverse WIP posting for finished item type
+      CALL DB_PKG_PRODUCTION$POST_WIP_TRANSACTION(
+         V_ADMSITE_CODE,
+         V_TYPE,
+         'FCL',
+         OLD.CODE,
+         NEW.CODE,
+         NEW.LOTCODE,
+         NEW.JOBCODE,
+         NULL,
+         coalesce(NEW.JRCCODE, OLD.JRCCODE),
+         CASE
+            WHEN coalesce(NEW.LOTCODE, 0) = 0 AND coalesce(V_OP_SEQ_1, V_OP_SEQ) < 1
+            THEN
+               coalesce(V_OP_SEQ_1, V_OP_SEQ)
+            ELSE
+               TRUNC(coalesce(V_OP_SEQ_1, V_OP_SEQ))
+         END,
+         NULL,
+         CASE
+            WHEN     coalesce(V_OP_SEQ_1, V_OP_SEQ) <>
+                        FLOOR(coalesce(V_OP_SEQ_1, V_OP_SEQ))
+                 AND coalesce(V_OP_SEQ_1, V_OP_SEQ) > 1
+            THEN
+               V_PRV_PRCODE
+            ELSE
+               coalesce(V_REFPRCODE_1, V_REFPRCODE)
+         END,
+         NEW.ASSEMBLY_ICODE,
+         NEW.ASSEMBLY_ICODE,
+         'FG',
+         0 - NEW.QTY,
+         0 - NEW.QTY,
+         NULL,
+         NULL,
+         V_ENTDT,
+         NEW.ASS_SAITEM_CODE,
+         NEW.ASS_SAITEM_CODE,
+         NEW.JOB_ASSEMBLY_ICODE,
+         -- START REV : 009
+         NULL,
+         coalesce(NEW.INVBATCH_SERIAL_CODE,OLD.INVBATCH_SERIAL_CODE)
+         --END REV : 009
+         );
+
+      -- finished goods stock posting
+      V_DETAIL_CODE := coalesce(NEW.CODE, OLD.CODE);
+      V_ENTCODE := coalesce(NEW.JRCCODE, OLD.JRCCODE);
+      V_NEW_ICODE := NEW.ASSEMBLY_ICODE;
+      V_OLD_ICODE := OLD.ASSEMBLY_ICODE;
+      V_NEW_QTY := NEW.QTY;
+      V_OLD_QTY := OLD.QTY;
+      V_NEW_RATE := round((NEW.RATE)::numeric, 3);
+      V_OLD_RATE := round((OLD.RATE)::numeric, 3);
+      V_LOCCODE := coalesce(NEW.RECEIVE_LOCCODE, OLD.RECEIVE_LOCCODE);
+
+      IF V_LOCCODE IS NOT NULL
+      THEN
+         CALL DB_PKG_STOCK$REFLECT(V_DETAIL_CODE,
+                               V_TYPE,
+                               V_ENTCODE,
+                               V_ENTNO,
+                               V_ENTDT,
+                               V_ENTTYPE,
+                               V_LOCCODE,
+                               V_YCODE,
+                               V_NEW_ICODE,
+                               V_OLD_ICODE,
+                               V_NEW_QTY,
+                               V_OLD_QTY,
+                               V_NEW_RATE,
+                               V_OLD_RATE,
+                               V_REFPCODE,
+                               V_REFLOCCODE,
+                               V_REFCMPCODE,
+                               V_REFGLCODE,
+                               V_REFDEPTCODE,
+                               V_REFPRCODE,
+                               V_REFDOCNO,
+                               V_REFPKGCODE,
+                               V_REFDCCODE,
+                               V_OTHER_RATE,
+                               V_SCHEME_DOCNO,
+                               NULL,
+                               NULL,
+                               NULL,
+                               V_ADMSITE_CODE               -- START REV : 005
+                                             ,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               0,
+                               NULL,
+                               NEW.COSTRATE,                  -- END REV : 005
+                               -- START REV : 009
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               coalesce(NEW.INVBATCH_SERIAL_CODE, OLD.INVBATCH_SERIAL_CODE)
+                               -- END REV :  009
+                               );
+      END IF;
+
+      -- START REV : 017
+      IF     coalesce(V_ENTRY_SOURCE, 'XX') <> 'WEB'
+AND not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+      THEN
+         -- END REV : 017
+         UPDATE INVITEM
+            SET RATE = round((coalesce(NEW.RATE, OLD.RATE))::numeric, 3)
+          WHERE ICODE = coalesce(NEW.ASSEMBLY_ICODE, OLD.ASSEMBLY_ICODE);
+
+         -- START REV : 005
+         IF V_TYPE IN ('INSERTING', 'UPDATING')
+         THEN
+            -- START REV : 007
+            --db_pro_upd_last_in_rate (:NEW.JRCCODE, 'PRR');
+            CALL db_pro_upd_last_in_rate(NEW.JRCCODE,
+                                     'PRR',
+                                     NEW.CODE,
+                                     NEW.ASSEMBLY_ICODE,
+                                     V_ENTDT,
+                                     V_NEW_RATE,
+                                     NULL,
+                                     V_ADMSITE_CODE,
+                                     V_ADMOU_CODE);
+         --  END REV  : 007
+         END IF;
+      -- END REV : 005
+      END IF;                                                     -- REV : 017
+   ELSIF V_IS_CONSIDER_IN_WIP = 'Y'
+   THEN
+      IF (V_OP_SEQ <> FLOOR(V_OP_SEQ))
+         AND (V_OP_SEQ > 1)
+         AND coalesce(NEW.LOTCODE, OLD.LOTCODE) IS NULL
+      THEN
+         BEGIN
+            SELECT PRCODE
+              INTO STRICT V_PRV_PRCODE
+              FROM PRDROUTEDET D, INVITEM I
+             WHERE     I.ICODE =
+                          coalesce(NEW.ASSEMBLY_ICODE, OLD.ASSEMBLY_ICODE)
+                   AND I.ROUTECODE = D.ROUTECODE
+                   AND D.OPERATION_SEQ = TRUNC(V_OP_SEQ);
+         EXCEPTION
+            WHEN no_data_found
+            THEN
+               NULL;
+         END;
+      END IF;
+
+      V_OP_SEQ_1 := V_OP_SEQ;
+      V_REFPRCODE_1 := V_REFPRCODE;
+      -- END REV : 004
+      -- WIP posting for unfinished item type
+      CALL DB_PKG_PRODUCTION$POST_WIP_TRANSACTION(
+         V_ADMSITE_CODE,
+         V_TYPE,
+         'REC',
+         OLD.CODE,
+         NEW.CODE,
+         NEW.LOTCODE,
+         NEW.JOBCODE,
+         NULL,
+         coalesce(NEW.JRCCODE, OLD.JRCCODE),
+         CASE
+            WHEN coalesce(NEW.LOTCODE, 0) = 0 AND coalesce(V_OP_SEQ_1, V_OP_SEQ) < 1
+            THEN
+               coalesce(V_OP_SEQ_1, V_OP_SEQ)
+            ELSE
+               TRUNC(coalesce(V_OP_SEQ_1, V_OP_SEQ))
+         END,
+         NULL,
+         CASE
+            WHEN     coalesce(V_OP_SEQ_1, V_OP_SEQ) <>
+                        FLOOR(coalesce(V_OP_SEQ_1, V_OP_SEQ))
+                 AND coalesce(V_OP_SEQ_1, V_OP_SEQ) > 1
+            THEN
+               V_PRV_PRCODE
+            ELSE
+               coalesce(V_REFPRCODE_1, V_REFPRCODE)
+         END,
+         NEW.ASSEMBLY_ICODE,
+         NEW.ASSEMBLY_ICODE,
+         'PSD',
+         NEW.QTY,
+         NEW.QTY,
+         NULL,
+         NULL,
+         V_ENTDT,
+         NEW.ASS_SAITEM_CODE,
+         NEW.ASS_SAITEM_CODE,
+         NEW.JOB_ASSEMBLY_ICODE,
+         -- START REV : 009
+         NULL,
+         coalesce(NEW.INVBATCH_SERIAL_CODE,OLD.INVBATCH_SERIAL_CODE)
+         --END REV : 009
+         );
+   END IF;
+
+   INSERT INTO PRD_RATE_STAGING(TRANMAIN_CODE,
+                                 TYPE,
+                                 JOBCODE,
+                                 LOTCODE,
+                                 ASSEMBLY_ICODE,
+                                 ASS_SAITEM_CODE,
+                                 TXN_TYPE,
+                                 PRCODE,
+                                 OPERATION_SEQ,
+                                 TXN_DATE,
+                                 -- START REV : 009
+                                 INVBATCH_SERIAL_CODE
+                                 --END REV : 009
+         )
+        VALUES (coalesce(NEW.JRCCODE, OLD.JRCCODE),
+                V_TYPE,
+                coalesce(NEW.JOBCODE, OLD.JOBCODE),
+                coalesce(NEW.LOTCODE, OLD.LOTCODE),
+                coalesce(NEW.ASSEMBLY_ICODE, OLD.ASSEMBLY_ICODE),
+                NEW.ASS_SAITEM_CODE,
+                'REC',
+                V_REFPRCODE,
+                V_OP_SEQ,
+                V_ENTDT,
+                -- START REV : 009
+                coalesce(NEW.INVBATCH_SERIAL_CODE,OLD.INVBATCH_SERIAL_CODE)
+                --END REV : 009
+                );
+EXCEPTION
+   WHEN SQLSTATE '50001' THEN
+      CALL ERRAUDIT(USER,
+                'T_A_PRDJRCDET',
+                SQLSTATE::varchar,
+                SQLERRM || 'Unable to find next process. Operation aborted.');
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED  '
+         || 'Unable to find next process. Operation aborted.' USING ERRCODE = '45001';
+   WHEN OTHERS
+   THEN
+      CALL ERRAUDIT(USER,
+                'T_A_PRDJRCDET',
+                SQLSTATE::varchar,
+                SQLERRM);
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED  ' || SQLSTATE::varchar || '  ' || SQLERRM USING ERRCODE = '45001';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

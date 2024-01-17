@@ -1,0 +1,206 @@
+procedure "main"."db_pkg_item_multiprice_populate_item_price_vendor(character, bigint, timestamp without time zone, bigint, bigint, character, character, bigint, bigint, bigint, timestamp without time zone)" {
+  text = """
+
+DECLARE
+
+     v_max_date  timestamp;
+
+BEGIN
+
+      IF   db_pkg_item_multiprice_search_duplicate_record_vendor(p_icode,p_pcode,p_date) <> 0  THEN
+
+            UPDATE  PUR_PRICE_CHART
+            SET     RATE          = CASE WHEN P_MRK_UPDOWN = 'U' AND coalesce(P_RATE_MULTIPLE, 0) = 0 THEN
+                                            coalesce(P_RATE, 0) + ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)
+                                        WHEN P_MRK_UPDOWN = 'U' AND coalesce(P_RATE_MULTIPLE, 0) <> 0 AND P_RATE_LIMIT = 'U' THEN
+                                           CASE WHEN MOD((coalesce(P_RATE, 0) + ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)), P_RATE_MULTIPLE) = 0 THEN
+                                             (coalesce(P_RATE, 0) + ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2))
+                                           ELSE
+                                             (coalesce(P_RATE, 0) + ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)) + (P_RATE_MULTIPLE - MOD((coalesce(P_RATE, 0) + ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)), P_RATE_MULTIPLE))
+                                           END
+                                        WHEN P_MRK_UPDOWN = 'U' AND coalesce(P_RATE_MULTIPLE, 0) <> 0 AND P_RATE_LIMIT = 'R' THEN
+                                             (coalesce(P_RATE, 0) + ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)) + (P_RATE_MULTIPLE - MOD((coalesce(P_RATE, 0) + ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)), P_RATE_MULTIPLE))
+                                        WHEN P_MRK_UPDOWN = 'U' AND coalesce(P_RATE_MULTIPLE, 0) <> 0 AND P_RATE_LIMIT = 'L' THEN
+                                             (coalesce(P_RATE, 0) + ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)) - (MOD((coalesce(P_RATE, 0) + ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)), P_RATE_MULTIPLE))
+                                        WHEN P_MRK_UPDOWN = 'D' AND coalesce(P_RATE_MULTIPLE, 0) = 0 THEN
+                                             coalesce(P_RATE, 0) - ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)
+                                        WHEN P_MRK_UPDOWN = 'D' AND coalesce(P_RATE_MULTIPLE, 0) <> 0 AND P_RATE_LIMIT = 'U' THEN
+                                           CASE WHEN MOD((coalesce(P_RATE, 0) - ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)), P_RATE_MULTIPLE) = 0 THEN
+                                              (coalesce(P_RATE, 0) - ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2))
+                                           ELSE
+                                             (coalesce(P_RATE, 0) - ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)) + (P_RATE_MULTIPLE - MOD((coalesce(P_RATE, 0) - ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)), P_RATE_MULTIPLE))
+                                           END
+                                        WHEN P_MRK_UPDOWN = 'D' AND coalesce(P_RATE_MULTIPLE, 0) <> 0 AND P_RATE_LIMIT = 'R' THEN
+                                             (coalesce(P_RATE, 0) - ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)) + (P_RATE_MULTIPLE - MOD((coalesce(P_RATE, 0) - ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)), P_RATE_MULTIPLE))
+                                        WHEN P_MRK_UPDOWN = 'D' AND coalesce(P_RATE_MULTIPLE, 0) <> 0 AND P_RATE_LIMIT = 'L' THEN
+                                             (coalesce(P_RATE, 0) - ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)) - (MOD((coalesce(P_RATE, 0) - ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)), P_RATE_MULTIPLE))
+                                        ELSE
+                                            coalesce(P_RATE, 0)
+                                   END,
+                    DELIVERY_DAYS = coalesce(P_DELIVERY_DAYS,0),
+                    extinct       = 'N',
+                    last_access_ecode   = p_ecode,
+                    last_access_time      = p_entry_date
+                    WHERE   icode           = p_icode
+                    AND     pcode              = p_pcode
+                    AND     effective_date   = p_date
+                    AND     effective_date   = (
+                                                 SELECT max(effective_date)
+                                                 from   pur_price_chart
+                                                 where  pcode = p_pcode
+                                                 and    icode = p_icode
+                                               );
+      ELSE
+
+         BEGIN
+           select max(effective_date)
+           into STRICT   v_max_date
+           from   pur_price_chart
+           where  icode = p_icode
+           and   pcode = p_pcode;
+         EXCEPTION
+           when no_data_found then
+              v_max_date := null;
+         END;
+
+
+       if ( v_max_date is null or v_max_date < p_date)   then
+         INSERT
+         INTO PUR_PRICE_CHART(
+                 icode,
+                 pcode,
+                 effective_date,
+                 rate,
+                 delivery_days,
+                 extinct,
+                 ecode,
+                 time,
+                 last_access_ecode,
+                 last_access_time
+               )
+         VALUES
+               (
+                 p_icode,
+                 p_pcode,
+                 p_date,
+                 CASE WHEN P_MRK_UPDOWN = 'U' AND coalesce(P_RATE_MULTIPLE, 0) = 0 THEN
+                                    coalesce(P_RATE, 0) + ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)
+                                WHEN P_MRK_UPDOWN = 'U' AND coalesce(P_RATE_MULTIPLE, 0) <> 0 AND P_RATE_LIMIT = 'U' THEN
+                                    CASE  WHEN MOD((coalesce(P_RATE, 0) + ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)), P_RATE_MULTIPLE) = 0 THEN
+                                       (coalesce(P_RATE, 0) + ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2))
+                                    ELSE
+                                     (coalesce(P_RATE, 0) + ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)) + (P_RATE_MULTIPLE - MOD((coalesce(P_RATE, 0) + ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)), P_RATE_MULTIPLE))
+                                    END
+                                WHEN P_MRK_UPDOWN = 'U' AND coalesce(P_RATE_MULTIPLE, 0) <> 0 AND P_RATE_LIMIT = 'R' THEN
+                                     (coalesce(P_RATE, 0) + ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)) + (P_RATE_MULTIPLE - MOD((coalesce(P_RATE, 0) + ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)), P_RATE_MULTIPLE))
+                                WHEN P_MRK_UPDOWN = 'U' AND coalesce(P_RATE_MULTIPLE, 0) <> 0 AND P_RATE_LIMIT = 'L' THEN
+                                     (coalesce(P_RATE, 0) + ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)) - (MOD((coalesce(P_RATE, 0) + ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)), P_RATE_MULTIPLE))
+                                WHEN P_MRK_UPDOWN = 'D' AND coalesce(P_RATE_MULTIPLE, 0) = 0 THEN
+                                     coalesce(P_RATE, 0) - ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)
+                                WHEN P_MRK_UPDOWN = 'D' AND coalesce(P_RATE_MULTIPLE, 0) <> 0 AND P_RATE_LIMIT = 'U' THEN
+                                    CASE WHEN MOD((coalesce(P_RATE, 0) - ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)), P_RATE_MULTIPLE) = 0 THEN
+                                        (coalesce(P_RATE, 0) - ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2))
+                                    ELSE
+                                     (coalesce(P_RATE, 0) - ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)) + (P_RATE_MULTIPLE - MOD((coalesce(P_RATE, 0) - ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)), P_RATE_MULTIPLE))
+                                    END
+                                WHEN P_MRK_UPDOWN = 'D' AND coalesce(P_RATE_MULTIPLE, 0) <> 0 AND P_RATE_LIMIT = 'R' THEN
+                                     (coalesce(P_RATE, 0) - ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)) + (P_RATE_MULTIPLE - MOD((coalesce(P_RATE, 0) - ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)), P_RATE_MULTIPLE))
+                                WHEN P_MRK_UPDOWN = 'D' AND coalesce(P_RATE_MULTIPLE, 0) <> 0 AND P_RATE_LIMIT = 'L' THEN
+                                     (coalesce(P_RATE, 0) - ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)) - (MOD((coalesce(P_RATE, 0) - ROUND((coalesce(P_RATE, 0) * coalesce(P_RATE_ROFF_VAL, 0) / 100), 2)), P_RATE_MULTIPLE))
+                                ELSE
+                                    coalesce(P_RATE, 0)
+                            END,
+                 coalesce(p_delivery_days,0),
+                 'N',
+                 p_ecode,
+                 p_entry_date,
+                 p_ecode,
+                 p_entry_date
+               );
+        end if;
+      END IF;
+
+     EXCEPTION
+          WHEN no_data_found THEN
+                 CALL erraudit(USER,
+                             'DB_PKG_ITEM_MULTIPRICE.populate_item_price_vendor() ',
+                             SQLSTATE,
+                             SQLERRM
+                            );
+         RAISE EXCEPTION '%', 'Unable to Update : ' || ' : ' || SQLERRM
+                                  USING ERRCODE = '45002';
+   END;
+
+
+"""
+  arguments = <
+    {
+      name = p_icode
+      type = character
+      mode = IN
+    }
+
+    {
+      name = p_pcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_rate
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_delivery_days
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_mrk_updown
+      type = character
+      mode = IN
+    }
+
+    {
+      name = p_rate_limit
+      type = character
+      mode = IN
+    }
+
+    {
+      name = p_rate_roff_val
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_rate_multiple
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_ecode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_entry_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

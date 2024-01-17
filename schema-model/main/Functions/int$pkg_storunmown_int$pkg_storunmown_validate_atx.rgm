@@ -1,0 +1,1473 @@
+function "main"."int$pkg_storunmown_int$pkg_storunmown_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status         char(1);
+      errmsg           varchar(200);
+      v_item_batch_separator    char(1);
+      errcode          bigint;
+      V_CNT_GST_ITEM   numeric(20) := 0;                          -- REV : 006
+BEGIN
+      --Invalid or non-extinct numbering scheme
+      
+       
+      -- START REV : 022
+        select item_batch_separator into STRICT v_item_batch_separator from admcmpprof;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'storunmown', userid, 'Data Validation', 'Please remove value from batch/serial column and try again.', clock_timestamp()
+        from   int$stg_storunmown a
+        where  a.item_barcode is not null
+        and    a.batch_serial_no is not null
+        and    coalesce((position(v_item_batch_separator in a.item_barcode)),0) <> 0
+        and    a.userid = p_userid;
+
+        declare 
+         v_count                     bigint;
+         c_separator CURSOR FOR
+                    SELECT *
+                    from   int$stg_storunmown
+                    where  userid = p_userid
+                    order by lineno;
+         begin
+           for c1 in c_separator loop
+                   select count(*) into STRICT v_count from int$stg_storunmown  where item_barcode like '%'||v_item_batch_separator||'%'
+                   and lineno = c1.lineno
+                   and    userid = p_userid;
+                   if v_count > 0 then
+
+                   update int$stg_storunmown
+                   set    batch_serial_no = SUBSTR(item_barcode, INSTR(item_barcode,v_item_batch_separator, -1) + 1),
+                   item_barcode = SUBSTR(item_barcode, 1, position(v_item_batch_separator in item_barcode)-1)
+                   where  lineno = c1.lineno
+                   and    item_barcode like '%'||v_item_batch_separator||'%'
+                   and    userid = p_userid;
+
+                   end if;
+           end loop;
+         end;
+
+        --COMMIT;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'storunmown', userid, 'Data Validation', 'System Batch Serial is not allowed. Please remove and proceed.', clock_timestamp()
+        from   int$stg_storunmown a
+        where  UPPER(a.batch_serial_no) = 'SYSTEM BATCH SERIAL'
+        and    a.batch_serial_no is not null
+        and    a.userid = p_userid;
+       -- END REV : 022
+       
+       -- START REV : 015
+    -- scheme_doc_format checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                p_userid,
+                'Data Validation',
+                'Scheme_doc format is not applicable for site or it is extinct or it is not tagged at Owned Store Sale menu',
+                clock_timestamp()
+           FROM int$stg_STORUNMOWN x
+          WHERE     UPPER(scheme_doc_format) NOT IN (
+           SELECT upper(docname)
+          FROM admdocscheme
+         WHERE     coalesce(ext, 'N') = 'N'
+      -- AND NVL (manual, 'N') = 'N'
+       AND doccode IN (SELECT doccode
+                 FROM admmenu_docscheme
+                WHERE     mdmenushortcode = 'MCSStoreOwned'
+                      AND NOT EXISTS (SELECT 1
+                                FROM admou_docscheme
+                               WHERE admsite_code = p_connect_site)
+
+UNION ALL
+
+               SELECT a.doccode
+                 FROM admmenu_docscheme a, admou_docscheme b
+                WHERE     a.doccode = b.doccode
+                      AND a.mdmenushortcode = 'MCSStoreOwned'
+                      AND b.admsite_code = p_connect_site))
+                AND x.userid = p_userid;
+
+  
+                 INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Data Validation',
+                'Manual-Excise document scheme is not allowed. Please use applicable document scheme for this transaction.',
+                clock_timestamp()
+           FROM INT$stg_STORUNMOWN a
+          WHERE         UPPER(a.scheme_doc_format) IN (SELECT upper(docname)
+  FROM admdocscheme
+ WHERE     coalesce(ext, 'N') = 'N'
+       and coalesce(ISEXCISE,'N')='Y'
+       --AND NVL (manual, 'N') = 'N'
+       AND doccode IN (SELECT doccode
+                 FROM admmenu_docscheme
+                WHERE     mdmenushortcode = 'MCSStoreOwned'))        
+                AND a.userid = p_userid;
+
+      -- scheme_docno chking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Data Validation',
+                'SCHEME_DOCNO, can not be blank if SCHEME_DOC_FORMAT is manual.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+          WHERE (    UPPER(a.scheme_doc_format) IN ('MANUAL (GENERAL)', 'MANUAL (EXCISE)')
+                     AND a.scheme_docno IS NULL)
+                AND a.userid = p_userid;
+
+      -- scheme_docno chking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Data Validation',
+                'Scheme Docno should be null, as it would be auto generated',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+          WHERE (    UPPER(a.scheme_doc_format) NOT IN ('MANUAL (GENERAL)', 'MANUAL (EXCISE)')
+                     AND a.scheme_docno IS NOT NULL)
+                AND a.userid = p_userid;
+
+      -- scheme_docno chking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                p_userid,
+                'Data Validation',
+                'Scheme Docno already exists (' || x.scheme_docno || ')',
+                clock_timestamp()
+           FROM int$stg_storunmown x
+          WHERE x.scheme_docno IN
+                   (  SELECT a.scheme_docno
+                        FROM int$stg_storunmown a, SALCSMAIN b
+                       WHERE     UPPER(a.scheme_docno) =
+                                    UPPER(b.scheme_docno)
+                             AND userid = p_userid
+                             AND ycode =
+                                    (SELECT ycode
+                                       FROM admyear
+                                      WHERE p_logging_date BETWEEN dtfr
+                                                               AND dtto)
+                    GROUP BY a.scheme_docno
+                      HAVING COUNT(DISTINCT a.scheme_docno) > 0);
+        -- duplicate scheme_docno chking              
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                p_userid,
+                'Data Validation',
+                'Scheme Docno (' || x.scheme_docno || '), duplicate number not allowed.',
+                clock_timestamp()
+           FROM int$stg_storunmown x
+          WHERE x.scheme_docno IN ( SELECT scheme_docno
+                        from (
+                        select scheme_docno
+                               from int$stg_storunmown
+                                   where userid = p_userid
+                               and scheme_docno is not null
+                               group by   scheme_docno,
+                                          saledt,
+                                          channel_id
+                        ) a
+                        group by scheme_docno 
+								  having count(scheme_docno) > 1);
+     -- Checking channel name                 
+     INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Data Validation',
+                'Channel name can''t be blank or should be valid and non extinct.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+          WHERE (a.CHANNEL_ID is  NULL or a.CHANNEL_ID not in (SELECT f.SLID from finsl f, admcls c
+            where f.clscode=c.clscode and upper(c.clstype)='H' and f.ext='N' and c.ext='N'))
+                AND a.userid = p_userid;
+
+    INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Data Validation',
+                'Length of Channel name can''t be greater than 100 character.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+          WHERE     length(a.CHANNEL_ID) > 100 
+                AND a.userid = p_userid;
+
+  -- end rev : 015
+      --Future date transaction is not allowed
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Date Validation',
+                'Future date transaction is not allowed.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+          WHERE date_trunc('day', saledt) > date_trunc('day', clock_timestamp()) AND a.userid = p_userid;
+
+      --User lock days setting getting violated
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Date Validation',
+                'User lock days setting getting violated.',
+                clock_timestamp()
+           FROM int$stg_storunmown a, hrdemp b
+          WHERE     a.userid = b.ecode
+                AND date_trunc('day', a.saledt) NOT BETWEEN (CURRENT_DATE - locdays::INTEGER)
+                                             AND CURRENT_DATE
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Date Validation',
+                'Customer City PIN can not exceed more than 6 caracter.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+          WHERE LENGTH(B_CUSTOMER_PIN) > 6 AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Date Validation',
+                'Customer City PIN can not be negative.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+          WHERE position('-' in B_CUSTOMER_PIN) <> 0 AND a.userid = p_userid;
+
+      --START REV : 003
+      --Date is not in open state
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Date Validation',
+                'Month / Year is not in open state.',
+                clock_timestamp()
+           FROM int$stg_storunmown a, ADMMONTH m, ADMOU_MONTH b
+          WHERE     date_trunc('day', a.saledt) BETWEEN date_trunc('day', m.dtfr)
+                                         AND date_trunc('day', m.dtto)
+                AND B.ADMMONTH_CODE = M.MCODE
+                AND B.ADMOU_CODE = P_CONNECT_OU
+                AND b.INV_MONTH_STATUS <> 'O'
+                AND a.userid = p_userid;
+
+      -- END REV : 003
+      --Tax region is not defined for the connected site.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'storunmown',
+                p_userid,
+                'Connect Site Validation',
+                'Tax region is not defined for the connected site.',
+                clock_timestamp()
+           FROM admsite b
+          WHERE b.code = p_connect_site AND b.psite_admcmptax_code IS NULL;
+
+      --Consignment sale ledger is mandatory for the customer.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'storunmown',
+                p_userid,
+                'Connect Site Validation',
+                'Consignment Sale GL in Organization Unit is not provided.',
+                clock_timestamp()
+           FROM admou
+          WHERE CONSIGNMENTSALE_GLCODE IS NULL AND CODE = P_CONNECT_OU; -- REV : 002;
+      --ar/ap ledger for Intermediary A/C is mandatory.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Data Validation',
+                'Sub Ledger must be tagged with  AR/AP type of GL.',
+                clock_timestamp()
+           FROM int$stg_storunmown a LEFT OUTER JOIN finsl p
+		   ON (UPPER(a.CHANNEL_ID) = UPPER(p.slID))
+ 		   LEFT OUTER JOIN fingl g ON (P.GLCODE = G.GLCODE)
+WHERE (P.GLCODE IS NULL OR coalesce(G.SRCTYPE, '@') <> 'R') AND a.userid = p_userid;
+
+      --Intermediary A/C is mandatory.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Mandatory Validation',
+                'Channel Id is mandatory.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+          WHERE a.CHANNEL_ID IS NULL AND a.userid = p_userid;
+
+      --Intermediary A/C should be valid and non-extinct.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Data Validation',
+                'MOP Control A/C should be valid and non-extinct.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+LEFT OUTER JOIN  finsl p ON (UPPER(a.CHANNEL_ID) = UPPER(p.slID))
+WHERE (coalesce(p.ext, 'N') = 'Y' OR p.slname IS NULL) AND a.userid = p_userid;
+
+      --Intermediary A/C should be provided.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Data Validation',
+                'CHANNEL ID should be provided.',
+                clock_timestamp()
+           FROM int$stg_storunmown a, finsl p
+          WHERE     UPPER(a.CHANNEL_ID) = UPPER(p.slID)
+                AND p.glcode IS NULL
+                AND a.userid = p_userid;
+
+      -- Multiple sub-ledgers found for this name, unable to proceed.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'STORFRANCON',
+                userid,
+                'Data Validation',
+                'Multiple sub-ledgers found for this name, unable to proceed.',
+                clock_timestamp()
+           FROM int$stg_storunmown a,
+                (  SELECT lineno, UPPER(b.slname), COUNT(1)
+                     FROM int$stg_storunmown a, finsl b
+                    WHERE     UPPER(a.CHANNEL_ID) = UPPER(b.slID)
+                          AND a.userid = p_userid
+                 GROUP BY lineno, UPPER(b.slname)
+                   HAVING COUNT(1) > 1) b
+          WHERE a.lineno = b.lineno AND a.userid = p_userid;
+--START REV : 019
+      
+      -- Stock point is mandatory.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Mandatory Validation',
+                'Stock point is mandatory.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+          WHERE a.stock_point_name IS NULL AND a.userid = p_userid;
+
+      --Stock point should be valid and non-extinct.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Data Validation',
+                'Stock point should be valid and non-extinct.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+LEFT OUTER JOIN invloc l ON (UPPER(a.stock_point_name) = UPPER(l.locname))
+WHERE (coalesce(l.ext, 'N') = 'Y' OR l.locname IS NULL) AND UPPER(a.stock_point_name) IS NOT NULL AND a.userid = p_userid;
+
+      --Stock point should belong to the connected site.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Data Validation',
+                'Stock point should belong to the connected site.',
+                clock_timestamp()
+           FROM int$stg_storunmown a, invloc l
+          WHERE     UPPER(a.stock_point_name) = UPPER(l.locname)
+                AND l.admsite_code NOT IN (SELECT code
+                                             FROM admsite
+                                            WHERE code = p_connect_site)
+                AND a.userid = p_userid;
+
+      -- Multiple stock points are found for this name, unable to proceed.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'STORFRANCON',
+                userid,
+                'Data Validation',
+                'Multiple sale stock points are found for this name, unable to proceed.',
+                clock_timestamp()
+           FROM int$stg_storunmown a,
+                (  SELECT lineno, UPPER(b.locname), COUNT(1)
+                     FROM int$stg_storunmown a, invloc b
+                    WHERE     UPPER(a.stock_point_name) = UPPER(b.locname)
+                          AND a.userid = p_userid
+                 GROUP BY lineno, UPPER(b.locname)
+                   HAVING COUNT(1) > 1) b
+          WHERE a.lineno = b.lineno AND a.userid = p_userid;
+
+      --Only other class type sub-ledgers allowed here.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Data Validation',
+                'Only warehouse type sale stock points are allowed.',
+                clock_timestamp()
+           FROM int$stg_storunmown a, invloc p
+          WHERE     UPPER(a.stock_point_name) = UPPER(p.locname)
+                AND p.loctype <> 'W'
+                AND a.userid = p_userid;
+
+     --Stock points are mandatory when Quantity is greater than 0.
+        INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Data Validation',
+                'Sale Stock points are mandatory when Quantity is greater than 0.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+          WHERE     a.item_qty > 0
+                AND a.stock_point_name IS NULL
+                AND a.userid = p_userid;
+
+      --Reference No. is mandatory.
+      
+
+      --Round off GL in Organization Unit is not provided.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Ledger Validation',
+                'Round off GL in Organization Unit is not provided.',
+                clock_timestamp()
+           FROM int$stg_storunmown a, admou b
+          WHERE (a.roundoff IS NOT NULL AND b.roundoff_glcode IS NULL)
+                AND B.CODE = P_CONNECT_OU                         -- REV : 002
+                AND a.userid = p_userid;
+
+      /*
+      *****************************************************************************
+      ITEM VALIDATION START
+      *****************************************************************************
+      */
+      --Item is mandatory.
+     
+
+      --Item doesn't exist or is extinct.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Item Data Validation',
+                'Item doesn''t exist or is extinct.',
+                clock_timestamp()
+           FROM int$stg_storunmown a LEFT OUTER JOIN 
+		   (SELECT icode, ext FROM invitem
+
+UNION
+
+                 SELECT barcode, ext FROM invitem) b
+		  ON (UPPER(a.item_barcode) = UPPER(b.icode))
+WHERE b.icode IS NULL AND coalesce(b.ext, 'N') = 'Y' AND a.userid = p_userid;
+
+      -- Tax ledger is not defined.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                p_userid,
+                'Ledger Validation',
+                'Tax ledger is not defined.',
+                clock_timestamp()
+           FROM (SELECT lineno,
+                        -- START REV : 003
+                        --int$pkg_storunmown_db_fun_taxdetcode(i.icode, saledt, l.admsite_code) taxdetcode
+                        int$pkg_storunmown_db_fun_taxdetcode(i.icode,
+                                           saledt,
+                                           l.admsite_code,
+                                           P_CONNECT_OU)
+                           taxdetcode-- END REV : 003
+                                     -- START REV : 004
+                        ,
+                        ICODE,
+                        SALEDT,
+                        INVHSNSACMAIN_CODE
+                   -- END REV : 004
+                   FROM int$stg_storunmown a, invloc l, invitem i
+                  WHERE     UPPER(a.stock_point_name) = UPPER(l.locname)
+                        AND a.userid = p_userid
+                        AND (   UPPER(a.item_barcode) = UPPER(i.icode)
+                             OR UPPER(a.item_barcode) = UPPER(i.barcode))) t1, admsite s, fintaxdet t2
+LEFT OUTER JOIN (SELECT tr.taxdetcode, tr.SALTAX_GLCODE, tr.SALTAX_SLCODE
+                   FROM fintax_range tr) td ON (t2.TAXDETCODE = td.TAXDETCODE)
+WHERE t1.taxdetcode = t2.taxdetcode AND S.CODE = p_connect_site AND S.psite_admcmptax_code = t2.admcmptax_code  AND coalesce(td.saltax_glcode, t2.saltax_glcode) IS NULL AND t2.taxcode <> 0 -- START REV : 004
+  AND (   (T1.ICODE NOT IN
+                            (SELECT ICODE
+                               FROM INVHSNSACDET D, INVITEM IT
+                              WHERE     D.INVHSNSACMAIN_CODE =
+                                           IT.INVHSNSACMAIN_CODE
+                                    AND D.INVHSNSACMAIN_CODE =
+                                           T1.INVHSNSACMAIN_CODE
+                                    AND D.CODE =
+                                           (SELECT DISTINCT D1.CODE
+                                              FROM INVHSNSACDET D1,
+                                                   INVITEM      IT1
+                                             WHERE     D1.INVHSNSACMAIN_CODE =
+                                                          IT1.INVHSNSACMAIN_CODE
+                                                   AND D1.INVHSNSACMAIN_CODE =
+                                                          T1.INVHSNSACMAIN_CODE
+                                                   AND D1.EFFECTIVE_DATE =
+                                                          (SELECT MAX(
+                                                                     EFFECTIVE_DATE)
+                                                             FROM INVHSNSACDET
+                                                                  D3,
+                                                                  INVITEM IT3
+                                                            WHERE     D3.INVHSNSACMAIN_CODE =
+                                                                         IT3.INVHSNSACMAIN_CODE
+                                                                  AND D3.INVHSNSACMAIN_CODE =
+                                                                         T1.INVHSNSACMAIN_CODE
+                                                                  AND D3.EFFECTIVE_DATE <=
+                                                                         T1.SALEDT))))
+                     OR S.ADMGSTIN_CODE IS NULL                   -- REV : 005
+                                               ) -- END REV : 004
+  AND t2.fintradegrp_code = (SELECT code
+                                             FROM fintradegrp
+                                            WHERE UPPER(NAME) = 'LOCAL') AND coalesce(t2.formcode, 0) = 0;
+
+      -- START REV : 006
+      -- Docscheme wise check.
+      BEGIN
+         SELECT COUNT(*)
+           INTO STRICT V_CNT_GST_ITEM
+           FROM int$stg_storunmown a, invitem i, admsite S
+          WHERE     S.CODE = P_CONNECT_SITE
+                AND (   UPPER(a.item_barcode) = UPPER(i.icode)
+                     OR UPPER(a.item_barcode) = UPPER(i.barcode))
+                AND (    (I.ICODE IN
+                             (SELECT ICODE
+                                FROM INVHSNSACDET D, INVITEM IT
+                               WHERE     D.INVHSNSACMAIN_CODE =
+                                            IT.INVHSNSACMAIN_CODE
+                                     AND D.INVHSNSACMAIN_CODE =
+                                            I.INVHSNSACMAIN_CODE
+                                     AND D.CODE =
+                                            (SELECT DISTINCT D1.CODE
+                                               FROM INVHSNSACDET D1,
+                                                    INVITEM      IT1
+                                              WHERE     D1.INVHSNSACMAIN_CODE =
+                                                           IT1.INVHSNSACMAIN_CODE
+                                                    AND D1.INVHSNSACMAIN_CODE =
+                                                           I.INVHSNSACMAIN_CODE
+                                                    AND D1.EFFECTIVE_DATE =
+                                                           (SELECT MAX(
+                                                                      EFFECTIVE_DATE)
+                                                              FROM INVHSNSACDET
+                                                                   D3,
+                                                                   INVITEM
+                                                                   IT3
+                                                             WHERE     D3.INVHSNSACMAIN_CODE =
+                                                                          IT3.INVHSNSACMAIN_CODE
+                                                                   AND D3.INVHSNSACMAIN_CODE =
+                                                                          I.INVHSNSACMAIN_CODE
+                                                                   AND D3.EFFECTIVE_DATE <=
+                                                                          A.SALEDT))))
+                     AND S.ADMGSTIN_CODE IS NOT NULL);
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            V_CNT_GST_ITEM := 0;
+      END;
+
+      --  IF NVL(V_CNT_GST_ITEM,0) >= 1 THEN
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                p_userid,
+                'Item Validation',
+                'For GST Applicable items GST numbering Scheme required and Vice Versa.',
+                clock_timestamp()
+           FROM int$stg_storunmown a, ADMDOCSCHEME D
+          WHERE     a.userid = p_userid
+                AND UPPER(A.document_scheme) = UPPER(D.docname)
+                AND (   (    coalesce(GSTAPPL, 'N') = 'N'
+                         AND coalesce(V_CNT_GST_ITEM, 0) >= 1)
+                     OR (    coalesce(GSTAPPL, 'N') = 'Y'
+                         AND coalesce(V_CNT_GST_ITEM, 0) = 0));
+
+           --     ) t1;
+--
+      -- END REV : 006
+      --Item''s Net Amount cannot be negative
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Item Data Validation',
+                'Item''s Net Amount cannot be negative.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+          WHERE     (    coalesce(item_qty, 0) > 0
+                     AND (  (coalesce(item_rate, 0) * coalesce(item_qty, 0))
+                          - coalesce(item_discountamt, 0)
+                          + coalesce(item_extra_taxamt, 0)) < 0)
+                AND a.userid = p_userid;
+
+      --Item''s Net Amount cannot be positive
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Item Data Validation',
+                'Item''s Net Amount cannot be positive.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+          WHERE     (    coalesce(item_qty, 0) < 0
+                     AND (  (coalesce(item_rate, 0) * coalesce(item_qty, 0))
+                          - coalesce(item_discountamt, 0)
+                          + coalesce(item_extra_taxamt, 0)) > 0)
+                AND a.userid = p_userid;
+
+      --Item quantity is required.
+      /* INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+       SELECT  int$error_log_code.NEXTVAL, lineno, 'storunmown', userid, 'Mandatory Validation','Item quantity is required.',SYSDATE
+       FROM    int$stg_storunmown a
+       WHERE   a.item_qty is null
+       AND     a.userid = p_userid;*/
+      --Item quantity cannot be 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Mandatory Validation',
+                'Item quantity cannot be 0.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+          WHERE a.item_qty = 0 AND a.userid = p_userid;
+
+      --Item quantity should be in multiples of scan unit.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Item Data Validation',
+                'Item quantity should be in multiples of scan unit.',
+                clock_timestamp()
+           FROM int$stg_storunmown a, invitem b
+          WHERE (   UPPER(a.item_barcode) = UPPER(b.icode)
+                     OR UPPER(a.item_barcode) = UPPER(b.barcode))
+                AND MOD(a.item_qty, b.barunit) <> 0
+                AND b.item_management_mode  <> 'S'
+                AND a.userid = p_userid;
+
+      --Item's RSP is mandatory.
+      /*  INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  int$error_log_code.NEXTVAL, lineno, 'storunmown', userid, 'Mandatory Validation','Item''s RSP is mandatory.',SYSDATE
+        FROM    int$stg_storunmown a
+        WHERE   a.item_rsp is null
+        AND     a.userid = p_userid;*/
+      --RSP must be >= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Item Data Validation',
+                'RSP must be >= 0.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+          WHERE a.item_rsp < 0 AND a.userid = p_userid;
+
+      --Item's sale price is mandatory.
+      /* INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+       SELECT  int$error_log_code.NEXTVAL, lineno, 'storunmown', userid, 'Mandatory Validation','Item''s sale price is mandatory.',SYSDATE
+       FROM    int$stg_storunmown a
+       WHERE   a.item_rate is null
+       AND     a.userid = p_userid;*/
+      --Rate must be >= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Item Data Validation',
+                'Rate must be >= 0.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+          WHERE a.item_rate < 0 AND a.userid = p_userid;
+
+      --Discount should be <= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Item Data Validation',
+                'Discount should be a negative value for return items.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+          WHERE (    a.item_qty < 0
+                     AND a.item_discountamt IS NOT NULL
+                     AND a.item_discountamt > 0)
+                AND a.userid = p_userid;
+
+      --Discount should be >= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Item Data Validation',
+                'Discount should be a positive value for sale items.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+          WHERE (    a.item_qty > 0
+                     AND a.item_discountamt IS NOT NULL
+                     AND a.item_discountamt < 0)
+                AND a.userid = p_userid;
+
+      --Discount should be between 0 and gross amount.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Item Data Validation',
+                'Discount should be between 0 and gross amount.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+          WHERE (    a.item_discountamt IS NOT NULL
+                     AND ABS(a.item_discountamt) NOT BETWEEN 0
+                                                          AND round((
+                                                                   coalesce(
+                                                                      item_rate,
+                                                                      0)
+                                                                 * coalesce(
+                                                                      ABS(
+                                                                         item_qty),
+                                                                      0))::numeric,
+                                                                 2))
+                AND a.userid = p_userid;
+
+      --Extra Tax should be <= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Item Data Validation',
+                'Extra Tax should be a negative value for return items.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+          WHERE (    a.item_qty < 0
+                     AND a.item_extra_taxamt IS NOT NULL
+                     AND a.item_extra_taxamt > 0)
+                AND a.userid = p_userid;
+
+      --Extra Tax should be >= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Item Data Validation',
+                'Extra Tax should be a positive value for sale items.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+          WHERE (    a.item_qty > 0
+                     AND a.item_extra_taxamt IS NOT NULL
+                     AND a.item_extra_taxamt < 0)
+                AND a.userid = p_userid;
+
+      /*
+         *****************************************************************************
+         RETAIL CUSTOMER VALIDATION START
+         *****************************************************************************
+         */
+      --Gender is mandatory for customer.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Mandatory Validation',
+                'Gender is mandatory for customer.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+          WHERE (    a.B_CUSTOMER_MOBILENO IS NOT NULL
+                     AND B_CUSTOMER_GENDER IS NULL)
+                AND a.userid = p_userid;
+
+      --Gender checking.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Customer Data Validation',
+                'BILLING_CUSTOMER_GENDER, is not valid. Please provide from the accepted list of values (Male, Female, Transgender and Undisclosed).',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+          WHERE (    B_CUSTOMER_GENDER IS NOT NULL
+                     AND upper(B_CUSTOMER_GENDER) NOT IN ('MALE', 'FEMALE', 'TRANSGENDER', 'UNDISCLOSED'))
+                AND a.userid = p_userid;
+
+      -- Email Id is invalid.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Data Validation',
+                'Email Id is invalid.',
+                clock_timestamp()
+           FROM int$stg_storunmown
+          WHERE (    B_CUSTOMER_EMAIL IS NOT NULL
+                     AND (   B_CUSTOMER_EMAIL NOT LIKE '%@%'
+                          OR B_CUSTOMER_EMAIL NOT LIKE '%.%'))
+                AND userid = p_userid;
+
+--Start Rev 010
+--******************************************************************************
+--TFS ID - 39865 RETAIL CUSTOMER EXCEL IMPORT VIA RETAIL SALE
+--******************************************************************************
+--Customer GST Identification No.
+--1
+INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Data Validation',
+                'GST Identification No. should have exactly 15 characters.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+           
+          WHERE LENGTH(a.B_CUST_GST_ID_NO) <> 15
+          AND   a.B_CUST_GST_ID_NO IS NOT NULL
+          AND   a.B_CUSTOMER_MOBILENO IS NOT NULL
+          -- END REV : 011
+          AND a.userid = p_userid;
+--2
+INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Data Validation',
+                'GST Identification No. is invalid as per Government prescribed format.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+           WHERE   a.B_CUST_GST_ID_NO IS NOT NULL
+           AND     db_fun_check_gstin_no(a.B_CUST_GST_ID_NO) = 'F'
+           AND     a.B_CUSTOMER_MOBILENO IS NOT NULL -- REV : 010
+           AND     a.userid = p_userid;
+--3
+INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Data Validation',
+                'Unable to determine state as per inputted GST Identification No., State code is invalid.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+LEFT OUTER JOIN admgststate m ON (SUBSTR(a.B_CUST_GST_ID_NO, 1,2) = m.code)
+WHERE a.userid = p_userid AND a.B_CUSTOMER_MOBILENO IS NOT NULL AND a.B_CUST_GST_ID_NO IS NOT NULL  AND M.code is null;
+          -- END REV : 011
+--Customer GST Registration Date
+--1
+INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Data Validation',
+                'GST Reg. Date cannot be provided without providing GST Identification No.',
+                clock_timestamp()
+        -- START REV : 011
+           FROM int$stg_storunmown a
+
+            where   a.B_CUST_GST_REG_DATE is not null
+            and     a.B_CUST_GST_ID_NO is null
+            AND     a.B_CUSTOMER_MOBILENO IS NOT NULL
+            and     a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc,createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'storunmown', userid, 'Data Validation', 'GST Reg. date is not in valid format.', clock_timestamp()
+        from    int$stg_storunmown   a
+        where   a.B_CUST_GST_REG_DATE is not null
+        AND     a.B_CUSTOMER_MOBILENO IS NOT NULL
+        and (
+                    (to_char(a.B_CUST_GST_REG_DATE,'yyyy'))::numeric  < 4
+                    or
+                    (to_char(a.B_CUST_GST_REG_DATE,'yyyymmdd'))::numeric  < 8
+                )
+        and     a.userid = p_userid;
+
+        -- END REV : 011
+--Customer GST State Name
+--1
+-- START REV : 011
+        -- GST state validation
+        -- CASE - I
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc,createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'storunmown', userid, 'Data Validation', 'GST State provided is invalid.', clock_timestamp()
+        FROM int$stg_storunmown a
+LEFT OUTER JOIN admgststate gs ON (upper(a.B_CUST_GST_STATE_NAME) = upper(gs.name))
+WHERE a.B_CUST_GST_STATE_NAME is not null and gs.name is null AND a.B_CUSTOMER_MOBILENO IS NOT NULL and a.userid = p_userid;
+
+        -- CASE - II
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc,createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'storunmown', userid, 'Data Validation', 'GST State inputted is not at per with GST Identification No.''s state.', clock_timestamp()
+        from    int$stg_storunmown a,
+                admgststate         gs
+        where   upper(a.B_CUST_GST_STATE_NAME) = upper(gs.name)
+        and (substr(a.B_CUST_GST_ID_NO,1,2)) <> gs.code
+        and     a.B_CUST_GST_STATE_NAME is not null
+       -- AND     a.B_CUST_GST_ID_NO  is not null
+        AND     a.B_CUSTOMER_MOBILENO IS NOT NULL
+        and     a.userid = p_userid;
+        -- end rev : 004
+--End Rev 011
+     --==============================================================================
+      --************************************B_ISDCODE***********************************
+      --==============================================================================
+      -- START REV : 012
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Data Validation',
+                'Mobile number should contain digits.',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+          WHERE (    a.B_CUSTOMER_MOBILENO IS NOT NULL
+                     AND a.B_CUSTOMER_MOBILENO ~ '[^0-9]'
+                            )
+                AND userid = p_userid;
+--START REV : 019
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storunmown',
+                userid,
+                'Data Validation',
+                'Length of mobile number is not valid for the given ISD Code',
+                clock_timestamp()
+           FROM int$stg_storunmown a
+LEFT OUTER JOIN admisd i ON (a.B_ISDCODE::TEXT = i.ISDCODE)
+WHERE i.ALLOW_MOBILENO_DIGIT IS NOT NULL AND LENGTH(a.B_CUSTOMER_MOBILENO)::TEXT <> i.ALLOW_MOBILENO_DIGIT AND a.B_CUSTOMER_MOBILENO IS NOT NULL AND a.userid = p_userid;
+-- END REV : 012
+--START REV : 022
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'storunmown', userid, 'Data Validation', 'Batch/Serial information for item not defined.', clock_timestamp()
+        from   int$stg_storunmown a, invitem i
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        and    a.item_barcode is not null
+        and    a.batch_serial_no is null
+        and    i.item_management_mode in ('B','S')
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'storunmown', userid, 'Data Validation', 'Batch/Serial information is not applicable for the item, Please delete batch/serial info and try again.', clock_timestamp()
+        from   int$stg_storunmown a, invitem i
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        and    a.item_barcode is not null
+        and    a.batch_serial_no is not null
+        and    i.item_management_mode = 'I'
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'storunmown', userid, 'Data Validation', 'Icode and batch/serial both field cannot be blank.', clock_timestamp()
+        from   int$stg_storunmown a
+        where (a.item_barcode is null
+        and     a.batch_serial_no is null)
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'storunmown', userid, 'Data Validation', 'Serial No. can’t be duplicate.', clock_timestamp()
+        from   int$stg_storunmown a, invitem i,
+               (    SELECT icode, batch_serial_no from (select i.icode, sum(abs(item_qty)) as qty, batch_serial_no from int$stg_storunmown a, invitem i
+                                    where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+                                    and userid= p_userid group by i.icode, batch_serial_no) alias8
+                                    where qty <> 2
+                                    group by icode, batch_serial_no
+                    
+union
+
+                    select icode, batch_serial_no from (select i.icode, sum(item_qty) as qty, batch_serial_no from int$stg_storunmown a, invitem i
+                                    where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+                                    and userid= p_userid group by i.icode, batch_serial_no) alias13
+                                    where qty <> 0
+                                    group by icode, batch_serial_no
+                    EXCEPT
+                    select icode, batch_serial_no from int$stg_storunmown a, invitem i
+                    where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+                    and userid= p_userid
+                    GROUP BY icode, batch_serial_no
+                     HAVING count(*) = 1
+                    ) b
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        and    a.batch_serial_no is not null
+        and    i.item_management_mode = 'S'
+        and    i.icode = b.icode
+        and    UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no)
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'storunmown', userid, 'Data Validation', 'Invalid Batch/Serial information or Batch/Serial No. not exists for this Item.', clock_timestamp()
+        FROM int$stg_storunmown a
+			LEFT OUTER JOIN invbatch_serial b ON (UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no ))
+			LEFT OUTER JOIN invitem i ON (i.icode = b.icode)
+WHERE (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+and a.batch_serial_no is not null
+and (b.icode is null or b.batch_serial_no is null)
+and i.item_management_mode in ('B','S') and a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'storunmown', userid, 'Data Validation', 'Item Quantity for serial managed items must be equal to scan unit of item.', clock_timestamp()
+        from   int$stg_storunmown a, invitem i
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        and    a.batch_serial_no is not null
+        and    i.item_management_mode = 'S'
+        and    coalesce(ABS(a.item_qty),0) <> coalesce(i.barunit,1)
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'storunmown', userid, 'Data Validation', 'Invalid Batch/Serial information.', clock_timestamp()
+        FROM int$stg_storunmown a
+LEFT OUTER JOIN invbatch_serial b ON (UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no))
+WHERE a.batch_serial_no is not null and b.batch_serial_no is null and a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'storunmown', userid, 'Data Validation', 'Multi combination exist for the given batch/serial. Specify the icode to proceed.', clock_timestamp()
+        from   int$stg_storunmown a
+        where  a.item_barcode is null
+        and    a.batch_serial_no is not null
+        and    a.batch_serial_no in (SELECT distinct batch_serial_no from int$stg_storunmown where item_barcode is not null)
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'storunmown', userid, 'Data Validation', 'Expiry Batch Selected. Please rectify and proceed.', clock_timestamp()
+        from int$stg_storunmown a, invitem i, invbatch_serial b
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        and    UPPER(i.icode) = b.icode
+        and    UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no)
+        and    b.exp_date < a.saledt
+        and    a.userid = p_userid;
+
+       --END REV : 022
+        --COMMIT;
+      -- Check whether records are valid or not
+      BEGIN
+         SELECT 'S'
+           INTO STRICT v_status
+
+          WHERE EXISTS (SELECT 'S'
+                      FROM int$error_log
+                     WHERE userid = p_userid);
+
+         RETURN('0');
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            RETURN('1');
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'storunmown',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+
+         RETURN('0');
+   END;
+
+   -- Create Store Franchise Consignment Sale after validation
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

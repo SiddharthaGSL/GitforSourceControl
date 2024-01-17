@@ -1,0 +1,1115 @@
+function "main"."trigger_fct_t_salrtmain()" {
+  text = """
+
+DECLARE
+   ora2pg_rowcount integer;
+V_TABNAME             varchar(50);
+   V_POSTCODE            FINPOST.POSTCODE%TYPE;
+   V_CCCODE              FINCOSTTAG.CODE%TYPE;
+   V_SALETYPE            SALINVMAIN.SALETYPE%TYPE := NEW.SALETYPE;
+   -- START REV : 003
+   V_GL_CC_APPL          char(1) := 'N';
+   V_NEW_DAMOUNT         FINPOST.DAMOUNT%TYPE;
+   V_NEW_CAMOUNT         FINPOST.DAMOUNT%TYPE;
+   V_OLD_DAMOUNT         FINPOST.DAMOUNT%TYPE;
+   V_OLD_CAMOUNT         FINPOST.DAMOUNT%TYPE;
+   -- END REV : 003
+   V_FROM_ADMSITE_CODE    INVSTOCK.ADMSITE_CODE%TYPE := coalesce(NEW.ADMSITE_CODE,OLD.ADMSITE_CODE);
+   V_FROM_SITETYPE        ADMSITE.SITETYPE%TYPE;
+   V_FROM_ENTTYPE         INVSTOCK.ENTTYPE%TYPE;
+   V_FROM_SUBENTTYPE      INVSTOCK.SUBENTTYPE%TYPE;
+   V_FROM_ADMOU_CODE      ADMOU.CODE%TYPE;
+   V_FROM_TS_ADMSITE_CODE ADMSITE.CODE%TYPE;
+   V_FROM_LOCCODE         INVSTOCK.LOCCODE%TYPE := NEW.OUTLOCCODE;
+
+   V_TO_ADMSITE_CODE      INVSTOCK.ADMSITE_CODE%TYPE := coalesce(NEW.ADMSITE_CODE_OWNER,OLD.ADMSITE_CODE_OWNER);
+   V_TO_SITETYPE          ADMSITE.SITETYPE%TYPE;
+   V_TO_ENTTYPE           INVSTOCK.ENTTYPE%TYPE;
+   V_TO_SUBENTTYPE        INVSTOCK.SUBENTTYPE%TYPE;
+   V_TO_ADMOU_CODE        ADMOU.CODE%TYPE;
+   V_TO_LOCCODE           INVSTOCK.LOCCODE%TYPE := NEW.INLOCCODE;
+
+   -- START REV : 003
+   V_ENTTYPE              INVSTOCK.ENTTYPE%TYPE;
+   V_DAMOUNT              FINPOST.DAMOUNT%TYPE;
+   V_CAMOUNT              FINPOST.CAMOUNT%TYPE;
+   -- END REV : 003
+    -- START REV : 014
+    V_ADMGSTIN_CODE       ADMSITE.ADMGSTIN_CODE%TYPE;
+    -- END REV  : 014
+   -- START REV : 015
+   V_PGLCODE_GL_CC_APP            FINGL.COSTAPP%TYPE;
+   -- END REV : 015
+   V_DET_GL_AMT         double precision := 0;
+-- START REV : 018
+       
+    V_SID                           bigint;
+    V_PROGRAM                       varchar(50);
+-- END REV : 018
+/*********************************************************************************************************************************************************
+REV : 011  MOUSUMI        06/04/2017     (BUG ID : 26844) Need an option to create Multi OU and all operation will be according to the same.
+REV : 012  ANINDYA        14/06/2017     (TFS ID: 29634) GST Related changes.
+REV : 014  MOUSUMI        08/09/2017     (TFS ID: 32662) GST Related changes.
+REV : 013  MOUSUMI        18/09/2017     (TFS ID : 33151) Introduction of new entry type for transfer charges.
+REV : 015  MANASH         14/12/2017     (TFS ID : 35973) Unable to save Transfer In Against Transfer out.
+REV : 016  MANASH         27/12/2017     (TFS ID : 36314) Sales Return module get hanged in multi session.
+REV : 017  MOUSUMI        06/03/2018     (TFS ID : 37820) Non trading
+REV : 018  MOUSUMI        06/08/2019     (TFS ID : 34621) Data not posting in GST_Docno_check table
+REV : 019  MOUSUMI        17/01/2020     (TFS ID : 26278) ENTRY SOURCE RELATED CHANGES
+REV : 020  MOUSUMI        01/APR/2020    (TFS ID : MIGRATION) CAN NOT BE DELETED OTHER THAN WEB
+**********************************************************************************************************************************************************/
+BEGIN
+  BEGIN
+   IF  coalesce(NEW.SALETYPE, OLD.SALETYPE) = 'O' THEN
+       V_TABNAME := 'SALRTMAIN';
+   ELSE
+       V_TABNAME := 'SALRTMAIN_C';
+   END IF;
+
+   SELECT SITETYPE,ADMOU_CODE
+   INTO STRICT   V_FROM_SITETYPE,V_FROM_ADMOU_CODE
+   FROM   ADMSITE
+   WHERE  CODE = V_FROM_ADMSITE_CODE;
+
+   SELECT SITETYPE,ADMOU_CODE
+   INTO STRICT   V_TO_SITETYPE,V_TO_ADMOU_CODE
+   FROM   ADMSITE
+   WHERE  CODE = V_TO_ADMSITE_CODE;
+
+    -- start rev : 014
+    SELECT  ADMGSTIN_CODE
+    INTO STRICT    V_ADMGSTIN_CODE
+    FROM    ADMSITE
+    WHERE   CODE = coalesce(NEW.ADMSITE_CODE_OWNER, OLD.ADMSITE_CODE_OWNER);
+    -- end rev : 014
+   IF    V_TO_SITETYPE = 'OS-OO-CM' AND V_FROM_SITETYPE = 'US-CO-OM' AND V_SALETYPE = 'O' THEN --S&D : Sales Return (Adhoc) ,Sales Return (Against Invoice)
+         V_TO_ENTTYPE := 'SRT';
+         V_TO_SUBENTTYPE := NULL;
+
+         -- START REV : 003
+         V_NEW_DAMOUNT  := coalesce(NEW.MAIN_GL_AMT, 0); --NVL(:NEW.GRSAMT, 0); -- REV : 017
+         V_NEW_CAMOUNT  := coalesce(NEW.NETAMT, 0);
+         V_OLD_DAMOUNT  := coalesce(OLD.MAIN_GL_AMT, 0); --NVL(:OLD.GRSAMT, 0); -- REV : 017
+         V_OLD_CAMOUNT  := coalesce(OLD.NETAMT, 0);
+         -- END REV : 003
+   -- START REV : 004
+   -- ELSIF V_TO_SITETYPE = 'OS-OO-CM' AND V_FROM_SITETYPE = 'MS-CO-CM' AND V_SALETYPE = 'C' THEN --S&D : Transfer IN (Against Transfer OUT)
+   ELSIF V_TO_SITETYPE = 'OS-OO-CM' AND V_FROM_SITETYPE IN ('MS-CO-CM','MS-OO-CM') AND V_SALETYPE = 'C' THEN --S&D : Transfer IN (Against Transfer OUT)
+   -- END REV : 004
+         V_TO_ENTTYPE := 'STI';
+         V_TO_SUBENTTYPE := 'CR';
+         V_FROM_ENTTYPE := 'STO';
+         V_FROM_SUBENTTYPE := 'CR';
+         V_FROM_TS_ADMSITE_CODE := V_FROM_ADMSITE_CODE;
+         V_FROM_ADMSITE_CODE := V_TO_ADMSITE_CODE;
+
+        -- START REV : 012
+        IF NEW.TRANSITDIFF_GLCODE IS NULL THEN
+         -- START REV : 003
+         -- START REV : 017
+                --V_NEW_DAMOUNT  := NVL(:NEW.GRSAMT, 0);
+                V_NEW_DAMOUNT  := coalesce(NEW.MAIN_GL_AMT, 0);
+         -- END REV : 017
+                V_NEW_CAMOUNT  := coalesce(NEW.GRSAMT, 0)+ coalesce(NEW.CHGAMT, 0);
+                -- START REV : 017
+               -- V_OLD_DAMOUNT  := NVL(:OLD.GRSAMT, 0);
+               V_OLD_DAMOUNT  := coalesce(OLD.MAIN_GL_AMT, 0);
+                -- END REV : 017
+                V_OLD_CAMOUNT  := coalesce(OLD.GRSAMT, 0)+ coalesce(OLD.CHGAMT, 0);
+        ELSE
+                V_NEW_DAMOUNT  := coalesce(NEW.NETAMT, 0)- coalesce(NEW.CHGAMT, 0);
+                V_NEW_CAMOUNT  := coalesce(NEW.GRSAMT, 0)+ coalesce(NEW.CHGAMT, 0);
+                V_OLD_DAMOUNT  := coalesce(OLD.NETAMT, 0)- coalesce(OLD.CHGAMT, 0);
+                V_OLD_CAMOUNT  := coalesce(OLD.GRSAMT, 0)+ coalesce(OLD.CHGAMT, 0);
+        END IF;
+        --END REV  : 012
+         V_ENTTYPE      := 'ADJ';
+         -- END REV : 003
+   ELSIF V_TO_SITETYPE = 'OS-OO-CM' AND V_FROM_SITETYPE = 'OS-OO-CM' AND V_SALETYPE = 'C' THEN --S&D : Transfer IN (Against Transfer OUT)
+         V_TO_ENTTYPE := 'STI';
+         V_TO_SUBENTTYPE := 'CR';
+         V_FROM_ENTTYPE := 'STO';
+         V_FROM_SUBENTTYPE := 'CR';
+         V_FROM_TS_ADMSITE_CODE := V_FROM_ADMSITE_CODE;
+         V_FROM_ADMSITE_CODE := V_TO_ADMSITE_CODE;
+
+         -- START REV : 012
+        IF NEW.TRANSITDIFF_GLCODE IS NULL THEN
+         -- START REV : 003
+         -- START REV : 017
+                --V_NEW_DAMOUNT  := NVL(:NEW.GRSAMT, 0);
+                V_NEW_DAMOUNT  := coalesce(NEW.MAIN_GL_AMT, 0);
+          -- END REV : 017
+                V_NEW_CAMOUNT  := coalesce(NEW.GRSAMT, 0)+ coalesce(NEW.CHGAMT, 0);
+          -- START REV : 017
+               -- V_OLD_DAMOUNT  := NVL(:OLD.GRSAMT, 0);
+                V_OLD_DAMOUNT  := coalesce(OLD.MAIN_GL_AMT, 0);
+          -- END REV : 017
+                V_OLD_CAMOUNT  := coalesce(OLD.GRSAMT, 0)+ coalesce(OLD.CHGAMT, 0);
+
+        ELSE
+                V_NEW_DAMOUNT  := coalesce(NEW.NETAMT, 0)- coalesce(NEW.CHGAMT, 0);
+                V_NEW_CAMOUNT  := coalesce(NEW.GRSAMT, 0)+ coalesce(NEW.CHGAMT, 0);
+                V_OLD_DAMOUNT  := coalesce(OLD.NETAMT, 0)- coalesce(OLD.CHGAMT, 0);
+                V_OLD_CAMOUNT  := coalesce(OLD.GRSAMT, 0)+ coalesce(OLD.CHGAMT, 0);
+        END IF;
+        --END REV  : 012
+         V_ENTTYPE      := 'ADJ';
+         -- END REV : 003
+   ELSIF V_TO_SITETYPE = 'OS-OO-CM' AND V_FROM_SITETYPE = 'US-CO-CM' AND V_SALETYPE = 'C' THEN --S&D : Transfer IN (Adhoc)
+         V_TO_ENTTYPE := 'STI';
+         V_TO_SUBENTTYPE := 'CR';
+         V_FROM_ENTTYPE := 'STO';
+         V_FROM_SUBENTTYPE := 'CR';
+
+         -- START REV : 003
+         V_NEW_DAMOUNT  := coalesce(NEW.MAIN_GL_AMT, 0); --NVL(:NEW.NETAMT, 0); -- REV : 017
+         V_NEW_CAMOUNT  := coalesce(NEW.NETAMT, 0); --NVL(:NEW.GRSAMT, 0); -- REV : 017
+         V_OLD_DAMOUNT  := coalesce(OLD.MAIN_GL_AMT, 0); --NVL(:OLD.NETAMT, 0);  -- REV : 017
+         V_OLD_CAMOUNT  := coalesce(OLD.NETAMT, 0); --NVL(:OLD.GRSAMT, 0);  -- REV : 017
+         -- END REV : 003
+   ELSIF V_TO_SITETYPE = 'US-CO-CM' AND V_FROM_SITETYPE = 'US-CO-CM' AND V_SALETYPE = 'C' THEN --S&D : Transfer IN (Adhoc)
+         V_TO_ENTTYPE := 'STI';
+         V_TO_SUBENTTYPE := 'CR';
+         V_FROM_ENTTYPE := 'STO';
+         V_FROM_SUBENTTYPE := 'CR';
+
+         -- START REV : 003 LKJ M,./0
+         -- START REV : 017
+       --  V_NEW_DAMOUNT  := NVL(:NEW.NETAMT , 0);
+         V_NEW_DAMOUNT  := coalesce(NEW.MAIN_GL_AMT , 0);
+        -- END REV : 017
+         -- START REV : 017
+         --V_NEW_CAMOUNT  := NVL(:NEW.GRSAMT, 0);
+         V_NEW_CAMOUNT  := coalesce(NEW.NETAMT, 0);
+       --  V_OLD_DAMOUNT  := NVL(:OLD.NETAMT, 0);
+         V_OLD_DAMOUNT  := coalesce(OLD.MAIN_GL_AMT, 0);
+         --V_OLD_CAMOUNT  := NVL(:OLD.GRSAMT, 0);
+         V_OLD_CAMOUNT  := coalesce(OLD.NETAMT, 0);
+         -- END REV : 017
+         -- END REV : 003
+   ELSIF V_TO_SITETYPE = 'OS-OO-CM' AND V_FROM_SITETYPE = 'MS-CO-OM-TS' AND V_SALETYPE = 'O' THEN --S&D : Sales Return (Adhoc)
+         V_TO_ENTTYPE := 'SRT';
+         V_TO_SUBENTTYPE := NULL;
+         V_FROM_ENTTYPE := 'STO';
+         V_FROM_SUBENTTYPE := 'SSR';
+         V_FROM_TS_ADMSITE_CODE := V_FROM_ADMSITE_CODE;
+         V_FROM_ADMSITE_CODE := V_TO_ADMSITE_CODE;
+
+         -- START REV : 010
+         IF  NEW.PSITE_GRT_CODE IS NOT NULL THEN
+             V_ENTTYPE      := 'ADJ';
+         END IF;
+         -- END REV : 010
+         -- START REV : 003
+         -- START REV : 017
+        -- V_NEW_DAMOUNT  := NVL(:NEW.GRSAMT, 0);
+        V_NEW_DAMOUNT  := coalesce(NEW.MAIN_GL_AMT, 0);
+         -- END REV : 017
+         V_NEW_CAMOUNT  := coalesce(NEW.NETAMT, 0);
+         -- START REV : 017
+        -- V_OLD_DAMOUNT  := NVL(:OLD.GRSAMT, 0);
+        V_OLD_DAMOUNT  := coalesce(OLD.MAIN_GL_AMT, 0);
+         -- END REV : 017
+         V_OLD_CAMOUNT  := coalesce(OLD.NETAMT, 0);
+         -- END REV : 003
+   ELSIF V_TO_SITETYPE = 'OS-OO-CM' AND V_FROM_SITETYPE = 'US-CO-OM-TS' AND V_SALETYPE = 'O' THEN --S&D : Sales Return (Adhoc)
+         V_TO_ENTTYPE := 'SRT';
+         V_TO_SUBENTTYPE := NULL;
+         V_FROM_ENTTYPE := 'GRT';
+         V_FROM_SUBENTTYPE := 'SSR';
+
+         -- START REV : 003
+         V_NEW_DAMOUNT  := coalesce(NEW.MAIN_GL_AMT, 0);  --NVL(:NEW.GRSAMT, 0); -- REV : 017
+         V_NEW_CAMOUNT  := coalesce(NEW.NETAMT, 0);
+         V_OLD_DAMOUNT  := coalesce(OLD.MAIN_GL_AMT, 0); --NVL(:OLD.GRSAMT, 0); -- -- REV : 017
+         V_OLD_CAMOUNT  := coalesce(OLD.NETAMT, 0);
+         -- END REV : 003
+   END IF;
+
+-- START REV: 011
+   IF    TG_OP = 'INSERT'
+      OR TG_OP = 'UPDATE' THEN
+      NEW.ADMOU_CODE_IN := V_FROM_ADMOU_CODE;
+   END IF;
+-- END REV : 011
+   IF TG_OP = 'INSERT' THEN
+      INSERT INTO FINPOST(POSTCODE, ENTCODE, ENTNO, ENTDT
+                  ,ENTTYPE, DOCNO, DOCDT, GLCODE
+                  ,SLCODE, DAMOUNT, YCODE, NARTEXT
+                  ,ADMSITE_CODE_OWNER,ADMOU_CODE -- REV : 011
+                  )
+      VALUES (nextval('erp01'), NEW.RTCODE::varchar, NEW.RTNO::varchar, NEW.RTDT
+                  ,CASE WHEN NEW.SALETYPE='O' THEN  'SRM'  ELSE 'CRM' END , NEW.DOCNO, NEW.DOCDT, NEW.GLCODE
+                  -- START REV : 003
+                  -- ,:NEW.SLCODE, NVL(:NEW.GRSAMT, 0), :NEW.YCODE, :NEW.REM);
+                  ,NEW.SLCODE, coalesce(V_NEW_DAMOUNT, 0), NEW.YCODE, NEW.REM
+                  ,V_TO_ADMSITE_CODE,V_TO_ADMOU_CODE -- REV : 011
+                  );
+                  -- START REV : 003
+      INSERT INTO FINPOST(POSTCODE, ENTCODE, ENTNO, ENTDT
+                  ,ENTTYPE, DOCNO, DOCDT, GLCODE
+                  ,SLCODE, CAMOUNT, YCODE
+                  ,ADMSITE_CODE_OWNER,ADMOU_CODE -- REV : 011
+                  )
+      VALUES (nextval('erp01'), NEW.RTCODE::varchar, NEW.RTNO::varchar, NEW.RTDT
+                  ,CASE WHEN NEW.SALETYPE='O' THEN  'SRM'  ELSE 'CRM' END , NEW.DOCNO, NEW.DOCDT, NEW.PGLCODE
+                  ,CASE WHEN NEW.SALETYPE='O' THEN  NEW.PCODE  ELSE NEW.PSLCODE END
+                  -- START REV : 003
+                  -- ,NVL(:NEW.NETAMT, 0), :NEW.YCODE);
+                  ,coalesce(V_NEW_CAMOUNT, 0), NEW.YCODE
+                  ,V_TO_ADMSITE_CODE,V_TO_ADMOU_CODE -- REV : 011
+                  );
+                  -- END REV : 003
+      -- START REV : 003
+      IF (NEW.PGLCODE = NEW.TRANSITDIFF_GLCODE) AND (coalesce(NEW.PSLCODE,0) = coalesce(NEW.TRANSITDIFF_SLCODE,0))
+           -- START REV : 012
+          OR
+          (NEW.SALETYPE = 'C' AND NEW.TRANSITDIFF_GLCODE IS NULL
+          -- START REV : 017
+          AND
+        ( (V_TO_SITETYPE = 'OS-OO-CM' AND V_FROM_SITETYPE = 'OS-OO-CM')
+          OR (V_TO_SITETYPE = 'OS-OO-CM' AND V_FROM_SITETYPE IN ('MS-CO-CM','MS-OO-CM'))
+          )
+          )
+          -- END REV : 017
+          -- END REV : 012
+          THEN
+          /*
+          UPDATE FINPOST
+          SET    CAMOUNT = NVL(CAMOUNT, 0) + NVL(:NEW.SHORTEXCESSAMT, 0)
+          WHERE  ENTCODE = TO_CHAR(:NEW.RTCODE)
+          AND    ENTTYPE = DECODE(:NEW.SALETYPE, 'O', 'SRM', 'CRM')
+          AND    GLCODE = :NEW.TRANSITDIFF_GLCODE
+          AND    NVL(SLCODE, 0) = DECODE(:NEW.SALETYPE, 'O', NVL(:NEW.PCODE,0), NVL(:NEW.TRANSITDIFF_SLCODE, 0));
+          */
+          V_DAMOUNT := NULL;
+
+          SELECT DAMOUNT INTO STRICT V_DAMOUNT
+          FROM   FINPOST
+          WHERE  ENTCODE = NEW.RTCODE::varchar
+          AND    ENTTYPE = CASE WHEN NEW.SALETYPE='O' THEN  'SRM'  ELSE 'CRM' END 
+          AND    GLCODE = NEW.GLCODE
+          AND    coalesce(SLCODE, 0) = coalesce(NEW.SLCODE,0);
+
+          UPDATE FINPOST
+          SET    CAMOUNT = V_DAMOUNT
+          WHERE  ENTCODE = NEW.RTCODE::varchar
+          AND    ENTTYPE = CASE WHEN NEW.SALETYPE='O' THEN  'SRM'  ELSE 'CRM' END 
+          AND    GLCODE = NEW.PGLCODE
+          AND    coalesce(SLCODE, 0) = coalesce(NEW.PSLCODE,0);
+
+           
+    -- START REV : 017
+          IF NEW.SALETYPE = 'C' AND NEW.TRANSITDIFF_GLCODE IS NULL THEN
+
+            BEGIN
+            SELECT SUM(round((coalesce(coalesce(RATE,0)*coalesce(SENDQTY,0),0))::numeric,2))
+            INTO STRICT   V_DET_GL_AMT
+            FROM   SALRTDET
+            WHERE  GLCODE IS NOT NULL
+            AND    RTCODE = NEW.RTCODE;
+            EXCEPTION WHEN no_data_found THEN
+                V_DET_GL_AMT := NULL;
+            END;
+
+    -- END REV : 017
+              UPDATE FINPOST
+              --START REV : 017
+             --ET    CAMOUNT = NVL(V_DAMOUNT,0)
+              SET    CAMOUNT = coalesce(V_DAMOUNT,0) + coalesce(V_DET_GL_AMT,0)
+              -- END REV : 017
+              WHERE  ENTCODE = NEW.RTCODE::varchar
+              AND    ENTTYPE = CASE WHEN NEW.SALETYPE='O' THEN  'SRM'  ELSE 'CRM' END 
+              AND    GLCODE = NEW.PGLCODE
+              AND    coalesce(SLCODE, 0) = coalesce(NEW.PSLCODE,0);
+
+          END IF;
+
+          -- END REV : 017
+      ELSE
+
+          IF  coalesce(NEW.SHORTEXCESSAMT,0) > 0 THEN
+              INSERT INTO FINPOST(POSTCODE, ENTCODE, ENTNO, ENTDT
+                          ,ENTTYPE, DOCNO, DOCDT, GLCODE
+                          ,SLCODE, CAMOUNT, YCODE
+                          ,ADMSITE_CODE_OWNER,ADMOU_CODE -- REV : 011
+                          )
+              VALUES (nextval('erp01'), NEW.RTCODE::varchar, NEW.RTNO::varchar, NEW.RTDT
+                          ,'CRM', NEW.DOCNO, NEW.DOCDT, NEW.TRANSITDIFF_GLCODE
+                          ,NEW.TRANSITDIFF_SLCODE, coalesce(NEW.SHORTEXCESSAMT, 0), NEW.YCODE
+                          ,V_TO_ADMSITE_CODE,V_TO_ADMOU_CODE -- REV : 011
+                          );
+          ELSIF coalesce(NEW.SHORTEXCESSAMT,0) < 0 THEN
+                INSERT INTO FINPOST(POSTCODE, ENTCODE, ENTNO, ENTDT
+                          ,ENTTYPE, DOCNO, DOCDT, GLCODE
+                          ,SLCODE, DAMOUNT, YCODE, NARTEXT
+                          ,ADMSITE_CODE_OWNER,ADMOU_CODE -- REV : 011
+                          )
+                 VALUES (nextval('erp01'), NEW.RTCODE::varchar, NEW.RTNO::varchar, NEW.RTDT
+                          ,'CRM', NEW.DOCNO, NEW.DOCDT, NEW.TRANSITDIFF_GLCODE
+                          ,NEW.TRANSITDIFF_SLCODE, ABS(coalesce(NEW.SHORTEXCESSAMT, 0)), NEW.YCODE, NEW.REM
+                          ,V_TO_ADMSITE_CODE,V_TO_ADMOU_CODE -- REV : 011
+                          );
+          END IF;
+      END IF;
+      -- END REV : 003
+   END IF;
+
+   IF TG_OP = 'UPDATE' THEN
+
+        -- START REV : 014
+        -- START REV : 016
+        --IF  :NEW.GSTAPPL != 'N' THEN
+        IF  NEW.GSTAPPL IN ('Y','C','D') AND NEW.SCHEME_DOCNO IS NOT NULL AND UPPER(NEW.SCHEME_DOCNO) <> 'AUTOMATIC' THEN -- REV : 018
+        -- end rev : 016       
+      -- START REV : 019
+         -- Considering :NEW Instead of :OLD because we are trying to restrict the
+         -- execution of this dependent table update from trigger when update is done 
+         -- from web application even if the document was created from any other source
+         -- like (Import Excel, D2K etc.) 
+         IF  coalesce(NEW.ENTRY_SOURCE,'XX') <> 'WEB' THEN
+      -- END REV : 019
+            UPDATE  GST_DOCNO_CHECK DC
+            SET     SCHEME_DOCNO = NEW.SCHEME_DOCNO,
+                    DOCCODE      = NEW.DOCCODE
+            WHERE   ENTTYPE      = 'SRM'
+            AND     ENTCODE      = NEW.RTCODE
+            AND     YCODE        = NEW.YCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF  ora2pg_rowcount = 0 THEN
+                INSERT
+                INTO    GST_DOCNO_CHECK (
+                            ENTTYPE,ENTCODE,DOCCODE,SCHEME_DOCNO,
+                            ENTDATE,YCODE,ADMSITE_CODE_OWNER,ADMGSTIN_CODE
+                        )
+                VALUES (
+                           'SRM',NEW.RTCODE,NEW.DOCCODE,NEW.SCHEME_DOCNO,
+                           NEW.RTDT,NEW.YCODE,NEW.ADMSITE_CODE_OWNER,V_ADMGSTIN_CODE
+                        );
+                END IF; -- REV : 019
+            END IF;
+        END IF;
+        -- END REV : 014
+      --FROM SITE POSTING
+      CALL DB_PKG_STOCK$REFLECT(P_ENTCODE=>NEW.RTCODE
+                          ,P_ENTNO=>NEW.RTNO
+                          ,P_ENTDT=>NEW.RTDT
+                          ,P_ENTTYPE=>V_FROM_ENTTYPE
+                          ,P_LOCCODE=>NEW.OUTLOCCODE
+                          ,P_YCODE=>NEW.YCODE
+                          ,P_REFPCODE=>NEW.PCODE
+                          ,P_REFLOCCODE=>NEW.INLOCCODE
+                          ,P_REFCMPCODE=>NULL
+                          ,P_REFGLCODE=>NULL
+                          ,P_REFDEPTCODE=>NULL
+                          ,P_REFPRCODE=>NULL
+                          ,P_REFDOCNO=>NEW.DOCNO
+                          ,P_REFPKGCODE=>NULL
+                          ,P_SCHEME_DOCNO=>NEW.SCHEME_DOCNO
+                          ,P_ONHOLD_DOCUMENT=>NULL
+                          ,P_ADMOU_CODE=>V_FROM_ADMOU_CODE
+                          ,P_ADMSITE_CODE=>V_FROM_ADMSITE_CODE
+                          ,P_TS_SITECODE=>V_FROM_TS_ADMSITE_CODE
+                          );
+
+      --TO SITE POSTING
+      CALL DB_PKG_STOCK$REFLECT(P_ENTCODE=>NEW.RTCODE
+                          ,P_ENTNO=>NEW.RTNO
+                          ,P_ENTDT=>NEW.RTDT
+                          ,P_ENTTYPE=>V_TO_ENTTYPE
+                          ,P_LOCCODE=>NEW.INLOCCODE
+                          ,P_YCODE=>NEW.YCODE
+                          ,P_REFPCODE=>NEW.PCODE
+                          ,P_REFLOCCODE=>NEW.OUTLOCCODE
+                          ,P_REFCMPCODE=>NULL
+                          ,P_REFGLCODE=>NULL
+                          ,P_REFDEPTCODE=>NULL
+                          ,P_REFPRCODE=>NULL
+                          ,P_REFDOCNO=>NEW.DOCNO
+                          ,P_REFPKGCODE=>NULL
+                          ,P_SCHEME_DOCNO=>NEW.SCHEME_DOCNO
+                          ,P_ONHOLD_DOCUMENT=>NULL
+                          ,P_ADMOU_CODE=>V_TO_ADMOU_CODE
+                          ,P_ADMSITE_CODE=>V_TO_ADMSITE_CODE
+                          ,P_TS_SITECODE=>(NULL)
+                          );
+
+      -- START REV : 003
+      -- Adjustment posting
+      CALL DB_PKG_STOCK$REFLECT(P_ENTCODE=>NEW.RTCODE
+                          ,P_ENTNO=>NEW.RTNO
+                          ,P_ENTDT=>NEW.RTDT
+                          ,P_ENTTYPE=>V_ENTTYPE
+                          ,P_LOCCODE=>NEW.OUTLOCCODE
+                          ,P_YCODE=>NEW.YCODE
+                          ,P_REFPCODE=>NEW.PCODE
+                          ,P_REFLOCCODE=>NEW.INLOCCODE
+                          ,P_REFCMPCODE=>NULL
+                          ,P_REFGLCODE=>NULL
+                          ,P_REFDEPTCODE=>NULL
+                          ,P_REFPRCODE=>NULL
+                          ,P_REFDOCNO=>NEW.DOCNO
+                          ,P_REFPKGCODE=>NULL
+                          ,P_SCHEME_DOCNO=>NEW.SCHEME_DOCNO
+                          ,P_ONHOLD_DOCUMENT=>NULL
+                          ,P_ADMOU_CODE=>V_FROM_ADMOU_CODE
+                          ,P_ADMSITE_CODE=>V_FROM_ADMSITE_CODE
+                          ,P_TS_SITECODE=>V_FROM_TS_ADMSITE_CODE
+                          );
+      -- END REV : 003
+      UPDATE FINPOST
+      SET    ENTNO = NEW.RTNO::varchar
+            ,ENTDT = NEW.RTDT
+            ,DOCNO = NEW.DOCNO
+            ,DOCDT = NEW.DOCDT
+            ,SCHEME_DOCNO = NEW.SCHEME_DOCNO
+            -- START REV : 018
+            ,LAST_ACCESS_TIME = NEW.LAST_ACCESS_TIME
+            ,LAST_ACCESS_ECODE = NEW.LAST_ACCESS_ECODE
+            -- END REV : 018
+      WHERE  ENTCODE = NEW.RTCODE::varchar
+      -- START REV : 013
+      --AND    ENTTYPE IN('SRC');
+      AND    ENTTYPE IN ('SRC', 'CRC','SRD','CRD','SRM','CRM');
+      -- END REV : 013
+      -- Updating GL Debit amount
+      UPDATE FINPOST
+      -- START REV : 003
+      -- SET    DAMOUNT = NVL(DAMOUNT, 0) - NVL(:OLD.GRSAMT, 0)
+      SET    DAMOUNT = coalesce(DAMOUNT, 0) - coalesce(V_OLD_DAMOUNT, 0)
+      -- END REV : 003
+      WHERE  ENTCODE = OLD.RTCODE::varchar
+      AND    ENTTYPE = CASE WHEN NEW.SALETYPE='O' THEN  'SRM'  ELSE 'CRM' END
+      AND    GLCODE = OLD.GLCODE
+      AND    coalesce(SLCODE, 0) = coalesce(OLD.SLCODE, 0);
+
+      UPDATE FINPOST
+      SET    ENTNO = NEW.RTNO::varchar
+            ,ENTDT = NEW.RTDT
+            ,DOCNO = NEW.DOCNO
+            ,DOCDT = NEW.DOCDT
+            ,SCHEME_DOCNO = NEW.SCHEME_DOCNO
+            ,NARTEXT = NEW.REM
+            -- START REV : 003
+            -- ,DAMOUNT = NVL(DAMOUNT, 0) + NVL(:NEW.GRSAMT, 0)
+            ,DAMOUNT = coalesce(DAMOUNT, 0) + coalesce(V_NEW_DAMOUNT, 0)
+            -- END REV : 003
+      WHERE  ENTCODE = NEW.RTCODE::varchar
+      AND    ENTTYPE = CASE WHEN NEW.SALETYPE='O' THEN  'SRM'  ELSE 'CRM' END
+      AND    GLCODE = NEW.GLCODE
+      AND    coalesce(SLCODE, 0) = coalesce(NEW.SLCODE, 0);
+
+      IF NOT FOUND THEN
+         INSERT INTO FINPOST(POSTCODE, ENTCODE, ENTNO, ENTDT
+                     ,ENTTYPE, DOCNO, DOCDT
+                     ,GLCODE, SLCODE, DAMOUNT, YCODE
+                     ,SCHEME_DOCNO, NARTEXT
+                     ,ADMSITE_CODE_OWNER,ADMOU_CODE -- REV : 011
+                     )
+         VALUES (nextval('erp01'), NEW.RTCODE::varchar, NEW.RTNO::varchar, NEW.RTDT
+                     ,CASE WHEN NEW.SALETYPE='O' THEN  'SRM'  ELSE 'CRM' END , NEW.DOCNO, NEW.DOCDT
+                     -- START REV : 003
+                     -- ,:NEW.GLCODE, :NEW.SLCODE, NVL(:NEW.GRSAMT, 0), :NEW.YCODE
+                     ,NEW.GLCODE, NEW.SLCODE, coalesce(V_NEW_DAMOUNT, 0), NEW.YCODE
+                     -- END REV : 003
+                     ,NEW.SCHEME_DOCNO, NEW.REM
+                     ,V_TO_ADMSITE_CODE,V_TO_ADMOU_CODE -- REV : 011
+                     );
+      END IF;
+
+      BEGIN
+         SELECT POSTCODE
+         INTO STRICT   V_POSTCODE
+         FROM   FINPOST
+         WHERE  ENTCODE = OLD.RTCODE::varchar
+         AND    ENTTYPE = CASE WHEN NEW.SALETYPE='O' THEN  'SRM'  ELSE 'CRM' END
+         AND    GLCODE  = NEW.GLCODE
+         -- START REV : 003
+         -- AND    DAMOUNT = NVL(:NEW.GRSAMT, 0)
+         AND    DAMOUNT = coalesce(V_NEW_DAMOUNT, 0)
+         -- END REV : 003
+         AND    YCODE   = OLD.YCODE;
+      EXCEPTION
+         WHEN no_data_found THEN NULL;
+      END;
+
+--START REV : 019
+      DELETE    FROM FINCOSTTAG
+      WHERE     ENTCODE = OLD.RTCODE::varchar
+      AND       ENTTYPE = CASE WHEN NEW.SALETYPE='O' THEN  'SRM'  ELSE 'CRM' END
+      AND       GLCODE  = OLD.GLCODE
+      -- START REV : 003
+      -- AND       DAMOUNT = NVL(:OLD.GRSAMT, 0)
+     -- AND       DAMOUNT = NVL(V_OLD_DAMOUNT, 0)
+      -- END REV : 003
+      AND       YCODE   = OLD.YCODE;
+     /* RETURNING CODE
+      INTO      V_CCCODE;*/
+ 
+          
+-- END REV : 019
+      IF V_POSTCODE IS NOT NULL AND NEW.GL_CC_APPL = 'Y' THEN
+         
+         INSERT INTO FINCOSTTAG(ENTCODE, ENTNO, ENTDT, ENTTYPE
+                        ,GLCODE, SLCODE, COSTCODE, DAMOUNT, CAMOUNT, YCODE
+                        ,--CODE,
+                         POSTCODE, ADMSITE_CODE
+                         -- START REV : 006
+                        ,REF_ADMSITE_CODE
+                           -- END REV : 006
+                        ,ADMOU_CODE -- REV : 011
+                         )
+            VALUES (NEW.RTCODE::varchar, NEW.RTNO::varchar, NEW.RTDT, CASE WHEN NEW.SALETYPE='O' THEN  'SRM'  ELSE 'CRM' END 
+                        -- START REV : 003
+                        -- ,:NEW.GLCODE, :NEW.SLCODE, NULL, NVL(:NEW.GRSAMT, 0), 0, :NEW.YCODE
+                        ,NEW.GLCODE, NEW.SLCODE, NULL, coalesce(V_NEW_DAMOUNT, 0), 0, NEW.YCODE
+                        -- END REV : 003
+                        ,--V_CCCODE,
+                         V_POSTCODE, NEW.ADMSITE_CODE_OWNER
+                        -- START REV : 006
+                        ,NEW.ADMSITE_CODE_OWNER
+                           -- END REV : 006
+                        ,V_TO_ADMOU_CODE -- REV : 011
+                           );
+
+                           
+      END IF;
+
+      -- Updating Party GL credit amount
+      UPDATE FINPOST
+      -- START REV : 003
+      -- SET    CAMOUNT = NVL(CAMOUNT, 0) - NVL(:OLD.NETAMT, 0)
+      SET    CAMOUNT = coalesce(CAMOUNT, 0) - coalesce(V_OLD_CAMOUNT, 0)
+      -- END REV : 003
+      WHERE  ENTCODE = OLD.RTCODE::varchar
+      AND    ENTTYPE = CASE WHEN NEW.SALETYPE='O' THEN  'SRM'  ELSE 'CRM' END
+      AND    GLCODE = OLD.PGLCODE
+      AND    coalesce(SLCODE, 0) = CASE WHEN NEW.SALETYPE='O' THEN  coalesce(OLD.PCODE, 0)  ELSE coalesce(OLD.PSLCODE, 0) END;
+
+      UPDATE FINPOST
+      SET    ENTNO = NEW.RTNO::varchar
+            ,ENTDT = NEW.RTDT
+            ,DOCNO = NEW.DOCNO
+            ,DOCDT = NEW.DOCDT
+            ,SCHEME_DOCNO = NEW.SCHEME_DOCNO
+            ,NARTEXT = NEW.REM
+         -- START REV : 003
+            -- ,CAMOUNT = NVL(CAMOUNT, 0) + NVL(:NEW.NETAMT, 0)
+            ,CAMOUNT = coalesce(CAMOUNT, 0) + coalesce(V_NEW_CAMOUNT, 0)
+            -- END REV : 003
+      WHERE  ENTCODE = NEW.RTCODE::varchar
+      AND    ENTTYPE = CASE WHEN NEW.SALETYPE='O' THEN  'SRM'  ELSE 'CRM' END
+      AND    GLCODE = NEW.PGLCODE
+      AND    coalesce(SLCODE, 0) = CASE WHEN NEW.SALETYPE='O' THEN  coalesce(NEW.PCODE,0)  ELSE coalesce(NEW.PSLCODE, 0) END;
+
+      IF NOT FOUND THEN
+         INSERT INTO FINPOST(POSTCODE, ENTCODE, ENTNO, ENTDT
+                     ,ENTTYPE, DOCNO, DOCDT
+                     ,GLCODE, SLCODE,
+                     CAMOUNT, YCODE, SCHEME_DOCNO, NARTEXT
+                     ,ADMSITE_CODE_OWNER,ADMOU_CODE -- REV : 011
+                     )
+         VALUES (nextval('erp01'), NEW.RTCODE::varchar, NEW.RTNO::varchar, NEW.RTDT
+                     ,CASE WHEN NEW.SALETYPE='O' THEN  'SRM'  ELSE 'CRM' END , NEW.DOCNO, NEW.DOCDT
+                     ,NEW.PGLCODE, CASE WHEN NEW.SALETYPE='O' THEN  NEW.PCODE  ELSE NEW.PSLCODE END
+                     -- START REV : 003
+                     -- , NVL(:NEW.NETAMT, 0), :NEW.YCODE, :NEW.SCHEME_DOCNO, :NEW.REM);
+                     , coalesce(V_NEW_CAMOUNT, 0), NEW.YCODE, NEW.SCHEME_DOCNO, NEW.REM
+                     ,V_TO_ADMSITE_CODE,V_TO_ADMOU_CODE -- REV : 011
+                     );
+                     -- START REV : 003
+      END IF;
+
+      IF  ((NEW.PGLCODE = NEW.TRANSITDIFF_GLCODE) AND (coalesce(NEW.PSLCODE,0) = coalesce(NEW.TRANSITDIFF_SLCODE,0)))
+          -- START REV : 012
+          OR
+         ((NEW.SALETYPE = 'C' AND NEW.TRANSITDIFF_GLCODE IS NULL)
+         --START REV : 017
+          AND
+        ( (V_TO_SITETYPE = 'OS-OO-CM' AND V_FROM_SITETYPE = 'OS-OO-CM')
+          OR (V_TO_SITETYPE = 'OS-OO-CM' AND V_FROM_SITETYPE IN ('MS-CO-CM','MS-OO-CM'))
+          )
+          )
+          -- END REV : 017
+          -- END REV : 012
+      THEN
+          V_DAMOUNT := NULL;
+
+          SELECT  -- START REV : 012
+                 --DAMOUNT
+                 (DAMOUNT + coalesce(NEW.CHGAMT,0))
+                 -- END REV : 012
+          INTO V_DAMOUNT
+          FROM   FINPOST
+          WHERE  ENTCODE = NEW.RTCODE::varchar
+          AND    ENTTYPE = CASE WHEN NEW.SALETYPE='O' THEN  'SRM'  ELSE 'CRM' END 
+          AND    GLCODE = NEW.GLCODE
+          AND    coalesce(SLCODE, 0) = coalesce(NEW.SLCODE,0);
+
+          UPDATE FINPOST
+          SET    CAMOUNT = V_DAMOUNT
+          WHERE  ENTCODE = NEW.RTCODE::varchar
+          AND    ENTTYPE = CASE WHEN NEW.SALETYPE='O' THEN  'SRM'  ELSE 'CRM' END 
+          AND    GLCODE = NEW.PGLCODE
+          AND    coalesce(SLCODE, 0) = coalesce(NEW.PSLCODE,0);
+
+           IF NEW.SALETYPE = 'C' AND NEW.TRANSITDIFF_GLCODE IS NULL THEN
+-- START REV : 017
+            BEGIN
+            SELECT SUM(round((coalesce(coalesce(RATE,0)*coalesce(SENDQTY,0),0))::numeric,2))
+            INTO STRICT   V_DET_GL_AMT
+            FROM   SALRTDET
+            WHERE  GLCODE IS NOT NULL
+            AND    RTCODE = NEW.RTCODE;
+            EXCEPTION WHEN no_data_found THEN
+                V_DET_GL_AMT := NULL;
+            END;
+-- END REV : 017
+              UPDATE FINPOST
+              -- START REV : 017
+              --SET  CAMOUNT = NVL(V_DAMOUNT,0)
+              SET    CAMOUNT = coalesce(V_DAMOUNT,0) + coalesce(V_DET_GL_AMT,0)
+              -- END REV : 017
+              WHERE  ENTCODE = NEW.RTCODE::varchar
+              AND    ENTTYPE = CASE WHEN NEW.SALETYPE='O' THEN  'SRM'  ELSE 'CRM' END
+              AND    GLCODE = NEW.PGLCODE
+              AND    coalesce(SLCODE, 0) = coalesce(NEW.PSLCODE,0);
+
+          END IF;
+
+          IF  NOT FOUND THEN
+              IF    coalesce(NEW.SHORTEXCESSAMT,0) > 0 THEN
+                    INSERT INTO FINPOST(POSTCODE, ENTCODE, ENTNO, ENTDT
+                                ,ENTTYPE, DOCNO, DOCDT
+                                ,GLCODE, SLCODE,CAMOUNT,
+                                YCODE, SCHEME_DOCNO, NARTEXT
+                                ,ADMSITE_CODE_OWNER,ADMOU_CODE -- REV : 010
+                                )
+                       VALUES (nextval('erp01'), NEW.RTCODE::varchar, NEW.RTNO::varchar, NEW.RTDT
+                                ,'CRM', NEW.DOCNO, NEW.DOCDT
+                                ,NEW.TRANSITDIFF_GLCODE, NEW.TRANSITDIFF_SLCODE, coalesce(NEW.SHORTEXCESSAMT, 0)
+                                ,NEW.YCODE, NEW.SCHEME_DOCNO, NEW.REM
+                                ,V_TO_ADMSITE_CODE,V_TO_ADMOU_CODE -- REV : 011
+                                );
+              ELSIF coalesce(NEW.SHORTEXCESSAMT,0) < 0 THEN
+                    INSERT INTO FINPOST(POSTCODE, ENTCODE, ENTNO, ENTDT
+                                ,ENTTYPE, DOCNO, DOCDT
+                                ,GLCODE, SLCODE, DAMOUNT
+                                ,YCODE, SCHEME_DOCNO, NARTEXT
+                                ,ADMSITE_CODE_OWNER,ADMOU_CODE
+                                )
+                    VALUES (nextval('erp01'), NEW.RTCODE::varchar, NEW.RTNO::varchar, NEW.RTDT
+                                ,'CRM', NEW.DOCNO, NEW.DOCDT
+                                ,NEW.TRANSITDIFF_GLCODE, NEW.TRANSITDIFF_SLCODE, ABS(coalesce(NEW.SHORTEXCESSAMT, 0))
+                                ,NEW.YCODE, NEW.SCHEME_DOCNO, NEW.REM
+                                ,V_TO_ADMSITE_CODE,V_TO_ADMOU_CODE -- REV : 011
+                                );
+              END IF;
+          END IF;
+
+          IF  NEW.SALETYPE = 'C' THEN
+              V_POSTCODE := NULL;
+              V_CCCODE   := NULL;
+              V_DAMOUNT  := NULL;
+              V_CAMOUNT  := NULL;
+
+              BEGIN
+                 SELECT POSTCODE, DAMOUNT, CAMOUNT
+                 INTO STRICT   V_POSTCODE, V_DAMOUNT, V_CAMOUNT
+                 FROM   FINPOST
+                 WHERE  ENTCODE = OLD.RTCODE::varchar
+                 AND    ENTTYPE = 'CRM'
+                 AND    GLCODE  = OLD.PGLCODE
+                 -- START REV : 007
+                 -- AND    SLCODE  = NVL(:OLD.PSLCODE, 0)
+                 AND    coalesce(SLCODE,0)  = coalesce(OLD.PSLCODE, 0)
+                 -- START REV : 007
+                 AND    YCODE   = OLD.YCODE;
+              EXCEPTION
+                 WHEN no_data_found THEN NULL;
+              END;
+
+              -- START REV : 019
+             DELETE    FROM FINCOSTTAG
+              WHERE     ENTCODE = OLD.RTCODE::varchar
+              AND       ENTTYPE = 'CRM'
+              AND       GLCODE  = OLD.PGLCODE
+              -- START REV : 007
+              -- AND       SLCODE  = NVL(:OLD.PSLCODE, 0)
+              AND       coalesce(SLCODE,0) = coalesce(OLD.PSLCODE, 0)
+              -- END REV : 007
+              AND       YCODE   = OLD.YCODE;
+             /* RETURNING CODE
+              INTO      V_CCCODE;*/
+              
+              
+              -- END REV : 019
+                --START REV : 015
+                SELECT  COSTAPP
+                INTO STRICT    V_PGLCODE_GL_CC_APP
+                FROM    FINGL
+                WHERE   GLCODE = NEW.PGLCODE;
+
+              --IF V_POSTCODE IS NOT NULL AND :NEW.GL_CC_APPL = 'Y' THEN
+              IF V_POSTCODE IS NOT NULL AND V_PGLCODE_GL_CC_APP = 'Y' THEN
+              -- END REV : 015
+                 INSERT INTO FINCOSTTAG(ENTCODE, ENTNO, ENTDT, ENTTYPE
+                            ,GLCODE, SLCODE, COSTCODE, DAMOUNT, CAMOUNT, YCODE
+                            ,--CODE, 
+                            POSTCODE, ADMSITE_CODE
+                             -- START REV : 006
+                            ,REF_ADMSITE_CODE
+                           -- END REV : 006
+                           ,ADMOU_CODE -- REV : 011
+                           )
+                 VALUES (NEW.RTCODE::varchar, NEW.RTNO::varchar, NEW.RTDT, 'CRM'
+                            ,NEW.PGLCODE, NEW.PSLCODE, NULL, coalesce(V_DAMOUNT,0), coalesce(V_CAMOUNT, 0), NEW.YCODE
+                            ,--V_CCCODE,
+                             V_POSTCODE, NEW.ADMSITE_CODE_OWNER
+                            -- START REV : 006
+                            ,NEW.ADMSITE_CODE_OWNER
+                           -- END REV : 006
+                           ,V_TO_ADMOU_CODE -- REV : 011
+                           );
+              END IF;
+          END IF;
+      ELSE
+
+          DELETE    FROM FINCOSTTAG
+          WHERE     ENTCODE = OLD.RTCODE::varchar
+          AND       ENTTYPE = 'CRM'
+          AND       GLCODE  = OLD.TRANSITDIFF_GLCODE
+          AND       coalesce(SLCODE, 0) = coalesce(OLD.TRANSITDIFF_SLCODE, 0)
+          AND       YCODE   = OLD.YCODE;
+
+          DELETE  FROM FINPOST
+          WHERE   ENTCODE = OLD.RTCODE::varchar
+          AND     ENTTYPE = 'CRM'
+          AND     GLCODE  = OLD.TRANSITDIFF_GLCODE
+          AND     coalesce(SLCODE, 0) = coalesce(OLD.TRANSITDIFF_SLCODE, 0);
+
+          IF    coalesce(NEW.SHORTEXCESSAMT,0) > 0 THEN
+                INSERT INTO FINPOST(POSTCODE, ENTCODE, ENTNO, ENTDT
+                            ,ENTTYPE, DOCNO, DOCDT
+                            ,GLCODE, SLCODE
+                            ,CAMOUNT, YCODE, SCHEME_DOCNO, NARTEXT
+                            ,ADMSITE_CODE_OWNER,ADMOU_CODE -- REV : 011
+                            )
+                   VALUES (nextval('erp01'), NEW.RTCODE::varchar, NEW.RTNO::varchar, NEW.RTDT
+                            ,'CRM', NEW.DOCNO, NEW.DOCDT
+                            ,NEW.TRANSITDIFF_GLCODE, NEW.TRANSITDIFF_SLCODE, coalesce(NEW.SHORTEXCESSAMT, 0)
+                            ,NEW.YCODE, NEW.SCHEME_DOCNO, NEW.REM
+                            ,V_TO_ADMSITE_CODE,V_TO_ADMOU_CODE -- REV : 011
+                            );
+          ELSIF coalesce(NEW.SHORTEXCESSAMT,0) < 0 THEN
+                INSERT INTO FINPOST(POSTCODE, ENTCODE, ENTNO, ENTDT
+                            ,ENTTYPE, DOCNO, DOCDT
+                            ,GLCODE, SLCODE, DAMOUNT
+                            ,YCODE, SCHEME_DOCNO, NARTEXT
+                            ,ADMSITE_CODE_OWNER,ADMOU_CODE -- REV : 011
+                            )
+                VALUES (nextval('erp01'), NEW.RTCODE::varchar, NEW.RTNO::varchar, NEW.RTDT
+                            ,'CRM', NEW.DOCNO, NEW.DOCDT
+                            ,NEW.TRANSITDIFF_GLCODE, NEW.TRANSITDIFF_SLCODE, ABS(coalesce(NEW.SHORTEXCESSAMT, 0))
+                            ,NEW.YCODE, NEW.SCHEME_DOCNO, NEW.REM
+                            ,V_TO_ADMSITE_CODE,V_TO_ADMOU_CODE -- REV : 011
+                            );
+          END IF;
+
+          IF  NEW.SALETYPE = 'C' THEN
+              V_POSTCODE := NULL;
+              V_CCCODE   := NULL;
+              V_CCCODE   := NULL;
+              V_DAMOUNT  := NULL;
+              V_CAMOUNT  := NULL;
+
+              BEGIN
+                 SELECT POSTCODE, DAMOUNT, CAMOUNT
+                 INTO STRICT   V_POSTCODE, V_DAMOUNT, V_CAMOUNT
+                 FROM   FINPOST
+                 WHERE  ENTCODE = OLD.RTCODE::varchar
+                 AND    ENTTYPE = 'CRM'
+                 AND    GLCODE  = OLD.PGLCODE
+                 -- START REV : 007
+                 -- AND    SLCODE  = NVL(:OLD.PSLCODE, 0)
+                 AND    coalesce(SLCODE,0)  = coalesce(OLD.PSLCODE, 0)
+                 -- END REV : 007
+                 AND    YCODE   = OLD.YCODE;
+              EXCEPTION
+                 WHEN no_data_found THEN NULL;
+              END;
+
+              DELETE    FROM FINCOSTTAG
+              WHERE     ENTCODE = OLD.RTCODE::varchar
+              AND       ENTTYPE = 'CRM'
+              AND       GLCODE  = OLD.PGLCODE
+              -- START REV : 007
+              -- AND       SLCODE  = NVL(:OLD.PSLCODE, 0)
+              AND       coalesce(SLCODE,0) = coalesce(OLD.PSLCODE, 0)
+              -- END REV : 007
+              AND       YCODE   = OLD.YCODE;
+              /*RETURNING CODE
+              INTO      V_CCCODE;*/
+              
+
+                --START REV : 015
+                SELECT  COSTAPP
+                INTO STRICT    V_PGLCODE_GL_CC_APP
+                FROM    FINGL
+                WHERE   GLCODE = NEW.PGLCODE;
+
+              --IF V_POSTCODE IS NOT NULL AND :NEW.GL_CC_APPL = 'Y' THEN
+              IF V_POSTCODE IS NOT NULL AND V_PGLCODE_GL_CC_APP = 'Y' THEN
+              -- END REV : 015
+                 INSERT INTO FINCOSTTAG(ENTCODE, ENTNO, ENTDT, ENTTYPE
+                            ,GLCODE, SLCODE, COSTCODE, DAMOUNT, CAMOUNT, YCODE
+                            ,--CODE,
+                             POSTCODE, ADMSITE_CODE
+                            -- START REV : 006
+                            ,REF_ADMSITE_CODE
+                           -- END REV : 006
+                           ,ADMOU_CODE -- REV : 011
+                           )
+                 VALUES (NEW.RTCODE::varchar, NEW.RTNO::varchar, NEW.RTDT, 'CRM'
+                            ,NEW.PGLCODE, NEW.PSLCODE, NULL, coalesce(V_DAMOUNT,0), coalesce(V_CAMOUNT, 0), NEW.YCODE
+                            ,--V_CCCODE, 
+                            V_POSTCODE, NEW.ADMSITE_CODE_OWNER
+                            -- START REV : 006
+                            ,NEW.ADMSITE_CODE_OWNER
+                           -- END REV : 006
+                           ,V_TO_ADMOU_CODE -- REV : 011
+                           );
+              END IF;
+
+              V_POSTCODE := NULL;
+              V_CCCODE   := NULL;
+              V_DAMOUNT  := NULL;
+              V_CAMOUNT  := NULL;
+
+             BEGIN
+                 SELECT POSTCODE, DAMOUNT, CAMOUNT
+                 INTO STRICT   V_POSTCODE, V_DAMOUNT, V_CAMOUNT
+                 FROM   FINPOST
+                 WHERE  ENTCODE = NEW.RTCODE::varchar
+                 AND    ENTTYPE = 'CRM'
+                 AND    GLCODE  = NEW.TRANSITDIFF_GLCODE
+                 -- START REV : 007
+                 -- AND    SLCODE  = NVL(:NEW.TRANSITDIFF_SLCODE, 0)
+                 AND    coalesce(SLCODE,0)  = coalesce(NEW.TRANSITDIFF_SLCODE, 0)
+                 -- END REV : 007
+                 AND    YCODE   = NEW.YCODE;
+              EXCEPTION
+                 WHEN no_data_found THEN
+                  V_POSTCODE := NULL;
+              END;
+
+              IF V_POSTCODE IS NOT NULL AND NEW.GL_CC_APPL = 'Y' THEN
+                 INSERT INTO FINCOSTTAG(ENTCODE, ENTNO, ENTDT, ENTTYPE
+                            ,GLCODE, SLCODE, COSTCODE
+                            , DAMOUNT, CAMOUNT, YCODE
+                            ,CODE, POSTCODE, ADMSITE_CODE
+                            -- START REV : 006
+                            ,REF_ADMSITE_CODE
+                           -- END REV : 006
+                           ,ADMOU_CODE -- 011
+                           )
+                 VALUES (NEW.RTCODE::varchar, NEW.RTNO::varchar, NEW.RTDT, 'CRM'
+                            ,NEW.TRANSITDIFF_GLCODE,
+                              -- START REV : 008
+                              --NVL(:NEW.TRANSITDIFF_SLCODE,0), NULL
+                              NEW.TRANSITDIFF_SLCODE,
+                              -- END REV : 008
+                              NULL
+                            , coalesce(V_DAMOUNT,0), coalesce(V_CAMOUNT, 0), NEW.YCODE
+                            ,V_CCCODE, V_POSTCODE, NEW.ADMSITE_CODE_OWNER
+                            -- START REV : 006
+                            ,NEW.ADMSITE_CODE_OWNER
+                           -- END REV : 006
+                           ,V_TO_ADMOU_CODE -- REV : 011
+                           );
+              END IF;
+          END IF;
+      END IF;
+      -- END REV : 003
+      DELETE FROM FINCOSTTAG
+      WHERE  POSTCODE IN (
+                          SELECT POSTCODE
+                          FROM   FINPOST
+                          WHERE  ENTCODE = OLD.RTCODE::varchar
+                          AND    ENTTYPE IN ('SRM', 'CRM')
+                          AND    coalesce(DAMOUNT, 0) = 0
+                          AND    coalesce(CAMOUNT, 0) = 0);
+
+      DELETE FROM FINPOST
+      WHERE  ENTCODE = OLD.RTCODE::varchar
+      AND    ENTTYPE IN ('SRM', 'CRM')
+      AND    coalesce(DAMOUNT, 0) = 0
+      AND    coalesce(CAMOUNT, 0) = 0;
+
+      UPDATE FINCOSTTAG
+      SET    ENTNO = NEW.RTNO::varchar
+            ,ENTDT = NEW.RTDT
+      WHERE  ENTCODE = NEW.RTCODE::varchar
+      AND    YCODE = NEW.YCODE;
+
+      -- START REV : 005
+      UPDATE FINPOST
+      -- START REV : 009
+      -- SET    ADMSITE_CODE_OWNER = :NEW.ADMSITE_CODE,
+      --        REF_ADMSITE_CODE   = :NEW.ADMSITE_CODE_OWNER,
+      SET    ADMSITE_CODE_OWNER = NEW.ADMSITE_CODE_OWNER,
+             REF_ADMSITE_CODE   = NEW.ADMSITE_CODE,
+      -- END REV : 009
+             ECODE              = NEW.ECODE,
+             TIME               = NEW.TIME
+             ,ADMOU_CODE        = V_TO_ADMOU_CODE -- REV : 010
+      WHERE  ENTCODE = NEW.RTCODE::varchar
+      -- START REV : 013
+      --AND    ENTTYPE IN('SRM', 'SRC', 'CRM');
+      AND    ENTTYPE IN ('SRM', 'SRC', 'CRM', 'CRC','SRD','CRD');
+      -- END REV : 013
+      -- END REV : 005
+   END IF;
+
+   IF TG_OP = 'DELETE' THEN
+
+         -- START REV  : 019
+       SELECT PG_BACKEND_PID() INTO V_SID;
+	   
+       SELECT APPLICATION_NAME INTO V_PROGRAM FROM PG_STAT_ACTIVITY WHERE PID=V_SID;
+
+IF not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+       THEN
+          RAISE EXCEPTION 'del_from_wrong_application' USING ERRCODE = '50001';
+       END IF;
+       -- END REV :019
+      DELETE FROM FINCOSTTAG
+      WHERE  POSTCODE IN (SELECT POSTCODE
+                         FROM   FINPOST
+                         WHERE  ENTCODE = OLD.RTCODE::varchar
+                          -- START REV : 013
+                          --AND    ENTTYPE IN('SRM', 'SRC', 'CRM'));
+                          AND   ENTTYPE IN ('SRM', 'SRC', 'CRM', 'CRC','SRD','CRD'));
+                          -- END REV : 013
+      DELETE FROM FINPOST
+      WHERE  ENTCODE = OLD.RTCODE::varchar
+      -- START REV : 013
+      --AND    ENTTYPE IN('SRM', 'SRC', 'CRM');
+      AND    ENTTYPE IN ('SRM', 'SRC', 'CRM', 'CRC','SRD','CRD');
+      -- END REV : 013
+   END IF;
+
+   -- LOGISTIC TAGGING START
+   IF TG_OP = 'INSERT' THEN
+ 
+   -- START REV : 019
+    IF  coalesce(NEW.ENTRY_SOURCE,'XX') <> 'WEB' 
+     THEN
+    -- END REV : 019
+          IF NEW.LGTCODE IS NOT NULL THEN
+             UPDATE INVLGTNOTE
+             SET DOCAMT = coalesce(DOCAMT, 0) + coalesce(NEW.NETAMT, 0)
+                ,LGTRECQTY = coalesce(LGTRECQTY, 0) + coalesce(NEW.LGTRECQTY, 0)
+                ,COMPLETION_TIME =
+                    CASE
+                       WHEN coalesce(QTY1, 0) <> 0
+                    AND    QTY1 =(coalesce(LGTRECQTY, 0) + coalesce(NEW.LGTRECQTY, 0)) THEN statement_timestamp()
+                       ELSE COMPLETION_TIME
+                    END
+             WHERE  LGTCODE = NEW.LGTCODE;
+          END IF;
+
+          IF NEW.INVGATEIN_CODE IS NOT NULL THEN
+             UPDATE INVGATEIN
+             SET TAGQTY = coalesce(TAGQTY, 0) + coalesce(NEW.LGTRECQTY, 0)
+             WHERE  CODE = NEW.INVGATEIN_CODE;
+          END IF;
+    -- START REV : 019
+     END IF;
+    -- END REV : 019
+   END IF;
+
+   IF TG_OP = 'UPDATE' THEN
+          -- START REV : 019
+        IF  coalesce(NEW.ENTRY_SOURCE,'XX') <> 'WEB'
+         THEN
+        -- END REV : 019
+              IF OLD.LGTCODE IS NOT NULL THEN
+                 UPDATE INVLGTNOTE
+                 SET DOCAMT = coalesce(DOCAMT, 0) - coalesce(OLD.NETAMT, 0)
+                    ,LGTRECQTY = coalesce(LGTRECQTY, 0) - coalesce(OLD.LGTRECQTY, 0)
+                    ,COMPLETION_TIME =
+                        CASE
+                           WHEN coalesce(QTY1, 0) <> 0
+                        AND    QTY1 =(LGTRECQTY - coalesce(OLD.LGTRECQTY, 0)) THEN statement_timestamp()
+                           ELSE NULL
+                        END
+                 WHERE  LGTCODE = OLD.LGTCODE;
+              END IF;
+
+              IF NEW.LGTCODE IS NOT NULL THEN
+                 UPDATE INVLGTNOTE
+                 SET DOCAMT = coalesce(DOCAMT, 0) + coalesce(NEW.NETAMT, 0)
+                    ,LGTRECQTY = coalesce(LGTRECQTY, 0) + coalesce(NEW.LGTRECQTY, 0)
+                    ,COMPLETION_TIME =
+                        CASE
+                           WHEN coalesce(QTY1, 0) <> 0
+                        AND    QTY1 =(LGTRECQTY + coalesce(NEW.LGTRECQTY, 0)) THEN statement_timestamp()
+                           ELSE COMPLETION_TIME
+                        END
+                 WHERE  LGTCODE = NEW.LGTCODE;
+              END IF;
+
+              IF OLD.INVGATEIN_CODE IS NOT NULL THEN
+                 UPDATE INVGATEIN
+                 SET TAGQTY = coalesce(TAGQTY, 0) - coalesce(OLD.LGTRECQTY, 0)
+                 WHERE  CODE = OLD.INVGATEIN_CODE;
+              END IF;
+
+              IF NEW.INVGATEIN_CODE IS NOT NULL THEN
+                 UPDATE INVGATEIN
+                 SET TAGQTY = coalesce(TAGQTY, 0) + coalesce(NEW.LGTRECQTY, 0)
+                 WHERE  CODE = NEW.INVGATEIN_CODE;
+              END IF;
+    -- START REV : 019
+     END IF;
+    -- END REV : 019
+   END IF;
+
+               IF TG_OP = 'DELETE' THEN
+
+				  SELECT PG_BACKEND_PID() INTO STRICT V_SID;
+                  SELECT APPLICATION_NAME INTO STRICT V_PROGRAM FROM PG_STAT_ACTIVITY WHERE PID=V_SID;
+
+IF not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+                  THEN
+                     RAISE EXCEPTION 'del_from_wrong_application' USING ERRCODE = '50001';
+                  END IF;
+                -- END REV : 020
+                -- END REV : 019
+               END IF;
+  -- LOGISTIC TAGGING END
+EXCEPTION
+    WHEN SQLSTATE '50001' THEN
+    RAISE EXCEPTION '%', 'T_SALRTMAIN == >> Deletion from other application except GINESYS WEB not allowed.' USING ERRCODE = '45112';
+    -- END REV : 020
+   WHEN OTHERS THEN
+      CALL ERRAUDIT(USER, 'SALRTMAIN', SQLSTATE::varchar, SQLERRM);
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED  ' || SQLSTATE::varchar || '  ' || SQLERRM USING ERRCODE = '45001';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

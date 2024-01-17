@@ -1,0 +1,46 @@
+function "main"."t_connected_app_item_gds2()" {
+  text = """
+
+DECLARE
+  C1 RECORD;
+   SUB_COUNT   smallint;
+   V_CONNECTED_APP_STATUS char(1);
+BEGIN
+   -- It is  not required to check Subscription event because practically it
+   -- is not possible to insert data in this table without event subscription
+   /*
+   SELECT COUNT(1)
+   INTO   SUB_COUNT
+   FROM  GDS2_SUBSCR_EVENT
+   WHERE  EVENT_ID = 'APPITEMCONFIGCHANGE';
+   */
+   --IF NVL(SUB_COUNT,0) > 0
+   --THEN
+   CALL DB_PKG_GDS2_EVENT.TRACK('app.allocation.item.added',
+                            NEW.ICODE,
+                            NEW.CONNECTED_APP_ID);
+--END IF;
+   SELECT  STATUS
+   INTO STRICT    V_CONNECTED_APP_STATUS
+   FROM    CONNECTED_APP 
+   WHERE   CODE = NEW.CONNECTED_APP_ID;
+
+   IF   V_CONNECTED_APP_STATUS = 'E'
+   THEN
+        FOR C1 IN (SELECT ADMSITE_CODE
+                    FROM  CONNECTED_APP_SITE
+                    WHERE CONNECTED_APP_ID = NEW.CONNECTED_APP_ID)
+        LOOP
+            CALL DB_PKG_GDS2_EVENT.TRACK('site.inventory.item.updated',NEW.ICODE || '~' || C1.ADMSITE_CODE::text);
+            CALL DB_PKG_GDS2_EVENT.TRACK('site.bininventory.item.updated', NEW.ICODE||'~'||C1.ADMSITE_CODE::text);
+        END LOOP;
+    END IF;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

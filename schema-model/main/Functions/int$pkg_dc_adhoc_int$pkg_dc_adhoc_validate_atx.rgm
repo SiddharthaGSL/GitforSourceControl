@@ -1,0 +1,1413 @@
+function "main"."int$pkg_dc_adhoc_int$pkg_dc_adhoc_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status                  char(1);
+      errmsg                    varchar(2000);
+      errcode                   text;
+      v_icode                   varchar(9);
+      v_barcode                 varchar(50);
+      v_connected_ou            bigint;
+      v_sitetype                admsite.SITETYPE%TYPE;
+      v_mark                    varchar(100);
+      v_item_batch_separator    char(1);
+	  i RECORD;
+	  return_string				varchar(500);
+	  
+BEGIN
+        v_mark := 1;
+        -- deleting the base table
+        delete FROM int$stg_createdc_all_fld
+        where  userid = p_userid;
+
+        --COMMIT;
+
+        v_mark := 1.1;
+
+        select item_batch_separator into STRICT v_item_batch_separator from admcmpprof;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Please remove value from batch/serial column and try again.', clock_timestamp()
+        from   int$stg_dc_adhoc a
+        where  a.icode_barcode is not null
+        and    a.batch_serial_no is not null
+        and    coalesce((position(v_item_batch_separator in a.icode_barcode)),0) <> 0
+        and    a.userid = p_userid;
+
+    declare 
+         c_separator CURSOR FOR
+                    SELECT *
+                    from   int$stg_dc_adhoc 
+                    where  userid = p_userid
+                    and    icode_barcode like '%'||v_item_batch_separator||'%'
+                    order by lineno;
+         begin
+           for c1 in c_separator
+           loop
+                   update int$stg_dc_adhoc
+                   set    batch_serial_no = SUBSTR(icode_barcode, INSTR(icode_barcode,v_item_batch_separator, -1) + 1),
+                   icode_barcode = SUBSTR(icode_barcode, 1, position(v_item_batch_separator in icode_barcode)-1)
+                   where  lineno = c1.lineno
+                   and    icode_barcode like '%'||v_item_batch_separator||'%'
+                   and    userid = p_userid;
+           end loop;
+         end;
+
+    --COMMIT;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'System Batch Serial is not allowed. Please remove and proceed.', clock_timestamp()
+        from   int$stg_dc_adhoc a
+        where  UPPER(a.batch_serial_no) = 'SYSTEM BATCH SERIAL'
+        and    a.batch_serial_no is not null
+        and    a.userid = p_userid;
+
+        -- END REV : 007
+        -- Insert the input data
+        
+        v_mark := 2;
+        insert into int$stg_createdc_all_fld(dcdt, scheme_doc_format, scheme_docno, site_short_name, out_stock_pt_name, agent_slid, transporter_slid, dc_rem,
+                         icode_barcode, itm_qty, itm_basic_rate, itm_discount_percentage, itm_rem, batch_serial_no, lineno, userid)
+        SELECT dc_date, scheme_doc_format, scheme_docno, site_short_name, out_stock_point_name, agent_slid, transporter_slid, dc_remarks,
+               icode_barcode, item_qty, basic_rate, discount_percentage, item_remarks, batch_serial_no, lineno, userid
+        from   int$stg_dc_adhoc
+        where  userid = p_userid;
+
+       -- START REV : 007
+       
+        v_mark := 3;
+        -- Check for OU code is present is not
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), 0, 'DC_ADHOC', 0, 'Date Validation', 'No Organization Unit is available.', clock_timestamp()
+        from   admsite a
+        where  code = p_connect_site
+        and    admou_code is null;
+
+        v_mark := 4;
+        -- Check for site type
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), 0, 'DC_ADHOC', 0, 'Date Validation', 'This module is only for Organizational site.', clock_timestamp()
+        from   admsite a
+        where  code = p_connect_site
+        and    sitetype not in ('OS-OO-CM','MS-OO-CM','MS-CO-OM-TS');
+
+        v_mark := 5;
+        -- Check the DC date is valid or not
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Date Validation', 'Please enter a valid date.', clock_timestamp()
+        from   int$stg_createdc_all_fld a
+        where  db_func_is_date(to_char(a.dcdt,'DD-MM-YYYY')) <> 1
+        and    a.userid = p_userid;
+
+        v_mark := 6;
+        -- Future date transaction is not allowed
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Date Validation', 'Future date transaction is not allowed.', clock_timestamp()
+        from   int$stg_createdc_all_fld a
+        where  date_trunc('day', dcdt) > date_trunc('day', clock_timestamp())
+        and    a.userid = p_userid;
+
+        v_mark := 7;
+        declare
+            v_dtfr          date;
+            v_dtto          date;
+            v_yr_ext        char(1);
+            v_day_status    char(1);
+            v_locdays       hrdemp.locdays%type;
+            v_last_dt_lock  char(1);
+
+            c1 CURSOR FOR
+                SELECT distinct date_trunc('day', dc_date) dcdt
+                from   int$stg_dc_adhoc a
+                where  db_func_is_date(to_char(a.dc_date,'DD-MM-YYYY'))  = 1
+                and    userid = p_userid;
+        begin
+            for i in c1 loop
+                -- Ycode related checking, min trans date checking, lockday checking, Year exists or not, Day status related checking
+                begin
+                    select ext, dtfr, dtto
+                    into STRICT   v_yr_ext, v_dtfr, v_dtto
+                    from   admyear
+                    where  i.dcdt between dtfr and dtto;
+
+                    if  coalesce(v_yr_ext,'N') = 'Y' then
+                        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                        SELECT  nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation',
+                                'Year of the Date is not open / extinct', clock_timestamp()
+                        from    int$stg_dc_adhoc
+                        where   date_trunc('day', dc_date) = i.dcdt
+                        and     userid = p_userid;
+                    else
+                        if  i.dcdt < v_dtfr then
+                            insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                            SELECT  nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation',
+                                    'Date can not be less than start date of current accounting year date '||TO_CHAR(v_dtfr,'DD/MM/YYYY'), clock_timestamp()
+                            from    int$stg_dc_adhoc
+                            where   date_trunc('day', dc_date) = i.dcdt
+                            and     userid = p_userid;
+                        else
+                            begin
+                                select locdays
+                                into STRICT   v_locdays
+                                from   hrdemp
+                                where  ecode = p_userid;
+
+                                if  v_locdays is not null then
+                                    if  date_trunc('day', i.dcdt) < (date_trunc('day', clock_timestamp()) - v_locdays) then
+                                        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                                        SELECT  nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation',
+                                                'User lock days setting getting violated', clock_timestamp()
+                                        from    int$stg_dc_adhoc
+                                        where   date_trunc('day', dc_date) = i.dcdt
+                                        and     userid = p_userid;
+                                    end if;
+                                end if;
+                            exception
+                                when no_data_found then
+                                    insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                                    SELECT  nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'User not exists', clock_timestamp()
+                                    from    int$stg_dc_adhoc
+                                    where   date_trunc('day', dc_date) = i.dcdt
+                                    and     userid = p_userid;
+                            end;
+                        end if;
+                    end if;
+                exception
+                    when no_data_found then
+                        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                        SELECT  nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Year not exists', clock_timestamp()
+                        from    int$stg_dc_adhoc
+                        where   date_trunc('day', dc_date) = i.dcdt
+                        and     userid = p_userid;
+                end;
+
+                -- day status related checking
+                -- Day check
+                insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                SELECT  nextval('int$error_log_code'), 0, 'DC_ADHOC', p_userid, 'Mandatory Validation',
+                        'Inventory Month is Closed no entry is possible for the date',clock_timestamp()
+                from    admmonth a, admou_month b
+                where   a.mcode = b.admmonth_code
+                and     i.dcdt between dtfr and dtto
+                and     b.admou_code = p_connect_ou
+                and     b.inv_month_status = 'C';
+            end loop;
+        end;
+
+        v_mark := 8;
+        -- DOCNAME valodation
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), a.lineno, 'DC_ADHOC', userid, 'Data Validation', 'Scheme doc format should be valid and non-extinct.', clock_timestamp()
+        from   int$stg_dc_adhoc a
+        where  upper(a.scheme_doc_format) not in
+               (    SELECT upper(d.docname)
+                    from   admdocscheme d, admmenu_docscheme m
+                    where  d.doccode = m.doccode
+                     and    m.MDMENUSHORTCODE = 'DcAdhoc'
+                    and    coalesce(d.ext,'N') = 'N'
+                    and    ( 0 = (select count(*)
+                                  from   admdocscheme d, admou_docscheme m
+                                  where  d.doccode = m.doccode
+                                  and    m.admsite_code = p_connect_site
+                                  and    coalesce(d.ext,'N') = 'N')
+                             or
+                             d.doccode in (select d.doccode
+                                           from   admdocscheme d, admou_docscheme m
+                                           where  d.doccode = m.doccode
+                                           and    m.admsite_code   = p_connect_site
+                                           and    coalesce(d.ext,'N') = 'N'))
+                )
+        and     a.userid = p_userid;
+
+        v_mark := 9;
+        -- scheme_docno chking
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation',
+                'Scheme Docno can not be blank in Manual type Doc Scheme',clock_timestamp()
+        from    int$stg_dc_adhoc a
+        where (upper(a.scheme_doc_format) in ('MANUAL (GENERAL)','MANUAL (EXCISE)') and a.scheme_docno is null)
+        and     a.userid = p_userid;
+
+        v_mark := 10;
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation',
+                'Scheme Doc No should be null, as it would be auto generated',clock_timestamp()
+        from    int$stg_dc_adhoc a
+        where (upper(a.scheme_doc_format) not in ('MANUAL (GENERAL)', 'MANUAL (EXCISE)') and a.scheme_docno is not null)
+        and     a.userid = p_userid;
+
+        v_mark := 11;
+        -- scheme_docno unique chking
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), 0, 'DC_ADHOC', p_userid, 'Data Validation','Scheme Doc No already exists',clock_timestamp()
+        from    int$stg_dc_adhoc a, invdcmain b
+        where   upper(a.scheme_docno) = upper(b.scheme_docno)
+        and     b.ycode = (SELECT ycode from admyear where dc_date between dtfr and dtto)
+        and     a.userid = p_userid
+        and     b.ordcode is null;
+
+        declare
+            c1 CURSOR FOR
+                SELECT  distinct a.scheme_docno
+                from    int$stg_dc_adhoc a
+                where   upper(a.scheme_doc_format) in ('MANUAL (GENERAL)','MANUAL (EXCISE)')
+                and     a.scheme_docno is not null
+                and     a.userid = p_userid;
+        begin
+            for i in c1 loop
+                insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                SELECT  nextval('int$error_log_code'), 0, 'DC_ADHOC', p_userid, 'Data Validation', 'Duplicate Scheme Doc No('||i.scheme_docno||') for Manual doc scheme',clock_timestamp()
+
+                where   exists (
+                                    SELECT count(*)
+                                    from (
+                                                select  distinct dc_date, site_short_name, out_stock_point_name, agent_slid, transporter_slid, dc_remarks
+                                                from    int$stg_dc_adhoc a
+                                                where   a.scheme_docno = i.scheme_docno
+                                                and     a.userid = p_userid
+                                            ) x
+                                    having count(*) > 1
+                               );
+            end loop;
+        end;
+
+        v_mark := 12;
+        -- Check for valid SITE
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'DC_ADHOC', p_userid, 'Data Validation','Document site and owner site could not be same',clock_timestamp()
+        from    int$stg_dc_adhoc a, admsite b
+        where   upper(a.site_short_name) = upper(b.shrtname)
+        and     b.code = p_connect_site
+        and     a.userid = p_userid;
+
+        -- Check for valid SITE
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), a.lineno, 'DC_ADHOC', userid, 'Data Validation', 'Site should be valid and non-extinct', clock_timestamp()
+        from   int$stg_dc_adhoc a
+        where  upper(site_short_name) not in
+                (
+                    SELECT upper(admsite.shrtname) site_shrtname
+                    FROM admsite
+LEFT OUTER JOIN finsl ON (admsite.slcode = finsl.slcode)
+LEFT OUTER JOIN admou ON (admsite.admou_code = admou.code)
+WHERE (
+                                (
+                                    admsite.admou_code = p_connect_ou
+                                    and
+                                    admsite.admou_code is not null
+                                )
+                                or
+                                admsite.admou_code is null
+                            ) and admsite.code <> p_connect_site and admsite.sitetype = 'OS-OO-CM' and admsite.ext = 'N'
+
+union all
+
+                    select upper(admsite.shrtname)
+                    FROM admsite_ou, admsite
+LEFT OUTER JOIN finsl ON (admsite.slcode = finsl.slcode)
+LEFT OUTER JOIN admou ON (admsite.admou_code = admou.code AND admsite.admou_code = admou.code)
+WHERE admsite.code   = admsite_ou.admsite_code  and admsite_ou.repln_admsite_code = p_connect_site  and (
+                                (
+                                    admsite.admou_code = p_connect_ou
+                                    and
+                                    admsite.admou_code is not null
+                                )
+                                or
+                                admsite.admou_code is null
+                           ) and admsite.code <> p_connect_site and admsite.sitetype in ('MS-OO-CM', 'MS-CO-CM','MS-CO-OM-TS') and admsite.ext = 'N' and admsite_ou.ext = 'N' and coalesce(finsl.ext,'N') = 'N'
+                     
+union all
+
+                    select upper(admsite.shrtname)
+                    FROM finsl_ou, finsl, admsite
+LEFT OUTER JOIN admou ON (admsite.admou_code = admou.code)
+WHERE admsite.slcode = finsl_ou.slcode and finsl_ou.slcode = finsl.slcode and finsl_ou.admsite_code = p_connect_site and admsite.sitetype in ('US-CO-CM','US-CO-OM-TS','US-CO-OM') and admsite.code <> p_connect_site and admsite.ext = 'N' and finsl.ext   = 'N'  and (
+                                (
+                                    admsite.admou_code = p_connect_ou
+                                    and
+                                    admsite.admou_code is not null
+                                )
+                                or
+                                admsite.admou_code is null
+                           )
+                     
+union all
+
+                    select upper(admsite.shrtname)
+                    FROM finsl, admsite
+LEFT OUTER JOIN admou ON (admsite.admou_code = admou.code)
+WHERE admsite.slcode = finsl.slcode and admsite.sitetype in ('US-CO-CM','US-CO-OM-TS','US-CO-OM') and admsite.ext = 'N' and finsl.ext   = 'N'  and (
+                                (
+                                    admsite.admou_code = p_connect_ou
+                                    and
+                                    admsite.admou_code is not null
+                                )
+                                or
+                                admsite.admou_code is null
+                           ) and admsite.code <> p_connect_site and admsite.slcode not in (select slcode from finsl_ou)
+                 );
+
+        v_mark := 13;
+        --Stock point is not valid
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Stock point should be valid', clock_timestamp()
+        from   int$stg_dc_adhoc a
+        where  upper(a.out_stock_point_name) not in (
+                            SELECT upper(locname)
+                            from   invloc
+                            where  ext = 'N'
+                            and    loctype = 'W'
+                            and    admsite_code = p_connect_site
+                        )
+        and    a.out_stock_point_name is not null
+        and    a.userid = p_userid;
+
+        v_mark := 14;
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Stock point should not be extinct', clock_timestamp()
+        from   int$stg_dc_adhoc a, invloc b
+        where  upper(a.out_stock_point_name) = upper(b.locname)
+        and    ext = 'Y'
+        and    a.out_stock_point_name is not null
+        and    a.userid = p_userid;
+
+        v_mark := 15;
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Stock point should be a Warehouse Type Stock Point', clock_timestamp()
+        from   int$stg_dc_adhoc a, invloc b
+        where  upper(a.out_stock_point_name) = upper(b.locname)
+        and    ext = 'N'
+        and    loctype <> 'W'
+        and    a.out_stock_point_name is not null
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Stock point should belong to the connected site.', clock_timestamp()
+        from   int$stg_dc_adhoc a, invloc b
+        where  upper(a.out_stock_point_name) = upper(b.locname)
+        and    admsite_code <> p_connect_site
+        and    coalesce(ext, 'N') = 'N'
+        and    a.userid = p_userid;
+
+        v_mark := 16;
+        --Agent is not valid
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Agent should be valid and non-extinct.', clock_timestamp()
+        from   int$stg_dc_adhoc a
+        where  upper(a.agent_slid) not in (
+                            SELECT upper(a.slid)
+                            from   finsl a, admcls b
+                            where  a.clscode = b.clscode
+                            and    b.clstype = 'A'
+                            and    a.ext = 'N'
+                        )
+        and    a.agent_slid is not null
+        and    a.userid = p_userid;
+
+        v_mark := 17;
+        --Transporter is not valid
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Transporter should be valid and non-extinct.', clock_timestamp()
+        from   int$stg_dc_adhoc a
+        where  upper(a.transporter_slid) not in (
+                            SELECT upper(a.slid)
+                            from   finsl a, admcls b
+                            where  a.clscode = b.clscode
+                            and    b.clstype = 'T'
+                            and    a.ext = 'N'
+                        )
+        and    a.transporter_slid is not null
+        and    a.userid = p_userid;
+
+        v_mark := 18;
+        update int$stg_dc_adhoc a
+        set    icode_barcode = upper(icode_barcode)
+        where  a.userid = p_userid;
+
+        v_mark := 19;
+        --Item doesn't exist or is extinct.
+        -- Checking for ICODE_BARCODE(1)
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Item should be valid and non-extinct and Icode', clock_timestamp()
+        from   int$stg_dc_adhoc a
+        where  a.lineno not in
+                    (
+                        SELECT  coalesce(a.lineno,0) lineno
+                        from    int$stg_dc_adhoc a, invitem b
+                        where   ((UPPER(a.icode_barcode) = b.icode) or (UPPER(a.icode_barcode) = b.barcode))
+                        and     a.userid = p_userid
+                    )
+        and    icode_barcode IS NOT NULL
+        and   a.userid = p_userid;
+
+        v_mark := 20;
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'DC_ADHOC', p_userid, 'Data Validation', 'It is Extinct Item('||a.icode_barcode||').',clock_timestamp()
+        from    int$stg_dc_adhoc a
+        where   a.lineno in
+                    (
+                        SELECT  coalesce(a.lineno,0) lineno
+                        from    int$stg_dc_adhoc a, invitem b
+                        where   ((UPPER(a.icode_barcode) = b.icode) or (UPPER(a.icode_barcode) = b.barcode))
+                        and     coalesce(b.ext,'N') = 'Y'
+                        and     a.userid = p_userid
+                    )
+        and    icode_barcode IS NOT NULL
+        and    a.userid = p_userid;
+
+        v_mark := 21;
+        -- Item quantity cannot be 0.
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Item quantity can not be Zero/Negative', clock_timestamp()
+        from   int$stg_dc_adhoc a
+        where  a.item_qty <= 0
+        and    a.userid = p_userid;
+
+        v_mark := 22;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Qty. can be provided up to 3 decimal places only', clock_timestamp()
+        from   int$stg_dc_adhoc a
+        where  LENGTH(RTRIM(abs((item_qty) - round(item_qty)),0)::text) > 4
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Maximum length 10 character allowed in Qty.', clock_timestamp()
+        from   int$stg_dc_adhoc a
+        where  length(item_qty::text) > 10
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Basic rate can be provided up to 2 decimal places only', clock_timestamp()
+        from   int$stg_dc_adhoc a
+        where  LENGTH(RTRIM((abs((basic_rate) - round(basic_rate))),0)::TEXT) > 4
+        -- END REV : 004
+        and    a.userid = p_userid;
+		
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Maximum length 12 character allowed in Basic rate.', clock_timestamp()
+        from   int$stg_dc_adhoc a
+        where  length(basic_rate::text) > 12
+        and    a.userid = p_userid;
+
+		insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Discount percentage can be provided up to 3 decimal places only', clock_timestamp()
+        from   int$stg_dc_adhoc a
+        where  length(RTRIM(abs((discount_percentage) - round(discount_percentage)),0)::text) > 4
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Maximum length 7 character allowed in Discount percentage.', clock_timestamp()
+        from   int$stg_dc_adhoc a
+        where  length(discount_percentage::text) > 7
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Basic Rate change is not allowed', clock_timestamp()
+        from   int$stg_createdc_all_fld a, hrdemp b, admprof c
+        where  a.userid = b.ecode
+        and    b.profcode = c.profcode
+        and    coalesce(c.allow_ratechange_delivery, 'N') = 'N'
+        and    a.itm_basic_rate is not null
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Discount is not allowed', clock_timestamp()
+        from   int$stg_createdc_all_fld a, hrdemp b, admprof c
+        where  a.userid = b.ecode
+        and    b.profcode = c.profcode
+        and    coalesce(c.allow_discount_delivery, 'N') = 'N'
+        and    a.itm_discount_percentage is not null
+        and    a.userid = p_userid;
+
+        v_mark := 23;
+        -- Item quantity should be in multiples of scan unit.
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Item quantity should be same of scan unit', clock_timestamp()
+        from   int$stg_dc_adhoc a, invitem b
+        where (
+                    upper(a.icode_barcode) = upper(b.icode)
+                    or
+                    upper(a.icode_barcode) = upper(b.barcode)
+                )
+        and     mod(a.item_qty, b.barunit) <> 0
+        and     b.item_management_mode <> 'S'
+        and     a.userid = p_userid;
+
+        v_mark := 24;
+        -- Basic rate cannot be 0.
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Basic Rate can not be negative', clock_timestamp()
+        from   int$stg_createdc_all_fld a
+        where  a.itm_qty < 0
+        and    a.userid = p_userid;
+
+        v_mark := 25;
+        -- Discount percentage (negateive and 0 are allowed).
+        declare
+            c0 CURSOR FOR
+                SELECT dcdt, scheme_docno, site_short_name, out_stock_pt_name, agent_slid, transporter_slid, dc_rem,
+                       icode_barcode,
+                       -- start rev : 006
+                       itm_rem,
+                       -- end rev : 006
+                       itm_basic_rate, itm_discount_percentage, batch_serial_no, count(*)
+                from   int$stg_createdc_all_fld
+                where  userid = p_userid
+                group by dcdt, scheme_docno, site_short_name, out_stock_pt_name, agent_slid, transporter_slid, dc_rem,
+                         icode_barcode,
+                         -- start rev : 006
+                         itm_rem,
+                         -- end rev : 006
+                         itm_basic_rate, itm_discount_percentage, batch_serial_no
+                having count(*) > 1
+                order by 1,2;
+        begin
+            for i in c0 loop
+                insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Duplicate item information ('||icode_barcode||')', clock_timestamp()
+                from   int$stg_createdc_all_fld
+                where  userid = p_userid
+                and    dcdt = i.dcdt
+                and    site_short_name = i.site_short_name
+                and    out_stock_pt_name = i.out_stock_pt_name
+                and (scheme_docno is null or scheme_docno = i.scheme_docno)
+                and (agent_slid is null or agent_slid = i.agent_slid)
+                and (transporter_slid is null or transporter_slid = i.transporter_slid)
+                and (dc_rem is null or dc_rem = i.dc_rem)
+                and    icode_barcode = i.icode_barcode
+                and (batch_serial_no is null or batch_serial_no = i.batch_serial_no);
+            end loop;
+        end;
+
+        --COMMIT;
+
+        v_mark := 26;
+        declare
+            c1 CURSOR FOR
+                SELECT b.doccode, upper(a.scheme_doc_format) scheme_format
+                from (SELECT distinct scheme_doc_format from int$stg_createdc_all_fld where userid = p_userid) a, admdocscheme b
+                where  upper(a.scheme_doc_format) = upper(b.docname);
+
+            c2 CURSOR FOR
+                SELECT b.code admsite_code, upper(a.site_short_name) shrtname
+                from (SELECT distinct site_short_name from int$stg_createdc_all_fld where userid = p_userid) a, admsite b
+                where  upper(a.site_short_name) = upper(b.shrtname);
+
+            c3 CURSOR FOR
+                SELECT b.loccode outloccode, upper(a.out_stock_pt_name) stk_pt_name
+                from (SELECT distinct out_stock_pt_name from int$stg_createdc_all_fld where userid = p_userid) a, invloc b
+                where  upper(a.out_stock_pt_name) = upper(b.locname);
+
+            c4 CURSOR FOR
+                SELECT b.slcode agent_code, upper(a.agent_slid) agent_slid
+                from (SELECT distinct agent_slid from int$stg_createdc_all_fld where userid = p_userid) a, finsl b
+                where  upper(a.agent_slid) = upper(b.slid);
+
+            c5 CURSOR FOR
+                SELECT b.slcode transporter_code, upper(a.transporter_slid) trnas_slid
+                from (SELECT distinct transporter_slid from int$stg_createdc_all_fld where userid = p_userid) a, finsl b
+                where  upper(a.transporter_slid) = upper(b.slid);
+        begin
+            -- populate DOCCODE in int$stg_createdc_all_fld
+            for i in c1 loop
+                update int$stg_createdc_all_fld a
+                set    doccode = i.doccode
+                where  upper(a.scheme_doc_format) = i.scheme_format
+                and    userid = p_userid;
+            end loop;
+
+            -- populate SITE CODE in int$stg_createdc_all_fld
+            for i in c2 loop
+                update int$stg_createdc_all_fld a
+                set    admsite_code = i.admsite_code
+                where  upper(a.site_short_name) = i.shrtname
+                and    userid = p_userid;
+            end loop;
+
+            -- population of Out stock point in int$stg_createdc_all_fld
+            for i in c3 loop
+                update int$stg_createdc_all_fld a
+                set    outloccode = i.outloccode
+                where  upper(a.out_stock_pt_name) = i.stk_pt_name
+                -- START REV : 003
+                and    a.userid = p_userid;
+                -- END REV : 003
+            end loop;
+
+            -- Population of inloccode
+            update int$stg_createdc_all_fld a
+            set    inloccode = (SELECT loccode
+                                from   invloc
+                                where  loctype = 'L'
+                                and    coalesce(ext,'N') = 'N')
+            where   userid = p_userid;
+
+            -- population of Agent code in int$stg_createdc_all_fld
+            for i in c4 loop
+                update int$stg_createdc_all_fld a
+                set    agcode = i.agent_code
+                where  upper(a.agent_slid) = i.agent_slid
+                and    userid = p_userid;
+            end loop;
+
+            -- population of Transporter code in int$stg_createdc_all_fld
+            for i in c5 loop
+                update int$stg_createdc_all_fld a
+                set    trpcode = i.transporter_code
+                where  upper(a.transporter_slid) = i.trnas_slid
+                and    userid = p_userid;
+            end loop;
+        end;
+
+        --COMMIT;
+
+        v_mark := 27;
+        -- population of fields from site
+        declare
+            v_slcode                        bigint;
+            v_sitetype                      admsite.sitetype%type;
+            v_psite_admcmptax_code          admsite.psite_admcmptax_code%type;
+
+            v_trpcode                       finsl.slcode%type;
+
+            v_tradegrp_code		            fintradegrp.code%type;
+			v_termcode				        saltermmain.saltermcode%type;
+			v_formcode                      finform.formcode%type;
+			v_pricelistcode		            salpricelistmain.pricelistcode%type;
+			v_tradegrp_name		            fintradegrp.name%type;
+			v_flag						    RECORD;
+
+			v_price_type                    salpricelistmain.price_type%type;
+			v_discount_factor               salpricelistmain.discount_factor%type;
+			v_include_vat_in_discount       salpricelistmain.include_vat_in_discount%type;
+			v_discount_mode                 salpricelistmain.discount_mode%type;
+			v_discount_basis                salpricelistmain.discount_basis%type;
+			v_net_price_multiples_of        salpricelistmain.net_price_multiples_of%type;
+			v_net_price_round_limit         salpricelistmain.net_price_round_limit%type;
+			v_cmptax_code_basis             salpricelistmain.cmptax_code_basis%type;
+
+            v_saletype                      finsl.saletype%type;
+            v_agcode                        finsl.slcode%type;
+            --v_trpcode                       finsl.slcode%type;
+            v_pricetype                     finsl.pricetype%type;
+			--v_pricelistcode		            finsl.pricelistcode%type;
+			--v_discount_factor               salpricelistmain.discount_factor%type;
+			v_price_roundoff                salpricelistmain.net_price_round_limit%type;
+			v_roundoff_limit                finsl.markup_selling_limit%type;
+        begin
+            for i in (SELECT distinct admsite_code from int$stg_createdc_all_fld where userid = p_userid) loop
+                v_slcode               := null;
+                v_sitetype             := null;
+                v_psite_admcmptax_code := null;
+
+                -- populate values as from LOV, pcode
+                begin
+                    select slcode, sitetype, psite_admcmptax_code
+                    into STRICT   v_slcode, v_sitetype, v_psite_admcmptax_code
+                    from   (
+                                SELECT finsl.slcode,
+                                       admsite.sitetype,
+                                       admsite.psite_admcmptax_code
+                                FROM admsite
+LEFT OUTER JOIN finsl ON (admsite.slcode = finsl.slcode)
+LEFT OUTER JOIN admou ON (admsite.admou_code = admou.code)
+WHERE (
+                                            (
+                                                admsite.admou_code = p_connect_ou
+                                                and
+                                                admsite.admou_code is not null
+                                            )
+                                            or
+                                            admsite.admou_code is null
+                                       ) and admsite.code <> p_connect_site and admsite.sitetype = 'OS-OO-CM' and admsite.ext = 'N' and admsite.code = i.admsite_code
+
+union all
+
+                                SELECT finsl.slcode,
+                                       admsite.sitetype,
+                                       admsite.psite_admcmptax_code
+                                FROM admsite_ou, admsite
+LEFT OUTER JOIN finsl ON (admsite.slcode = finsl.slcode)
+LEFT OUTER JOIN admou ON (admsite.admou_code = admou.code AND admsite.admou_code = admou.code)
+WHERE admsite.code   = admsite_ou.admsite_code  and admsite_ou.repln_admsite_code = p_connect_site  and (
+                                            (
+                                                admsite.admou_code = p_connect_ou
+                                                and
+                                                admsite.admou_code is not null
+                                            )
+                                            or
+                                            admsite.admou_code is null
+                                       ) and admsite.code <> p_connect_site and admsite.sitetype in ('MS-OO-CM', 'MS-CO-CM','MS-CO-OM-TS') and admsite.ext = 'N' and admsite_ou.ext = 'N' and coalesce(finsl.ext,'N') = 'N' and admsite.code = i.admsite_code
+                                 
+union all
+
+                                select finsl.slcode,
+                                       admsite.sitetype,
+                                       admsite.psite_admcmptax_code
+                                FROM finsl_ou, finsl, admsite
+LEFT OUTER JOIN admou ON (admsite.admou_code = admou.code)
+WHERE admsite.slcode = finsl_ou.slcode and finsl_ou.slcode = finsl.slcode and finsl_ou.admsite_code = p_connect_site and admsite.sitetype in ('US-CO-CM','US-CO-OM-TS','US-CO-OM') and admsite.code <> p_connect_site and admsite.ext = 'N' and finsl.ext   = 'N'  and (
+                                            (
+                                                admsite.admou_code = p_connect_ou
+                                                and
+                                                admsite.admou_code is not null
+                                            )
+                                            or
+                                            admsite.admou_code is null
+                                       ) and admsite.code = i.admsite_code
+                                 
+union all
+
+                                select finsl.slcode,
+                                       admsite.sitetype,
+                                       admsite.psite_admcmptax_code
+                                FROM finsl, admsite
+LEFT OUTER JOIN admou ON (admsite.admou_code = admou.code)
+WHERE admsite.slcode = finsl.slcode and admsite.sitetype in ('US-CO-CM','US-CO-OM-TS','US-CO-OM') and admsite.ext = 'N' and finsl.ext   = 'N'  and (
+                                            (
+                                                admsite.admou_code = p_connect_ou
+                                                and
+                                                admsite.admou_code is not null
+                                            )
+                                            or
+                                            admsite.admou_code is null
+                                       ) and admsite.code <> p_connect_site and admsite.slcode not in (select slcode from finsl_ou) and admsite.code = i.admsite_code
+                             ) alias13;
+                exception
+                    when no_data_found then null;
+                end;
+
+                if v_slcode is not null or v_sitetype is not null or v_psite_admcmptax_code is not null then
+                    update int$stg_createdc_all_fld
+                    set    pcode = v_slcode,
+                           sitetype = v_sitetype,
+                           psite_admcmptax_code = v_psite_admcmptax_code
+                    where  admsite_code = i.admsite_code
+                    and    userid = p_userid;
+                end if;
+            end loop;
+
+            --COMMIT;
+
+            -- Populate customer information
+            begin
+                for i in (
+                            SELECT distinct a.admsite_code, a.pcode, sitetype
+                            from   int$stg_createdc_all_fld a
+                            where  userid = p_userid
+                            and    pcode is not null
+                          )
+                     loop
+                    v_saletype          := null;
+                    v_agcode            := null;
+                    v_trpcode           := null;
+                    v_pricetype         := null;
+                    v_pricelistcode		:= null;
+                    v_discount_factor   := null;
+                    v_price_roundoff    := null;
+                    v_roundoff_limit    := null;
+
+                    select	a.saletype,
+                            b.slcode                            agcode,
+                            t.slcode                            trpcode,
+                            a.pricetype,
+                            a.pricelistcode,
+                            prc.discount_factor,
+                            prc.net_price_multiples_of,
+                            a.markup_selling_limit              roundoff_limit
+                    into STRICT	v_saletype, v_agcode, v_trpcode, v_pricetype, v_pricelistcode,
+                            v_discount_factor, v_price_roundoff, v_roundoff_limit
+                    FROM fingl, admcls, finsl a
+LEFT OUTER JOIN finsl b ON (a.agcode = b.slcode)
+LEFT OUTER JOIN finsl t ON (a.trpcode = t.slcode)
+LEFT OUTER JOIN salpricelistmain prc ON (a.pricelistcode = prc.pricelistcode)
+WHERE a.clscode =  admcls.clscode   and a.slcode in (SELECT distinct s.slcode from admsite s) and a.glcode = fingl.glcode and fingl.srctype = 'R' and a.ext = 'N' and a.saletype is not null and a.slcode = i.pcode;
+
+                    update int$stg_createdc_all_fld a
+                    set    saletype = v_saletype,
+                           agcode = v_agcode,
+                           trpcode = v_trpcode,
+                           pricetype = v_pricetype,
+                           pricelistcode = v_pricelistcode,
+                           discount_factor = v_discount_factor,
+                           price_roundoff = v_price_roundoff,
+                           roundoff_limit = v_roundoff_limit
+                    where  pcode = i.pcode
+                    and    userid = p_userid;
+                end loop;
+
+                update int$stg_createdc_all_fld a
+                set    saletype = 'C',
+                       agcode  = NULL,
+                       trpcode  = NULL,
+                       pricetype  = NULL,
+                       pricelistcode  = NULL,
+                       discount_factor  = NULL,
+                       price_roundoff  = NULL,
+                       roundoff_limit  = NULL
+                where  a.sitetype in ('OS-OO-CM','MS-OO-CM')
+                and    userid = p_userid;
+
+                --COMMIT;
+            end;
+
+            -- Populate pricelist information
+            for i in (SELECT distinct admsite_code, sitetype, pcode, trpcode
+                      from int$stg_createdc_all_fld
+                      where admsite_code is not null
+                      and    userid = p_userid)
+                loop
+                v_tradegrp_code  := null;
+                v_termcode       := null;
+                v_formcode       := null;
+                v_pricelistcode  := null;
+
+                --v_flag := 
+				CALL db_pkg_get_data_snd$get_tradegrp_term(
+                                    -- in parameters
+                                    p_connect_ou,
+                                    p_connect_site,
+                                    i.admsite_code,
+                                    i.sitetype,
+                                    i.pcode,
+                                    -- out parameters
+                                    v_termcode,
+                                    v_tradegrp_code,
+                                    v_formcode,
+                                    v_pricelistcode
+                                );
+
+                update int$stg_createdc_all_fld
+                set    saltradegrp_code = v_tradegrp_code,
+                       --termcode = v_termcode,
+                       formcode = v_formcode,
+                       pricelistcode = v_pricelistcode
+                where  admsite_code = i.admsite_code
+                and (pcode is null or pcode = i.pcode)
+                and    userid = p_userid;
+
+                if  v_pricelistcode is not null then
+                    v_price_type := null;
+                    v_discount_factor := null;
+                    v_include_vat_in_discount := null;
+                    v_discount_mode := null;
+                    v_discount_basis := null;
+                    v_net_price_multiples_of := null;
+                    v_net_price_round_limit := null;
+                    v_cmptax_code_basis := null;
+
+                    select price_type, discount_factor, include_vat_in_discount, discount_mode,
+                           discount_basis, net_price_multiples_of price_roundoff, net_price_round_limit roundoff_limit, cmptax_code_basis
+                    into STRICT   v_price_type, v_discount_factor, v_include_vat_in_discount, v_discount_mode,
+                           v_discount_basis, v_net_price_multiples_of, v_net_price_round_limit, v_cmptax_code_basis
+                    from   salpricelistmain
+                    where  pricelistcode = v_pricelistcode;
+
+                    update int$stg_createdc_all_fld
+                    set    pricetype = v_price_type,
+                           discount_factor = v_discount_factor,
+                           incl_vat_in_dist = v_include_vat_in_discount,
+                           discount_mode = v_discount_mode,
+                           discount_basis = v_discount_basis,
+                           price_roundoff = v_net_price_multiples_of,
+                           roundoff_limit = v_net_price_round_limit,
+                           cmptax_code_basis = v_cmptax_code_basis
+                    where  admsite_code = i.admsite_code
+                    and    pricelistcode = v_pricelistcode
+                    and    userid = p_userid;
+
+                    --COMMIT;
+                end if;
+
+                if i.trpcode is null then -- if not provided in excel
+                    -- population of transporter
+                    begin
+                        v_trpcode := null;
+
+                        select trpcode into STRICT v_trpcode
+                        from   admsite
+                        where  code = i.admsite_code
+                        and    slcode = i.pcode;
+                    exception
+                        when no_data_found then
+                            begin
+                                select trpcode into STRICT v_trpcode
+                                from   finsl
+                                where  slcode = i.pcode;
+                            exception
+                                when no_data_found then null;
+                            end;
+                    end;
+
+                    update int$stg_createdc_all_fld
+                    set    trpcode = v_trpcode
+                    where  admsite_code = i.admsite_code
+                    and (pcode is null or pcode = i.pcode)
+                    and    trpcode is null
+                    and    userid = p_userid;
+                end if;
+            end loop;
+
+            --COMMIT;
+        end;
+
+        v_mark := 28;
+        -- Check for valid SITE
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), a.lineno, 'DC_ADHOC', userid, 'Data Validation', 'Customer tagged with the site should be non-extinct', clock_timestamp()
+        from   int$stg_createdc_all_fld a, finsl b
+        where  a.pcode = b.slcode
+        and    a.admsite_code is not null
+        and    b.ext = 'Y';
+
+        v_mark := 29;
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), a.lineno, 'DC_ADHOC', userid, 'Data Validation', 'Entry not allowed for owner site in different OU', clock_timestamp()
+        from   int$stg_createdc_all_fld a, admsite b
+        where  a.admsite_code_owner = b.code
+        and    b.admou_code <> p_connect_ou
+        and    a.admsite_code_owner is not null;
+
+        v_mark := 30;
+        v_mark := 31;
+
+        v_mark := 32;
+        -- Populate agent code if not provided in excel
+        declare
+            c1 CURSOR FOR
+                SELECT distinct upper(agent_slid) ag_slid, b.slcode
+                from   int$stg_createdc_all_fld a, finsl b, admcls c
+                where  upper(b.slid) = upper(a.agent_slid)
+                and    b.clscode = c.clscode
+                and    a.userid = p_userid
+                and    c.clstype = 'A'
+                and    b.ext = 'N';
+        begin
+            for i in c1 loop
+                update int$stg_createdc_all_fld a
+                set    agcode = i.slcode
+                where  agent_slid = i.ag_slid
+                -- START REV : 003
+                and    userid = p_userid;
+                -- END REV : 003
+            end loop;
+
+            --COMMIT;
+        end;
+
+        v_mark := 33;
+        -- Populate transporter code if not provided in excel
+        declare
+            c1 CURSOR FOR
+                SELECT distinct transporter_slid, b.slcode
+                from   int$stg_createdc_all_fld a, finsl b, admcls c
+                where  upper(b.slid) = upper(a.transporter_slid)
+                and    b.clscode = c.clscode
+                and    a.userid = p_userid
+                and    c.clstype = 'T'
+                and    b.ext = 'N';
+        begin
+            for i in c1 loop
+                update int$stg_createdc_all_fld a
+                set    trpcode = i.slcode
+                where  transporter_slid = i.transporter_slid
+                -- START REV : 003
+                and    userid = p_userid;
+                -- END REV : 003
+            end loop;
+
+            --COMMIT;
+        end;
+
+        v_mark := 34;
+        -- Check for trade group is attached or not
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'No Trade Group is associated with this customer/ site', clock_timestamp()
+        from   int$stg_createdc_all_fld a
+        where  saltradegrp_code is null
+        and    a.sitetype in ('US-CO-OM', 'US-CO-OM-TS', 'MS-CO-OM-TS')
+        and    a.userid = p_userid;
+
+        --COMMIT;
+
+        v_mark := 35;
+        -- Check for price list
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Pricelist is not defined, unable to proceed', clock_timestamp()
+        from   int$stg_createdc_all_fld a
+        where  pricelistcode is null
+        and    a.sitetype in ('MS-CO-CM','US-CO-CM','OS-OO-CM','MS-OO-CM')
+        and    a.userid = p_userid;
+
+        --COMMIT;
+
+        v_mark := 36;
+        -- checking for FIFO price type vs outright
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'FIFO price type is not allowed for outright sale', clock_timestamp()
+        from   int$stg_createdc_all_fld a
+        where  pricetype = 'F'
+        and    a.sitetype in ('MS-CO-CM','US-CO-CM','OS-OO-CM','MS-OO-CM')
+        and    a.userid = p_userid;
+
+        --COMMIT;
+
+        v_mark := 37;
+        -- checking for TAX region
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'TAX region not defined', clock_timestamp()
+        from   int$stg_createdc_all_fld a
+        where  coalesce(a.incl_vat_in_dist, 'N') = 'Y'
+        and    a.psite_admcmptax_code is null
+        and    a.userid = p_userid;
+
+        v_mark :=37.1;
+        --START REV : 007
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Batch/Serial information for item not defined.', clock_timestamp()
+        from   int$stg_createdc_all_fld a, invitem b
+        where (UPPER(a.icode_barcode) = b.icode OR UPPER(a.icode_barcode) = b.barcode)
+        and    a.icode_barcode is not null
+        and    a.batch_serial_no is null
+        and    b.item_management_mode in ('B','S')
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Batch/Serial information is not applicable for the item, Please delete batch/serial info and try again.', clock_timestamp()
+        from   int$stg_createdc_all_fld a, invitem b
+        where (UPPER(a.icode_barcode) = b.icode OR UPPER(a.icode_barcode) = b.barcode)
+        and    a.icode_barcode is not null
+        and    a.batch_serial_no is not null
+        and    b.item_management_mode = 'I'
+        and    a.userid = p_userid;
+
+        
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Serial No. can’t be duplicate.', clock_timestamp()
+        from   int$stg_createdc_all_fld a, invitem b
+        where (UPPER(a.icode_barcode) = b.icode OR UPPER(a.icode_barcode) = b.barcode)
+        and    a.batch_serial_no is not null
+        and    b.item_management_mode = 'S'
+        and    a.icode_barcode in (SELECT icode_barcode from int$stg_createdc_all_fld GROUP BY icode_barcode, batch_serial_no HAVING count(*) > 1 )
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Invalid Batch/Serial information or Batch/Serial No. not exists for this Item.', clock_timestamp()
+		FROM int$stg_createdc_all_fld a 
+INNER JOIN invitem iv ON (UPPER(a.icode_barcode) = iv.icode OR UPPER(a.icode_barcode) = iv.barcode)
+LEFT OUTER JOIN invbatch_serial b ON ((UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no )) AND (iv.icode = b.icode))
+WHERE a.batch_serial_no is not null   and (b.icode is null or b.batch_serial_no is null) 
+and iv.item_management_mode in ('B','S') and a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Item Quantity for serial managed items must be equal to scan unit of item.', clock_timestamp()
+        from   int$stg_createdc_all_fld a, invitem b
+        where (UPPER(a.icode_barcode) = b.icode OR UPPER(a.icode_barcode) = b.barcode)
+        and    a.batch_serial_no is not null
+        and    b.item_management_mode = 'S'
+        and    coalesce(ABS(a.itm_qty),0) <> coalesce(a.barunit,1)
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Invalid Batch/Serial information.', clock_timestamp()
+        FROM  int$stg_createdc_all_fld a
+LEFT OUTER JOIN invbatch_serial b  ON (UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no))
+WHERE a.batch_serial_no is not null and b.batch_serial_no is null and a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Multi combination exist for the given batch/serial. Specify the icode to proceed.', clock_timestamp()
+        from   int$stg_createdc_all_fld a
+        where  a.icode_barcode is null
+        and    a.batch_serial_no is not null
+        and    a.batch_serial_no in (SELECT distinct batch_serial_no from int$stg_createdc_all_fld where icode_barcode is not null)
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Expiry Batch Selected. Please rectify and proceed.', clock_timestamp()
+        from int$stg_createdc_all_fld a, invitem iv, invbatch_serial b
+        where (UPPER(a.icode_barcode) = iv.icode OR UPPER(a.icode_barcode) = iv.barcode)
+        and    UPPER(iv.icode) = b.icode
+        and    UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no)
+        and    b.exp_date < a.dcdt
+        and    a.userid = p_userid;
+
+        --END REV : 007
+        v_mark := 38;
+        update int$stg_createdc_all_fld a
+        set(icode, barunit) = ( SELECT icode, barunit
+                                    from   invitem b
+                                    where (
+                                                upper(b.icode) = upper(a.icode_barcode)
+                                                or
+                                                upper(b.barcode) = upper(a.icode_barcode)
+                                            )
+                                  )
+        where  a.icode_barcode is not null
+        and    a.userid = p_userid;
+
+        declare c_batch CURSOR FOR
+                SELECT lineno, b.code
+                from   int$stg_createdc_all_fld a, invitem iv, invbatch_serial b
+                where  a.icode = iv.icode
+                and    iv.icode = b.icode
+                and    UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no)
+                and    a.batch_serial_no is not null
+                and    userid = p_userid
+                order by lineno;
+         begin
+           for c1 in c_batch loop
+                   update int$stg_createdc_all_fld
+                   set invbatch_serial_code = c1.code
+                   where  lineno = c1.lineno
+                   and    userid = p_userid;
+           end loop;
+         end;
+
+        v_mark := 39;
+        v_mark := 40;
+
+        declare
+            v_taxrate 		        double precision; ----fintaxdet.rate%type;
+            v_taxamt 				double precision; --bigint;
+            v_net_rate        		double precision; --bigint;
+            v_discount          	double precision; --bigint;
+            v_roundoff          	double precision; --bigint;
+            v_basic_rate       		double precision; --bigint;
+            v_discount_factor   	double precision; --bigint;
+            v_ou_admcmptax_code     double precision; --bigint;
+            v_itm_mrp               invitem.mrp%type;
+            -- START REV : 004
+            v_wsp                   invitem.wsp%type;
+            v_listed_mrp            invitem.listed_mrp%type;
+            -- END REV : 004
+        c1 CURSOR FOR
+                SELECT *
+                from   int$stg_createdc_all_fld
+                where  userid = p_userid
+                and    icode is not null
+                order by lineno;
+        begin
+            select psite_admcmptax_code into STRICT v_ou_admcmptax_code
+            from   admsite
+            where  code = p_connect_site;
+
+            for i in c1 loop
+                -- start rev : 005
+                --DB_PRO_ITMRTDISCRF_DC_ADHC_IMP -- REV : 004
+				
+                call DB_PRO_ITEM_RATE_DISC_ROFF
+                        (
+                            i.icode::text,
+                            i.dcdt::timestamp without time zone,
+                            i.pricelistcode::bigint,
+                            i.psite_admcmptax_code::bigint,
+                            v_ou_admcmptax_code::bigint,
+                            'NEW',
+                            p_connect_ou::bigint,
+                            i.barunit::bigint,
+                            i.admsite_code::bigint,
+                            p_connect_site::bigint,
+                            i.pcode::bigint,
+                            'C',
+                            null::double precision,
+                            null::double precision,
+                            v_taxrate::double precision,
+                            v_taxamt::double precision,
+                            v_net_rate::double precision,
+                            v_discount::double precision,
+                            v_roundoff::double precision,
+                            v_basic_rate::double precision,
+                            v_discount_factor::double precision,
+                            i.saltradegrp_code::bigint,
+                            i.formcode::bigint,
+                            i.invbatch_serial_code::bigint
+                        );
+
+                v_itm_mrp := null;
+                -- START REV : 007
+                select case when a.item_management_mode = 'I' or a.price_management = 'I' then a.mrp
+                       else b.mrp
+                       end  mrp,
+                       case when a.item_management_mode = 'I' or a.price_management = 'I' then a.wsp
+                       else b.wsp
+                       end  wsp,
+                       case when a.item_management_mode = 'I' or a.price_management = 'I' then a.listed_mrp
+                       else b.listed_mrp
+                       end  listed_mrp
+                into STRICT v_itm_mrp, v_wsp, v_listed_mrp
+                FROM invitem a
+LEFT OUTER JOIN invbatch_serial b ON (a.icode = b.icode)
+WHERE a.icode = i.icode and (i.batch_serial_no IS NULL OR UPPER(b.batch_serial_no) = UPPER(i.batch_serial_no));
+                -- REV : 004
+                -- END REV : 007
+                
+                --select mrp into v_itm_mrp from invitem where icode = i.icode;
+                update int$stg_createdc_all_fld
+                set    itm_discount             = v_discount,
+                       itm_roundoff             = v_roundoff,
+                       itm_derived_basic_rate   = v_basic_rate,
+                       itm_factor               = v_discount_factor,
+                       itm_rate                 = v_net_rate,
+                       itm_mrp                  = v_itm_mrp,
+                       -- START REV : 004         
+                       itm_wsp                  = v_wsp,
+                       itm_listed_mrp           = v_listed_mrp
+                       -- END REV : 004
+                where  lineno                   = i.lineno
+                -- START REV : 003
+                and    userid = p_userid;
+                -- END REV : 003
+            end loop;
+
+            for i in c1 loop
+                v_basic_rate      := coalesce(i.itm_basic_rate, i.itm_derived_basic_rate);
+                v_discount_factor := coalesce(i.itm_discount_percentage, i.itm_factor);
+
+                -- start rev : 005
+                --DB_PRO_ITMRTDISCRF_DC_ADHC_IMP -- REV : 003
+                call DB_PRO_ITEM_RATE_DISC_ROFF
+                -- end rev : 005
+                        (
+                            i.icode::text,
+                            i.dcdt::timestamp without time zone,
+                            i.pricelistcode::bigint,
+                            i.psite_admcmptax_code::bigint,
+                            v_ou_admcmptax_code::bigint,
+                            'NEW',
+                            p_connect_ou::bigint,
+                            0::bigint,
+                            i.admsite_code::bigint,
+                            p_connect_site::bigint::bigint,
+                            i.pcode::bigint,
+                            'C',
+                            v_basic_rate::double precision,
+                            v_discount_factor::double precision,
+                            v_taxrate::double precision,
+                            v_taxamt::double precision,
+                            v_net_rate::double precision,
+                            v_discount::double precision,
+                            v_roundoff::double precision,
+                            v_basic_rate::double precision,
+                            v_discount_factor::double precision,
+                            i.saltradegrp_code::bigint,
+                            i.formcode::bigint,
+                            i.invbatch_serial_code::bigint
+                        );
+                -- START REV : 007
+                select case when a.item_management_mode = 'I' or a.price_management = 'I' then a.mrp
+                       else b.mrp
+                       end  mrp,
+                       case when a.item_management_mode = 'I' or a.price_management = 'I' then a.wsp
+                       else b.wsp
+                       end  wsp,
+                       case when a.item_management_mode = 'I' or a.price_management = 'I' then a.listed_mrp
+                       else b.listed_mrp
+                       end  listed_mrp
+                into STRICT v_itm_mrp, v_wsp,v_listed_mrp
+                FROM invitem a
+LEFT OUTER JOIN invbatch_serial b ON (a.icode = b.icode)
+WHERE a.icode = i.icode and (i.batch_serial_no IS NULL OR UPPER(b.batch_serial_no) = UPPER(i.batch_serial_no));
+                -- END REV : 007
+                -- REV : 003
+                update int$stg_createdc_all_fld
+                set    itm_discount             = v_discount,
+                       itm_roundoff             = v_roundoff,
+                       itm_basic_rate           = v_basic_rate,
+                       itm_factor               = v_discount_factor,
+                       itm_rate                 = v_net_rate,
+                       -- START REV : 003
+                       --itm_mrp                  = v_itm_mrp
+                       -- END REV : 003
+                       -- START REV : 004
+                       itm_mrp                  = v_itm_mrp,
+                       itm_wsp                  = v_wsp,
+                       itm_listed_mrp           = v_listed_mrp
+                       -- END REV : 004
+                where  lineno                   = i.lineno
+                -- START REV : 003
+                and    userid = p_userid;
+                -- END REV : 003
+            end loop;
+        exception when others then 
+		            errmsg := sqlerrm;
+		--null;
+        end;
+
+        --COMMIT;
+
+        v_mark := 40.1;
+        -- 0 rate delivery allow or not
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'DC_ADHOC', userid, 'Data Validation', 'Item''s rate zero not allowed as per profile', clock_timestamp()
+        from   int$stg_createdc_all_fld a, hrdemp b, admprof c
+        where  a.userid = b.ecode
+        and    b.profcode = c.profcode
+        and    coalesce(c.allow_zerorate_delivery, 'N') = 'N'
+        and    a.itm_rate = 0
+        and    a.userid = p_userid;
+
+        --COMMIT;
+
+        v_mark := 41;
+        -- Check whether records are valid or not
+        begin
+            select 'S'
+            into STRICT   v_status
+
+            where  exists (SELECT 'S'
+                           from   int$error_log
+                           where  userid = p_userid
+                           and    classname = 'DC_ADHOC');
+
+            return('0');
+        exception
+            when no_data_found then
+                return('1');
+        end;
+    exception
+        when others then
+            errcode := SQLSTATE;
+            errmsg := sqlerrm;
+
+            -- Error log for Oracle Internal Error
+            insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            values (nextval('int$error_log_code'), 0, 'DC_ADHOC', p_userid, errcode, errmsg, clock_timestamp()); -- ||','||v_mark
+            --COMMIT;
+            return('0');
+   end;
+
+    -- Create DC
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

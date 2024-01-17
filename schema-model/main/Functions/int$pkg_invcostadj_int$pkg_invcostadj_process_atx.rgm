@@ -1,0 +1,93 @@
+function "main"."int$pkg_invcostadj_int$pkg_invcostadj_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        errmsg      varchar(500);
+        vsession    varchar(100);
+        vdetailtbl  varchar(1000);
+        vdetailrec  varchar(500);
+        errcode     bigint;
+        vmaxno      bigint;
+        vcount      bigint;
+        v_err       varchar(1000);
+        v_icode     varchar(9);
+BEGIN
+        delete FROM invcostadj a
+        where  a.admmonth_code in (SELECT b.mcode
+                                   from   admmonth b, int$stg_invcostadj c
+                                   where  upper(b.month_name) = upper(c.month_name));
+
+        insert into invcostadj(admmonth_code, adjdt, admsite_code, icode, admou_code, diff_cost_amt, diff_site_cost_amt,
+                               source, created_by, created_on, last_access_on)
+        SELECT b.mcode, b.dtto, d.code, c.icode, d.admou_code, a.diff_cost_amt, a.diff_site_cost_amt,
+               'M', p_userid, clock_timestamp(), clock_timestamp()
+        from   int$stg_invcostadj a, admmonth b, invitem c, admsite d
+        where  upper(a.month_name) = upper(b.month_name)
+        and    ((upper(a.barcode) = c.icode) or (upper(a.barcode) = c.barcode))
+        and    upper(a.site_shortname) = upper(d.shrtname)
+        and    a.userid = p_userid
+        and (a.diff_cost_amt <> 0 or a.diff_site_cost_amt <> 0);
+
+        -- log to be added in history table
+        select  nextval('int$error_log_code')
+        into STRICT    vsession
+;
+
+        vdetailtbl := 'create table ginarchive.invcostadj_'||vsession||' as select * from int$stg_invcostadj where userid ='|| p_userid::text;
+        EXECUTE vdetailtbl;
+
+        vdetailrec := 'select count(1) from ginarchive.invcostadj_'||vsession;
+        EXECUTE vdetailrec into STRICT vcount;
+
+        insert into int$history(code, importedby, importedon, classname, summary, history_detail_tablename, history_detail_row_count)
+        values (nextval('int$history_code'), p_userid, clock_timestamp(), 'INVCOSTADJ', vcount::TEXT||'Cost adjustment imported successfully.', 'invcostadj_'||vsession, vcount);
+
+        --COMMIT;
+
+        return('1');
+
+    exception
+        when others then
+            errcode := SQLSTATE;
+            errmsg  := sqlerrm;
+
+            -- error log for oracle internal error
+            insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            values (nextval('int$error_log_code'), 0, 'INVCOSTADJ', p_userid, errcode, errmsg, clock_timestamp());
+            --COMMIT;
+
+            return('0');
+    END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

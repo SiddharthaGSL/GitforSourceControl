@@ -1,0 +1,93 @@
+view "main"."v_stock_onhand" {
+  text = """-
+SELECT alias10.barcode,
+    alias10.sitename,
+    alias10.admsite_code,
+    alias10.contact_person,
+    alias10.mobile,
+    alias10.oph1,
+    alias10.oph2,
+    alias10.oph3,
+    alias10.address,
+    alias10.city,
+    sum(alias10.qty) AS qty
+   FROM ( SELECT COALESCE(i.barcode, i.icode) AS barcode,
+            s.name AS sitename,
+            io.admsite_code,
+            s.contact_person,
+            s.mobile,
+            s.oph1,
+            s.oph2,
+            s.oph3,
+            s.address,
+            s.ctname AS city,
+            io.qty
+           FROM main.invstock_onhand io,
+            main.invloc l,
+            main.admsite s,
+            main.invitem i
+          WHERE ((io.loccode = l.loccode) AND (l.loctype = ANY (ARRAY['S'::bpchar, 'W'::bpchar])) AND (io.admsite_code = s.code) AND ((io.icode)::text = (i.icode)::text))
+        UNION ALL
+         SELECT COALESCE(i.barcode, i.icode) AS barcode,
+            s.name AS sitename,
+            pb.admsite_code,
+            s.contact_person,
+            s.mobile,
+            s.oph1,
+            s.oph2,
+            s.oph3,
+            s.address,
+            s.ctname AS city,
+            (('-1'::integer)::numeric * sum(pbi.qty)) AS qty
+           FROM main.psite_posbill pb,
+            main.psite_posbillitem pbi,
+            main.admsite s,
+            main.invitem i
+          WHERE (((pb.code)::text = (pbi.psite_posbill_code)::text) AND (pb.admsite_code = s.code) AND ((pbi.icode)::text = (i.icode)::text) AND ((pb.admsite_code, date_trunc('day'::text, pb.billdate)) IN ( SELECT DISTINCT pb1.admsite_code,
+                    date_trunc('day'::text, pb1.billdate) AS date_trunc
+                   FROM main.psite_posbill pb1
+                EXCEPT
+                 SELECT stlm.admsite_code,
+                    stlm.stlmfor
+                   FROM main.psite_posstlm stlm
+                  WHERE (stlm.status = 'C'::bpchar))))
+          GROUP BY COALESCE(i.barcode, i.icode), s.name, pb.admsite_code, s.contact_person, s.mobile, s.oph1, s.oph2, s.oph3, s.address, s.ctname) alias10
+  GROUP BY alias10.barcode, alias10.sitename, alias10.admsite_code, alias10.contact_person, alias10.mobile, alias10.oph1, alias10.oph2, alias10.oph3, alias10.address, alias10.city;
+"""
+  columns = (
+    column "barcode" {
+      type = "character varying"
+    }
+    column "sitename" {
+      type = "character varying(100)"
+    }
+    column "admsite_code" {
+      type = "bigint"
+    }
+    column "contact_person" {
+      type = "character varying(100)"
+    }
+    column "mobile" {
+      type = "character varying(25)"
+    }
+    column "oph1" {
+      type = "character varying(25)"
+    }
+    column "oph2" {
+      type = "character varying(25)"
+    }
+    column "oph3" {
+      type = "character varying(25)"
+    }
+    column "address" {
+      type = "character varying(500)"
+    }
+    column "city" {
+      type = "character varying(100)"
+    }
+    column "qty" {
+      type = "numeric"
+    }
+  )
+}
+

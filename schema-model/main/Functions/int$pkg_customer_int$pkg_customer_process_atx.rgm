@@ -1,0 +1,416 @@
+function "main"."int$pkg_customer_int$pkg_customer_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        errmsg          varchar(200);
+        vdetailtbl      varchar(1000);
+        vsession        varchar(100);
+        vcode           varchar(50);
+        vcustomer       varchar(500);
+
+        errcode         bigint;
+        vcount          bigint;
+        v_connect_site  bigint;
+		V_SID			bigint;
+
+        -- For updating existing customers
+        cus CURSOR FOR
+
+                    SELECT
+                    int$stg_poscustomer.code                                                  code,
+                    trim(both int$stg_poscustomer.lpcardno)                                                lpcardno,
+                    trim(both int$stg_poscustomer.salutation)                                              salutation,
+                    trim(both int$stg_poscustomer.fname)                                                   fname,
+                    trim(both int$stg_poscustomer.mname)                                                   mname,
+                    trim(both int$stg_poscustomer.lname)                                                   lname,
+                    CASE WHEN UPPER(int$stg_poscustomer.GENDER) = 'MALE' THEN 'M'
+                         WHEN UPPER(int$stg_poscustomer.GENDER) = 'FEMALE' THEN 'F'
+                         WHEN UPPER(int$stg_poscustomer.GENDER) = 'TRANSGENDER' THEN 'T'
+                         WHEN UPPER(int$stg_poscustomer.GENDER) = 'UNDISCLOSED' THEN 'U'
+                         ELSE coalesce(P_CUST.GENDER,'M')
+                    END                                                           GENDER,
+                    trim(both int$stg_poscustomer.profession)                                              profession,
+                    trim(both int$stg_poscustomer.religion)                                                religion,
+                    trim(both int$stg_poscustomer.address1)                                                address1,
+                    trim(both int$stg_poscustomer.address2)                                                address2,
+                    trim(both int$stg_poscustomer.address3)                                                address3,
+                    NULL                                                          cityid,
+                    trim(both int$stg_poscustomer.district)                                                district,
+                    trim(both int$stg_poscustomer.city)                                                    city,
+                    trim(both int$stg_poscustomer.state)                                                   state,
+                    trim(both int$stg_poscustomer.country)                                                 country,
+                    trim(both int$stg_poscustomer.pin)                                                     pin,
+                    trim(both int$stg_poscustomer.phone1)                                                  phone1,
+                    trim(both int$stg_poscustomer.phone2)                                                  phone2,
+                    trim(both int$stg_poscustomer.mobile)                                                  mobile,
+                    trim(both int$stg_poscustomer.email)                                                   email,
+                    date_trunc('day',int$stg_poscustomer.dob)                                                     dob,
+                    date_trunc('day',int$stg_poscustomer.doa)                                                     doa,
+                    trim(both int$stg_poscustomer.spousename)                                              spousename,
+                    clock_timestamp()                                                       createdon,
+                    trim(both userid)                                                  createdby,
+                    clock_timestamp()                                                       lastmodifiedon,
+                    trim(both userid)                                                  lastmodifiedby,
+                    CASE WHEN int$stg_poscustomer.lpcardno IS NULL THEN NULL  ELSE clock_timestamp() END                             membersince,
+                    trim(both int$stg_poscustomer.remarks)                                                 remarks,
+                    CASE    WHEN UPPER(int$stg_poscustomer.receivemessage) = 'YES' THEN 1
+                            WHEN UPPER(int$stg_poscustomer.receivemessage) = 'NO' THEN 0
+                            ELSE coalesce(P_CUST.receivemessage,1)
+                    END receivemessage,
+                    CASE WHEN UPPER(int$stg_poscustomer.prefcommunicationmode) = 'SMS' THEN 'S'
+                         WHEN UPPER(int$stg_poscustomer.prefcommunicationmode) = 'EMAIL' THEN 'E'
+                         WHEN UPPER(int$stg_poscustomer.prefcommunicationmode) = 'ANY' THEN 'A' ELSE P_CUST.prefcommunicationmode
+                    END                                                           prefcommunicationmode,
+                    trim(both userid)                                                  createdbyid,
+                    trim(both userid)                                                  lastmodifiedbyid,
+                    trim(both int$stg_poscustomer.loyaltymembershipno)                                     loyaltymembershipno,
+                    trim(both int$stg_poscustomer.panno)                                                   panno,
+                    CASE WHEN int$stg_poscustomer.allowcreditsale='Y' THEN 1 WHEN int$stg_poscustomer.allowcreditsale='N' THEN 0  ELSE coalesce(p_cust.ALLOW_CREDIT_SALE,0) END   allowcreditsale
+                    -- start rev : 004
+                    ,coalesce(int$stg_poscustomer.gst_identification_no, p_cust.cp_gstin_no)       cp_gstin_no
+                    ,coalesce(int$stg_poscustomer.gst_registration_date, p_cust.cp_gstin_date)   cp_gstin_date
+                    ,case when int$stg_poscustomer.gst_identification_no is not null then
+                           substr(int$stg_poscustomer.gst_identification_no,1,2)
+                      when int$stg_poscustomer.gst_state_name is not null then
+                            gs.code
+                      else
+                            p_cust.cp_gstin_state_code
+                     end    cp_gstin_state_code
+                    -- end rev : 004
+                    -- start rev : 006
+                    ,case when lower(int$stg_poscustomer.isemployee) = 'yes' then 1
+                        else 0
+                    end isemployee
+                    ,i.code admisd_code
+                -- end rev : 006
+            FROM int$stg_poscustomer 
+			LEFT OUTER JOIN psite_customer p_cust 
+			ON (int$stg_poscustomer.code = p_cust.code)
+            LEFT OUTER JOIN admisd i 
+			ON (int$stg_poscustomer.isdcode::text = i.isdcode)
+            LEFT OUTER JOIN admgststate gs 
+				ON (upper(coalesce(int$stg_poscustomer.gst_state_name,'@@')) = upper(gs.name))
+WHERE userid = p_userid  -- start rev : 004
+  -- end rev : 004
+  and p_cust.code is not null -- END REV : 001
+         -- start rev : 006
+;
+        -- end rev : 006
+        c CURSOR FOR
+            SELECT  a.lpcardno, a.userid, b.code customer_code
+            FROM    int$stg_poscustomer   a
+                    ,psite_customer     b
+            WHERE   a.lpcardno = b.lpcardno
+            AND     a.userid = p_userid;
+BEGIN
+        --Clear error log table before Create/Update Customers
+        DELETE FROM int$error_log WHERE userid = p_userid;
+
+        SELECT  default_ho_site
+        INTO STRICT    v_connect_site
+        FROM    admou
+        
+        where   code = p_connect_ou;
+        -- end rev : 003
+        SELECT  coalesce(s.psite_initial,c.cmpinit)
+        INTO STRICT    vcode
+        FROM    admsite s, admcmp C
+        WHERE   s.code = /*p_connect_site*/
+  v_connect_site;
+
+       -- Create new Customers
+       INSERT INTO psite_customer(
+                admsite_code,
+                id,
+                code,
+                lpcardno,
+                salutation,
+                fname,
+                mname,
+                lname,
+                gender,
+                profession,
+                religion,
+                address1,
+                address2,
+                address3,
+                cityid,
+                district,
+                city,
+                state,
+                country,
+                pin,
+                phone1,
+                phone2,
+                mobile,
+                email,
+                dob,
+                doa,
+                spousename,
+                createdon,
+                createdby,
+                lastmodifiedon,
+                lastmodifiedby,
+                membersince,
+                remarks,
+                receivemessage,
+                prefcommunicationmode,
+                createdbyid,
+                lastmodifiedbyid,
+                lastmodify_admsite_code,
+                loyaltymembershipno,
+                panno,
+                allow_credit_sale
+                -- start rev : 004
+                ,cp_gstin_no
+                ,cp_gstin_date
+                ,cp_gstin_state_code
+                -- end rev : 004
+                -- START REV : 006
+                 ,isemployee
+                 ,admisd_code
+                 -- End REV : 006
+                )
+        SELECT  v_connect_site, /*p_connect_site,*/
+                NULL,
+                --vcode||'-'||psite_customer_seq.NEXTVAL,
+                --START REV : 009
+                uuid_generate_v4(),
+                --END REV : 009
+                trim(both a.lpcardno),
+                trim(both a.salutation),
+                trim(both a.fname),
+                trim(both a.mname),
+                trim(both a.lname),
+                CASE WHEN UPPER(a.gender) = 'MALE' THEN 'M'
+                     WHEN UPPER(a.gender) = 'FEMALE' THEN 'F'
+                     WHEN UPPER(a.gender) = 'TRANSGENDER' THEN 'T'
+                     WHEN UPPER(a.gender) = 'UNDISCLOSED' THEN 'U'
+                     ELSE 'M'
+                END,
+                trim(both a.profession),
+                trim(both a.religion),
+                trim(both a.address1),
+                trim(both a.address2),
+                trim(both a.address3),
+                -- START REV : 007
+                -- NULL,
+                c.code,
+                --END REV : 007 
+                trim(both a.district),
+                trim(both a.city),
+                trim(both a.state),
+                trim(both a.country),
+                trim(both a.pin),
+                trim(both a.phone1),
+                trim(both a.phone2),
+                trim(both a.mobile),
+                trim(both a.email),
+                date_trunc('day',a.dob),
+                date_trunc('day',a.doa),
+                trim(both a.spousename),
+                clock_timestamp(),
+                trim(both a.userid),
+                clock_timestamp(),
+                trim(both a.userid),
+                CASE WHEN a.lpcardno IS NULL THEN NULL  ELSE clock_timestamp() END ,
+                trim(both a.remarks),
+                CASE WHEN UPPER(a.receivemessage) = 'YES' THEN 1
+                     WHEN UPPER(a.receivemessage) = 'NO' THEN 0
+                    ELSE 1
+                END,
+                CASE WHEN UPPER(a.prefcommunicationmode) = 'SMS' THEN 'S'
+                     WHEN UPPER(a.prefcommunicationmode) = 'EMAIL' THEN 'E'
+                     WHEN UPPER(a.prefcommunicationmode) = 'ANY' THEN 'A' ELSE 'S'
+                END,
+                trim(both a.userid),
+                trim(both a.userid),
+                v_connect_site /*p_connect_site*/,
+                trim(both loyaltymembershipno),
+                panno,
+                CASE WHEN allowcreditsale='Y' THEN 1 WHEN allowcreditsale='N' THEN 0 END
+                -- start rev : 004
+                ,a.gst_identification_no
+                ,a.gst_registration_date
+                ,case when a.gst_identification_no is not null then
+                           substr(a.gst_identification_no,1,2)
+                      when a.gst_state_name is not null then
+                            gs.code
+                      else
+                            null
+                end
+                -- end rev : 004
+                -- start rev : 006
+                ,case when lower(a.isemployee) = 'yes' then 1
+                else 0
+                end isemployee
+                ,i.code
+                -- end rev : 006
+        FROM int$stg_poscustomer a
+LEFT OUTER JOIN admcity c ON (a.city = c.ctname)
+LEFT OUTER JOIN admisd i ON (a.isdcode::text = i.isdcode)
+LEFT OUTER JOIN admgststate gs ON (upper(coalesce(a.gst_state_name,'@@')) = upper(gs.name))
+WHERE a.userid = p_userid -- start rev : 004
+  -- end rev : 004
+  AND a.code IS NULL -- START REV : 007
+  -- END REV : 007
+        -- start rev : 006
+;
+        -- end rev : 006
+        -- Updating Existing Customers
+        FOR r IN cus loop
+            -- start rev : 005
+            update  psite_customer  pc
+            set     admsite_code = v_connect_site,
+                    id  = NULL::bigint,
+                    lpcardno = coalesce(pc.lpcardno, r.lpcardno),
+                    salutation = coalesce(r.salutation,pc.salutation),
+                    fname = coalesce(r.fname,pc.fname),
+                    mname = coalesce(r.mname,pc.mname),
+                    lname = coalesce(r.lname,pc.lname),
+                    gender = coalesce(r.gender,pc.gender),
+                    profession = coalesce(r.profession,pc.profession),
+                    religion = coalesce(r.religion,pc.religion),
+                    address1 = coalesce(r.address1,pc.address1),
+                    address2 = coalesce(r.address2,pc.address2),
+                    address3 = coalesce(r.address3,pc.address3),
+                    cityid = coalesce(r.cityid::bigint,pc.cityid),
+                    district = coalesce(r.district,pc.district),
+                    city = coalesce(r.city,pc.city),
+                    state = coalesce(r.state,pc.state),
+                    country = coalesce(r.country,pc.country),
+                    pin = coalesce(r.pin,pc.pin),
+                    phone1 = coalesce(r.phone1,pc.phone1),
+                    phone2 = coalesce(r.phone2,pc.phone2),
+                    mobile = coalesce(r.mobile,pc.mobile),
+                    email = coalesce(r.email,pc.email),
+                    dob = coalesce(r.dob,pc.dob),
+                    doa = coalesce(r.doa,pc.doa),
+                    spousename = coalesce(r.spousename,pc.spousename),
+                    createdon = coalesce(r.createdon,pc.createdon),
+                    createdby = coalesce(r.createdby,pc.createdby),
+                    lastmodifiedon = coalesce(r.lastmodifiedon,pc.lastmodifiedon),
+                    lastmodifiedby = coalesce(r.lastmodifiedby,pc.lastmodifiedby),
+                    membersince = coalesce(r.membersince,pc.membersince),
+                    remarks = coalesce(r.remarks,pc.remarks),
+                    receivemessage = coalesce(r.receivemessage,pc.receivemessage),
+                    prefcommunicationmode = coalesce(r.prefcommunicationmode,pc.prefcommunicationmode),
+                    createdbyid = coalesce(r.createdbyid::bigint,pc.createdbyid),
+                    lastmodifiedbyid = coalesce(r.lastmodifiedbyid::bigint,pc.lastmodifiedbyid),
+                    lastmodify_admsite_code = v_connect_site, --p_connect_site
+                    loyaltymembershipno = coalesce(r.loyaltymembershipno,pc.loyaltymembershipno),
+                    panno = coalesce(r.panno,pc.panno),
+                    allow_credit_sale = coalesce(r.allowcreditsale,pc.allow_credit_sale),
+                    cp_gstin_no = coalesce(r.cp_gstin_no,pc.cp_gstin_no),
+                    cp_gstin_date = coalesce(r.cp_gstin_date,pc.cp_gstin_date),
+                    cp_gstin_state_code = coalesce(r.cp_gstin_state_code ,pc.cp_gstin_state_code),
+                     -- start rev : 006
+                    isemployee                = r.isemployee,
+                    admisd_code               = r.admisd_code
+                    -- end rev : 006
+            WHERE   code = r.code;
+            -- end rev : 005
+        END LOOP;
+
+        FOR r IN c LOOP
+
+            UPDATE  lpcard
+            SET     status              = 'I',
+                    issue_admsite_code  = v_connect_site, /*p_connect_site,*/
+                    issuedon            = date_trunc('day', clock_timestamp()),
+                    -- START REV : 008
+                    --valid_upto          = TO_DATE(DECODE(validity_in_months,NULL,NULL,ADD_MONTHS(TO_DATE(SYSDATE),validity_in_months) - 1),'DD-MON-YY'),
+                    valid_upto          = case when validity_in_months = NULL then null
+                                               else
+                                                   date_trunc('day', clock_timestamp()) + validity_in_months*'1 month'::interval - 1
+                                          end,
+                    -- END REV : 008
+                    psite_customer_code = r.customer_code,
+                    lastmodifiedon      = clock_timestamp(),
+                    lastmodifiedby      = r.userid
+            WHERE  cardno               = r.lpcardno;
+
+        END LOOP;
+        --COMMIT;
+
+        BEGIN
+            SELECT  count(*)
+            INTO STRICT    vcount
+            FROM    int$stg_poscustomer
+            WHERE   userid = p_userid;
+
+            IF   vcount <> 0 THEN
+                -- log to be added in History table
+				
+				SELECT PG_BACKEND_PID() INTO V_SID;
+				
+                SELECT nextval('int$error_log_code')
+        		INTO STRICT vsession;
+
+                -- START REV : 002
+                --vdetailtbl := 'CREATE TABLE POSCUSTOMER_'||vsession||' AS SELECT fname "Name",mobile "Mobile No.", lpcardno "Card No." FROM int$stg_poscustomer WHERE userid ='|| p_userid::text;
+                vdetailtbl := 'CREATE TABLE GINARCHIVE.POSCUSTOMER_'||vsession||' AS SELECT fname "Name",mobile "Mobile No.", lpcardno "Card No." FROM int$stg_poscustomer WHERE userid ='|| p_userid::text;
+                -- END REV : 002
+                EXECUTE vdetailtbl;
+
+                INSERT INTO int$history(code, importedby, importedon, classname, summary, history_detail_tablename, history_detail_row_count)
+                -- START REV : 002
+                --VALUES (int$history_code.NEXTVAL, p_userid, SYSDATE, 'POSCUSTOMER', vcount::TEXT||' Customers has been created', 'POSCUSTOMER_'||vsession, vcount);
+                VALUES (nextval('int$history_code'), p_userid, clock_timestamp(), 'POSCUSTOMER', vcount::TEXT||' Customers has been created', 'GINARCHIVE.POSCUSTOMER_'||vsession, vcount);
+                -- END REV : 002
+                --COMMIT;
+
+                RETURN('1');
+
+            ELSE
+                RETURN('0');
+            END IF;
+        END;
+        NULL;
+
+    EXCEPTION
+        WHEN OTHERS THEN
+            errcode := SQLSTATE;
+            errmsg := SQLERRM;
+
+            --Error log for Oracle Internal Error
+            INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            VALUES (nextval('int$error_log_code'), 0, 'POSCUSTOMER', p_userid, errcode, errmsg, clock_timestamp());
+            --COMMIT;
+
+            RETURN('0');
+    END;
+
+    -- clear gv allocation staging table
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

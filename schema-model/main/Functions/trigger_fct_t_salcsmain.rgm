@@ -1,0 +1,2339 @@
+function "main"."trigger_fct_t_salcsmain()" {
+  text = """
+
+DECLARE
+  C1 RECORD;
+   v_sale_post_method         char(1);
+   v_vatexp_glcode            bigint;
+   v_vatexp_slcode            bigint;
+   /*v_roundoff_amt             double precision;
+   v_sale_amt                 double precision;
+   v_debtor_amt               double precision;
+   v_tot_vat                  double precision;
+   v_vat_amt                  double precision;*/
+   v_roundoff_amt             NUMERIC(20,2);
+   v_sale_amt                 NUMERIC(20,2);
+   v_debtor_amt               NUMERIC(20,2);
+   v_tot_vat                  NUMERIC(20,2);
+   v_vat_amt                  NUMERIC(20,2);
+   -- START REV : 004
+   V_ENTTYPE                  INVSTOCK.ENTTYPE%TYPE;
+   V_POSTCODE                 FINPOST.POSTCODE%TYPE;
+   V_CCCODE                   FINCOSTTAG.CODE%TYPE;
+   V_GL_CC_APPL               FINGL.COSTAPP%TYPE;
+   -- END REV : 004
+   v_mop_amt                  double precision;
+   -- START REV : 005
+   v_mop_glcode_postcode      FINPOST.POSTCODE%TYPE;
+   v_rndoff_glcode_postcode   FINPOST.POSTCODE%TYPE;
+   V_RF_GL_CC_APPL            FINGL.COSTAPP%TYPE;
+   v_vatexp_glcode_postcode   FINPOST.POSTCODE%TYPE;
+   V_VE_GL_CC_APPL            FINGL.COSTAPP%TYPE;
+   v_vat_glcode_postcode      FINPOST.POSTCODE%TYPE;
+   -- END REV :  005
+   -- START REV : 005
+   v_sitetype                 varchar(25);
+   --START REV : 007
+   v_entcount                 bigint;
+   v_ent_chk_count            bigint;
+   --END REV : 007
+   v_igst_output_glcode       bigint;
+   v_cgst_output_glcode       bigint;
+   v_sgst_output_glcode       bigint;
+   v_cess_output_glcode       bigint;
+   v_igst_output_slcode       bigint;
+   v_cgst_output_slcode       bigint;
+   v_sgst_output_slcode       bigint;
+   v_cess_output_slcode       bigint;
+   v_tot_igstamt              double precision;
+   v_tot_cgstamt              double precision;
+   v_tot_sgstamt              double precision;
+   v_tot_cessamt              double precision;
+   v_igst_glcode_postcode     bigint;
+   v_igst_gl_glccapp          char(1);
+   v_cgst_glcode_postcode     bigint;
+   v_cgst_gl_glccapp          char(1);
+   v_sgst_glcode_postcode     bigint;
+   v_sgst_gl_glccapp          char(1);
+   v_cess_glcode_postcode     bigint;
+   v_CESS_gl_glccapp          char(1);
+   -- START REV : 017
+   V_NEW_POSTCODE             FINPOST.POSTCODE%TYPE;
+   v_tot_vat_GL               double precision;
+   v_tot_igstamt_GL           double precision;
+   v_tot_cgstamt_GL           double precision;
+   v_tot_sgstamt_GL           double precision;
+   v_tot_cessamt_GL           double precision;
+-- END REV : 017
+-- START REV : 020
+   v_slcode                   bigint;
+   v_sl_sale_post_method      char(1);
+   v_admgstin_code            bigint;
+   v_cp_gstin_no              varchar(15);
+-- END REV : 020  
+-- START REV : 021
+   v_tp_glcode                   bigint;
+   v_cod_glcode_postcode         bigint;
+   V_COD_GL_CC_APPL              FINGL.COSTAPP%TYPE;
+-- END REV : 021
+BEGIN
+  BEGIN
+   /*******************************************************************************************************************
+      REVISIONS:
+      No.       Date         Author                   Description
+      --------- -----------  ----------------------   -----------------------------------------------------------------
+      REV : 001 06-OCT-2010  Diptiman                 (BUG ID : 1882) Account posting based on entry_mode imposed.
+      REV : 002 15-FEB-2011  Diptiman                 (BUG ID : 2598) Account posting rectified.
+      REV : 003 06-APR-2011  Anindya                  Incorporate VAT Posting
+      REV : 004 06-MAR-2012  Diptiman                 (BUG ID : 216) Site related changes.
+      REV : 005 14-FEB-2013  Anindya                  Introduce MS-OO-CM
+      REV : 006 03-JUN-2014  Diptiman                 (BUG ID : 1324) Voucher type added.
+      REV : 007 25-NOV-2014  Sanjiv                   (BUG ID : 1816) MS-CO-CM Accounting Logic Change
+      REV : 008 07-MAY-2013  Anindya                  (BUG ID : 743) For Unmanaged site in Exclusive mode Accounts
+                                                      posting is not taking place (it was already released with version 11.26.1
+                                                      but at the time of 11.38 released it was identified that some how the same changes
+                                                      was missed out from subsiquent releases. So again it is getting released with
+                                                      11.38.0)
+      REV : 009  14-DEC-2015  Prasanta                (TFS ID : 13380) NETPAYABLE AMOUNT not getting updated in SALCSMAIN TABLE
+      REV : 010  01-JUN-2016  Anindya                 (TFS ID : 14707) In VAT Exclusive mode tax range related changes
+      REV : 011  18-MAY-2016  anindya                 (TFS ID : 15889) Retail sale related changes
+      REV : 012  26-JUL-2016  anindya                 (TFS ID : 19360) Retail sale related changes
+      REV : 013  02-AUG-2016  anindya                 (TFS ID : 15889) Consignment Sale entry createtion from D2k is restricted from
+                                                                       this version. So the changes done for unmanaged site aginst
+                                                                       revesion 009 is going to be connented out because from now onwards
+                                                                       Netpayable and roundoff column will be populated for US site also
+                                                                       from gini web version.
+      REV : 014  06-MAR-2017  MOUSUMI                 (TFS ID : 25371) Need to reflect Reference No. for web transactions in document adjustment from
+      REV : 015  08-MAY-2017  MOUSUMI                 (TFS ID : 26844) Multiou
+      REV : 016  28-FEB-2018  ANINDYA                 (TFS ID : xxxxx) CGST costapp getting replaced by IGST costapp
+      REV : 017  09-MAR-2018  MOUSUMI                 (TFS ID : 37820) Non trading
+      REV : 018  20-JUN-2018  ANINDYA                 (TFS ID : XXXXX) Online sale related changes.
+      REV : 019  02-AUG-2021  MANASH                  (MNTS ID : 1079) Stock Report is showing wrong while Online Sale is pushed.   
+      REV : 020  10-12-2021   ANINDYA                 (MNTS ID : 1020) VAT is not getting posted for US-CO-CM site
+      REV : 021  03-NOV-2020  SIDDHARTHA              (TFS ID : 3579)  Finance Impact DB Trigger for Retail Invoice. 
+      REV : 022  01-APR-2022  ANINDYA                 (TFS ID : OMS Integration)  Sales ledger posting is taking place even if amount is not there                 
+      REV : 023  18-APR-2022  ANINDYA                 (TFS ID : OMS Integration)  Multiple Stockpoint for Sale/Return/DamageReturn in Header
+   *******************************************************************************************************************/
+   -- START REV : 008
+   SELECT sitetype, slcode
+     INTO STRICT v_sitetype
+          -- START REV : 020 
+          ,v_slcode
+          -- END REV : 020
+     FROM admsite
+    WHERE code = coalesce(NEW.admsite_code, OLD.admsite_code);
+
+    -- START REV : 021
+  BEGIN
+      SELECT glcode
+         INTO STRICT v_tp_glcode
+         FROM finsl
+        WHERE SLCODE = NEW.tpcode;
+  EXCEPTION
+    WHEN no_data_found
+    THEN       
+        v_tp_glcode := NULL;
+   END;
+  -- END REV : 021
+    
+    -- START REV : 020
+    IF v_slcode IS NOT NULL
+    THEN
+       SELECT sale_post_method
+       INTO STRICT   v_sl_sale_post_method
+       FROM   FINSL
+       WHERE  slcode = v_slcode;
+
+    END IF;
+    -- END REV : 020 
+   IF TG_OP = 'UPDATE'
+   THEN
+
+      -- Stock updation
+      CALL db_pkg_stock$reflect(NEW.cscode,
+                            NEW.csno,
+                            -- START REV : 019 
+                            --:NEW.csdate,
+                            date_trunc('day', NEW.csdate),
+                            -- END REV : 019
+                            'SAL',
+                            -- START REV : 023
+                            --:NEW.outloccode,
+                            NULL,
+                            -- END REV : 023
+                            NEW.ycode,
+                            NEW.pcode,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NEW.scheme_docno,
+                            -- START REV : 004
+                            NULL,
+                            NEW.ADMOU_CODE,
+                            NEW.ADMSITE_CODE                 -- END REV : 004
+                                             );
+   END IF;
+
+   -- START REV : 002
+   IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE'
+   THEN
+      IF coalesce(NEW.status, 'X') <> 'C'
+      THEN
+         -- START REV : 004
+         DELETE FROM FINCOSTTAG
+          WHERE ENTCODE = OLD.CSCODE::varchar AND ENTTYPE = 'CSM';
+
+         -- END REV : 004
+         DELETE FROM finpost
+               WHERE entcode = OLD.cscode::varchar AND enttype = 'CSM';
+      END IF;
+   END IF;
+
+   -- END REV : 002
+   -- START REV : 001
+   IF coalesce(NEW.status, OLD.status) = 'C'
+   THEN
+      -- END REV : 001
+      -- Account Posting
+      IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE'
+      THEN
+         -- START REV : 004
+         DELETE FROM FINCOSTTAG
+          WHERE ENTCODE = OLD.CSCODE::varchar AND ENTTYPE = 'CSM';
+
+         -- END REV : 004
+         DELETE FROM finpost
+               WHERE entcode = NEW.cscode::varchar AND enttype = 'CSM';
+
+         IF v_sitetype IN ('MS-OO-CM', 'OS-OO-CM') OR (v_sitetype IN ('US-CO-CM','MS-CO-CM') AND v_sl_sale_post_method = 'E')
+         -- END REV : 020
+         -- END REV : 011
+         THEN
+            v_sale_post_method := 'E';
+
+            -- START REV : 020
+            SELECT admgstin_code
+            INTO STRICT   v_admgstin_code
+            FROM admsite
+            WHERE code = NEW.ADMSITE_CODE;
+
+            IF v_admgstin_code IS NULL
+            THEN
+              SELECT CP_GSTIN_NO
+              INTO STRICT   V_CP_GSTIN_NO
+              FROM admsite
+              WHERE code = NEW.ADMSITE_CODE;
+            END IF;
+
+            -- END REV : 020
+            BEGIN
+               SELECT igst_output_glcode,
+                      ig.costapp igst_gl_glccapp,
+                      igst_output_slcode,
+                      cgst_output_glcode,
+                      -- START REV : 016
+                      --ig.costapp cgst_gl_glccapp,
+                      cg.costapp cgst_gl_glccapp,
+                      -- END REV : 016
+                      cgst_output_slcode,
+                      sgst_output_glcode,
+                      sg.costapp sgst_gl_glccapp,
+                      sgst_output_slcode,
+                      cess_output_glcode,
+                      eg.costapp cess_gl_glccapp,
+                      cess_output_slcode
+                 INTO STRICT v_igst_output_glcode,
+                      v_igst_gl_glccapp,
+                      v_igst_output_slcode,
+                      v_cgst_output_glcode,
+                      v_cgst_gl_glccapp,
+                      v_cgst_output_slcode,
+                      v_sgst_output_glcode,
+                      v_sgst_gl_glccapp,
+                      v_sgst_output_slcode,
+                      v_cess_output_glcode,
+                      v_cess_gl_glccapp,
+                      v_cess_output_slcode
+                 FROM admgstin agi
+LEFT OUTER JOIN fingl ig ON (agi.IGST_OUTPUT_GLCODE = ig.glcode)
+LEFT OUTER JOIN fingl cg ON (agi.CGST_OUTPUT_GLCODE = cg.glcode)
+LEFT OUTER JOIN fingl sg ON (agi.SGST_OUTPUT_GLCODE = sg.glcode)
+LEFT OUTER JOIN fingl eg ON (agi.cess_OUTPUT_glcode = eg.glcode)
+WHERE agi.code = (SELECT admgstin_code
+                                        FROM admsite
+                                       WHERE code = NEW.ADMSITE_CODE);
+            EXCEPTION
+               WHEN no_data_found
+               THEN
+                  NULL;
+            END;
+         -- END REV : 011
+         ELSE
+            v_sale_post_method := 'I';
+
+            SELECT                                         --sale_post_method,
+                  vatexp_glcode, vatexp_slcode
+              INTO                                       --v_sale_post_method,
+                  v_vatexp_glcode, v_vatexp_slcode
+              FROM finsl
+             WHERE slcode = NEW.pcode;
+         END IF;
+
+         -- END REV : 005
+         SELECT SUM(coalesce(amount, 0))
+           INTO STRICT v_mop_amt
+           FROM salcsmop
+          WHERE cscode = NEW.cscode AND glcode IS NOT NULL;
+
+         -- When Posting Method is Inclusive
+         IF v_sale_post_method = 'I'
+         THEN
+            -- When Round Off GL is defined in company frofile
+            IF NEW.roundoff_glcode IS NOT NULL
+            THEN
+               v_roundoff_amt := NEW.roundoff;
+               -- START REV : 017
+               --v_sale_amt := :NEW.netamt;
+               v_sale_amt := coalesce(NEW.MAIN_GL_AMT, 0);
+               -- END REV : 017
+               v_debtor_amt :=
+                    coalesce(NEW.netamt, 0)
+                  - coalesce(v_mop_amt, 0)
+                  --START REV : 021
+                  - coalesce(NEW.CODAMT,0)
+                  --END REV : 021
+                  + coalesce(NEW.roundoff, 0);
+            ELSE        -- When Round Off GL is not defined in company frofile
+               v_roundoff_amt := 0;
+
+               IF coalesce(NEW.netamt, 0) > 0                  -- In Case of Sale
+               THEN
+                  IF coalesce(NEW.roundoff, 0) > 0       -- When RoundOff Amt +Ve
+                  THEN
+                     -- START REV : 017
+                     /* v_sale_amt :=
+                         NVL (:NEW.netamt, 0) + NVL (:NEW.roundoff, 0);*/
+                     v_sale_amt :=
+                        coalesce(NEW.MAIN_GL_AMT, 0) + coalesce(NEW.roundoff, 0);
+                     -- END REV : 017
+                     v_debtor_amt :=
+                          coalesce(NEW.netamt, 0)
+                        - coalesce(v_mop_amt, 0)
+                        --START REV : 021
+                        - coalesce(NEW.CODAMT,0)
+                        --END REV : 021
+                        + coalesce(NEW.roundoff, 0);
+                  ELSE                                -- When RoundOff Amt -Ve
+                     -- START REV : 017
+                     --v_sale_amt := NVL (:NEW.netamt, 0);
+                     v_sale_amt := coalesce(NEW.MAIN_GL_AMT, 0);
+                     -- END REV : 017
+                     v_debtor_amt :=
+                        coalesce(NEW.netamt, 0) - coalesce(v_mop_amt, 0)
+                        --START REV : 021
+                        - coalesce(NEW.CODAMT,0);
+                        --END REV : 021
+                  END IF;
+               ELSE                                  -- In Case of Sale Return
+                  IF coalesce(NEW.roundoff, 0) > 0       -- When RoundOff Amt +Ve
+                  THEN
+                     -- START REV : 017
+                     -- v_sale_amt := NVL (:NEW.netamt, 0);
+                     v_sale_amt := coalesce(NEW.MAIN_GL_AMT, 0);
+                     -- END REV : 017
+                     v_debtor_amt :=
+                        coalesce(NEW.netamt, 0) - coalesce(v_mop_amt, 0)
+                        --START REV : 021
+                        - coalesce(NEW.CODAMT,0);
+                        --END REV : 021
+                  ELSE                                -- When RoundOff Amt -Ve
+                     -- START REV : 017
+                     /*v_sale_amt :=
+                        NVL (:NEW.netamt, 0) + NVL (:NEW.roundoff, 0);*/
+                     v_sale_amt :=
+                        coalesce(NEW.MAIN_GL_AMT, 0) + coalesce(NEW.roundoff, 0);
+                     -- END REV : 017
+                     v_debtor_amt :=
+                          coalesce(NEW.netamt, 0)
+                        - coalesce(v_mop_amt, 0)
+                        --START REV : 021
+                        - coalesce(NEW.CODAMT,0)
+                        --END REV : 021
+                        + coalesce(NEW.roundoff, 0);
+                  END IF;
+               END IF;
+            END IF;
+
+            SELECT SUM(coalesce(taxamt, 0))
+              INTO STRICT v_tot_vat
+              FROM salcsdet
+             WHERE cscode = NEW.cscode AND coalesce(TAXREGIME, 'V') = 'V';
+
+            SELECT SUM(coalesce(igstamt, 0)) tot_igstamt,
+                   SUM(coalesce(cgstamt, 0)) tot_cgstamt,
+                   SUM(coalesce(sgstamt, 0)) tot_sgstamt,
+                   SUM(coalesce(cessamt, 0)) tot_cessamt
+              INTO STRICT v_tot_igstamt,
+                   v_tot_cgstamt,
+                   v_tot_sgstamt,
+                   v_tot_cessamt
+              FROM salcsdet
+             WHERE cscode = NEW.cscode AND coalesce(taxregime, 'V') = 'G';
+
+            -- VAT Posting is required only when VAT Expense ledger is defined
+            IF v_vatexp_glcode IS NOT NULL 
+            THEN
+               v_vat_amt :=
+                    coalesce(v_tot_vat, 0)
+                  + coalesce(v_tot_igstamt, 0)
+                  + coalesce(v_tot_cgstamt, 0)
+                  + coalesce(v_tot_sgstamt, 0)
+                  + coalesce(v_tot_cessamt, 0);
+               v_debtor_amt :=
+                    coalesce(v_debtor_amt, 0)
+                  - coalesce(v_tot_vat, 0)
+                  - (  coalesce(v_tot_igstamt, 0)
+                     + coalesce(v_tot_cgstamt, 0)
+                     + coalesce(v_tot_sgstamt, 0)
+                     + coalesce(v_tot_cessamt, 0));
+            END IF;
+         END IF;
+
+         -- When Posting methos is VAT Exclusive
+         IF v_sale_post_method = 'E'
+         THEN
+            -- When Round Off GL is defined in company frofile
+            IF NEW.roundoff_glcode IS NOT NULL
+            THEN
+               v_roundoff_amt := NEW.roundoff;
+               -- START REV : 017
+               /* v_sale_amt :=
+                   NVL (:NEW.netpayable, 0) - NVL (:NEW.roundoff, 0);*/
+               v_sale_amt := (coalesce(NEW.MAIN_GL_AMT, 0)); -- + NVL (:NEW.roundoff, 0))  - NVL (:NEW.roundoff, 0);
+               -- END REV : 017
+               v_debtor_amt := NEW.netpayable - coalesce(v_mop_amt, 0)
+                        --START REV : 021
+                        - coalesce(NEW.CODAMT,0);
+                        --END REV : 021
+            ELSE        -- When Round Off GL is not defined in company frofile
+               v_roundoff_amt := 0;
+
+               IF coalesce(NEW.netamt, 0) > 0                  -- In Case of Sale
+               THEN
+                  IF coalesce(NEW.roundoff, 0) < 0  -- When Rounnd Off Amt is -Ve
+                  THEN
+                     -- START REV : 017
+                     /* v_sale_amt :=
+                         NVL (:NEW.netpayable, 0) - NVL (:NEW.roundoff, 0);*/
+                     v_sale_amt := (coalesce(NEW.MAIN_GL_AMT, 0)); -- + NVL (:NEW.roundoff, 0)) - NVL (:NEW.roundoff, 0);
+                     -- END REV : 017
+                     v_debtor_amt :=
+                          coalesce(NEW.netpayable, 0)
+                        - coalesce(v_mop_amt, 0)
+                        --START REV : 021
+                        - coalesce(NEW.CODAMT,0)
+                        --END REV : 021
+                        - coalesce(NEW.roundoff, 0);
+                  ELSE                           -- When Rounnd Off Amt is +Ve
+                     -- START REV : 017
+                     --v_sale_amt := NVL (:NEW.netpayable, 0);
+                     v_sale_amt :=
+                        (coalesce(NEW.MAIN_GL_AMT, 0) + coalesce(NEW.roundoff, 0));
+                     -- END REV : 017
+                     v_debtor_amt :=
+                        coalesce(NEW.netpayable, 0) - coalesce(v_mop_amt, 0)
+                        --START REV : 021
+                        - coalesce(NEW.CODAMT,0);
+                        --END REV : 021
+                  END IF;
+               ELSE                                  -- In Case Of Sale Return
+                  IF coalesce(NEW.roundoff, 0) < 0  -- When Rounnd Off Amt is -Ve
+                  THEN
+                     -- START REV : 017
+                     -- v_sale_amt := NVL (:NEW.netpayable, 0);
+                     v_sale_amt :=
+                        (coalesce(NEW.MAIN_GL_AMT, 0) + coalesce(NEW.roundoff, 0));
+                     -- END REV : 017
+                     v_debtor_amt :=
+                        coalesce(NEW.netpayable, 0) - coalesce(v_mop_amt, 0)
+                        --START REV : 021
+                        - coalesce(NEW.CODAMT,0);
+                        --END REV : 021
+                  ELSE                           -- When Rounnd Off Amt is +Ve
+                     -- START REV : 017
+                     /*v_sale_amt :=
+                        NVL (:NEW.netpayable, 0) - NVL (:NEW.roundoff, 0);*/
+                     v_sale_amt := (coalesce(NEW.MAIN_GL_AMT, 0)); -- + NVL (:NEW.roundoff, 0)) - NVL (:NEW.roundoff, 0)  ;
+                     -- END REV : 017
+                     v_debtor_amt :=
+                          coalesce(NEW.netpayable, 0)
+                        - coalesce(v_mop_amt, 0)
+
+                        --START REV : 021
+                        - coalesce(NEW.CODAMT,0)
+                        --END REV : 021
+                        - coalesce(NEW.roundoff, 0);
+                  END IF;
+               END IF;
+            END IF;
+
+            SELECT SUM(coalesce(taxamt, 0)) tot_vat
+              INTO STRICT v_tot_vat
+              FROM salcsdet
+             WHERE     cscode = NEW.cscode
+                   AND coalesce(taxregime, 'V') = 'V'
+                   AND taxdetcode IN
+                          (SELECT d.taxdetcode
+                             FROM fintaxdet d
+LEFT OUTER JOIN (SELECT tr.taxdetcode,
+                                          tr.SALTAX_GLCODE,
+                                          tr.SALTAX_SLCODE
+                                     FROM                   -- START REV : 012
+                                         fintaxdet     t,
+                                          -- END REV : 012
+                                          fintax_range tr,
+                                          salcsdet     d
+                                    WHERE                   -- START REV : 012
+                                         t    .TAXDETCODE = tr.TAXDETCODE
+                                          -- START REV : 012
+                                          AND tr.taxdetcode = d.taxdetcode
+                                          -- START REV : 012
+                                          --and     ABS(NVL(d.taxamt,0)) BETWEEN tr.RANGEFROM and NVL(tr.rangeto,999999999999)
+                                          AND (CASE
+                                                  WHEN t.TAX_BASIS = 'N'
+                                                  THEN
+                                                     ABS(
+                                                        round((d.netamt / d.qty)::numeric,
+                                                           3))
+                                                  WHEN t.TAX_BASIS = 'M'
+                                                  THEN
+                                                     d.mrp
+                                               END) BETWEEN tr.RANGEFROM
+                                                        AND coalesce(
+                                                               tr.rangeto,
+                                                               999999999999)
+                                          -- END REV : 012
+                                          AND d.cscode = NEW.cscode
+                                          AND coalesce(d.taxamt, 0) <> 0) td ON (d.taxdetcode = td.taxdetcode)
+WHERE coalesce(td.saltax_glcode, d.saltax_glcode)
+                                         IS NOT NULL );
+
+            --END REV : 010
+            -- START REV : 020
+            IF  v_admgstin_code IS NOT NULL
+            THEN
+            -- END REV : 020
+                SELECT SUM(coalesce(igstamt, 0)) tot_igstamt,
+                       SUM(coalesce(cgstamt, 0)) tot_cgstamt,
+                       SUM(coalesce(sgstamt, 0)) tot_sgstamt,
+                       SUM(coalesce(cessamt, 0)) tot_cessamt
+                  INTO STRICT v_tot_igstamt,
+                       v_tot_cgstamt,
+                       v_tot_sgstamt,
+                       v_tot_cessamt
+                  FROM salcsdet
+                 WHERE cscode = NEW.cscode AND coalesce(taxregime, 'V') = 'G';
+            -- START REV : 020     
+            END IF;
+            -- END REV : 020 
+            -- START REV : 017
+            SELECT SUM(coalesce(taxamt, 0)) tot_vat
+              INTO STRICT v_tot_vat_GL
+              FROM salcsdet
+             WHERE     cscode = NEW.cscode
+                   AND GLCODE IS NULL
+                   AND coalesce(taxregime, 'V') = 'V'
+                   AND taxdetcode IN
+                          (SELECT d.taxdetcode
+                             FROM fintaxdet d
+LEFT OUTER JOIN (SELECT tr.taxdetcode,
+                                          tr.SALTAX_GLCODE,
+                                          tr.SALTAX_SLCODE
+                                     FROM                   -- START REV : 012
+                                         fintaxdet     t,
+                                          -- END REV : 012
+                                          fintax_range tr,
+                                          salcsdet     d
+                                    WHERE                   -- START REV : 012
+                                         t    .TAXDETCODE = tr.TAXDETCODE
+                                          -- START REV : 012
+                                          AND tr.taxdetcode = d.taxdetcode
+                                          -- START REV : 012
+                                          --and     ABS(NVL(d.taxamt,0)) BETWEEN tr.RANGEFROM and NVL(tr.rangeto,999999999999)
+                                          AND (CASE
+                                                  WHEN t.TAX_BASIS = 'N'
+                                                  THEN
+                                                     ABS(
+                                                        round((d.netamt / d.qty)::numeric,
+                                                           3))
+                                                  WHEN t.TAX_BASIS = 'M'
+                                                  THEN
+                                                     d.mrp
+                                               END) BETWEEN tr.RANGEFROM
+                                                        AND coalesce(
+                                                               tr.rangeto,
+                                                               999999999999)
+                                          -- END REV : 012
+                                          AND d.cscode = NEW.cscode
+                                          AND D.GLCODE IS NULL
+                                          AND coalesce(d.taxamt, 0) <> 0) td ON (d.taxdetcode = td.taxdetcode)
+WHERE coalesce(td.saltax_glcode, d.saltax_glcode)
+                                         IS NOT NULL );
+
+            -- START REV : 020
+            IF  v_admgstin_code IS NOT NULL
+            THEN
+            -- END REV : 020
+                SELECT SUM(coalesce(igstamt, 0)) tot_igstamt,
+                       SUM(coalesce(cgstamt, 0)) tot_cgstamt,
+                       SUM(coalesce(sgstamt, 0)) tot_sgstamt,
+                       SUM(coalesce(cessamt, 0)) tot_cessamt
+                  INTO STRICT v_tot_igstamt_GL,
+                       v_tot_cgstamt_GL,
+                       v_tot_sgstamt_GL,
+                       v_tot_cessamt_GL
+                  FROM salcsdet
+                 WHERE     cscode = NEW.cscode
+                       AND GLCODE IS NULL
+                       AND coalesce(taxregime, 'V') = 'G';
+            -- START REV : 020
+            END IF;
+            -- END REV : 020
+            v_sale_amt :=
+                 coalesce(v_sale_amt, 0)
+               - coalesce(v_tot_vat_GL, 0)
+               - (  coalesce(v_tot_igstamt_GL, 0)
+                  + coalesce(v_tot_cgstamt_GL, 0)
+                  + coalesce(v_tot_sgstamt_GL, 0)
+                  + coalesce(v_tot_cessamt_GL, 0));
+         -- END REV : 017
+         END IF;
+
+         IF (   (v_Sitetype <> 'MS-OO-CM')
+             OR (v_Sitetype = 'MS-OO-CM' AND NEW.CHANNELTYPE = 'ETL'))
+         THEN
+            IF coalesce(v_debtor_amt, 0) <> 0
+            THEN
+            -- END REV : 005
+            -- END REV : 018
+                INSERT INTO finpost(postcode,
+                                     entcode,
+                                     entno,
+                                     entdt,
+                                     enttype,
+                                     glcode,
+                                     slcode,
+                                     damount,
+                                     camount,
+                                     ycode,
+                                     scheme_docno,
+                                     nartext                    -- START REV : 014
+                                            ,
+                                     DOCNO                        -- END REV : 014
+                                                                -- START REV : 015
+                                     ,
+                                     ADMSITE_CODE_OWNER,
+                                     ADMOU_CODE                   -- END REV : 015
+                                               )
+                        VALUES (
+                                  nextval('erp01'),
+                                  NEW.cscode::varchar,
+                                  NEW.csno::varchar,
+                                  -- START REV : 019
+                                  --:NEW.csdate,
+                                  date_trunc('day', NEW.csdate),
+                                  -- END REV : 019
+                                  'CSM',
+                                  NEW.debtors_glcode,
+                                  NEW.pcode,
+                                  CASE
+                                     WHEN coalesce(v_debtor_amt, 0) > 0
+                                     THEN
+                                        coalesce(v_debtor_amt, 0)
+                                     ELSE
+                                        NULL
+                                  END,
+                                  CASE
+                                     WHEN coalesce(v_debtor_amt, 0) < 0
+                                     THEN
+                                        ABS(coalesce(v_debtor_amt, 0))
+                                     ELSE
+                                        NULL
+                                  END,
+                                  NEW.ycode,
+                                  NEW.scheme_docno,
+                                  NEW.remarks                  -- START REV : 014
+                                              ,
+                                  NEW.REFNO                      -- END REV : 014
+                                                                -- START REV : 015
+                                  ,
+                                  NEW.ADMSITE_CODE_OWNER,
+                                  NEW.ADMOU_CODE                 -- END REV : 015
+                                                 );
+             -- START REV : 005
+             END IF;
+         END IF;
+
+         -- END REV : 005
+         --  Cosignment Sale A/C Posting
+         -- START REV : 022
+         IF coalesce(v_sale_amt,0) <> 0
+         THEN
+         -- END REV : 022
+             INSERT INTO finpost(postcode,
+                                  entcode,
+                                  entno,
+                                  entdt,
+                                  enttype,
+                                  glcode,
+                                  slcode,
+                                  damount,
+                                  camount,
+                                  ycode,
+                                  scheme_docno,
+                                  nartext                       -- START REV : 014
+                                         ,
+                                  DOCNO                            -- END REV :014
+                                                                -- START REV : 015
+                                  ,
+                                  ADMSITE_CODE_OWNER,
+                                  ADMOU_CODE                      -- END REV : 015
+                                            )
+                     VALUES (
+                               nextval('erp01'),
+                               NEW.cscode::varchar,
+                               NEW.csno::varchar,
+                               -- START REV : 019
+                               --:NEW.csdate,
+                               date_trunc('day', NEW.csdate),
+                               -- END REV : 019
+                               'CSM',
+                               NEW.consignment_sales_glcode,
+                               NEW.consignment_sales_slcode,
+                               CASE
+                                  WHEN coalesce(v_sale_amt, 0) < 0
+                                  THEN
+                                     ABS(coalesce(v_sale_amt, 0))
+                                  ELSE
+                                     NULL
+                               END,
+                               CASE
+                                  WHEN coalesce(v_sale_amt, 0) > 0
+                                  THEN
+                                     coalesce(v_sale_amt, 0)
+                                  ELSE
+                                     NULL
+                               END,
+                               NEW.ycode,
+                               NEW.scheme_docno,
+                               NEW.remarks                     -- START REV : 014
+                                           ,
+                               NEW.REFNO                         -- END REV : 014
+                                                                -- START REV : 015
+                               ,
+                               NEW.ADMSITE_CODE_OWNER,
+                               NEW.ADMOU_CODE                    -- END REV : 015
+                                              );
+
+            -- START REV : 022                                  
+            END IF;
+            -- END REV : 022                       
+         -- START REV : 004
+         -- MOP Related Posting
+         FOR C1 IN (  SELECT glcode,
+                             slcode,
+                             SUM(coalesce(amount, 0)) amount,
+                             coalesce(gl_cc_appl, 'N') costapp
+                        FROM salcsmop
+                       WHERE cscode = NEW.cscode AND glcode IS NOT NULL
+                    GROUP BY glcode, slcode, coalesce(gl_cc_appl, 'N'))
+         LOOP
+            INSERT INTO finpost(postcode,
+                                 entcode,
+                                 entno,
+                                 entdt,
+                                 enttype,
+                                 glcode,
+                                 slcode,
+                                 damount,
+                                 camount,
+                                 ycode,
+                                 scheme_docno,
+                                 nartext                    -- START REV : 014
+                                        ,
+                                 DOCNO                        -- END REV : 014
+                                                            -- START REV : 015
+                                 ,
+                                 ADMSITE_CODE_OWNER,
+                                 ADMOU_CODE                   -- END REV : 015
+                                           )
+                    VALUES (
+                              nextval('erp01'),
+                              NEW.cscode::varchar,
+                              NEW.csno::varchar,
+                              -- START REV : 019
+                              --:NEW.csdate,
+                              date_trunc('day', NEW.csdate),
+                              -- END REV : 019
+                              'CSM',
+                              C1.glcode,
+                              C1.slcode,
+                              CASE
+                                 WHEN coalesce(c1.Amount, 0) > 0
+                                 THEN
+                                    coalesce(ABS(c1.Amount), 0)
+                                 ELSE
+                                    NULL
+                              END,
+                              CASE
+                                 WHEN coalesce(c1.Amount, 0) < 0
+                                 THEN
+                                    ABS(coalesce(ABS(c1.Amount), 0))
+                                 ELSE
+                                    NULL
+                              END,
+                              NEW.ycode,
+                              NEW.scheme_docno,
+                              NEW.remarks                  -- START REV : 014
+                                          ,
+                              NEW.REFNO                      -- END REV : 014
+                                                            -- START REV : 015
+                              ,
+                              NEW.ADMSITE_CODE_OWNER,
+                              NEW.ADMOU_CODE                 -- END REV : 015
+                                             )
+              -- START REV : 005
+              RETURNING POSTCODE
+                   INTO v_mop_glcode_postcode;
+
+               --===============================================================
+               -- START REV : 005
+               DELETE FROM FINCOSTTAG
+                WHERE     ENTCODE = NEW.CSCODE::varchar
+                      AND ENTTYPE = 'CSM'
+                      AND DAMOUNT =
+                             CASE
+                                WHEN coalesce(c1.Amount, 0) > 0
+                                THEN
+                                   coalesce(ABS(c1.Amount), 0)
+                                ELSE
+                                   NULL
+                             END
+                      AND CAMOUNT =
+                             CASE
+                                WHEN coalesce(c1.Amount, 0) < 0
+                                THEN
+                                   coalesce(ABS(c1.Amount), 0)
+                                ELSE
+                                   NULL
+                             END
+                      AND YCODE = NEW.YCODE
+                      AND GLCODE = c1.glcode
+            RETURNING CODE
+                 INTO V_CCCODE;
+
+            IF     v_mop_glcode_postcode IS NOT NULL
+               AND coalesce(C1.COSTAPP, 'N') = 'Y'
+            THEN
+               INSERT INTO FINCOSTTAG(ENTCODE,
+                                       ENTNO,
+                                       ENTDT,
+                                       ENTTYPE,
+                                       GLCODE,
+                                       SLCODE,
+                                       COSTCODE,
+                                       DAMOUNT,
+                                       CAMOUNT,
+                                       YCODE,
+                                       CODE,
+                                       POSTCODE,
+                                       ADMSITE_CODE         -- START REV : 006
+                                                   ,
+                                       REF_ADMSITE_CODE       -- END REV : 006
+                                                       ,
+                                       ADMOU_CODE                 -- REV : 015
+                                                 )
+                       VALUES (
+                                 NEW.CSCODE::varchar,
+                                 NEW.CSNO::varchar,
+                                 -- START REV : 019
+                                 --:NEW.CSDATE,
+                                 date_trunc('day', NEW.CSDATE),
+                                 -- END REV : 019
+                                 'CSM',
+                                 c1.glcode,
+                                 c1.slcode,
+                                 NULL,
+                                 CASE
+                                    WHEN coalesce(c1.Amount, 0) > 0
+                                    THEN
+                                       coalesce(ABS(c1.Amount), 0)
+                                    ELSE
+                                       NULL
+                                 END,
+                                 CASE
+                                    WHEN coalesce(c1.Amount, 0) < 0
+                                    THEN
+                                       coalesce(ABS(c1.Amount), 0)
+                                    ELSE
+                                       NULL
+                                 END,
+                                 NEW.YCODE,
+                                 V_CCCODE,
+                                 v_mop_glcode_postcode,
+                                 -- START REV : 006
+                                 --:NEW.ADMSITE_CODE
+                                 CASE WHEN                                     v_sitetype='US-CO-OM-TS' THEN  NEW.ADMSITE_CODE_OWNER WHEN                                     v_sitetype='MS-CO-OM-TS' THEN  NEW.ADMSITE_CODE_OWNER  ELSE NEW.ADMSITE_CODE END ,
+                                 NEW.admsite_code            -- END REV : 006
+                                                  ,
+                                 NEW.ADMOU_CODE                  -- REV : 015
+                                                );
+            END IF;
+         -- END REV : 005
+         --========================================================
+         END LOOP;
+
+         BEGIN
+            SELECT COSTAPP
+              INTO STRICT V_GL_CC_APPL
+              FROM FINGL
+             WHERE GLCODE = NEW.CONSIGNMENT_SALES_GLCODE;
+         EXCEPTION
+            WHEN no_data_found
+            THEN
+               NULL;
+         END;
+
+         -- Temp withdrawn, have to confirm for unmanage and manage site.
+         --IF V_SITETYPE =  'US-CO-CM' THEN
+         BEGIN
+            SELECT POSTCODE
+              INTO STRICT V_POSTCODE
+              FROM FINPOST
+             WHERE     ENTCODE = NEW.CSCODE::varchar
+                   AND ENTTYPE = 'CSM'
+                   AND GLCODE = NEW.CONSIGNMENT_SALES_GLCODE
+                   AND coalesce(SLCODE, 0) =
+                          coalesce(NEW.CONSIGNMENT_SALES_SLCODE, 0)
+                   AND coalesce(DAMOUNT, 0) =
+                          CASE
+                             WHEN coalesce(v_sale_amt, 0) < 0
+                             THEN
+                                ABS(coalesce(v_sale_amt, 0))
+                             ELSE
+                                0
+                          END
+                   AND coalesce(CAMOUNT, 0) =
+                          CASE
+                             WHEN coalesce(v_sale_amt, 0) > 0
+                             THEN
+                                coalesce(v_sale_amt, 0)
+                             ELSE
+                                0
+                          END
+                   AND YCODE = NEW.YCODE;
+         EXCEPTION
+            WHEN no_data_found
+            THEN
+               NULL;
+         END;
+
+            DELETE FROM FINCOSTTAG
+             WHERE     ENTCODE = NEW.CSCODE::varchar
+                   AND ENTTYPE = 'CSM'
+                   AND DAMOUNT =
+                          CASE
+                             WHEN coalesce(v_sale_amt, 0) < 0
+                             THEN
+                                ABS(coalesce(v_sale_amt, 0))
+                             ELSE
+                                NULL
+                          END
+                   AND CAMOUNT =
+                          CASE
+                             WHEN coalesce(v_sale_amt, 0) > 0
+                             THEN
+                                coalesce(v_sale_amt, 0)
+                             ELSE
+                                NULL
+                          END
+                   AND YCODE = NEW.YCODE
+                   -- START REV : 005
+                   AND GLCODE = NEW.CONSIGNMENT_SALES_GLCODE
+         -- END REV : 005
+         RETURNING CODE
+              INTO V_CCCODE;
+
+         IF V_POSTCODE IS NOT NULL AND coalesce(V_GL_CC_APPL, 'N') = 'Y'
+         THEN
+            INSERT INTO FINCOSTTAG(ENTCODE,
+                                    ENTNO,
+                                    ENTDT,
+                                    ENTTYPE,
+                                    GLCODE,
+                                    SLCODE,
+                                    COSTCODE,
+                                    DAMOUNT,
+                                    CAMOUNT,
+                                    YCODE,
+                                    CODE,
+                                    POSTCODE,
+                                    ADMSITE_CODE            -- start rev : 006
+                                                ,
+                                    REF_ADMSITE_CODE          -- end rev : 006
+                                                    ,
+                                    ADMOU_CODE                    -- REV : 015
+                                              )
+                    VALUES (
+                              NEW.CSCODE::varchar,
+                              NEW.CSNO::varchar,
+                              -- START REV : 019
+                              --:NEW.CSDATE,
+                              date_trunc('day', NEW.CSDATE),
+                              -- END REV : 019
+                              'CSM',
+                              NEW.CONSIGNMENT_SALES_GLCODE,
+                              NEW.CONSIGNMENT_SALES_SLCODE,
+                              NULL,
+                              CASE
+                                 WHEN coalesce(V_SALE_AMT, 0) < 0
+                                 THEN
+                                    ABS(coalesce(V_SALE_AMT, 0))
+                                 ELSE
+                                    NULL
+                              END,
+                              CASE
+                                 WHEN coalesce(V_SALE_AMT, 0) > 0
+                                 THEN
+                                    coalesce(V_SALE_AMT, 0)
+                                 ELSE
+                                    NULL
+                              END,
+                              NEW.YCODE,
+                              V_CCCODE,
+                              V_POSTCODE,
+                              -- start rev : 006
+                              --:NEW.ADMSITE_CODE
+                              CASE WHEN v_sitetype='US-CO-OM-TS' THEN  NEW.ADMSITE_CODE_OWNER WHEN v_sitetype='MS-CO-OM-TS' THEN  NEW.ADMSITE_CODE_OWNER  ELSE NEW.ADMSITE_CODE END ,
+                              NEW.admsite_code               -- end rev : 006
+                                               ,
+                              NEW.ADMOU_CODE                     -- REV : 015
+                                             );
+         END IF;
+
+         --END IF;
+         -- END REV : 004
+         -- Round Off Ledger Posting
+         IF NEW.roundoff_glcode IS NOT NULL
+         THEN
+            IF coalesce(NEW.roundoff, 0) <> 0
+            THEN
+
+               INSERT INTO finpost(postcode,
+                                    entcode,
+                                    entno,
+                                    entdt,
+                                    enttype,
+                                    glcode,
+                                    slcode,
+                                    damount,
+                                    camount,
+                                    ycode,
+                                    scheme_docno,
+                                    nartext                 -- START REV : 014
+                                           ,
+                                    DOCNO                     -- END REV : 014
+                                                            -- START REV : 015
+                                    ,
+                                    ADMSITE_CODE_OWNER,
+                                    ADMOU_CODE                -- END REV : 015
+                                              )
+                       VALUES (
+                                 nextval('erp01'),
+                                 NEW.cscode::varchar,
+                                 NEW.csno::varchar,
+                                 -- START REV : 019
+                                 --:NEW.csdate,
+                                 date_trunc('day', NEW.csdate),
+                                 -- END REV : 019
+                                 'CSM',
+                                 NEW.roundoff_glcode,
+                                 NULL,
+                                 CASE
+                                    WHEN coalesce(v_roundoff_amt, 0) < 0
+                                    THEN
+                                       ABS(coalesce(v_roundoff_amt, 0))
+                                    ELSE
+                                       NULL
+                                 END,
+                                 CASE
+                                    WHEN coalesce(v_roundoff_amt, 0) > 0
+                                    THEN
+                                       coalesce(v_roundoff_amt, 0)
+                                    ELSE
+                                       NULL
+                                 END,
+                                 NEW.ycode,
+                                 NEW.scheme_docno,
+                                 NEW.remarks               -- START REV : 014
+                                             ,
+                                 NEW.REFNO                   -- END REV : 014
+                                                            -- START REV : 015
+                                 ,
+                                 NEW.ADMSITE_CODE_OWNER,
+                                 NEW.ADMOU_CODE              -- END REV : 015
+                                                )
+                 -- START REV : 005
+                 RETURNING POSTCODE
+                      INTO v_rndoff_glcode_postcode;
+
+                  -- END REV : 005
+                  --========================================================
+                  -- START REV :
+                  DELETE FROM FINCOSTTAG
+                   WHERE     ENTCODE = NEW.CSCODE::varchar
+                         AND ENTTYPE = 'CSM'
+                         AND DAMOUNT =
+                                CASE
+                                   WHEN coalesce(v_roundoff_amt, 0) < 0
+                                   THEN
+                                      ABS(coalesce(v_roundoff_amt, 0))
+                                   ELSE
+                                      NULL
+                                END
+                         AND CAMOUNT =
+                                CASE
+                                   WHEN coalesce(v_roundoff_amt, 0) > 0
+                                   THEN
+                                      coalesce(v_roundoff_amt, 0)
+                                   ELSE
+                                      NULL
+                                END
+                         AND YCODE = NEW.YCODE
+                         AND GLCODE = NEW.roundoff_glcode
+               RETURNING CODE
+                    INTO V_CCCODE;
+
+               SELECT COSTAPP
+                 INTO STRICT V_RF_GL_CC_APPL
+                 FROM FINGL
+                WHERE GLCODE = NEW.roundoff_glcode;
+
+               IF     v_rndoff_glcode_postcode IS NOT NULL
+                  AND coalesce(V_RF_GL_CC_APPL, 'N') = 'Y'
+               THEN
+                  INSERT INTO FINCOSTTAG(ENTCODE,
+                                          ENTNO,
+                                          ENTDT,
+                                          ENTTYPE,
+                                          GLCODE,
+                                          SLCODE,
+                                          COSTCODE,
+                                          DAMOUNT,
+                                          CAMOUNT,
+                                          YCODE,
+                                          CODE,
+                                          POSTCODE,
+                                          ADMSITE_CODE      -- start rev : 006
+                                                      ,
+                                          REF_ADMSITE_CODE    -- end rev : 006
+                                                          ,
+                                          ADMOU_CODE              -- REV : 015
+                                                    )
+                          VALUES (
+                                    NEW.CSCODE::varchar,
+                                    NEW.CSNO::varchar,
+                                    -- START REV : 019
+                                    --NEW.CSDATE,
+                                    date_trunc('day', NEW.CSDATE),
+                                    -- END REV : 019
+                                    'CSM',
+                                    NEW.roundoff_glcode,
+                                    NULL,
+                                    NULL,
+                                    CASE
+                                       WHEN coalesce(v_roundoff_amt, 0) < 0
+                                       THEN
+                                          ABS(coalesce(v_roundoff_amt, 0))
+                                       ELSE
+                                          NULL
+                                    END,
+                                    CASE
+                                       WHEN coalesce(v_roundoff_amt, 0) > 0
+                                       THEN
+                                          coalesce(v_roundoff_amt, 0)
+                                       ELSE
+                                          NULL
+                                    END,
+                                    NEW.YCODE,
+                                    V_CCCODE,
+                                    v_rndoff_glcode_postcode,
+                                    -- START REV : 006
+                                    --:NEW.ADMSITE_CODE
+                                    CASE WHEN                                        v_sitetype='US-CO-OM-TS' THEN  NEW.ADMSITE_CODE_OWNER WHEN                                        v_sitetype='MS-CO-OM-TS' THEN  NEW.ADMSITE_CODE_OWNER  ELSE NEW.ADMSITE_CODE END ,
+                                    NEW.admsite_code         -- END REV : 006
+                                                     ,
+                                    NEW.ADMOU_CODE               -- REV : 015
+                                                   );
+               END IF;
+            -- END REV : 005
+            --========================================================
+            END IF;
+         END IF;
+
+         -- In Case of VAT Inclusive only single posting is required
+         -- against VAT Expense ledger defined in Customer master
+         IF v_sale_post_method = 'I'
+         THEN
+            IF v_vatexp_glcode IS NOT NULL and coalesce(v_vat_amt, 0) <> 0
+            THEN
+               INSERT INTO finpost(postcode,
+                                    entcode,
+                                    entno,
+                                    entdt,
+                                    enttype,
+                                    glcode,
+                                    slcode,
+                                    damount,
+                                    camount,
+                                    ycode,
+                                    scheme_docno,
+                                    nartext                 -- START REV : 014
+                                           ,
+                                    DOCNO                     -- END REV : 014
+                                                            -- START REV : 015
+                                    ,
+                                    ADMSITE_CODE_OWNER,
+                                    ADMOU_CODE                -- END REV : 015
+                                              )
+                       VALUES (
+                                 nextval('erp01'),
+                                 NEW.cscode::varchar,
+                                 NEW.csno::varchar,
+                                 -- START REV : 019
+                                 --:NEW.csdate,
+                                 date_trunc('day', NEW.csdate),
+                                 -- END REV : 019
+                                 'CSM',
+                                 v_vatexp_glcode,
+                                 v_vatexp_slcode,
+                                 CASE
+                                    WHEN coalesce(v_vat_amt, 0) > 0
+                                    THEN
+                                       ABS(coalesce(v_vat_amt, 0))
+                                    ELSE
+                                       NULL
+                                 END,
+                                 CASE
+                                    WHEN coalesce(v_vat_amt, 0) < 0
+                                    THEN
+                                       ABS(coalesce(v_vat_amt, 0))
+                                    ELSE
+                                       NULL
+                                 END,
+                                 NEW.ycode,
+                                 NEW.scheme_docno,
+                                 NEW.remarks               -- START REV : 014
+                                             ,
+                                 NEW.REFNO                   -- END REV : 014
+                                                            -- START REV : 015
+                                 ,
+                                 NEW.ADMSITE_CODE_OWNER,
+                                 NEW.ADMOU_CODE              -- END REV : 015
+                                                )
+                 -- START REV : 005
+                 RETURNING POSTCODE
+                      INTO v_vatexp_glcode_postcode;
+
+                  -- END REV :  005
+                  --===============================================================
+                  -- START REV : 005
+                  DELETE FROM FINCOSTTAG
+                   WHERE     ENTCODE = NEW.CSCODE::varchar
+                         AND ENTTYPE = 'CSM'
+                         AND DAMOUNT =
+                                CASE
+                                   WHEN coalesce(v_vat_amt, 0) > 0
+                                   THEN
+                                      ABS(coalesce(v_vat_amt, 0))
+                                   ELSE
+                                      NULL
+                                END
+                         AND CAMOUNT =
+                                CASE
+                                   WHEN coalesce(v_vat_amt, 0) < 0
+                                   THEN
+                                      ABS(coalesce(v_vat_amt, 0))
+                                   ELSE
+                                      NULL
+                                END
+                         AND YCODE = NEW.YCODE
+                         AND GLCODE = v_vatexp_glcode
+               RETURNING CODE
+                    INTO V_CCCODE;
+
+               SELECT COSTAPP
+                 INTO STRICT V_VE_GL_CC_APPL
+                 FROM FINGL
+                WHERE GLCODE = v_vatexp_glcode;
+
+               IF     v_vatexp_glcode_postcode IS NOT NULL
+                  AND coalesce(V_VE_GL_CC_APPL, 'N') = 'Y'
+               THEN
+                  INSERT INTO FINCOSTTAG(ENTCODE,
+                                          ENTNO,
+                                          ENTDT,
+                                          ENTTYPE,
+                                          GLCODE,
+                                          SLCODE,
+                                          COSTCODE,
+                                          DAMOUNT,
+                                          CAMOUNT,
+                                          YCODE,
+                                          CODE,
+                                          POSTCODE,
+                                          ADMSITE_CODE      -- START REV : 006
+                                                      ,
+                                          REF_ADMSITE_CODE    -- END REV : 006
+                                                          ,
+                                          ADMOU_CODE              -- REV : 015
+                                                    )
+                          VALUES (
+                                    NEW.CSCODE::varchar,
+                                    NEW.CSNO::varchar,
+                                    -- START REV : 019
+                                    --:NEW.CSDATE,
+                                    date_trunc('day', NEW.CSDATE),
+                                    -- END REV : 019
+                                    'CSM',
+                                    v_vatexp_glcode,
+                                    v_vatexp_slcode,
+                                    NULL,
+                                    CASE
+                                       WHEN coalesce(v_vat_amt, 0) > 0
+                                       THEN
+                                          ABS(coalesce(v_vat_amt, 0))
+                                       ELSE
+                                          NULL
+                                    END,
+                                    CASE
+                                       WHEN coalesce(v_vat_amt, 0) < 0
+                                       THEN
+                                          ABS(coalesce(v_vat_amt, 0))
+                                       ELSE
+                                          NULL
+                                    END,
+                                    NEW.YCODE,
+                                    V_CCCODE,
+                                    v_vatexp_glcode_postcode,
+                                    -- START REV : 006
+                                    --:NEW.ADMSITE_CODE
+                                    CASE WHEN                                        v_sitetype='US-CO-OM-TS' THEN  NEW.ADMSITE_CODE_OWNER WHEN                                        v_sitetype='MS-CO-OM-TS' THEN  NEW.ADMSITE_CODE_OWNER  ELSE NEW.ADMSITE_CODE END ,
+                                    NEW.admsite_code         -- END REV : 006
+                                                     ,
+                                    NEW.ADMOU_CODE               -- REV : 015
+                                                   );
+               END IF;
+            -- END REV : 005
+            --========================================================
+            END IF;
+         -- In Case Of VAT Exclusive Different VAT wise (i.e VAT 4%, VAT 12.5 % etc)
+         -- different posting is required
+         ELSIF v_sale_post_method = 'E'
+         THEN
+            -- START REV : 005
+            IF coalesce(v_tot_vat, 0) <> 0
+            THEN
+               FOR c1
+                  IN (  SELECT                               -- START REV : 010
+                               --b.saltax_glcode, b.saltax_slcode,
+ coalesce(td.saltax_glcode, b.saltax_glcode)
+                                  saltax_glcode,
+                               coalesce(td.saltax_slcode, b.saltax_slcode)
+                                  saltax_slcode, -- END REV : 010
+ coalesce(g.costapp, 'N') COSTAPP,
+                               SUM(a.taxamt)     taxamt
+                          FROM                                    --salcsdet a,
+ (SELECT *
+                                  FROM SALCSDET
+                                 WHERE     cscode = NEW.cscode
+                                       AND coalesce(taxregime, 'V') = 'V') a,
+                               fintaxdet b, -- START REV : 010
+ (SELECT DISTINCT d.code,
+                                                tr.taxdetcode,
+                                                tr.SALTAX_GLCODE,
+                                                tr.SALTAX_SLCODE
+                                  FROM                      -- START REV : 012
+                                      fintaxdet t,            -- END REV : 012
+                                                  fintax_range tr, salcsdet d
+                                 WHERE                      -- START REV : 012
+                                      t    .TAXDETCODE = tr.TAXDETCODE
+                                       -- START REV : 012
+                                       AND tr.taxdetcode = d.taxdetcode
+                                       -- START REV : 012
+                                       --and     ABS(NVL(d.taxamt,0)) BETWEEN tr.RANGEFROM and NVL(tr.rangeto,999999999999)
+                                       AND (CASE
+                                               WHEN t.TAX_BASIS = 'N'
+                                               THEN
+                                                  ABS(
+                                                     round((d.netamt / d.qty)::numeric,
+                                                        3))
+                                               WHEN t.TAX_BASIS = 'M'
+                                               THEN
+                                                  d.mrp
+                                            END) BETWEEN tr.RANGEFROM
+                                                     AND coalesce(tr.rangeto,
+                                                              999999999999)
+                                       -- END REV : 012
+                                       AND d.cscode = NEW.cscode
+                                       AND coalesce(d.taxregime, 'V') = 'V'
+                                       AND coalesce(d.taxamt, 0) <> 0) td, -- END REV : 010
+ fingl   g
+WHERE     a.taxdetcode = b.taxdetcode -- START REV : 010
+                               --AND b.taxdetcode = td.taxdetcode (+)
+  -- END REV : 010
+  AND a.cscode = NEW.cscode AND coalesce(td.saltax_glcode, b.saltax_glcode) =
+                                      g.glcode -- START REV : 010
+                               --AND b.saltax_glcode IS NOT NULL
+  AND coalesce(td.saltax_glcode, b.saltax_glcode)
+                                      IS NOT NULL -- END REV : 010
+ GROUP BY                              -- START REV : 010
+                               --b.saltax_glcode, b.saltax_slcode,
+                               coalesce(td.saltax_glcode, b.saltax_glcode),
+                               coalesce(td.saltax_slcode, b.saltax_slcode),
+                               -- END REV : 010
+                               coalesce(g.costapp, 'N'))
+               -- END REV :  005
+               LOOP
+                  --  ERRAUDIT(997,997,997,997);
+                  INSERT INTO finpost(postcode,
+                                       entcode,
+                                       entno,
+                                       entdt,
+                                       enttype,
+                                       glcode,
+                                       slcode,
+                                       damount,
+                                       camount,
+                                       ycode,
+                                       scheme_docno,
+                                       nartext              -- START REV : 014
+                                              ,
+                                       DOCNO                  -- END REV : 014
+                                                            -- START REV : 015
+                                       ,
+                                       ADMSITE_CODE_OWNER,
+                                       ADMOU_CODE             -- END REV : 015
+                                                 )
+                          VALUES (
+                                    nextval('erp01'),
+                                    NEW.cscode::varchar,
+                                    NEW.csno::varchar,
+                                    -- START REV : 019
+                                    --:NEW.csdate,
+                                    date_trunc('day', NEW.csdate),
+                                    -- END REV : 019
+                                    'CSM',
+                                    c1.saltax_glcode,
+                                    c1.saltax_slcode,
+                                    CASE
+                                       WHEN coalesce(c1.taxamt, 0) < 0
+                                       THEN
+                                          ABS(coalesce(c1.taxamt, 0))
+                                       ELSE
+                                          NULL
+                                    END,
+                                    CASE
+                                       WHEN coalesce(c1.taxamt, 0) > 0
+                                       THEN
+                                          ABS(coalesce(c1.taxamt, 0))
+                                       ELSE
+                                          NULL
+                                    END,
+                                    NEW.ycode,
+                                    NEW.scheme_docno,
+                                    NEW.remarks            -- START REV : 014
+                                                ,
+                                    NEW.REFNO                -- END REV : 014
+                                                            -- START REV : 015
+                                    ,
+                                    NEW.ADMSITE_CODE_OWNER,
+                                    NEW.ADMOU_CODE           -- END REV : 015
+                                                   )
+                    --START REV : 005
+                    RETURNING POSTCODE
+                         INTO v_vat_glcode_postcode;
+
+                     -- END REV :
+                     --===============================================================
+                     -- START REV :
+                     DELETE FROM FINCOSTTAG
+                      WHERE     ENTCODE = NEW.CSCODE::varchar
+                            AND ENTTYPE = 'CSM'
+                            AND DAMOUNT =
+                                   CASE
+                                      WHEN coalesce(c1.taxamt, 0) < 0
+                                      THEN
+                                         ABS(coalesce(c1.taxamt, 0))
+                                      ELSE
+                                         NULL
+                                   END
+                            AND CAMOUNT =
+                                   CASE
+                                      WHEN coalesce(c1.taxamt, 0) > 0
+                                      THEN
+                                         coalesce(c1.taxamt, 0)
+                                      ELSE
+                                         NULL
+                                   END
+                            AND YCODE = NEW.YCODE
+                            AND GLCODE = c1.saltax_glcode
+                  RETURNING CODE
+                       INTO V_CCCODE;
+
+                  IF     v_vat_glcode_postcode IS NOT NULL
+                     AND coalesce(C1.COSTAPP, 'N') = 'Y'
+                  THEN
+                     INSERT INTO FINCOSTTAG(ENTCODE,
+                                             ENTNO,
+                                             ENTDT,
+                                             ENTTYPE,
+                                             GLCODE,
+                                             SLCODE,
+                                             COSTCODE,
+                                             DAMOUNT,
+                                             CAMOUNT,
+                                             YCODE,
+                                             CODE,
+                                             POSTCODE,
+                                             ADMSITE_CODE   -- START REV : 006
+                                                         ,
+                                             REF_ADMSITE_CODE -- END REV : 006
+                                                             ,
+                                             ADMOU_CODE           -- REV : 015
+                                                       )
+                             VALUES (
+                                       NEW.CSCODE::varchar,
+                                       NEW.CSNO::varchar,
+                                       -- START REV : 019
+                                       --:NEW.CSDATE,
+                                       date_trunc('day', NEW.CSDATE),
+                                       -- END REV : 019
+                                       'CSM',
+                                       c1.saltax_glcode,
+                                       c1.saltax_slcode,
+                                       NULL,
+                                       CASE
+                                          WHEN coalesce(c1.taxamt, 0) < 0
+                                          THEN
+                                             ABS(coalesce(c1.taxamt, 0))
+                                          ELSE
+                                             NULL
+                                       END,
+                                       CASE
+                                          WHEN coalesce(c1.taxamt, 0) > 0
+                                          THEN
+                                             coalesce(c1.taxamt, 0)
+                                          ELSE
+                                             NULL
+                                       END,
+                                       NEW.YCODE,
+                                       V_CCCODE,
+                                       v_vat_glcode_postcode,
+                                       -- START REV : 006
+                                       --:NEW.ADMSITE_CODE
+                                       CASE WHEN                                           v_sitetype='US-CO-OM-TS' THEN  NEW.ADMSITE_CODE_OWNER WHEN                                           v_sitetype='MS-CO-OM-TS' THEN  NEW.ADMSITE_CODE_OWNER  ELSE NEW.ADMSITE_CODE END ,
+                                       NEW.admsite_code      -- END REV : 006
+                                                        ,
+                                       NEW.ADMOU_CODE            -- REV : 015
+                                                      );
+                  END IF;
+               -- END REV : 005
+               --========================================================
+               END LOOP;
+            END IF;
+
+            -- START IGST POSTING
+            IF     coalesce(V_TOT_IGSTAMT, 0) <> 0
+               AND V_IGST_OUTPUT_GLCODE IS NOT NULL
+            THEN
+               INSERT INTO finpost(postcode,
+                                    entcode,
+                                    entno,
+                                    entdt,
+                                    enttype,
+                                    glcode,
+                                    slcode,
+                                    damount,
+                                    camount,
+                                    ycode,
+                                    scheme_docno,
+                                    nartext                 -- START REV : 014
+                                           ,
+                                    DOCNO                     -- END REV : 014
+                                                            -- START REV : 015
+                                    ,
+                                    ADMSITE_CODE_OWNER,
+                                    ADMOU_CODE                -- END REV : 015
+                                              )
+                       VALUES (
+                                 nextval('erp01'),
+                                 NEW.cscode::varchar,
+                                 NEW.csno::varchar,
+                                 -- START REV : 019
+                                 --:NEW.csdate,
+                                 date_trunc('day', NEW.csdate),
+                                 -- END REV : 019
+                                 'CSM',
+                                 V_IGST_OUTPUT_GLCODE,
+                                 V_IGST_OUTPUT_SLCODE,
+                                 CASE
+                                    WHEN coalesce(V_TOT_IGSTAMT, 0) < 0
+                                    THEN
+                                       ABS(coalesce(V_TOT_IGSTAMT, 0))
+                                    ELSE
+                                       NULL
+                                 END,
+                                 CASE
+                                    WHEN coalesce(V_TOT_IGSTAMT, 0) > 0
+                                    THEN
+                                       ABS(coalesce(V_TOT_IGSTAMT, 0))
+                                    ELSE
+                                       NULL
+                                 END,
+                                 NEW.ycode,
+                                 NEW.scheme_docno,
+                                 NEW.remarks               -- START REV : 014
+                                             ,
+                                 NEW.REFNO                   -- END REV : 014
+                                                            -- START REV : 015
+                                 ,
+                                 NEW.ADMSITE_CODE_OWNER,
+                                 NEW.ADMOU_CODE              -- END REV : 015
+                                                )
+                 --START REV : 005
+                 RETURNING POSTCODE
+                      INTO v_igst_glcode_postcode;
+
+                  -- END REV :
+                  --===============================================================
+                  -- START REV :
+                  DELETE FROM FINCOSTTAG
+                   WHERE     ENTCODE = NEW.CSCODE::varchar
+                         AND ENTTYPE = 'CSM'
+                         AND DAMOUNT =
+                                CASE
+                                   WHEN coalesce(V_TOT_IGSTAMT, 0) < 0
+                                   THEN
+                                      ABS(coalesce(V_TOT_IGSTAMT, 0))
+                                   ELSE
+                                      NULL
+                                END
+                         AND CAMOUNT =
+                                CASE
+                                   WHEN coalesce(V_TOT_IGSTAMT, 0) > 0
+                                   THEN
+                                      coalesce(V_TOT_IGSTAMT, 0)
+                                   ELSE
+                                      NULL
+                                END
+                         AND YCODE = NEW.YCODE
+                         AND GLCODE = V_IGST_OUTPUT_GLCODE
+               RETURNING CODE
+                    INTO V_CCCODE;
+
+               IF     v_igst_glcode_postcode IS NOT NULL
+                  AND coalesce(v_igst_gl_glccapp, 'N') = 'Y'
+               THEN
+                  INSERT INTO FINCOSTTAG(ENTCODE,
+                                          ENTNO,
+                                          ENTDT,
+                                          ENTTYPE,
+                                          GLCODE,
+                                          SLCODE,
+                                          COSTCODE,
+                                          DAMOUNT,
+                                          CAMOUNT,
+                                          YCODE,
+                                          CODE,
+                                          POSTCODE,
+                                          ADMSITE_CODE      -- START REV : 006
+                                                      ,
+                                          REF_ADMSITE_CODE    -- END REV : 006
+                                                          ,
+                                          ADMOU_CODE              -- REV : 015
+                                                    )
+                          VALUES (
+                                    NEW.CSCODE::varchar,
+                                    NEW.CSNO::varchar,
+                                    -- START REV : 019
+                                    --:NEW.csdate,
+                                    date_trunc('day', NEW.csdate),
+                                    -- END REV : 019
+                                    'CSM',
+                                    V_IGST_OUTPUT_GLCODE,
+                                    V_IGST_OUTPUT_SLCODE,
+                                    NULL,
+                                    CASE
+                                       WHEN coalesce(V_TOT_IGSTAMT, 0) < 0
+                                       THEN
+                                          ABS(coalesce(V_TOT_IGSTAMT, 0))
+                                       ELSE
+                                          NULL
+                                    END,
+                                    CASE
+                                       WHEN coalesce(V_TOT_IGSTAMT, 0) > 0
+                                       THEN
+                                          coalesce(V_TOT_IGSTAMT, 0)
+                                       ELSE
+                                          NULL
+                                    END,
+                                    NEW.YCODE,
+                                    V_CCCODE,
+                                    v_igst_glcode_postcode,
+                                    -- START REV : 006
+                                    --:NEW.ADMSITE_CODE
+                                    CASE WHEN                                        v_sitetype='US-CO-OM-TS' THEN  NEW.ADMSITE_CODE_OWNER WHEN                                        v_sitetype='MS-CO-OM-TS' THEN  NEW.ADMSITE_CODE_OWNER  ELSE NEW.ADMSITE_CODE END ,
+                                    NEW.admsite_code         -- END REV : 006
+                                                     ,
+                                    NEW.ADMOU_CODE               -- REV : 015
+                                                   );
+               END IF;
+            END IF;
+
+            --- CGST RELATED CHANGES
+            IF     coalesce(V_TOT_CGSTAMT, 0) <> 0
+               AND V_CGST_OUTPUT_GLCODE IS NOT NULL
+            THEN
+               INSERT INTO finpost(postcode,
+                                    entcode,
+                                    entno,
+                                    entdt,
+                                    enttype,
+                                    glcode,
+                                    slcode,
+                                    damount,
+                                    camount,
+                                    ycode,
+                                    scheme_docno,
+                                    nartext                 -- START REV : 014
+                                           ,
+                                    DOCNO                     -- END REV : 014
+                                                            -- START REV : 015
+                                    ,
+                                    ADMSITE_CODE_OWNER,
+                                    ADMOU_CODE                -- END REV : 015
+                                              )
+                       VALUES (
+                                 nextval('erp01'),
+                                 NEW.cscode::varchar,
+                                 NEW.csno::varchar,
+                                 -- START REV : 019
+                                 --:NEW.csdate,
+                                 date_trunc('day', NEW.csdate),
+                                 -- END REV : 019
+                                 'CSM',
+                                 V_CGST_OUTPUT_GLCODE,
+                                 V_CGST_OUTPUT_SLCODE,
+                                 CASE
+                                    WHEN coalesce(V_TOT_CGSTAMT, 0) < 0
+                                    THEN
+                                       ABS(coalesce(V_TOT_CGSTAMT, 0))
+                                    ELSE
+                                       NULL
+                                 END,
+                                 CASE
+                                    WHEN coalesce(V_TOT_CGSTAMT, 0) > 0
+                                    THEN
+                                       ABS(coalesce(V_TOT_CGSTAMT, 0))
+                                    ELSE
+                                       NULL
+                                 END,
+                                 NEW.ycode,
+                                 NEW.scheme_docno,
+                                 NEW.remarks               -- START REV : 014
+                                             ,
+                                 NEW.REFNO                   -- END REV : 014
+                                                            -- START REV : 015
+                                 ,
+                                 NEW.ADMSITE_CODE_OWNER,
+                                 NEW.ADMOU_CODE              -- END REV : 015
+                                                )
+                 --START REV : 005
+                 RETURNING POSTCODE
+                      INTO v_cgst_glcode_postcode;
+
+                  -- END REV :
+                  --===============================================================
+                  -- START REV :
+                  DELETE FROM FINCOSTTAG
+                   WHERE     ENTCODE = NEW.CSCODE::varchar
+                         AND ENTTYPE = 'CSM'
+                         AND DAMOUNT =
+                                CASE
+                                   WHEN coalesce(V_TOT_CGSTAMT, 0) < 0
+                                   THEN
+                                      ABS(coalesce(V_TOT_CGSTAMT, 0))
+                                   ELSE
+                                      NULL
+                                END
+                         AND CAMOUNT =
+                                CASE
+                                   WHEN coalesce(V_TOT_CGSTAMT, 0) > 0
+                                   THEN
+                                      coalesce(V_TOT_CGSTAMT, 0)
+                                   ELSE
+                                      NULL
+                                END
+                         AND YCODE = NEW.YCODE
+                         AND GLCODE = V_CGST_OUTPUT_GLCODE
+               RETURNING CODE
+                    INTO V_CCCODE;
+
+               IF     v_cgst_glcode_postcode IS NOT NULL
+                  AND coalesce(v_cgst_gl_glccapp, 'N') = 'Y'
+               THEN
+                  INSERT INTO FINCOSTTAG(ENTCODE,
+                                          ENTNO,
+                                          ENTDT,
+                                          ENTTYPE,
+                                          GLCODE,
+                                          SLCODE,
+                                          COSTCODE,
+                                          DAMOUNT,
+                                          CAMOUNT,
+                                          YCODE,
+                                          CODE,
+                                          POSTCODE,
+                                          ADMSITE_CODE      -- START REV : 006
+                                                      ,
+                                          REF_ADMSITE_CODE    -- END REV : 006
+                                                          ,
+                                          ADMOU_CODE              -- REV : 015
+                                                    )
+                          VALUES (
+                                    NEW.CSCODE::varchar,
+                                    NEW.CSNO::varchar,
+                                    -- START REV : 019
+                                    --:NEW.csdate,
+                                    date_trunc('day', NEW.csdate),
+                                    -- END REV : 019
+                                    'CSM',
+                                    V_cGST_OUTPUT_GLCODE,
+                                    V_cGST_OUTPUT_SLCODE,
+                                    NULL,
+                                    CASE
+                                       WHEN coalesce(V_TOT_CGSTAMT, 0) < 0
+                                       THEN
+                                          ABS(coalesce(V_TOT_CGSTAMT, 0))
+                                       ELSE
+                                          NULL
+                                    END,
+                                    CASE
+                                       WHEN coalesce(V_TOT_CGSTAMT, 0) > 0
+                                       THEN
+                                          coalesce(V_TOT_CGSTAMT, 0)
+                                       ELSE
+                                          NULL
+                                    END,
+                                    NEW.YCODE,
+                                    V_CCCODE,
+                                    v_cgst_glcode_postcode,
+                                    -- START REV : 006
+                                    --:NEW.ADMSITE_CODE
+                                    CASE WHEN                                        v_sitetype='US-CO-OM-TS' THEN  NEW.ADMSITE_CODE_OWNER WHEN                                        v_sitetype='MS-CO-OM-TS' THEN  NEW.ADMSITE_CODE_OWNER  ELSE NEW.ADMSITE_CODE END ,
+                                    NEW.admsite_code         -- END REV : 006
+                                                     ,
+                                    NEW.ADMOU_CODE               -- REV : 015
+                                                   );
+               END IF;
+            END IF;
+
+            -- END CGST POSTING
+            -- START SGST POSTING
+            IF     coalesce(V_TOT_SGSTAMT, 0) <> 0
+               AND V_SGST_OUTPUT_GLCODE IS NOT NULL
+            THEN
+               INSERT INTO finpost(postcode,
+                                    entcode,
+                                    entno,
+                                    entdt,
+                                    enttype,
+                                    glcode,
+                                    slcode,
+                                    damount,
+                                    camount,
+                                    ycode,
+                                    scheme_docno,
+                                    nartext                 -- START REV : 014
+                                           ,
+                                    DOCNO                     -- END REV : 014
+                                                            -- START REV : 015
+                                    ,
+                                    ADMSITE_CODE_OWNER,
+                                    ADMOU_CODE                -- END REV : 015
+                                              )
+                       VALUES (
+                                 nextval('erp01'),
+                                 NEW.cscode::varchar,
+                                 NEW.csno::varchar,
+                                 -- START REV : 019
+                                 --:NEW.csdate,
+                                 date_trunc('day', NEW.csdate),
+                                 -- END REV : 019
+                                 'CSM',
+                                 V_SGST_OUTPUT_GLCODE,
+                                 V_SGST_OUTPUT_SLCODE,
+                                 CASE
+                                    WHEN coalesce(V_TOT_SGSTAMT, 0) < 0
+                                    THEN
+                                       ABS(coalesce(V_TOT_SGSTAMT, 0))
+                                    ELSE
+                                       NULL
+                                 END,
+                                 CASE
+                                    WHEN coalesce(V_TOT_CGSTAMT, 0) > 0
+                                    THEN
+                                       ABS(coalesce(V_TOT_SGSTAMT, 0))
+                                    ELSE
+                                       NULL
+                                 END,
+                                 NEW.ycode,
+                                 NEW.scheme_docno,
+                                 NEW.remarks               -- START REV : 014
+                                             ,
+                                 NEW.REFNO                   -- END REV : 014
+                                                            -- START REV : 015
+                                 ,
+                                 NEW.ADMSITE_CODE_OWNER,
+                                 NEW.ADMOU_CODE              -- END REV : 015
+                                                )
+                 --START REV : 005
+                 RETURNING POSTCODE
+                      INTO v_Sgst_glcode_postcode;
+
+                  -- END REV :
+                  --===============================================================
+                  -- START REV :
+                  DELETE FROM FINCOSTTAG
+                   WHERE     ENTCODE = NEW.CSCODE::varchar
+                         AND ENTTYPE = 'CSM'
+                         AND DAMOUNT =
+                                CASE
+                                   WHEN coalesce(V_TOT_SGSTAMT, 0) < 0
+                                   THEN
+                                      ABS(coalesce(V_TOT_SGSTAMT, 0))
+                                   ELSE
+                                      NULL
+                                END
+                         AND CAMOUNT =
+                                CASE
+                                   WHEN coalesce(V_TOT_SGSTAMT, 0) > 0
+                                   THEN
+                                      coalesce(V_TOT_SGSTAMT, 0)
+                                   ELSE
+                                      NULL
+                                END
+                         AND YCODE = NEW.YCODE
+                         AND GLCODE = V_SGST_OUTPUT_GLCODE
+               RETURNING CODE
+                    INTO V_CCCODE;
+
+               IF     v_sgst_glcode_postcode IS NOT NULL
+                  AND coalesce(v_sgst_gl_glccapp, 'N') = 'Y'
+               THEN
+                  INSERT INTO FINCOSTTAG(ENTCODE,
+                                          ENTNO,
+                                          ENTDT,
+                                          ENTTYPE,
+                                          GLCODE,
+                                          SLCODE,
+                                          COSTCODE,
+                                          DAMOUNT,
+                                          CAMOUNT,
+                                          YCODE,
+                                          CODE,
+                                          POSTCODE,
+                                          ADMSITE_CODE      -- START REV : 006
+                                                      ,
+                                          REF_ADMSITE_CODE    -- END REV : 006
+                                                          ,
+                                          ADMOU_CODE              -- REV : 015
+                                                    )
+                          VALUES (
+                                    NEW.CSCODE::varchar,
+                                    NEW.CSNO::varchar,
+                                    -- START REV : 019
+                                     --:NEW.csdate,
+                                     date_trunc('day', NEW.csdate),
+                                     -- END REV : 019
+                                    'CSM',
+                                    V_SGST_OUTPUT_GLCODE,
+                                    V_SGST_OUTPUT_SLCODE,
+                                    NULL,
+                                    CASE
+                                       WHEN coalesce(V_TOT_SGSTAMT, 0) < 0
+                                       THEN
+                                          ABS(coalesce(V_TOT_SGSTAMT, 0))
+                                       ELSE
+                                          NULL
+                                    END,
+                                    CASE
+                                       WHEN coalesce(V_TOT_SGSTAMT, 0) > 0
+                                       THEN
+                                          coalesce(V_TOT_SGSTAMT, 0)
+                                       ELSE
+                                          NULL
+                                    END,
+                                    NEW.YCODE,
+                                    V_CCCODE,
+                                    v_Sgst_glcode_postcode,
+                                    -- START REV : 006
+                                    --:NEW.ADMSITE_CODE
+                                    CASE WHEN                                        v_sitetype='US-CO-OM-TS' THEN  NEW.ADMSITE_CODE_OWNER WHEN                                        v_sitetype='MS-CO-OM-TS' THEN  NEW.ADMSITE_CODE_OWNER  ELSE NEW.ADMSITE_CODE END ,
+                                    NEW.admsite_code         -- END REV : 006
+                                                     ,
+                                    NEW.ADMOU_CODE               -- REV : 015
+                                                   );
+               END IF;
+            END IF;
+         -- END SGST
+         END IF;
+
+         -- START CESS RELATED POSTING
+         IF coalesce(V_TOT_CESSAMT, 0) <> 0 AND V_CESS_OUTPUT_GLCODE IS NOT NULL
+         THEN
+            INSERT INTO finpost(postcode,
+                                 entcode,
+                                 entno,
+                                 entdt,
+                                 enttype,
+                                 glcode,
+                                 slcode,
+                                 damount,
+                                 camount,
+                                 ycode,
+                                 scheme_docno,
+                                 nartext                    -- START REV : 014
+                                        ,
+                                 DOCNO                        -- END REV : 014
+                                                            -- START REV : 015
+                                 ,
+                                 ADMSITE_CODE_OWNER,
+                                 ADMOU_CODE                   -- END REV : 015
+                                           )
+                    VALUES (
+                              nextval('erp01'),
+                              NEW.cscode::varchar,
+                              NEW.csno::varchar,
+                              -- START REV : 019
+                                 --:NEW.csdate,
+                                 date_trunc('day', NEW.csdate),
+                                 -- END REV : 019
+                              'CSM',
+                              V_CESS_OUTPUT_GLCODE,
+                              V_CESS_OUTPUT_SLCODE,
+                              CASE
+                                 WHEN coalesce(V_TOT_CESSAMT, 0) < 0
+                                 THEN
+                                    ABS(coalesce(V_TOT_CESSAMT, 0))
+                                 ELSE
+                                    NULL
+                              END,
+                              CASE
+                                 WHEN coalesce(V_TOT_CESSAMT, 0) > 0
+                                 THEN
+                                    ABS(coalesce(V_TOT_CESSAMT, 0))
+                                 ELSE
+                                    NULL
+                              END,
+                              NEW.ycode,
+                              NEW.scheme_docno,
+                              NEW.remarks                  -- START REV : 014
+                                          ,
+                              NEW.REFNO                      -- END REV : 014
+                                                            -- START REV : 015
+                              ,
+                              NEW.ADMSITE_CODE_OWNER,
+                              NEW.ADMOU_CODE                 -- END REV : 015
+                                             )
+              --START REV : 005
+              RETURNING POSTCODE
+                   INTO v_CESS_glcode_postcode;
+
+               -- END REV :
+               --===============================================================
+               -- START REV :
+               DELETE FROM FINCOSTTAG
+                WHERE     ENTCODE = NEW.CSCODE::varchar
+                      AND ENTTYPE = 'CSM'
+                      AND DAMOUNT =
+                             CASE
+                                WHEN coalesce(V_TOT_CESSAMT, 0) < 0
+                                THEN
+                                   ABS(coalesce(V_TOT_CESSAMT, 0))
+                                ELSE
+                                   NULL
+                             END
+                      AND CAMOUNT =
+                             CASE
+                                WHEN coalesce(V_TOT_CESSAMT, 0) > 0
+                                THEN
+                                   coalesce(V_TOT_CESSAMT, 0)
+                                ELSE
+                                   NULL
+                             END
+                      AND YCODE = NEW.YCODE
+                      AND GLCODE = V_CESS_OUTPUT_GLCODE
+            RETURNING CODE
+                 INTO V_CCCODE;
+
+            IF     v_CESS_glcode_postcode IS NOT NULL
+               AND coalesce(v_CESS_gl_glccapp, 'N') = 'Y'
+            THEN
+               INSERT INTO FINCOSTTAG(ENTCODE,
+                                       ENTNO,
+                                       ENTDT,
+                                       ENTTYPE,
+                                       GLCODE,
+                                       SLCODE,
+                                       COSTCODE,
+                                       DAMOUNT,
+                                       CAMOUNT,
+                                       YCODE,
+                                       CODE,
+                                       POSTCODE,
+                                       ADMSITE_CODE         -- START REV : 006
+                                                   ,
+                                       REF_ADMSITE_CODE       -- END REV : 006
+                                                       ,
+                                       ADMOU_CODE                 -- REV : 015
+                                                 )
+                       VALUES (
+                                 NEW.CSCODE::varchar,
+                                 NEW.CSNO::varchar,
+                                 -- START REV : 019
+                                 --:NEW.csdate,
+                                 date_trunc('day', NEW.csdate),
+                                 -- END REV : 019
+                                 'CSM',
+                                 V_CESS_OUTPUT_GLCODE,
+                                 V_CESS_OUTPUT_SLCODE,
+                                 NULL,
+                                 CASE
+                                    WHEN coalesce(V_TOT_CESSAMT, 0) < 0
+                                    THEN
+                                       ABS(coalesce(V_TOT_CESSAMT, 0))
+                                    ELSE
+                                       NULL
+                                 END,
+                                 CASE
+                                    WHEN coalesce(V_TOT_CESSAMT, 0) > 0
+                                    THEN
+                                       coalesce(V_TOT_CESSAMT, 0)
+                                    ELSE
+                                       NULL
+                                 END,
+                                 NEW.YCODE,
+                                 V_CCCODE,
+                                 v_CESS_glcode_postcode,
+                                 -- START REV : 006
+                                 --:NEW.ADMSITE_CODE
+                                 CASE WHEN                                     v_sitetype='US-CO-OM-TS' THEN  NEW.ADMSITE_CODE_OWNER WHEN                                     v_sitetype='MS-CO-OM-TS' THEN  NEW.ADMSITE_CODE_OWNER  ELSE NEW.ADMSITE_CODE END ,
+                                 NEW.admsite_code            -- END REV : 006
+                                                  ,
+                                 NEW.ADMOU_CODE                  -- REV : 015
+                                                );
+            END IF;
+         END IF;
+      -- END CESS
+      END IF;
+   --==================================================================================================
+   -- START REV: 021
+               --IF  NVL(v_is_marketplace,0) = 0
+               IF  coalesce(NEW.CODAMT,0) > 0
+               THEN
+                    INSERT INTO finpost(postcode,
+                                 entcode,
+                                 entno,
+                                 entdt,
+                                 enttype,
+                                 glcode,
+                                 slcode,
+                                 damount,
+                                 camount,
+                                 ycode,
+                                 scheme_docno,
+                                 nartext,
+                                 docno,
+                                 admsite_code_owner,
+                                 admou_code
+                                 )
+                    VALUES (
+                                 nextval('erp01'),
+                                 NEW.cscode::varchar,
+                                 NEW.csno::varchar,
+                                 NEW.csdate,
+                                 'CSM',
+                                 v_tp_glcode,
+                                 NEW.tpcode,
+                                 NEW.codamt,
+                                 0,
+                                 NEW.ycode,
+                                 NEW.scheme_docno,
+                                 NEW.remarks,
+                                 NEW.refno,
+                                 NEW.admsite_code_owner,
+                                 NEW.admou_code
+                              )
+              RETURNING POSTCODE
+                   INTO v_cod_glcode_postcode;
+
+--========================================================
+                  -- START REV : 019
+                  DELETE FROM FINCOSTTAG
+                   WHERE     ENTCODE = NEW.CSCODE::varchar
+                         AND ENTTYPE = 'CSM'
+                         AND DAMOUNT = NEW.codamt
+                         AND CAMOUNT = NEW.codamt
+                         AND YCODE = NEW.YCODE
+                         AND GLCODE = v_tp_glcode
+               RETURNING CODE
+                    INTO V_CCCODE;
+
+               SELECT COSTAPP
+                 INTO STRICT V_COD_GL_CC_APPL
+                 FROM FINGL
+                WHERE GLCODE = v_tp_glcode;
+
+               IF     v_cod_glcode_postcode IS NOT NULL
+                  AND coalesce(V_COD_GL_CC_APPL, 'N') = 'Y'
+               THEN
+                  INSERT INTO FINCOSTTAG(ENTCODE,
+                                          ENTNO,
+                                          ENTDT,
+                                          ENTTYPE,
+                                          GLCODE,
+                                          SLCODE,
+                                          COSTCODE,
+                                          DAMOUNT,
+                                          CAMOUNT,
+                                          YCODE,
+                                          CODE,
+                                          POSTCODE,
+                                          ADMSITE_CODE,
+                                          REF_ADMSITE_CODE,
+                                          ADMOU_CODE
+                                                    )
+                          VALUES (
+                                    NEW.CSCODE::varchar,
+                                    NEW.CSNO::varchar,
+                                    NEW.CSDATE,
+                                    'CSM',
+                                    v_tp_glcode,
+                                    NEW.tpcode,
+                                    NULL,
+                                    NEW.codamt,
+                                    0,
+                                    NEW.YCODE,
+                                    V_CCCODE,
+                                    v_cod_glcode_postcode,
+                                    CASE WHEN                                        v_sitetype='US-CO-OM-TS' THEN  NEW.ADMSITE_CODE_OWNER WHEN                                        v_sitetype='MS-CO-OM-TS' THEN  NEW.ADMSITE_CODE_OWNER  ELSE NEW.ADMSITE_CODE END ,
+                                    NEW.admsite_code,
+                                    NEW.ADMOU_CODE
+                                                   );
+                         -- END REV : 020
+              END IF;
+            END IF;
+-- START REV : 021
+   END IF;
+
+   --  END REV : 003
+   IF TG_OP = 'DELETE'
+   THEN
+      -- START REV : 004
+      DELETE FROM FINCOSTTAG
+       WHERE ENTCODE = OLD.CSCODE::varchar AND ENTTYPE IN ('CSM', 'CSD');
+
+      -- END REV : 004
+      DELETE FROM finpost
+            WHERE     entcode = OLD.cscode::varchar
+                  AND ENTTYPE IN ('CSM', 'CSD');
+   END IF;
+
+   -- START REV : 004
+   DELETE FROM FINCOSTTAG
+    WHERE     ENTCODE = OLD.CSCODE::varchar
+          AND ENTTYPE IN ('CSM', 'CSD')
+          AND coalesce(DAMOUNT, 0) = 0
+          AND coalesce(CAMOUNT, 0) = 0;
+
+   -- END REV : 004
+   -- END REV : 001
+   -- START REV : 006
+   UPDATE FINPOST
+      SET ECODE = NEW.ECODE,
+          TIME = NEW.TIME,
+          LAST_ACCESS_ECODE = NEW.LAST_ACCESS_ECODE,
+          LAST_ACCESS_TIME = NEW.LAST_ACCESS_TIME,
+          ADMSITE_CODE_OWNER = NEW.ADMSITE_CODE_OWNER,
+          REF_ADMSITE_CODE = NEW.ADMSITE_CODE-- START REV : 017
+          ,
+          DOCNO = NEW.REFNO,
+          SCHEME_DOCNO = NEW.SCHEME_DOCNO
+    -- END REV : 017
+    WHERE ENTCODE = NEW.CSCODE::varchar AND ENTTYPE IN ('CSM', 'CSD'); -- REV : 017 ;
+   -- END REV : 006
+   --STARt REV 007
+   SELECT COUNT(1)
+     INTO STRICT v_entcount
+     FROM finpost
+    WHERE enttype = 'CSM' AND entcode = NEW.CSCODE::varchar;
+
+   IF v_entcount = 2
+   THEN
+      SELECT COUNT(1)
+        INTO STRICT v_ent_chk_count
+        FROM (  SELECT glcode, slcode, COUNT(1)
+                  FROM finpost
+                 WHERE enttype = 'CSM' AND entcode = NEW.CSCODE::varchar
+              GROUP BY glcode, slcode) alias2;
+
+      IF v_ent_chk_count = 1
+      THEN
+         DELETE FROM FINCOSTTAG
+          WHERE ENTCODE = NEW.CSCODE::varchar AND ENTTYPE = 'CSM';
+
+         -- END REV : 004
+         DELETE FROM finpost
+               WHERE entcode = NEW.cscode::varchar AND enttype = 'CSM';
+      END IF;
+   END IF;
+--END REV 007
+EXCEPTION
+   WHEN OTHERS
+   THEN
+      CALL erraudit(USER,
+                'T_SALCSMAIN',
+                SQLSTATE::varchar,
+                SQLERRM);
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED' || SQLSTATE::varchar || '-' || SQLERRM USING ERRCODE = '45001';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

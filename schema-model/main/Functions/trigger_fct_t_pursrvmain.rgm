@@ -1,0 +1,378 @@
+function "main"."trigger_fct_t_pursrvmain()" {
+  text = """
+
+DECLARE
+   ora2pg_rowcount integer;
+oglcode                      bigint;
+   nglcode                      bigint;
+   -- start rev : 100
+   v_admgstin_code              admsite.admgstin_code%TYPE;
+   -- end rev : 100
+   -- START REV : 101
+   
+   V_SID                        bigint;
+   V_PROGRAM                    varchar(50);
+-- END REV : 101
+BEGIN
+  BEGIN
+   /***********************************************************************************************************************************************
+   REV : 100  MANASH   07/07/2017     (TFS ID: 30869) [GST] Document numbering scheme related changes.
+   REV : 101  MOUSUMI   16/4/2020     (TFS ID: migration) Migration related changes
+   ************************************************************************************************************************************************/
+   -- start rev : 100
+   SELECT admgstin_code
+     INTO STRICT v_admgstin_code
+     FROM admsite
+    WHERE code = coalesce(NEW.admsite_code_owner, OLD.admsite_code_owner);
+
+   -- end rev : 100
+   -- Rev 9.3.4.0018
+   IF TG_OP = 'UPDATE'
+   THEN
+      -- START REV : 100
+      IF coalesce(NEW.ENTRY_SOURCE, '@@') <> 'WEB'
+      THEN                                                        -- REV : 101
+         IF NEW.GSTAPPL = 'Y'
+         THEN
+            UPDATE GST_DOCNO_CHECK DC
+               SET SCHEME_DOCNO = NEW.SCHEME_DOCNO, DOCCODE = NEW.DOCCODE
+             WHERE     ENTTYPE = 'PSM'
+                   AND ENTCODE = NEW.SRVCODE
+                   AND YCODE = NEW.YCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               INSERT INTO GST_DOCNO_CHECK (ENTTYPE,
+                                               ENTCODE,
+                                               DOCCODE,
+                                               SCHEME_DOCNO,
+                                               ENTDATE,
+                                               YCODE,
+                                               ADMSITE_CODE_OWNER,
+                                               ADMGSTIN_CODE)
+                    VALUES ('PSM',
+                            NEW.SRVCODE,
+                            NEW.DOCCODE,
+                            NEW.SCHEME_DOCNO,
+                            NEW.SRVDT,
+                            NEW.YCODE,
+                            NEW.ADMSITE_CODE_OWNER,
+                            V_ADMGSTIN_CODE);
+            END IF;
+         END IF;
+      END IF;                                                      -- REV :101
+      -- END REV : 100
+      -- START REV : 004
+      IF coalesce(NEW.tds_app, 'N') = 'Y'
+      THEN
+         UPDATE finpost
+            SET entno = NEW.srvno,
+                scheme_docno = NEW.scheme_docno,
+                tdstypecode = NEW.tdstypecode,
+                tdssrccode = NEW.tdssrccode,
+                tdssection = NEW.tdssection,
+                tdsrate = NEW.tdsrate,
+                tds_appamt = NEW.tds_appamt,
+                certificateno = NEW.certificateno,
+                REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE          -- REV : 006
+                                                        ,
+                ADMOU_CODE = NEW.ADMOU_CODE                      -- REV : 007
+          WHERE entcode = NEW.srvcode::varchar AND enttype = 'PSM';
+      ELSE
+         UPDATE finpost
+            SET entno = NEW.srvno,
+                scheme_docno = NEW.scheme_docno,
+                tdstypecode  = NULL,
+                tdssrccode  = NULL,
+                tdssection  = NULL,
+                tdsrate  = NULL,
+                tds_appamt  = NULL,
+                certificateno  = NULL,
+                REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE          -- REV : 006
+                                                        ,
+                ADMOU_CODE = NEW.ADMOU_CODE                      -- REV : 007
+          WHERE entcode = NEW.srvcode::varchar AND enttype = 'PSM';
+      END IF;
+
+      -- END REV : 004
+      -- START REV : 005
+      UPDATE finpost
+         SET admsite_code_owner = NEW.admsite_code_owner,
+             ecode = NEW.ecode,
+             TIME = NEW.TIME,
+             last_access_ecode = NEW.last_access_ecode,
+             last_access_time = NEW.last_access_time,
+             REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE             -- REV : 006
+                                                     ,
+             ADMOU_CODE = NEW.ADMOU_CODE                         -- REV : 007
+       WHERE     entcode = NEW.srvcode::varchar
+             AND enttype IN ('PSM', 'PSD', 'PSC');
+   -- END REV : 005
+   END IF;
+
+   --End of Rev 9.3.4.0018
+   IF coalesce(OLD.adjamt, 0) = 0
+   THEN
+      IF OLD.srvcode IS NOT NULL
+      THEN
+         BEGIN
+            SELECT glcode
+              INTO STRICT oglcode
+              FROM finsl
+             WHERE slcode = OLD.pcode;
+         EXCEPTION
+            WHEN no_data_found
+            THEN
+               NULL;
+         END;
+
+         IF coalesce(OLD.netamt, 0) < 0
+         THEN
+            UPDATE finpost
+               SET entno = OLD.srvno::varchar                   -- REV : 003
+                                               -- START REV : 002
+                   ,
+                   scheme_docno = OLD.scheme_docno           -- END REV : 002
+                                                   ,
+                   entdt = OLD.srvdt,
+                   glcode = oglcode,
+                   docno = OLD.docno,
+                   docdt = OLD.docdt,
+                   duedt = OLD.duedt,
+                   slcode = OLD.pcode,
+                   damount = coalesce(damount, 0) + coalesce(OLD.netamt, 0),
+                   nartext = NEW.REM                             -- REV : 001
+                                     ,
+                   REF_ADMSITE_CODE = OLD.REF_ADMSITE_CODE       -- REV : 006
+                                                           ,
+                   ADMOU_CODE = OLD.ADMOU_CODE                   -- REV : 007
+             WHERE     entcode = OLD.srvcode::varchar           -- REV : 003
+                   AND slcode = OLD.pcode
+                   AND glcode = oglcode
+                   AND enttype = 'PSM';
+         ELSIF coalesce(OLD.netamt, 0) > 0
+         THEN
+            UPDATE finpost
+               SET entno = OLD.srvno::varchar                   -- REV : 003
+                                               -- START REV : 002
+                   ,
+                   scheme_docno = OLD.scheme_docno           -- END REV : 002
+                                                   ,
+                   entdt = OLD.srvdt,
+                   docno = OLD.docno,
+                   docdt = OLD.docdt,
+                   duedt = OLD.duedt,
+                   glcode = oglcode,
+                   slcode = OLD.pcode,
+                   camount = coalesce(camount, 0) - coalesce(OLD.netamt, 0),
+                   nartext = NEW.REM                             -- REV : 001
+                                     ,
+                   REF_ADMSITE_CODE = OLD.REF_ADMSITE_CODE       -- REV : 006
+                                                           ,
+                   ADMOU_CODE = OLD.ADMOU_CODE                   -- REV : 007
+             WHERE     entcode = OLD.srvcode::varchar           -- REV : 003
+                   AND slcode = OLD.pcode
+                   AND glcode = oglcode
+                   AND enttype = 'PSM';
+         END IF;
+      END IF;
+
+      IF NEW.srvcode IS NOT NULL
+      THEN
+         BEGIN
+            SELECT glcode
+              INTO STRICT nglcode
+              FROM finsl
+             WHERE slcode = NEW.pcode;
+         EXCEPTION
+            WHEN no_data_found
+            THEN
+               NULL;
+         END;
+
+         IF coalesce(NEW.netamt, 0) < 0
+         THEN
+            UPDATE finpost
+               SET entno = NEW.srvno::varchar                   -- REV : 003
+                                               -- START REV : 002
+                   ,
+                   scheme_docno = NEW.scheme_docno           -- END REV : 002
+                                                   ,
+                   entdt = NEW.srvdt,
+                   docno = NEW.docno,
+                   docdt = NEW.docdt,
+                   duedt = NEW.duedt,
+                   glcode = nglcode,
+                   slcode = NEW.pcode,
+                   damount = coalesce(damount, 0) - coalesce(NEW.netamt, 0),
+                   nartext = NEW.REM                             -- REV : 001
+                                     ,
+                   REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE       -- REV : 006
+                                                           ,
+                   ADMOU_CODE = NEW.ADMOU_CODE                   -- REV : 007
+             WHERE     entcode = NEW.srvcode::varchar           -- REV : 003
+                   AND glcode = nglcode
+                   AND slcode = NEW.pcode
+                   AND enttype = 'PSM';
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               INSERT INTO finpost(postcode,
+                                    entcode,
+                                    entno,
+                                    entdt,
+                                    enttype,
+                                    docno,
+                                    docdt,
+                                    duedt,
+                                    glcode,
+                                    slcode,
+                                    damount,
+                                    ycode                   -- START REV : 001
+                                         ,
+                                    nartext                   -- END REV : 001
+                                           -- START REV : 002
+                                    ,
+                                    scheme_docno              -- END REV : 002
+                                                ,
+                                    REF_ADMSITE_CODE,
+                                    ADMOU_CODE                    -- REV : 007
+                                              )
+                    VALUES (nextval('erp01'),
+                            NEW.srvcode::varchar,
+                            NEW.srvno::varchar,                 -- REV : 003
+                            NEW.srvdt,
+                            'PSM',
+                            NEW.docno,
+                            NEW.docdt,
+                            NEW.duedt,
+                            nglcode,
+                            NEW.pcode,
+                            -coalesce(NEW.netamt, 0),
+                            NEW.ycode                      -- START REV : 001
+                                      ,
+                            NEW.REM                          -- END REV : 001
+                                    -- START REV : 002
+                            ,
+                            NEW.scheme_docno                 -- END REV : 002
+                                             ,
+                            NEW.REF_ADMSITE_CODE                 -- REV : 006
+                                                 ,
+                            NEW.ADMOU_CODE                       -- REV : 007
+                                           );
+            END IF;
+         ELSIF coalesce(NEW.netamt, 0) > 0
+         THEN
+            UPDATE finpost
+               SET entno = NEW.srvno::varchar                   -- REV : 003
+                                               -- START REV : 002
+                   ,
+                   scheme_docno = NEW.scheme_docno           -- END REV : 002
+                                                   ,
+                   entdt = NEW.srvdt,
+                   docno = NEW.docno,
+                   docdt = NEW.docdt,
+                   duedt = NEW.duedt,
+                   glcode = nglcode,
+                   slcode = NEW.pcode,
+                   camount = coalesce(camount, 0) + coalesce(NEW.netamt, 0),
+                   nartext = NEW.REM                             -- REV : 001
+                                     ,
+                   REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE       -- REV : 006
+                                                           ,
+                   ADMOU_CODE = NEW.ADMOU_CODE                   -- REV : 007
+             WHERE     entcode = NEW.srvcode::varchar           -- REV : 003
+                   AND glcode = nglcode
+                   AND slcode = NEW.pcode
+                   AND enttype = 'PSM';
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               INSERT INTO finpost(postcode,
+                                    entcode,
+                                    entno,
+                                    entdt,
+                                    enttype,
+                                    docno,
+                                    docdt,
+                                    duedt,
+                                    glcode,
+                                    slcode,
+                                    camount,
+                                    ycode                   -- START REV : 001
+                                         ,
+                                    nartext                   -- END REV : 001
+                                           -- START REV : 002
+                                    ,
+                                    scheme_docno              -- END REV : 002
+                                                ,
+                                    REF_ADMSITE_CODE              -- REV : 006
+                                                    ,
+                                    ADMOU_CODE                    -- REV : 007
+                                              )
+                    VALUES (nextval('erp01'),
+                            NEW.srvcode::varchar,
+                            NEW.srvno::varchar,                 -- REV : 003
+                            NEW.srvdt,
+                            'PSM',
+                            NEW.docno,
+                            NEW.docdt,
+                            NEW.duedt,
+                            nglcode,
+                            NEW.pcode,
+                            coalesce(NEW.netamt, 0),
+                            NEW.ycode                      -- START REV : 001
+                                      ,
+                            NEW.REM                          -- END REV : 001
+                                    -- START REV : 002
+                            ,
+                            NEW.scheme_docno                 -- END REV : 002
+                                             ,
+                            NEW.REF_ADMSITE_CODE,
+                            NEW.ADMOU_CODE                       -- REV : 007
+                                           );
+            END IF;
+         END IF;
+      END IF;
+
+      DELETE FROM finpost
+            WHERE     entcode = OLD.srvcode::varchar            -- REV : 003
+                  AND enttype = 'PSM'
+                  AND coalesce(camount, 0) = 0
+                  AND coalesce(damount, 0) = 0;
+   END IF;
+
+   -- START REV : 101
+   IF TG_OP = 'DELETE'
+   THEN
+           SELECT PG_BACKEND_PID() INTO STRICT V_SID;
+        SELECT APPLICATION_NAME INTO STRICT V_PROGRAM FROM PG_STAT_ACTIVITY WHERE PID=V_SID;
+
+
+		IF not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+	      THEN
+	         RAISE EXCEPTION 'del_from_wrong_application' USING ERRCODE = '50001';
+	      END IF;
+   END IF;
+EXCEPTION
+   -- START REV : 015
+   WHEN SQLSTATE '50001' THEN
+      RAISE EXCEPTION '%', 'T_PURSRVMAIN == >> Deletion from other application except GINESYS WEB not allowed.' USING ERRCODE = '45112';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

@@ -1,0 +1,63 @@
+procedure "main"."int$pkg_grcord_grc_proc_insert_excise_data(bigint)" {
+  text = """
+
+DECLARE
+
+
+  c1_loop RECORD;
+
+BEGIN
+      FOR c1_loop IN (SELECT det.code ers_code, det.acqty, orddet.ordqty,
+                             orddet.excisemain_code, orddet.ex_basis,
+                             orddet.ex_effrate, orddet.ex_abtfactor,
+                             orddet.ex_dutyfactor, orddet.ex_cessfactor,
+                             orddet.ex_roundoff, orddet.ex_appamt,
+                             orddet.ex_dutyamt, orddet.ex_cessamt,
+                             orddet.ex_applicable_from
+                        FROM invgrcdet det, purorddet orddet
+                       WHERE det.grccode = p_grccode
+                         AND det.po_code = orddet.code)
+      LOOP
+
+           UPDATE invgrcdet
+            SET excisemain_code = c1_loop.excisemain_code,
+                ex_basis = c1_loop.ex_basis,
+                ex_effrate = coalesce(c1_loop.ex_effrate, 0),
+                ex_abtfactor = coalesce(c1_loop.ex_abtfactor, 0),
+                ex_dutyfactor = coalesce(c1_loop.ex_dutyfactor, 0),
+                ex_cessfactor = coalesce(c1_loop.ex_cessfactor, 0),
+                ex_appamt =
+                   (CASE WHEN c1_loop.ex_basis = NULL THEN  0  ELSE ROUND (  coalesce(c1_loop.acqty, 0)                                   * ((  c1_loop.ex_effrate                                       - (  (  c1_loop.ex_effrate                                             * c1_loop.ex_abtfactor                                            )                                          / 100                                         )                                      )                                     ),                                   2                                  ) END
+                   ),
+                ex_dutyamt =
+                   (CASE WHEN c1_loop.ex_basis = NULL THEN  0  ELSE ROUND ((  coalesce(c1_loop.acqty, 0)                                    * (  (  (  c1_loop.ex_effrate                                             - (  (  c1_loop.ex_effrate                                                   * c1_loop.ex_abtfactor                                                  )                                                / 100                                               )                                            )                                          * c1_loop.ex_dutyfactor                                         )                                       / 100                                      )                                   ),                                   (CASE WHEN c1_loop.ex_roundoff=0 THEN  0  ELSE 2 END )                                  ) END 
+                   ),
+                ex_cessamt =
+                   (CASE WHEN c1_loop.ex_basis = NULL THEN  0  ELSE ROUND ((  coalesce(c1_loop.acqty, 0)                                    * (  (  (  (  (  c1_loop.ex_effrate                                                   - (  (  c1_loop.ex_effrate                                                         * c1_loop.ex_abtfactor                                                        )                                                      / 100                                                     )                                                  )                                                * c1_loop.ex_dutyfactor                                               )                                             / 100                                            )                                          * c1_loop.ex_cessfactor                                         )                                       / 100                                      )                                   ),                                   (CASE WHEN c1_loop.ex_roundoff=0 THEN  0  ELSE 2 END )                                  ) END 
+                   ),
+                ex_roundoff = c1_loop.ex_roundoff,
+                ex_applicable_from = c1_loop.ex_applicable_from
+         WHERE  code = c1_loop.ers_code;
+      END LOOP;
+
+      UPDATE invgrcdet d
+         SET ex_dutyfactor = 0,
+             ex_dutyamt = 0,
+             ex_cessamt = 0
+       WHERE grccode = p_grccode
+         AND coalesce(ex_effrate, 0) < coalesce(ex_applicable_from, 0);
+   END;
+
+
+"""
+  arguments = <
+    {
+      name = p_grccode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

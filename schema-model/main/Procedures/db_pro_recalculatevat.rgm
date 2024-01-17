@@ -1,0 +1,262 @@
+procedure "main"."db_pro_recalculatevat()" {
+  text = """
+
+DECLARE
+
+   v_errcode           varchar(50);
+   v_errmsg            varchar(2000);
+   v_sltype            char(1);
+   v_requsetid         bigint;
+   v_stlmstatus        char(1);
+   v_count             bigint;
+   recalcvat CURSOR FOR
+      SELECT   requestid, admsite_code, recalcdate
+          FROM tax_recalc_history
+         WHERE status IN ('PS')
+      ORDER BY requestid;
+   c1rec CURSOR(p_admsite_code bigint, p_recalcdate timestamp)
+   FOR
+      SELECT pbi.code posbillitemid, pbi.netamt,
+             round((ABS(pbi.netamt / pbi.qty))::numeric, 3) netprice, pbi.rsp,
+             i.icode, v.vatcode, v.description, v.rate, v.vatid,
+             coalesce(v.rangeappl, 0) rangeappl, v.rangebasis
+        FROM psite_posbill pb,
+             psite_posbillitem pbi,
+             invitem i,
+             (SELECT site_code, vatcode, description, rate, vatid, rangeappl,
+                     basis rangebasis
+                FROM v_npos_vat v1
+               WHERE (v1.vatcode, v1.effectivedate) IN (
+                        SELECT   v2.vatcode, MAX(v2.effectivedate) AS expr1
+                            FROM v_npos_vat v2
+                           WHERE date_trunc('day', effectivedate) <= p_recalcdate
+                             AND v2.isextinct = 0
+                             AND v2.site_code = p_admsite_code
+                        GROUP BY v2.vatcode)
+                 AND v1.isextinct = 0
+                 AND v1.site_code = p_admsite_code) v
+       WHERE pb.code = pbi.psite_posbill_code
+         AND pb.admsite_code = p_admsite_code
+         AND pbi.icode = i.icode
+         AND coalesce(pbi.taxregime,'V') = 'V'
+         AND i.taxcode = v.vatcode
+         --AND NVL (pbi.extaxamt, 0) = 0
+         AND date_trunc('day', pb.billdate) = p_recalcdate
+
+UNION ALL
+
+      SELECT pbi.code posbillitemid, pbi.netamt,
+             round((ABS(pbi.netamt / pbi.qty))::numeric, 3) netprice, pbi.rsp, i.icode,
+             v.vatcode, v.description, v.rate, v.vatid,
+             coalesce(v.rangeappl, 0) rangeappl, v.rangebasis
+        FROM psite_posbill pb,
+             psite_posbillitem pbi,
+             invitem i,
+             (SELECT site_code, vatcode, description, rate, vatid, rangeappl,
+                     basis rangebasis
+                FROM v_npos_vat v1
+               WHERE v1.vatcode = 0
+                 AND v1.isextinct = 0
+                 AND v1.site_code = p_admsite_code) v
+       WHERE pb.code = pbi.psite_posbill_code
+         AND pb.admsite_code = p_admsite_code
+         AND pbi.icode = i.icode
+         AND coalesce(pbi.taxregime,'V') = 'V'
+         AND i.taxcode NOT IN (SELECT v2.vatcode
+                                 FROM v_npos_vat v2
+                                WHERE v2.site_code = p_admsite_code)
+         --AND NVL (pbi.extaxamt, 0) = 0
+         AND date_trunc('day', pb.billdate) = p_recalcdate;
+   v_slab_range_desc   varchar(100);
+   v_slab_range_rate   double precision;
+   v_hosettledon       timestamp;
+   v_hosettledby       bigint;
+BEGIN
+   FOR crecvat IN recalcvat
+	LOOP
+	<<end_loop>>
+   	BEGIN
+      SELECT  coalesce(ho_settledon,clock_timestamp()) settledon, coalesce(ho_settledby,1) settledby
+      INTO STRICT    v_hosettledon, v_hosettledby
+      FROM    psite_posstlm
+      WHERE   admsite_code = crecvat.admsite_code
+      AND     stlmfor = crecvat.recalcdate;
+      BEGIN
+         /*
+               CHECK FOR SALETYPE
+         */
+         BEGIN
+            SELECT saletype
+              INTO STRICT v_sltype
+              FROM finsl
+             WHERE slcode IN (SELECT slcode
+                                FROM admsite
+                               WHERE code = crecvat.admsite_code);
+         EXCEPTION
+            WHEN no_data_found
+            THEN
+               v_sltype := 'C';
+         END;
+         IF v_sltype = 'C'
+         THEN
+            SELECT COUNT(1)
+              INTO STRICT v_count
+              FROM salcsmain
+             WHERE admsite_code = crecvat.admsite_code
+               AND date_trunc('day', csdate) = date_trunc('day', crecvat.recalcdate)
+               AND coalesce(adjamt, 0) <> 0;
+            IF v_count <> 0
+            THEN
+               UPDATE tax_recalc_history
+                  SET hoexecutiondate = clock_timestamp(),
+                      hoexecutionerror = 'Consignment Sale Already Adjusted',
+                      status = 'EH'
+                WHERE requestid = crecvat.requestid;
+               --GOTO end_loop;
+			   EXIT end_loop;
+            END IF;
+         END IF;
+         /*
+             UPDATE  psite_posbillitem
+         */
+         FOR c1 IN c1rec(crecvat.admsite_code, crecvat.recalcdate)
+         LOOP
+            IF c1.rangeappl = 0
+            THEN
+               UPDATE psite_posbillitem pbi
+                  SET taxdetcode = c1.vatid,
+                      taxdescription = c1.description,
+                      taxpercent = c1.rate,
+                      taxamt = ROUND (((c1.netamt / (100 + c1.rate)) * c1.rate)::numeric, 2),
+                      taxableamt = ROUND (((c1.netamt / (100 + c1.rate)) * 100)::numeric, 2)
+                WHERE code = c1.posbillitemid;
+            ELSIF c1.rangeappl = 1
+            THEN
+               BEGIN
+                  SELECT range_desc, rate
+                    INTO STRICT v_slab_range_desc, v_slab_range_rate
+                    FROM fintax_range
+                   WHERE taxdetcode = c1.vatid
+                     AND (   (    c1.rangebasis = 'N'
+                              AND c1.netprice BETWEEN rangefrom
+                                                  AND coalesce(rangeto, 99999999)
+                             )
+                          OR (    c1.rangebasis = 'R'
+                              AND c1.rsp BETWEEN rangefrom
+                                             AND coalesce(rangeto, 99999999)
+                             )
+                         );
+                  UPDATE psite_posbillitem pbi
+                     SET taxdetcode = c1.vatid,
+                         taxdescription = v_slab_range_desc,
+                         taxpercent = v_slab_range_rate,
+                         taxamt =
+                            ROUND (  ((c1.netamt / (100 + v_slab_range_rate))
+                                   * v_slab_range_rate)::numeric,
+                                   2
+                                  ),
+                         taxableamt =
+                            ROUND (  ((c1.netamt / (100 + v_slab_range_rate))
+                                   * 100)::numeric,
+                                   2
+                                  )
+                   WHERE code = c1.posbillitemid;
+               EXCEPTION
+                  WHEN no_data_found
+                  THEN
+                     UPDATE psite_posbillitem pbi
+                        SET taxdetcode = c1.vatid,
+                            taxdescription = 'Slab Not Defined',
+                            taxpercent = 0,
+                            taxamt = 0,
+                            taxableamt = c1.netamt
+                      WHERE code = c1.posbillitemid;
+               END;
+            END IF;
+         END LOOP;
+         /*
+             CHECK FOR DAYS CLOSED ENTRIES
+         */
+         SELECT status
+           INTO STRICT v_stlmstatus
+           FROM psite_posstlm
+          WHERE admsite_code = crecvat.admsite_code
+            AND stlmfor = crecvat.recalcdate;
+         IF v_stlmstatus = 'C'
+         THEN
+            IF v_sltype = 'C'
+            THEN
+               /*
+                   DELETE  CONSIGMENT ENTRY
+               */
+               DELETE FROM salcsmop
+                     WHERE cscode IN (
+                              SELECT cscode
+                                FROM salcsmain
+                               WHERE csdate = crecvat.recalcdate
+                                 AND admsite_code = crecvat.admsite_code);
+               DELETE FROM salcsdet
+                     WHERE cscode IN (
+                              SELECT cscode
+                                FROM salcsmain
+                               WHERE csdate = crecvat.recalcdate
+                                 AND admsite_code = crecvat.admsite_code);
+               DELETE FROM salcsmain
+                     WHERE csdate = crecvat.recalcdate
+                       AND admsite_code = crecvat.admsite_code;
+                /*
+                   INSERT NEW  CONSIGMENT ENTRY
+               */
+               CALL p_pos_consolidation(crecvat.recalcdate :: timestamp without time zone, crecvat.admsite_code :: bigint,v_hosettledby::INTEGER, v_hosettledon::timestamp with time zone, clock_timestamp());
+            END IF;
+            IF v_sltype = 'O'
+            THEN
+               /*
+                   DELETE  CONSIGMENT ENTRY
+               */
+               DELETE FROM salssdet
+                     WHERE sscode IN (
+                              SELECT sscode
+                                FROM salssmain
+                               WHERE ssdate = crecvat.recalcdate
+                                 AND admsite_code = crecvat.admsite_code);
+               DELETE FROM salssmain
+                     WHERE ssdate = crecvat.recalcdate
+                       AND admsite_code = crecvat.admsite_code;
+               /*
+                   INSERT NEW  CONSIGMENT ENTRY
+               */
+               CALL p_pos_consolidation(crecvat.recalcdate :: timestamp without time zone, crecvat.admsite_code :: bigint,v_hosettledby::INTEGER, v_hosettledon::timestamp with time zone, clock_timestamp());
+            END IF;
+         END IF;
+         /*
+               UPDATE TAX_RECALCULATE_HISTORY
+          */
+         UPDATE tax_recalc_history
+            SET hoexecutiondate = clock_timestamp(),
+                status = 'PH'
+          WHERE requestid = crecvat.requestid;
+      EXCEPTION
+         WHEN OTHERS
+         THEN
+            v_errcode := SQLSTATE;
+            v_errmsg := SQLERRM;
+            UPDATE tax_recalc_history
+               SET hoexecutiondate = clock_timestamp(),
+                   hoexecutionerror = v_errmsg,
+                   status = 'EH'
+             WHERE requestid = crecvat.requestid;
+      END;
+      COMMIT;
+      --<<end_loop>>
+	  END;
+      NULL;
+   END LOOP;
+--COMMIT;
+END;
+"""
+  arguments = [
+  ]
+  language = plpgsql
+}
+

@@ -1,0 +1,89 @@
+function "main"."trigger_fct_t_invlgtnote()" {
+  text = """
+
+DECLARE
+   L_TABLE_NAME                 varchar(50);
+   -- START REV : 006
+   
+   V_SID                        bigint;
+   V_PROGRAM                    varchar(50);
+-- END REV : 006
+BEGIN
+  BEGIN
+   -- START REV : 006
+SELECT PG_BACKEND_PID() INTO STRICT V_SID;
+SELECT APPLICATION_NAME INTO STRICT V_PROGRAM FROM PG_STAT_ACTIVITY WHERE PID=V_SID;
+
+
+   -- END REV : 006
+   --Rev 9.3.4.0018
+   IF TG_OP = 'UPDATE'
+   THEN
+      CASE
+         WHEN NEW.LGTTYPE = 'I'
+         THEN
+            L_TABLE_NAME := 'INVLGTNOTE_I';
+         WHEN NEW.LGTTYPE = 'O'
+         THEN
+            L_TABLE_NAME := 'INVLGTNOTE_O';
+         ELSE
+            NULL;
+      END CASE;
+
+      --start rev :001
+      IF coalesce(NEW.ENTRY_SOURCE, '@@') <> 'WEB'
+      THEN                                                        -- REV : 006
+         IF NEW.PERMITCODE IS NOT NULL
+         THEN
+            UPDATE INVPERMIT
+               SET STATUS = 'U'
+             WHERE PERMITCODE = NEW.PERMITCODE;
+         ELSE
+            UPDATE INVPERMIT
+               SET STATUS = 'N'
+             WHERE PERMITCODE = OLD.PERMITCODE;
+         END IF;
+
+         IF NEW.PERMITCODE <> OLD.PERMITCODE
+         THEN
+            UPDATE INVPERMIT
+               SET STATUS = 'N', CHECKPOST  = NULL, ENTRYDT  = NULL
+             WHERE PERMITCODE = OLD.PERMITCODE;
+         END IF;
+
+         --end rev : 001
+         IF (coalesce(OLD.ISSUEDTO, 0) <> coalesce(NEW.ISSUEDTO, 0))
+         THEN
+            NEW.ISSUEDBY := NEW.LAST_ACCESS_ECODE;
+         END IF;
+      -- end rev : 002
+      END IF;
+   END IF;
+
+   IF TG_OP = 'DELETE'
+   THEN
+      -- START REV : 006
+IF not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+      THEN
+         RAISE EXCEPTION 'del_from_wrong_application' USING ERRCODE = '50001';
+      END IF;
+   -- END REV : 006
+   END IF;
+EXCEPTION
+   WHEN SQLSTATE '50001' THEN
+      RAISE EXCEPTION '%', 'T_INVLGTNOTE == >> Deletion from other application except GINESYS WEB not allowed.' USING ERRCODE = '45112';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

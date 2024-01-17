@@ -1,0 +1,167 @@
+procedure "main"."db_pro_pos_customer_merge_all()" {
+  text = """
+
+DECLARE
+
+   v_merge_session_id     bigint;
+   V_NEW_CUSTOMER_CODE    varchar(50);
+   V_NEW_CUSTOMER_FNAME   varchar(100);
+   V_NEW_CUSTOMER_LNAME   varchar(100);
+   V_CNT                  bigint;
+   v_createdby            bigint;
+   V_SQLERRM              varchar(500);
+   C_MOBILE CURSOR FOR
+      SELECT MOBILE FROM TEMP_DUPLICATE_CUSTOMER;
+   C_CUSTOMER CURSOR(
+      P_MOBILE    text)
+   FOR
+        SELECT t.code,
+               t.FNAME,
+               t.MNAME,
+               t.LNAME,
+               SUM(t.posbillcount) posbillcount,
+               SUM(t.osalecount) osalecount,
+               MAX(t.ldate)      lDate,
+               t.lModifiedDate    lModifiedOn
+          FROM (  SELECT c.code,
+                         C.FNAME,
+                         C.MNAME,
+                         C.LNAME,
+                         COUNT(p.psite_customer_code) posbillcount,
+                         0                         osalecount,
+                         MAX(p.lastmodifiedon)    lDate,
+                         c.lastmodifiedon          lModifiedDate
+                    FROM psite_customer c
+LEFT OUTER JOIN psite_posbill p ON (c.code = p.psite_customer_code)
+WHERE c.LPCARDNO IS NULL AND c.mobile = P_MOBILE GROUP BY c.code,
+                         c.FNAME,
+                         C.MNAME,
+                         C.LNAME,
+                         c.lastmodifiedon
+
+UNION ALL
+
+                  SELECT c.code,
+                         c.FNAME,
+                         C.MNAME,
+                         C.LNAME,
+                         0                         posbillcount,
+                         COUNT(s.psite_customer_code) osalecount,
+                         MAX(s.last_access_time)  lDate,
+                         c.lastmodifiedon          lModifiedDate
+                    FROM psite_customer c
+LEFT OUTER JOIN salcsmain s ON (c.code = s.psite_customer_code)
+WHERE c.LPCARDNO IS NULL AND c.mobile = P_MOBILE GROUP BY c.code,
+                         c.FNAME,
+                         C.MNAME,
+                         C.LNAME,
+                         c.lastmodifiedon
+                
+UNION ALL
+
+                  SELECT c.code,
+                         c.FNAME,
+                         C.MNAME,
+                         C.LNAME,
+                         0                         posbillcount,
+                         COUNT(s.psite_customer_code) osalecount,
+                         MAX(s.last_access_time)  lDate,
+                         c.lastmodifiedon          lModifiedDate
+                    FROM psite_customer c
+LEFT OUTER JOIN salssmain s ON (c.code = s.psite_customer_code)
+WHERE c.LPCARDNO IS NULL AND c.mobile = P_MOBILE GROUP BY c.code,
+                         c.FNAME,
+                         C.MNAME,
+                         C.LNAME,
+                         c.lastmodifiedon) t
+      GROUP BY t.code,
+               t.FNAME,
+               t.MNAME,
+               t.LNAME,
+               t.lModifiedDate
+      ORDER BY 7 DESC NULLS LAST, 8 DESC NULLS LAST;
+BEGIN
+   SELECT MAX(id) INTO STRICT v_merge_session_id FROM PSITE_CUS_BULK_MERGE_SESSION;
+   SELECT createdbyid
+     INTO STRICT v_createdby
+     FROM PSITE_CUS_BULK_MERGE_SESSION
+    WHERE id = v_merge_session_id;
+   EXECUTE 'TRUNCATE TABLE TEMP_DUPLICATE_CUSTOMER';
+   INSERT INTO TEMP_DUPLICATE_CUSTOMER(MOBILE, DUP_COUNT)
+        SELECT MOBILE Mobile, COUNT(1) COUNT
+          FROM PSITE_CUSTOMER
+         WHERE LPCARDNO IS NULL
+      GROUP BY MOBILE
+        HAVING COUNT(1) > 1;
+   UPDATE PSITE_CUS_BULK_MERGE_SESSION
+      SET TOTAL_COUNT = (SELECT COUNT(1) FROM TEMP_DUPLICATE_CUSTOMER)
+    WHERE ID = v_merge_session_id;
+   COMMIT;
+   FOR C1 IN C_MOBILE
+   LOOP
+      V_CNT := 1;
+      FOR C2 IN C_CUSTOMER(C1.MOBILE)
+      LOOP
+         IF V_CNT = 1
+         THEN
+            V_NEW_CUSTOMER_CODE := C2.CODE;
+            V_NEW_CUSTOMER_FNAME := C2.FNAME;
+            V_NEW_CUSTOMER_LNAME := C2.LNAME;
+         END IF;
+         IF V_CNT <> 1
+         THEN
+            INSERT INTO PSITE_CUSTOMER_MERGE(MOBILE,
+                                              OLD_PSITE_CUSTOMER_CODE,
+                                              OLD_PSITE_CUSTOMER_FNAME,
+                                              OLD_PSITE_CUSTOMER_LNAME,
+                                              NEW_PSITE_CUSTOMER_CODE,
+                                              NEW_PSITE_CUSTOMER_FNAME,
+                                              NEW_PSITE_CUSTOMER_LNAME,
+                                              CREATEDBY,
+                                              CREATEDON,
+                                              STATUS)
+                 VALUES (C1.MOBILE,
+                         C2.CODE,
+                         C2.FNAME,
+                         C2.LNAME,
+                         V_NEW_CUSTOMER_CODE,
+                         V_NEW_CUSTOMER_FNAME,
+                         V_NEW_CUSTOMER_LNAME,
+                         v_createdby,
+                         clock_timestamp(),
+                         'P');
+         END IF;
+         V_CNT := V_CNT + 1;
+      END LOOP;
+      BEGIN
+         CALL DB_PRO_POS_CUSTOMER_MERGE(V_NEW_CUSTOMER_CODE);
+         UPDATE PSITE_CUS_BULK_MERGE_SESSION
+            SET SUCCESS_COUNT = coalesce(SUCCESS_COUNT, 0) + 1
+          WHERE ID = v_merge_session_id;
+         DELETE FROM TEMP_DUPLICATE_CUSTOMER WHERE MOBILE = C1.MOBILE;
+      EXCEPTION
+         WHEN OTHERS
+         THEN
+            V_SQLERRM := SQLSTATE::varchar || '-' || SQLERRM;
+            ROLLBACK;
+            UPDATE PSITE_CUS_BULK_MERGE_SESSION
+               SET FAIL_COUNT = coalesce(FAIL_COUNT, 0) + 1
+             WHERE ID = v_merge_session_id;
+            CALL DB_PRO_CUS_MERGE_ERRLOG(v_merge_session_id,
+                                     C1.MOBILE,
+                                     V_NEW_CUSTOMER_CODE,
+                                     V_SQLERRM);
+      END;
+      COMMIT;
+   END LOOP;
+   UPDATE PSITE_CUS_BULK_MERGE_SESSION
+    SET ENDTIME = clock_timestamp()
+     WHERE ID = v_merge_session_id;
+    COMMIT;
+END;
+"""
+  arguments = [
+  ]
+  language = plpgsql
+}
+

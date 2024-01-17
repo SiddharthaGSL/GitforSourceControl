@@ -1,0 +1,130 @@
+view "main"."v_authorize_sales_order" {
+  text = """-
+SELECT m.ordcode,
+    m.ordno,
+    m.scheme_docno,
+    m.orddt,
+    m.pcode,
+    v.slname AS vendor,
+    sum((COALESCE(d.ordqty, (0)::numeric) * COALESCE(d.rate, (0)::numeric))) AS order_value,
+    sum(COALESCE(d.ordqty, (0)::numeric)) AS order_qty,
+    m.authorcode,
+        CASE
+            WHEN (m.authorcode IS NULL) THEN 'Pending'::text
+            ELSE 'Authorized'::text
+        END AS "authorization",
+    m.ecode,
+    m.admou_code,
+    s1.name AS site_name,
+    s1.code AS site_code,
+    s2.name AS site_name_owner,
+    s2.code AS site_code_owner,
+    s2.sitetype AS site_type_owner,
+    sum((COALESCE(i.mrp, (0)::numeric) * COALESCE(d.ordqty, (0)::numeric))) AS mrpvalue,
+        CASE
+            WHEN (COALESCE(m.saletype, 'O'::bpchar) = 'O'::bpchar) THEN 'Sales Order'::text
+            WHEN (COALESCE(m.saletype, 'O'::bpchar) = 'C'::bpchar) THEN 'Transfer Order'::text
+            ELSE NULL::text
+        END AS sal_type,
+        CASE
+            WHEN (m.authorcode IS NULL) THEN NULL::text
+            ELSE (((('Authorized by '::text || rtrim(initcap((e.fname)::text))) || ' ( '::text) || to_char(m.authorizationtime, 'DD/MM/YYYY HH:MI:SS AM'::text)) || ' ) '::text)
+        END AS authorname,
+        CASE
+            WHEN (m.ishold = 'Y'::bpchar) THEN 'Held'::text
+            ELSE 'Un-Held'::text
+        END AS hold_unhold,
+    m.heldby
+   FROM main.admsite s2,
+    main.admsite s1,
+    main.invitem i,
+    main.salorddet d,
+    ((main.salordmain m
+     LEFT JOIN main.finsl v ON ((m.pcode = v.slcode)))
+     LEFT JOIN main.hrdemp e ON ((m.authorcode = e.ecode)))
+  WHERE ((m.ordcode = d.ordcode) AND ((d.icode)::text = (i.icode)::text) AND (m.admsite_code = s1.code) AND (m.admsite_code_owner = s2.code) AND (COALESCE(d.dqty, (0)::numeric) = (0)::numeric) AND (COALESCE(d.ordqty, (0)::numeric) > COALESCE(d.cnlqty, (0)::numeric)))
+  GROUP BY m.ordcode, m.ordno, m.scheme_docno, m.orddt, m.pcode, v.slname, m.authorcode,
+        CASE
+            WHEN (m.authorcode IS NULL) THEN 'Pending'::text
+            ELSE 'Authorized'::text
+        END,
+        CASE
+            WHEN (m.ishold = 'Y'::bpchar) THEN 'Held'::text
+            ELSE 'Un-Held'::text
+        END, m.heldby, m.ecode, m.admou_code, s1.name, s1.code, s2.name, s2.sitetype, s2.code,
+        CASE
+            WHEN (COALESCE(m.saletype, 'O'::bpchar) = 'O'::bpchar) THEN 'Sales Order'::text
+            WHEN (COALESCE(m.saletype, 'O'::bpchar) = 'C'::bpchar) THEN 'Transfer Order'::text
+            ELSE NULL::text
+        END, e.fname, (to_char(m.authorizationtime, 'DD/MM/YYYY HH:MI:SS AM'::text));
+"""
+  columns = (
+    column "ordcode" {
+      type = "bigint"
+    }
+    column "ordno" {
+      type = "bigint"
+    }
+    column "scheme_docno" {
+      type = "character varying(25)"
+    }
+    column "orddt" {
+      type = "timestamp(0) without time zone"
+    }
+    column "pcode" {
+      type = "bigint"
+    }
+    column "vendor" {
+      type = "character varying(100)"
+    }
+    column "order_value" {
+      type = "numeric"
+    }
+    column "order_qty" {
+      type = "numeric"
+    }
+    column "authorcode" {
+      type = "bigint"
+    }
+    column "authorization" {
+      type = text
+    }
+    column "ecode" {
+      type = "bigint"
+    }
+    column "admou_code" {
+      type = "bigint"
+    }
+    column "site_name" {
+      type = "character varying(100)"
+    }
+    column "site_code" {
+      type = "bigint"
+    }
+    column "site_name_owner" {
+      type = "character varying(100)"
+    }
+    column "site_code_owner" {
+      type = "bigint"
+    }
+    column "site_type_owner" {
+      type = "character varying(15)"
+    }
+    column "mrpvalue" {
+      type = "numeric"
+    }
+    column "sal_type" {
+      type = text
+    }
+    column "authorname" {
+      type = text
+    }
+    column "hold_unhold" {
+      type = text
+    }
+    column "heldby" {
+      type = "bigint"
+    }
+  )
+}
+

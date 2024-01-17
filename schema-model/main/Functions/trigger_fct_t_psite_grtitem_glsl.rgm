@@ -1,0 +1,212 @@
+function "main"."trigger_fct_t_psite_grtitem_glsl()" {
+  text = """
+
+DECLARE
+   ora2pg_rowcount integer;
+v_entcode                invstock.entcode%TYPE;
+   v_entno                  PSITE_GRT.DOCNO%TYPE;
+   v_scheme_docno           invstock.scheme_docno%TYPE;
+   v_entdt                  invstock.entdt%TYPE;
+   v_ycode                  invstock.ycode%TYPE;
+   v_refpcode               invstock.refpcode%TYPE;
+   v_refsitecode            invstock.admsite_code%TYPE;
+   v_refloccode             invstock.refloccode%TYPE;
+   v_refcmpcode             invstock.refcmpcode%TYPE;
+   v_refglcode              invstock.refglcode%TYPE;
+   v_refdeptcode            invstock.refdeptcode%TYPE;
+   v_refprcode              invstock.refprcode%TYPE;
+   v_refdocno               invstock.refdocno%TYPE;
+   v_refpkgcode             invstock.refpkgcode%TYPE;
+   v_refdccode              invstock.refdccode%TYPE;
+   v_item_remarks           invstock.item_remarks%TYPE;
+   v_admsite_code           psite_grc.admsite_code%TYPE;
+   v_admsite_code_OWNER          psite_grc.admsite_code%TYPE;
+   v_slcode                 finsl.slcode%TYPE;
+   V_SITETYPE               ADMSITE.SITETYPE%TYPE;
+   V_ENTTYPE_POST               varchar(10) := 'TOD';
+   V_TRANSFEROUT_GLCODE         bigint := NULL;
+   V_TRANSIT_GLCODE             bigint := NULL;
+   v_damount                    FINPOST.DAMOUNT%TYPE;
+   v_Camount                    FINPOST.DAMOUNT%TYPE;
+   v_P_damount               FINPOST.DAMOUNT%TYPE;
+   v_P_Camount               FINPOST.DAMOUNT%TYPE;
+   V_ADMOU_CODE             FINPOST.ADMOU_CODE%TYPE := NULL;
+   V_REM                    FINPOST.nartext%TYPE := NULL;
+   V_POSTCODE               FINPOST.POSTCODE%TYPE := NULL;
+BEGIN
+  BEGIN
+   /********************************************************************************************************************************
+        REV NO         OWNER         DATE           DESCRIPTION
+        ---------     -----------    -----------    ---------------------------------------------------------------------
+        REV : 003     MOUSUMI        15-MAR-2018    (TFS ID : 37820) Non trading
+   *********************************************************************************************************************************/
+    SELECT pg.docno entno, pg.docdt entdt, PG.code entcode,
+            pg.ycode ycode, pg.slcode refpcode, pg.admsite_code refsitecode,PG.TRANSFEROUT_GLCODE,PG.TRANSIT_GLCODE
+            ,default_ho_site,ADMSITE_CODE,SITETYPE,REMARKS,PG.ADMOU_CODE,DOCNO
+    INTO STRICT v_entno, v_entdt, v_entcode,
+      v_ycode, v_refpcode, v_refsitecode,
+      V_TRANSFEROUT_GLCODE,V_TRANSIT_GLCODE
+      ,v_admsite_code_owner
+      ,V_admsite_code,V_SITETYPE,V_REM,V_ADMOU_CODE,V_SCHEME_DOCNO
+    FROM admsite s, psite_grt pg
+LEFT OUTER JOIN admou ou ON (PG.ADMOU_CODE = OU.CODE)
+WHERE pg.code = NEW.psite_grT_code AND pg.ADMSITE_CODE = S.CODE;
+
+ IF v_sitetype <> 'MS-CO-OM-TS'
+   THEN
+      IF V_transferout_glcode <> V_transit_glcode
+      THEN
+
+
+            IF    NEW.GLCODE IS NOT NULL THEN
+              UPDATE finpost
+                 SET entno          = V_ENTNO,
+                     entdt          = V_ENTDT,
+                     scheme_docno   = V_scheme_docno,
+                    -- docno   = V_docno,
+                   --  docDT   = V_DOCDT,
+                     glcode  = NEW.glcode,
+                     slcode  = NEW.slcode,
+                     nartext = V_rem,
+                     Camount =coalesce(CAMOUNT,0) + coalesce(NEW.BASICAMT,0)
+                 ,REF_ADMSITE_CODE   = V_admsite_code
+                ,admsite_code_owner = v_admsite_code_owner
+               ,ADMOU_CODE = V_ADMOU_CODE
+               WHERE entcode = NEW.psite_grT_code::varchar
+                 AND enttype = V_ENTTYPE_POST
+                 AND glcode = NEW.glcode
+                 AND ((NEW.slcode IS NULL AND slcode IS NULL) OR slcode = NEW.slcode);
+
+                  GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+                  THEN
+
+
+                 /*             INSERT INTO finpost
+                     (postcode, entcode, entno, entdt,
+                      enttype, glcode,
+                      slcode, camount,
+                      ycode, nartext, scheme_docno, release_status,
+                      admsite_code_owner, ref_admsite_code, chgappamt,
+                      chgamt, ecode, TIME, last_access_ecode,
+                      last_access_time, release_ecode, release_time,admou_code
+                     )
+              VALUES (erp01.NEXTVAL, :NEW.code, :NEW.docno, :NEW.docdt,
+                      'TOA', :NEW.transferout_glcode,
+                      :NEW.transferout_slcode,
+                      NVL (:NEW.MAIN_GL_AMT, 0),
+                      :NEW.ycode, :NEW.remarks, :NEW.docno, 'P',
+                      v_admsite_code_owner, :NEW.admsite_code, NULL,
+                      NULL, 1, SYSDATE, NULL,
+                      NULL, 1, SYSDATE, :NEW.admou_code
+                     )*/
+                        INSERT INTO FINPOST(  postcode, entcode, entno, entdt,
+                                          enttype, glcode,
+                                          slcode, camount,
+                                          ycode, nartext, scheme_docno, release_status,
+                                          admsite_code_owner, ref_admsite_code,
+                                          ecode, TIME, last_access_ecode,
+                                          last_access_time, release_ecode, release_time,admou_code
+                                       )
+                                VALUES (nextval('erp01'),
+                                         NEW.psite_grT_code::varchar,
+                                         V_ENTNO,
+                                        V_ENTDT, V_ENTTYPE_POST--, V_docno
+                                        , NEW.glcode, NEW.slcode,
+                                         coalesce(NEW.BASICAMT, 0),
+                                        V_ycode
+                                        ,V_rem
+                                        ,V_scheme_docno,'P'
+                                        ,v_admsite_code_owner
+                                        ,V_admsite_code
+                                        ,1,statement_timestamp(),1,statement_timestamp(),1,statement_timestamp()
+                                        ,V_ADMOU_CODE
+                                       );
+                   END IF;
+
+                BEGIN
+                    SELECT  DISTINCT(POSTCODE),
+                            SUM(DAMOUNT),
+                            SUM(CAMOUNT)
+                    INTO STRICT
+                            V_POSTCODE,
+                            V_P_DAMOUNT,
+                            V_P_CAMOUNT
+                    FROM
+                            FINPOST
+                    WHERE
+                            ENTCODE = NEW.psite_grT_code::varchar
+                    AND     ENTTYPE = V_ENTTYPE_POST
+                    AND       GLCODE = NEW.GLCODE
+                    AND      NEW.GLCODE  IS NOT NULL
+                    AND      coalesce(CAMOUNT,0) <> 0
+                    AND     ((NEW.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = NEW.SLCODE)
+                    GROUP BY POSTCODE;
+
+                        UPDATE FINCOSTTAG
+                        SET
+                        entno           = V_ENTno,
+                        entdt           = V_ENTdt,
+                        enttype         = V_ENTTYPE_POST,
+                        glcode          = NEW.glcode,
+                        ycode           = V_ycode,
+                        costcode         = NULL,
+                        slcode          = NEW.slcode, --:new.pcode,
+                        Camount         = coalesce(Camount,0) + coalesce(NEW.BASICAMT,0) ,
+                        admsite_code    = V_ADMSITE_CODE,
+                        postcode        = v_postcode,
+                        ref_admsite_code    = V_ADMSITE_CODE
+                        ,ADMOU_CODE = V_ADMOU_CODE -- REV : 009
+                        where  entcode  =  NEW.psite_grT_code::varchar
+                        and enttype     = V_ENTTYPE_POST
+                        AND  NEW.GL_CC_APPL = 'Y'
+                        and glcode      = NEW.glcode
+                        AND    ((NEW.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = NEW.SLCODE);
+
+                       GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0 THEN
+
+                            IF  V_POSTCODE IS NOT NULL AND NEW.GL_CC_APPL = 'Y' AND coalesce(V_P_CAMOUNT,0) <> 0  THEN
+                                INSERT INTO FINCOSTTAG(ENTCODE, ENTNO, ENTDT, ENTTYPE
+                                       ,GLCODE, YCODE, COSTCODE, SLCODE, CAMOUNT,
+                                       POSTCODE, ADMSITE_CODE, REF_ADMSITE_CODE
+                                       ,ADMOU_CODE
+                                       )
+                                VALUES (NEW.psite_grT_code::varchar, V_ENTNO, V_ENTDT, V_ENTTYPE_POST
+                                       ,NEW.GLCODE, V_YCODE, NULL, NEW.SLCODE, coalesce(NEW.BASICAMT,0),
+                                       V_POSTCODE,V_ADMSITE_CODE,V_ADMSITE_CODE
+                                       ,V_ADMOU_CODE
+                                       );
+                            END IF;
+                       END IF;
+            EXCEPTION WHEN no_data_found THEN
+               NULL;
+            END;
+
+        END IF;
+    END IF;
+  END IF;
+
+
+  DELETE FROM FINCOSTTAG
+   WHERE  ENTCODE IN ( OLD.psite_grT_code::varchar ,NEW.psite_grT_code::varchar)
+   AND    ENTTYPE = V_ENTTYPE_POST
+   AND    coalesce(DAMOUNT, 0) = 0
+   AND    coalesce(CAMOUNT, 0) = 0;
+
+   DELETE FROM FINPOST
+   WHERE  ENTCODE IN ( OLD.psite_grT_code::varchar ,NEW.psite_grT_code::varchar)
+   AND    ENTTYPE = V_ENTTYPE_POST
+   AND    coalesce(DAMOUNT, 0) = 0
+   AND    coalesce(CAMOUNT, 0) = 0;
+
+  END;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

@@ -1,0 +1,66 @@
+function "main"."trigger_fct_t_invgstrate_gds2()" {
+  text = """
+
+DECLARE
+   SUB_COUNT     smallint;
+   V_ISENABLED   smallint;
+BEGIN
+   SELECT COUNT(1)
+     INTO STRICT V_ISENABLED
+     FROM GDS2_SUBSCR_EVENT
+    WHERE EVENT_ID = 'GSTRATEMASTER';
+
+   IF V_ISENABLED > 0
+   THEN
+      call DB_PKG_GDS2_EVENT$TRACK('GSTRATEMASTER', NEW.CODE);
+   END IF;
+
+   SELECT COUNT(1)
+    INTO STRICT   SUB_COUNT
+    FROM  GDS2_SUBSCR_EVENT
+    WHERE  EVENT_ID IN ('inventory.gstrate.added','inventory.gstrate.updated',
+                        'inventory.gstrate.extinct.marked','inventory.gstrate.extinct.unmarked');
+
+    IF TG_OP = 'INSERT'
+    THEN
+        IF coalesce(SUB_COUNT,0) > 0
+        THEN
+            call DB_PKG_GDS2_EVENT$TRACK(
+                'inventory.gstrate.added', NEW.CODE);
+        END IF;
+    END IF;
+
+    IF TG_OP = 'UPDATE'
+    THEN
+        IF coalesce(SUB_COUNT,0) > 0
+        THEN
+            IF coalesce(NEW.EXTINCT,'N') = 'Y' AND coalesce(OLD.EXTINCT,'N') = 'N'
+            THEN
+                call DB_PKG_GDS2_EVENT$TRACK(
+                    'inventory.gstrate.extinct.marked', NEW.CODE);
+            END IF;
+
+            IF coalesce(NEW.EXTINCT,'N') = 'N' AND coalesce(OLD.EXTINCT,'N') = 'Y'
+            THEN
+                call DB_PKG_GDS2_EVENT$TRACK(
+                    'inventory.gstrate.extinct.unmarked', NEW.CODE);
+            END IF;
+
+            IF coalesce(OLD.EXTINCT,'N') = coalesce(NEW.EXTINCT,'N')
+            THEN
+                call DB_PKG_GDS2_EVENT$TRACK(
+                    'inventory.gstrate.updated', NEW.CODE);
+            END IF;
+        END IF;
+
+    END IF;
+
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

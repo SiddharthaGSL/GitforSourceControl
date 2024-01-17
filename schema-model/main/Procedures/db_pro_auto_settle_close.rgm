@@ -1,0 +1,200 @@
+procedure "main"."db_pro_auto_settle_close(bigint, bigint, timestamp without time zone, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+V_CNT_CLOSE         bigint      := 0;
+V_UNCLOSED_CODE     varchar(50)    := NULL;
+V_ERROR_MSG         varchar(4000)  := NULL;
+BEGIN
+/******************************************************************************************************************
+REVISION : 101   MOUSUMI BHAUMIK       DATE  : 18-MAY-2018     AUTHORIZATION CHECKING
+REVISION : 002   ANINDYA DAS           DATE  : 17-JUL-2022     Concurrency handling from procedure directly because
+                                                               in particular scenerio when this procedure is getting called 
+                                                               to close a particular date that means , the specific
+                                                               record in PSITE_POSSTLM table to be updated with STATUS = C
+                                                               but at the same time that particular record got updated from
+                                                               other terminal (either POST or REVERT), in that case no record 
+                                                               is getting fetched in CURSOR , so no  update is taking plase from 
+                                                               this procedure. As a result no trigger based concurrency  check
+                                                               is happening , due to which no concurrency error message is coming
+                                                               in UI although actually no action is taking place on that particular 
+                                                               record of psite_posstlm table. To avoid this confution a concurrency
+                                                               check from procedure itself is introduced.
+                                                                             
+*******************************************************************************************************************/
+DECLARE C1 CURSOR FOR 
+    SELECT DISTINCT date_trunc('day', stlmfor) stlmfor
+    FROM   PSITE_POSSTLM   
+    WHERE  admsite_code   = P_admsite_code
+    AND    date_trunc('day', stlmfor) BETWEEN date_trunc('day', P_REF_DATE_FROM) AND  date_trunc('day', P_REF_DATE_TO)
+    AND    STATUS = 'U'
+    ORDER BY stlmfor ASC;
+-- START REV : 101
+V_GRC                   numeric(20)     := 0;
+V_GRT                   numeric(20)     := 0;
+V_PRDORD                numeric(20)     := 0;
+V_MISC                  numeric(20)     := 0;
+V_GRC_PI                varchar(4000)   := NULL;
+V_STL_FOR_DATE          timestamp            := NULL;
+V_CNT                   numeric(20)     := 0;
+-- END REV : 101
+BEGIN
+-- START REV : 002
+IF P_DATAVERSION IS NOT NULL
+THEN
+   BEGIN
+       SELECT STLMFOR
+       INTO STRICT   V_STL_FOR_DATE
+       FROM   PSITE_POSSTLM
+       WHERE  admsite_code   = P_admsite_code
+       AND    date_trunc('day', stlmfor) BETWEEN date_trunc('day', P_REF_DATE_FROM) AND  date_trunc('day', P_REF_DATE_TO) 
+       AND    dataversion = p_dataversion;
+   EXCEPTION
+       WHEN no_data_found
+       THEN
+        RAISE EXCEPTION '%', 'Record updated by another user.' USING ERRCODE = '45301';
+   END;
+END IF;
+V_STL_FOR_DATE :=  NULL;
+-- END REV : 002
+FOR C2 IN C1
+LOOP
+ -- START REV : 101
+    V_ERROR_MSG := null;
+        SELECT COUNT(1)
+        INTO STRICT   V_GRC
+        FROM invgrcmain
+        WHERE date_trunc('day', GRCDT) = date_trunc('day', C2.stlmfor)
+        AND   auth_ecode IS NULL
+        AND   admsite_code_in = P_ADMSITE_CODE;
+        IF coalesce(V_GRC,0) > 0 THEN
+          V_ERROR_MSG := '#Unauthorized GRC document present.';
+        END IF;
+        SELECT COUNT(1)
+        INTO STRICT   V_CNT
+        FROM invgrcmain
+        WHERE date_trunc('day', GRCDT) = date_trunc('day', C2.STLMFOR)
+        AND coalesce(RCINVQTY,0) = 0
+        AND WHETHER_CONSIGNMENT = 'N'
+        AND   ADMSITE_CODE_IN = P_ADMSITE_CODE;
+        IF coalesce(V_CNT,0) > 0 THEN
+        SELECT date_trunc('day', GRCDT), string_agg(SCHEME_DOCNO, ', ' ORDER BY SCHEME_DOCNO)
+        INTO STRICT   V_STL_FOR_DATE, V_GRC_PI
+        FROM invgrcmain
+        WHERE date_trunc('day', GRCDT) = date_trunc('day', C2.STLMFOR)
+        AND coalesce(RCINVQTY,0) = 0
+        AND WHETHER_CONSIGNMENT = 'N'
+        AND   ADMSITE_CODE_IN = P_ADMSITE_CODE
+        GROUP BY GRCDT;
+        V_ERROR_MSG := V_ERROR_MSG||'#Non-invoiced Local procurement''s GRC ( '||V_GRC_PI||' ) found, unable to settle for '||V_STL_FOR_DATE;
+        END IF;
+        SELECT COUNT(1)
+        INTO STRICT   V_GRT
+        FROM   invgrtmain
+        WHERE  date_trunc('day', GRTDT) = date_trunc('day', C2.stlmfor)
+        AND    auth_ecode IS NULL
+        AND    ADMSITE_CODE = P_ADMSITE_CODE;
+        IF coalesce(V_GRT,0) > 0 THEN
+          V_ERROR_MSG := V_ERROR_MSG||'#Unauthorized GRT document present.';
+        END IF;
+        SELECT COUNT(1)
+        INTO STRICT   V_PRDORD
+        FROM    prdord
+        WHERE   date_trunc('day', ORDDT) = date_trunc('day', C2.stlmfor)
+        AND     auth_ecode IS NULL
+        AND     ADMSITE_CODE = P_ADMSITE_CODE;
+        IF coalesce(V_PRDORD,0) > 0 THEN
+          V_ERROR_MSG := V_ERROR_MSG||'#Unauthorized Conversion document present.';
+        END IF;
+        SELECT  COUNT(1)
+        INTO STRICT    V_MISC
+        FROM    invmiscmain
+        WHERE   date_trunc('day', MISCDT) = date_trunc('day', C2.stlmfor)
+        AND     auth_ecode IS NULL
+        AND     ADMSITE_CODE = P_ADMSITE_CODE;
+        IF coalesce(V_MISC,0) > 0 THEN
+          V_ERROR_MSG := V_ERROR_MSG||'#Unauthorized Miscellaneous document present for that date.';
+        END IF;
+         IF V_ERROR_MSG  IS  NULL THEN
+             UPDATE  SALCSMAIN
+             SET     RELEASE_STATUS =  'P'
+                     ,RELEASE_TIME   =  clock_timestamp()
+                     ,RELEASE_ECODE  =  P_USER_ID
+             WHERE   ADMSITE_CODE   = P_ADMSITE_CODE
+             AND     date_trunc('day', CSDATE) = date_trunc('day', C2.stlmfor);
+             UPDATE  GVISSUE_JOURNAL
+             SET     RELEASE_STATUS =  'P'
+                     ,RELEASE_TIME   =  clock_timestamp()
+                     ,RELEASE_ECODE  =  P_USER_ID
+             WHERE   ADMSITE_CODE   = P_ADMSITE_CODE
+             AND     date_trunc('day', DOCDATE) = date_trunc('day', C2.stlmfor);
+             UPDATE  POSJOURNAL
+             SET     RELEASE_STATUS =  'P'
+                     ,RELEASE_TIME   =  clock_timestamp()
+                     ,RELEASE_ECODE  =  P_USER_ID
+             WHERE   ADMSITE_CODE   = P_ADMSITE_CODE
+             AND     date_trunc('day', DOCDATE) = date_trunc('day', C2.stlmfor);
+            UPDATE PSITE_POSSTLM
+            SET    STATUS = 'C'
+                   ,HO_SETTLEDBY =    P_USER_ID
+                   ,HO_SETTLEDON =    clock_timestamp()
+                   ,DATAVERSION =     coalesce(P_DATAVERSION, DATAVERSION)
+            WHERE  admsite_code   = P_admsite_code
+            AND    date_trunc('day', stlmfor) = date_trunc('day', C2.stlmfor)
+            AND    STATUS <> 'C';
+         ELSE
+                RAISE EXCEPTION 'validation_error' USING ERRCODE = '50001';
+                exit;
+         END IF;
+    END LOOP;
+EXCEPTION WHEN SQLSTATE '50001' THEN
+             CALL ERRAUDIT(USER,
+                       'DB_PRO_AUTO_SETTLE_CLOSE',
+                       'Autosettlement',
+                        V_ERROR_MSG
+                       );
+             RAISE EXCEPTION '%', V_ERROR_MSG USING ERRCODE = '45105';
+         --  EXIT;
+WHEN OTHERS THEN
+            CALL ERRAUDIT(USER, 'DB_PRO_AUTO_SETTLE_CLOSE', SQLSTATE, SQLERRM);
+            RAISE EXCEPTION '%', SQLSTATE::varchar||SQLERRM USING ERRCODE = '45105';
+END;
+END;
+"""
+  arguments = <
+    {
+      name = p_admsite_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_user_id
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_ref_date_from
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_ref_date_to
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_dataversion
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+  >
+  language = plpgsql
+}
+

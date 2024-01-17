@@ -1,0 +1,50 @@
+function "main"."trigger_fct_t_psite_mop_gds2()" {
+  text = """
+
+DECLARE
+   SUB_COUNT     smallint;
+BEGIN
+    SELECT COUNT(1)
+    INTO STRICT   SUB_COUNT
+    FROM  GDS2_SUBSCR_EVENT
+    WHERE  EVENT_ID IN ('retail.mop.added','retail.mop.updated','retail.mop.extinct.marked','retail.mop.extinct.unmarked');
+
+    IF TG_OP = 'INSERT' 
+    THEN
+        IF coalesce(SUB_COUNT,0) > 0
+        THEN
+            CALL DB_PKG_GDS2_EVENT$TRACK(
+                'retail.mop.added', NEW.CODE);
+        END IF;
+    END IF;
+    
+    IF TG_OP = 'UPDATE'
+    THEN
+        IF coalesce(SUB_COUNT,0) > 0
+        THEN
+            CALL DB_PKG_GDS2_EVENT$TRACK(
+                'retail.mop.updated', NEW.CODE);
+
+            IF coalesce(NEW.ISEXTINCT,0) = 1 AND coalesce(OLD.ISEXTINCT,0) = 0
+            THEN
+                CALL DB_PKG_GDS2_EVENT$TRACK(
+                    'retail.mop.extinct.marked', NEW.CODE);
+            END IF;
+
+            IF coalesce(NEW.ISEXTINCT,0) = 0 AND coalesce(OLD.ISEXTINCT,0) = 1
+            THEN
+                CALL DB_PKG_GDS2_EVENT$TRACK(
+                    'retail.mop.extinct.unmarked', NEW.CODE);
+            END IF;
+        END IF;
+    END IF;
+    
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

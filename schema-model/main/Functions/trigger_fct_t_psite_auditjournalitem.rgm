@@ -1,0 +1,184 @@
+function "main"."trigger_fct_t_psite_auditjournalitem()" {
+  text = """
+
+DECLARE
+   v_type            varchar(100);
+   v_detail_code     invstock.detail_code%TYPE;
+   v_entcode         invstock.entcode%TYPE;
+   v_entno           invstock.entno%TYPE;
+   v_scheme_docno    invstock.scheme_docno%TYPE;
+   v_entdt           invstock.entdt%TYPE;
+   v_enttype         invstock.enttype%TYPE;
+   v_subenttype      invstock.subenttype%TYPE;
+   v_loccode         invstock.loccode%TYPE;
+   v_ycode           invstock.ycode%TYPE;
+   v_new_icode       invstock.icode%TYPE;
+   v_old_icode       invstock.icode%TYPE;
+   v_new_qty         invstock.qty%TYPE;
+   v_old_qty         invstock.qty%TYPE;
+   v_new_rate        invstock.rate%TYPE;
+   v_old_rate        invstock.rate%TYPE;
+   v_refpcode        invstock.refpcode%TYPE;
+   v_refsitecode     invstock.admsite_code%TYPE;
+   v_issecondary     invstock.issecondary%TYPE;
+   v_saletype        salinvmain.saletype%TYPE;
+   v_refloccode      invstock.refloccode%TYPE;
+   v_refcmpcode      invstock.refcmpcode%TYPE;
+   v_refglcode       invstock.refglcode%TYPE;
+   v_refdeptcode     invstock.refdeptcode%TYPE;
+   v_refprcode       invstock.refprcode%TYPE;
+   v_refdocno        invstock.refdocno%TYPE;
+   v_refpkgcode      invstock.refpkgcode%TYPE;
+   v_refdccode       invstock.refdccode%TYPE;
+   v_other_rate      invstock.costrate%TYPE;
+   v_item_remarks    invstock.item_remarks%TYPE;
+   v_site_upd_cost   invstock.upd_cost%TYPE;
+   v_site_costrate   invstock.site_costrate%TYPE;
+   v_poststock       smallint;
+   v_sitetype        varchar(15);
+BEGIN
+   /*******************************************************************************************************************
+     REV NO      DATE           OWNER            DESCRIPTION
+     ---------   -----------    -----------      ---------------------------------------------------------------------
+     REV : 001   13-NOV-2017    DIPTIMAN         (TFS ID : 32259) COGS costrate related changes.
+   *******************************************************************************************************************/
+   SELECT SITETYPE
+   INTO STRICT   V_SITETYPE
+   FROM   ADMSITE
+   WHERE  CODE = NEW.ADMSITE_CODE;
+
+
+   IF coalesce(NEW.diffqty, 0) <> 0
+   THEN
+      SELECT NULL entno, aj.bookstockdate entdt, code entcode,
+             'ADJ' enttype,
+             CASE
+                WHEN NEW.diffqty >= 0
+                   THEN
+                   CASE WHEN V_SITETYPE = 'MS-CO-OM-TS' THEN
+                      'AIS'
+                   ELSE
+                      'ADI'
+                   END
+                WHEN NEW.diffqty < 0
+                   THEN
+                   CASE WHEN V_SITETYPE = 'MS-CO-OM-TS' THEN
+                       'AOS'
+                   ELSE
+                       'ADO'
+                   END
+             END sub_enttype,
+             aj.ycode ycode, aj.slcode refpcode,
+             aj.admsite_code refsitecode, NULL refloccode,
+             (SELECT CASE
+                        WHEN coalesce(issecondary, 'N') = 'N'
+                           THEN NULL
+                        ELSE issecondary
+                     END
+                FROM admsite
+               WHERE code = aj.admsite_code) issecondary,
+             aj.store_loccode loccode, NULL refsaletype, NULL refcmpcode,
+             NULL refglcode, NULL refdeptcode, NULL refprcode,
+             NULL refdocno, NULL refpkgcode, code scheme_docno, poststock
+        INTO STRICT v_entno, v_entdt, v_entcode,
+             v_enttype,
+             v_subenttype,
+             v_ycode, v_refpcode,
+             v_refsitecode, v_refloccode,
+             v_issecondary,
+             v_loccode, v_saletype, v_refcmpcode,
+             v_refglcode, v_refdeptcode, v_refprcode,
+             v_refdocno, v_refpkgcode, v_scheme_docno, v_poststock
+        FROM psite_auditjournal aj
+       WHERE aj.code = NEW.psite_auditjournal_code;
+
+      v_detail_code := NEW.code;
+      v_new_icode := NEW.icode;
+      v_old_icode := OLD.icode;
+      v_new_qty := NEW.diffqty;
+      v_old_qty := NEW.diffqty;
+      v_new_rate := NEW.rate;
+      v_old_rate := NEW.rate;
+
+      IF NEW.diffqty > 0
+      THEN
+         v_site_upd_cost := 'Y';
+         v_site_costrate := NEW.rate;
+         v_other_rate := NEW.costrate;
+      ELSIF NEW.diffqty < 0
+      THEN
+         v_site_upd_cost := 'N';
+         v_site_costrate := NULL;
+      END IF;
+
+      v_item_remarks := 'STOCK AUDIT';
+      v_type := 'INSERTING';
+
+      IF coalesce(v_poststock, 0) = 1
+      THEN
+         CALL db_pkg_stock$reflect(v_detail_code,
+                               v_type,
+                               v_entcode,
+                               v_entno,
+                               v_entdt,
+                               v_enttype,
+                               v_loccode,
+                               v_ycode,
+                               v_new_icode,
+                               v_old_icode,
+                               v_new_qty,
+                               v_old_qty,
+                               v_new_rate,
+                               v_old_rate,
+                               v_refpcode,
+                               v_refloccode,
+                               v_refcmpcode,
+                               v_refglcode,
+                               v_refdeptcode,
+                               v_refprcode,
+                               v_refdocno,
+                               v_refpkgcode,
+                               v_refdccode,
+                               v_other_rate,
+                               v_scheme_docno,
+                               v_subenttype,
+                               NULL,
+                               v_item_remarks,
+                               v_refsitecode,
+                               v_issecondary,
+                               v_site_upd_cost,
+                               v_site_costrate,
+                               NULL,
+                               NEW.psite_stockpoint_code,
+                               -- START REV : 001
+                               NULL,
+                               NULL, 
+                               NULL, 
+                               NULL, 
+                               NULL, 
+                               NULL, 
+                               NULL, 
+                               NULL, 
+                               NULL, 
+                               0, 
+                               NULL, 
+                               NEW.COSTRATE,
+                               NULL, 
+                               NULL, 
+                               NULL, 
+                               NULL, 
+                               NULL,
+                               -- END REV : 001
+                               coalesce(NEW.INVBATCH_SERIAL_CODE, OLD.INVBATCH_SERIAL_CODE)
+                              );
+      END IF;
+   END IF;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

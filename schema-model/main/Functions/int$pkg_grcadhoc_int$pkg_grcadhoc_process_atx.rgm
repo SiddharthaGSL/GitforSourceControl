@@ -1,0 +1,924 @@
+function "main"."int$pkg_grcadhoc_int$pkg_grcadhoc_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      --v_site_initial           VARCHAR2 (15);
+      errmsg                   varchar(500);
+      vsession                 varchar(100);
+      vdetailtbl               varchar(5000);
+      vdetailrec               varchar(500);
+      errcode                  text;
+      vcount                   bigint;
+      --v_scheme_docno     VARCHAR2 (25)   := NULL;
+      v_GRCcode                numeric(20);
+      v_ycode                  smallint;
+      v_admou_code             bigint;
+      v_admsite_code           bigint;
+      v_grsamt                 double precision;
+      v_chgamt                 double precision;
+      v_netamt                 double precision;
+      v_GRCdt                  timestamp;
+
+      -- For Scheme Document No generation
+      --v_tempno                 NUMBER (20);
+      --v_menucode               NUMBER (12) := 89;
+      v_scheme_docno           varchar(25);
+      --v_slname                 VARCHAR2 (100);
+      --return_string            CHAR (699);
+      --v_username               admcmp.cmpinit%TYPE;
+      v_cmpcode                bigint;
+      v_itemprefix             admcmp.itemprefix%TYPE;
+      -- START REV : 007
+      --v_isprice_excludes_tax   NUMBER (1);
+      -- END REV : 007
+      v_status                 varchar(1000);
+
+      g_mark                   varchar(100);
+
+      V_DET_CNT                bigint := 0;v_pricelistcode          salpricelistmain.pricelistcode%TYPE;
+      v_termcode               purtermmain.code%TYPE;
+      v_termname               purtermmain.name%TYPE;
+      v_tradegrp_code          fintradegrp.code%TYPE;
+      v_chng_hdr               purtermmain.header_level_ischangeable%TYPE;
+      v_chng_line              purtermmain.line_level_ischangeable%TYPE;
+      v_formcode               finform.formcode%TYPE;
+      v_flag                   bigint;
+      V_admcurrency_code       bigint := NULL;
+      G_ERROR                  varchar(500) := NULL;
+      --v_batch_serial_code      NUMBER(12);
+      return_string_batch      varchar(500);
+      v_cnt_batch              bigint;
+      v_classname              varchar(50) := 'GRCADHOC';
+      v_acrate                 bigint:= NULL;
+      v_icode                  varchar(50):= NULL;
+	  i						   RECORD;
+
+-- START REV : 005
+      c_batch1 CURSOR FOR
+                SELECT lineno, b.code, b.mfg_date, b.exp_date, b.listed_mrp, b.wsp, b.mrp
+                from   int$stg_grcadhoc_all_fld a, invitem i1, invbatch_serial b
+                where (UPPER(a.icode_barcode) = i1.icode OR UPPER(a.icode_barcode) = i1.barcode)
+                and    i1.icode = b.icode
+                and    upper(a.batch_serial_no) = upper(b.batch_serial_no)
+                and    a.batch_serial_no is not null
+                and    userid = p_userid
+                order by lineno;
+
+      c_batch2 CURSOR FOR
+            SELECT b.code, b.batch_serial_no, a.lineno
+                from int$stg_grcadhoc_all_fld a,
+                    invbatch_serial          b,
+                    invgrp                   g,
+                    invitem                  i1
+            where (UPPER(a.icode_barcode) = i1.icode OR UPPER(a.icode_barcode) = i1.barcode)
+                    and b.icode = i1.icode
+                    and i1.grpcode = g.grpcode
+                    and a.mfg_date = b.mfg_date
+                    and a.valid_upto = b.exp_date
+                    and a.mrp = b.listed_mrp
+                    and a.wsp = b.wsp
+                    and a.rsp = b.mrp
+                    and a.standardrate = b.costrate
+                    and a.batch_serial_no is null
+                    and g.iscreatebatchdocumentwise = 'N'
+                    and a.userid = p_userid;
+
+      c_batch3 CURSOR(p_grccode    bigint)
+      FOR
+                    SELECT a.icode_barcode, i1.icode, a.batch_serial_no, a.mfg_date, a.valid_upto, a.mrp, a.wsp, a.rsp, a.standardrate, a.grcqty, a.grcdt, i1.item_management_mode, a.lineno
+                    from   int$stg_grcadhoc_all_fld a, invitem i1, invgrp g
+                    where (UPPER(a.icode_barcode) = i1.icode OR UPPER(a.icode_barcode) = i1.barcode)
+                    and    i1.grpcode = g.grpcode
+                    and    a.icode_barcode is not null
+                    and    i1.item_management_mode in ('B','S')
+                    and    userid = p_userid
+                    and    a.invbatch_serial_code is null
+                    order by lineno;
+
+      c_batch4 CURSOR(p_grccode    bigint)
+      FOR
+                    SELECT invbatch_serial_code
+                    from   int$stg_grcadhoc_temp
+                    where  grccode = p_grccode
+                    and    userid = p_userid;
+    -- END REV : 005
+      C1 CURSOR FOR
+           SELECT DISTINCT GRCcode
+             FROM int$stg_GRCADHOC_all_fld
+            WHERE userid = p_userid
+         ORDER BY 1;
+
+      -- main fields
+      C2 CURSOR(
+         p_GRCcode    bigint)
+      FOR
+         SELECT DISTINCT
+                GRCdt,
+                pcode,
+                docno,
+                G.trpcode,
+                GRC_remARKS,
+                scheme_docno,
+                ycode,
+                CASE WHEN UPPER(G.whether_consignment)='YES' THEN  'Y'  ELSE 'N' END
+                   whether_consignment,
+                D.doccode,
+                A.admou_code,                                  --mrchndsrcode,
+                -- fintradegrp_code,
+                -- admcurrency_code,
+                1                      exrate,
+                A.CODE                 ADMSITE_CODE,               --formcode,
+                'N'                    enable_lgt_track,        --purtermcode,
+                agcode,
+                L.loccode,
+                REF_NO,
+                a.PSITE_admcmptax_code ou_admcmptax_code
+           FROM int$stg_GRCADHOC_all_fld G,
+                INVLOC                   L,
+                ADMSITE                  A,
+                admdocscheme             d,
+                FINSL                    P
+          WHERE     G.GRCcode = p_GRCcode
+                AND UPPER(STOCKPOINT_NAME) = UPPER(L.LOCNAME)
+                AND A.CODE = P_CONNECT_SITE
+                AND P.SLCODE = G.PCODE
+                AND D.docname = G.scheme_doc_format
+                AND USERID = P_USERID;
+
+      -- detail fields group by icode, rate, sum(qty)
+      C3 CURSOR(
+         p_GRCcode              bigint,
+         P_ou_admcmptax_code    bigint)
+      FOR
+        SELECT I1.icode,
+       CASE WHEN coalesce(g.rate, 0) > 0 THEN g.rate
+            ELSE (db_fun_item_rate_web(g.GRCdt, g.pcode, I1.icode, 'P', p_ou_admcmptax_code, g.grc_rate, p_connect_site, g.invbatch_serial_code))
+       END rate,
+       CASE WHEN i1.price_management = 'B' THEN b.mrp
+            ELSE I1.MRP
+       END rsp,
+       CASE WHEN i1.price_management = 'B' THEN b.listed_mrp
+            ELSE I1.Listed_MRP
+       END mrp,
+       CASE WHEN i1.price_management = 'B' THEN b.wsp
+            ELSE I1.WSP
+       END WSP,
+       g.grc_rate,
+       GRC_item_rem,
+       I1.GST_ITC_APPL,
+       SUM(coalesce(GRCqty, 0)) GRCqty,
+       g.invbatch_serial_code,
+       i1.item_management_mode
+FROM int$stg_GRCADHOC_all_fld G
+INNER JOIN INVITEM I1 ON (UPPER(I1.icode) = UPPER(G.icode_barcode) OR UPPER(I1.barcode) = UPPER(G.icode_barcode))
+LEFT JOIN INVBATCH_SERIAL b ON (g.invbatch_serial_code = b.code)
+WHERE G.GRCcode = p_GRCcode
+  AND USERID = P_USERID
+  AND g.invbatch_serial_code IS NOT NULL
+GROUP BY I1.icode,
+         CASE WHEN coalesce(g.rate, 0) > 0 THEN g.rate
+              ELSE (db_fun_item_rate_web(g.GRCdt, g.pcode, I1.icode, 'P', p_ou_admcmptax_code, g.grc_rate, p_connect_site, g.invbatch_serial_code))
+         END,
+         CASE WHEN i1.price_management = 'B' THEN b.mrp
+              ELSE I1.MRP
+         END,
+         CASE WHEN i1.price_management = 'B' THEN b.listed_mrp
+              ELSE I1.Listed_MRP
+         END,
+         CASE WHEN i1.price_management = 'B' THEN b.wsp
+              ELSE I1.WSP
+         END,
+         g.grc_rate,
+         GRC_item_rem,
+         I1.GST_ITC_APPL,
+         g.invbatch_serial_code,
+         i1.item_management_mode
+
+UNION ALL
+
+SELECT I1.icode,
+       CASE WHEN i1.item_management_mode = 'I' THEN g.rate
+            ELSE (db_fun_item_rate_web(g.GRCdt, g.pcode, I1.icode, 'P', p_ou_admcmptax_code, g.grc_rate, p_connect_site, g.invbatch_serial_code))
+       END rate,
+       CASE WHEN i1.price_management = 'B' THEN b.mrp
+            ELSE I1.MRP
+       END rsp,
+       CASE WHEN i1.price_management = 'B' THEN b.listed_mrp
+            ELSE I1.Listed_MRP
+       END mrp,
+       CASE WHEN i1.price_management = 'B' THEN b.wsp
+            ELSE I1.WSP
+       END WSP,
+       g.grc_rate,
+       grc_item_rem,
+       i1.gst_itc_appl,
+       coalesce(t.qty, (SUM(coalesce(grcqty, 0)))) grcqty,
+       t.invbatch_serial_code AS invbatch_serial_code,
+       i1.item_management_mode
+FROM int$stg_grcadhoc_all_fld g
+INNER JOIN invitem i1 ON (   UPPER(I1.icode) = UPPER(G.icode_barcode)
+                      OR UPPER(I1.barcode) = UPPER(G.icode_barcode)) 
+LEFT JOIN int$stg_grcadhoc_temp t ON (g.grccode = t.grccode)
+LEFT JOIN invbatch_serial b ON (t.invbatch_serial_code = b.code)
+WHERE G.GRCcode = p_GRCcode
+  AND g.USERID = P_USERID
+  AND g.invbatch_serial_code IS NULL
+GROUP BY I1.icode,
+         CASE WHEN i1.item_management_mode = 'I' THEN g.rate
+              ELSE (db_fun_item_rate_web(g.GRCdt, g.pcode, I1.icode, 'P', p_ou_admcmptax_code, g.grc_rate, p_connect_site, g.invbatch_serial_code))
+         END,
+         CASE WHEN i1.price_management = 'B' THEN b.mrp
+              ELSE I1.MRP
+         END,
+         CASE WHEN i1.price_management = 'B' THEN b.listed_mrp
+              ELSE I1.Listed_MRP
+         END,
+         CASE WHEN i1.price_management = 'B' THEN b.wsp
+              ELSE I1.WSP
+         END,
+         g.grc_rate,
+         grc_item_rem,
+         i1.gst_itc_appl,
+         t.qty,
+         t.invbatch_serial_code,
+         i1.item_management_mode;
+
+   --END Rev : 001
+BEGIN
+      g_mark := 'P01';
+
+      -- Deleting all log against the PO creation for the user
+      DELETE FROM admerraudit err
+       WHERE err.usrname = USER AND err.prcname = 'GRCADHOC' AND err.errcode = p_userid::text;
+
+     DELETE FROM int$stg_grcadhoc_temp where userid = p_userid;
+
+     /*CALL erraudit(USER,
+                'GRCADHOC',
+                p_userid,
+                '1 - Web import GRC creation start');*/
+
+      BEGIN
+         SELECT cmpcode, itemprefix
+           INTO STRICT v_cmpcode, v_itemprefix
+           FROM admcmp;
+      EXCEPTION
+         WHEN OTHERS
+         THEN
+           /*CALL erraudit(USER,
+                      'GRCADHOC',
+                      '1',
+                      SQLERRM);*/
+      END;
+
+      -- Updating ordcode in int$stg_createpo_all_fld
+      FOR i IN (  SELECT DISTINCT SUPPLIER_SLID, docno
+                    FROM int$stg_GRCADHOC_all_fld
+                   WHERE userid = p_userid
+                ORDER BY 1, 2)
+      LOOP
+         SELECT nextval('erp01') INTO STRICT v_GRCcode;
+
+         /*v_status :=
+               'update int$stg_GRCADHOC_all_fld '
+            || 'set    grccode = '
+            || v_GRCcode
+            || ' '
+            || 'where  SUPPLIER_SLID = '''
+            || i.SUPPLIER_SLID
+            || ''' '
+            || 'and    docno = '''
+            || i.docno
+            || ''' ';*/
+			v_status :=
+               'update int$stg_GRCADHOC_all_fld '
+            || 'set    grccode = '
+            || quote_nullable(v_GRCcode::text)
+            || 'where  SUPPLIER_SLID = '
+            || quote_nullable(i.SUPPLIER_SLID)
+            || ''
+            || 'and    docno = '
+            || quote_nullable(i.docno)
+            || '';
+
+        /*CALL erraudit(USER,
+                   'GRCADHOC',
+                   p_userid,
+                   '76 - Updating grccode - ' || v_status);*/
+		
+		EXECUTE v_status;		   
+
+         --EXECUTE IMMEDIATE v_status;
+         --v_status := db_fun_commit_statement(USER, v_status);
+      END LOOP;
+
+-- START REV : 005
+    FOR b IN C_BATCH2
+          LOOP
+              update int$stg_grcadhoc_all_fld a
+                  set batch_serial_no = b.batch_serial_no,
+                      invbatch_serial_code = b.code
+              where  a.lineno = b.lineno
+              and    a.batch_serial_no is null
+              and    a.userid = p_userid;
+          END LOOP;
+
+    FOR d IN C_BATCH3(v_grccode)
+          LOOP
+             select count(*) into STRICT v_cnt_batch from invbatch_serial
+             where batch_serial_no = d.batch_serial_no
+             and   icode = d.icode;
+
+             IF coalesce(v_cnt_batch,0) = 0
+              THEN
+                return_string_batch := erpcreatebatch(d.icode_barcode::text, 
+													  d.batch_serial_no::text, 
+													  d.mfg_date::timestamp without time zone, 
+													  d.valid_upto::timestamp without time zone, 
+													  d.mrp::bigint, 
+													  d.wsp::bigint, 
+													  d.rsp::bigint, 
+													  d.standardrate::bigint, 
+													  d.grcqty::bigint, 
+													  v_classname::text, 
+													  p_userid, 
+													  v_grccode::bigint);
+                    IF return_string_batch IS NOT NULL
+                        THEN
+                            update int$stg_grcadhoc_all_fld a
+                                set invbatch_serial_code = substr(return_string_batch, instr(return_string_batch,'~', -1) + 1),
+                                    batch_serial_no = substr(return_string_batch, 1, position('~' in return_string_batch)-1)
+                            where  lineno = d.lineno
+                            and    userid = p_userid
+                            and    d.item_management_mode = 'B'
+                            and    a.batch_serial_no is null;
+							
+                            update int$stg_grcadhoc_all_fld a
+                                set invbatch_serial_code = substr(return_string_batch, instr(return_string_batch,'~', -1) + 1)
+                            where  lineno = d.lineno
+                            and    userid = p_userid
+                            and    d.item_management_mode = 'S'
+                            and    a.batch_serial_no is not null;
+
+                            update invbatch_serial
+                                set entcode = v_grccode,
+                                    enttype = 'GRC',
+                                    last_in_date = d.grcdt
+                            where code = substr(return_string_batch, instr(return_string_batch,'~', -1) + 1)::bigint;
+
+                            FOR F IN C_BATCH4(v_grccode)
+                            LOOP
+                                update invbatch_serial
+                                    set entcode = v_grccode,
+                                        enttype = 'GRC',
+                                        last_in_date = d.grcdt
+                                where code = f.invbatch_serial_code
+                                and   d.item_management_mode = 'S';
+                            END LOOP;
+                    ELSE
+                        RAISE EXCEPTION 'e_usr_exp' USING ERRCODE = '50001';
+                    END IF;
+             END IF;
+          END LOOP;
+
+    FOR a IN C_BATCH1
+          LOOP
+             update int$stg_grcadhoc_all_fld
+             set invbatch_serial_code = a.code,
+                mfg_date = a.mfg_date,
+                valid_upto = a.exp_date,
+                mrp = a.listed_mrp,
+                wsp = a.wsp,
+                rsp = a.mrp
+             where  lineno = a.lineno
+             and    userid = p_userid;
+          END LOOP;
+
+-- END REV : 005
+      FOR i IN c1
+      LOOP
+         FOR j IN c2(i.GRCcode)
+         LOOP
+            V_SCHEME_DOCNO :=
+               db_fun_document_number_web(NULL,
+                                           J.doccode,
+                                           J.ycode,
+                                           TO_CHAR(J.grcdt,'DD-MM-YYYY'),
+                                           NULL,
+                                           j.admsite_code,
+                                           j.admou_code,
+                                           'ProcGRCAdhoc');
+            -- END REV : 003
+           /*CALL erraudit(
+               USER,
+               'GRCADHOC',
+               p_userid,
+                  '71 - Inserting main entry ... '
+               || i.GRCcode::TEXT
+               || '*'
+               || J.YCODE::text);*/
+
+            BEGIN
+               SELECT A.CODE
+                 INTO STRICT V_ADMCURRENCY_CODE
+                 FROM ADMCURRENCY A
+                WHERE A.ISBASE = 1;
+            EXCEPTION
+               WHEN OTHERS
+               THEN
+                  NULL;
+            END;
+
+            v_pricelistcode := NULL;
+            v_termcode := NULL;
+            v_termname := NULL;
+            v_tradegrp_code := NULL;
+            v_chng_hdr := NULL;
+            v_chng_line := NULL;
+            v_formcode := NULL;
+            v_flag := NULL;
+            v_acrate := NULL;
+            v_icode := NULL;
+
+            --v_flag :=
+               CALL db_pkg_get_data_procurement$get_tradegrp_term(
+                  p_connect_ou,
+                  p_CONNECT_SITE,
+                  J.pcode,
+                  v_termcode,
+                  v_tradegrp_code,
+                  v_formcode);
+
+            IF    v_termcode IS NULL
+               OR v_tradegrp_code IS NULL
+               OR v_formcode IS NULL
+            THEN
+             /*CALL erraudit('F',
+                         'F',
+                         'F',
+                         J.pcode);*/
+               G_ERROr := 'Term / Trdaegroup / Formname can not be null';
+               ROLLBACK;
+               RAISE EXCEPTION 'insert_violation' USING ERRCODE = '50002';
+            -- EXIT;
+            END IF;
+
+            INSERT INTO invgrcmain(ADMCURRENCY_CODE,
+                                    ADMOU_CODE,
+                                    ADMSITE_CODE_IN,
+                                    AGCODE,
+                                    AUTH_ECODE,
+                                    AUTH_TIME,
+                                    CHGAMT,
+                                    DISCHGPER,
+                                    DOCCODE,
+                                    DOCNO,
+                                    ECODE,
+                                    EXRATE,
+                                    EXT,
+                                    FINTRADEGRP_CODE,
+                                    FORMCODE,
+                                    GRCCODE,
+                                    GRCDT,
+                                    GRCNO,
+                                    GRSAMT,
+                                    INTGCODE,
+                                    INVGATEIN_CODE,
+                                    LAST_ACCESS_ECODE,
+                                    LAST_ACCESS_TIME,
+                                    LGTCODE,
+                                    LGTRECQTY,
+                                    LOCCODE,
+                                    NETAMT,
+                                    ORDCMPCODE,
+                                    ORDCODE,
+                                    PCODE,
+                                    PSITE_STOCKPOINT_CODE,
+                                    PURTERMCODE,
+                                    RCINVQTY,
+                                    RCQTY,
+                                    REM,
+                                    RTINVQTY,
+                                    RTQTY,
+                                    SCHEME_DOCNO,
+                                    SET_APPLICABLE,
+                                    TAXCHGPER,
+                                    TIME,
+                                    WHETHER_CONSIGNMENT,
+                                    YCODE,
+                                    GENO,
+                                    --START REV : 001
+                                    ENTRY_MODE,
+                                    ENTRY_SOURCE               --END REV : 001
+                                                )
+                 VALUES (V_ADMCURRENCY_CODE,
+                         p_connect_ou,
+                         P_CONNECT_SITE,
+                         J.AGCODE,
+                         NULL,                                   --AUTH_ECODE,
+                         NULL,                                    --AUTH_TIME,
+                         NULL,                                       --CHGAMT,
+                         NULL,                                    --DISCHGPER,
+                         J.DOCCODE,
+                         J.DOCNO,
+                         p_userid,                                  --i.ECODE,
+                         J.EXRATE,
+                         'N',
+                         v_tradegrp_code,
+                         V_FORMCODE,
+                         i.GRCCODE,
+                         j.GRCDT,
+                         i.GRCCODE,
+                         NULL,                                       --GRSAMT,
+                         NULL,                                     --INTGCODE,
+                         NULL,                               --INVGATEIN_CODE,
+                         p_userid,
+                         clock_timestamp(),
+                         NULL,                                      --LGTCODE,
+                         NULL,                                    --LGTRECQTY,
+                         j.loccode,                                 --LOCCODE,
+                         NULL,                                       --NETAMT,
+                         NULL,                                   --ORDCMPCODE,
+                         NULL,                                      --ORDCODE,
+                         j.PCODE,
+                         NULL,                        --PSITE_STOCKPOINT_CODE,
+                         V_TERMCODE,
+                         NULL,                                     --RCINVQTY,
+                         NULL,                             --j.GRCQTY,--RCQTY,
+                         j.grc_remarks,                --I.GRC_item_rem,--REM,
+                         NULL,                                     --RTINVQTY,
+                         NULL,                                        --RTQTY,
+                         -- START REV : 003
+                         -- 'Automatic',                        --V_SCHEME_DOCNO,
+                         V_SCHEME_DOCNO,
+                         -- END REV : 003
+                         'N',                                --SET_APPLICABLE,
+                         NULL,                                    --TAXCHGPER,
+                         clock_timestamp(),                                      --TIME,
+                         J.WHETHER_CONSIGNMENT,
+                         J.YCODE,
+                         J.REF_NO,
+                         --START REV : 001
+                         'A',                                     --ENTRY_MODE
+                         'EXCEL'                                --ENTRY_SOURCE
+                                --END REV : 001
+                         );
+
+            -- Document detail entry
+            FOR k IN c3(i.GRCcode, j.ou_admcmptax_code)
+            LOOP
+               IF ((K.ICODE IS NULL OR coalesce(K.RATE, 0) = 0) AND K.INVBATCH_SERIAL_CODE IS NULL)
+               THEN
+                  G_ERROR := 'Rate can not be zero';
+                  ROLLBACK;
+                  RAISE EXCEPTION 'insert_violation' USING ERRCODE = '50002';
+               ELSE
+               G_ERROR := K.RATE;
+               END IF;
+
+               
+
+               INSERT INTO INVGRCDET(GRCCODE,
+                                      GRCNO,
+                                      GRCDT,
+                                      ORDCODE,
+                                      LOCCODE,
+                                      ICODE,
+                                      ACQTY,
+                                      ACRATE,
+                                      RTQTY,
+                                      YCODE,
+                                      RCINVQTY,
+                                      RTINVQTY,
+                                      REM,
+                                      GRSAMT,
+                                      DISCOUNT,
+                                      TAXAMT,
+                                      NETAMT,
+                                      TAXCHGPER,
+                                      DISCHGPER,
+                                      --  CODE,
+                                      PO_CODE,
+                                      POICODE,
+                                      CHGAMT,
+                                      EFFAMT,
+                                      FORGN_CURR_RATE,
+                                      EXCISEMAIN_CODE,
+                                      EX_BASIS,
+                                      EX_EFFRATE,
+                                      EX_ABTFACTOR,
+                                      EX_DUTYFACTOR,
+                                      EX_CESSFACTOR,
+                                      EX_ROUNDOFF,
+                                      EX_APPAMT,
+                                      EX_DUTYAMT,
+                                      EX_CESSAMT,
+                                      RSP,
+                                      INVSETMAIN_CODE,
+                                      EX_APPLICABLE_FROM,
+                                      --START REV : 001
+                                      ORATE,
+                                      MRP,
+                                      WSP,
+                                      GST_ITC_APPL,
+                                      --END REV : 001
+                                      --START REV : 005
+                                      INVBATCH_SERIAL_CODE
+                                      --START REV : 005
+                                      )
+                       VALUES (
+                                 i.GRCcode,
+                                 i.GRCcode,
+                                 J.GRCDT,
+                                 NULL,                               --ORDCODE
+                                 j.loccode,                       --I.LOCCODE,
+                                 K.ICODE,
+                                 K.GRCQTY,
+                                 coalesce(K.GRC_RATE, K.RATE),
+                                 NULL,                                 --RTQTY
+                                 J.YCODE,
+                                 NULL,                             --RCINVQTY,
+                                 NULL,                             --RTINVQTY,
+                                 K.GRC_ITEM_REM,
+                                 ROUND (
+                                    (coalesce(k.rate, 0) * coalesce(k.GRCqty, 0)),
+                                    2),                              --GRSAMT,
+                                 NULL,                             --DISCOUNT,
+                                 NULL,                               --TAXAMT,
+                                 ROUND (
+                                    (coalesce(k.rate, 0) * coalesce(k.GRCqty, 0)),
+                                    2),                              --NETAMT,
+                                 NULL,                            --TAXCHGPER,
+                                 NULL,                            --DISCHGPER,
+                                 -- CODE,
+                                 NULL,                              --PO_CODE,
+                                 NULL,                              --POICODE,
+                                 NULL,                               --CHGAMT,
+                                 NULL,                               --EFFAMT,
+                                 NULL,                      --FORGN_CURR_RATE,
+                                 NULL,                      --EXCISEMAIN_CODE,
+                                 NULL,                             --EX_BASIS,
+                                 NULL,                           --EX_EFFRATE,
+                                 NULL,                         --EX_ABTFACTOR,
+                                 NULL,                        --EX_DUTYFACTOR,
+                                 NULL,                        --EX_CESSFACTOR,
+                                 NULL,                          --EX_ROUNDOFF,
+                                 NULL,                            --EX_APPAMT,
+                                 NULL,                           --EX_DUTYAMT,
+                                 NULL,                           --EX_CESSAMT,
+                                 K.RSP,
+                                 NULL,                      --INVSETMAIN_CODE,
+                                 NULL,                    --EX_APPLICABLE_FROM
+                                 --START REV : 001
+                                 K.RATE,                               --ORATE
+                                 K.MRP,                                  --MRP
+                                 K.WSP,                                  --WSP
+                                 K.GST_ITC_APPL,                 --GST_ITC_APPL
+                                 --END REV : 001
+                                 --START REV : 005
+                                 K.INVBATCH_SERIAL_CODE
+                                 --START REV : 005
+                                 );
+            END LOOP;                             -- Document detail entry END
+            -- Insert into excise information
+            CALL int$pkg_grcadhoc_loc_proc_insert_excise_data(i.GRCcode);
+
+           /*CALL erraudit(USER,
+                      'grcadhoc',
+                      p_userid,
+                      '73 - Calculating line level charge ... ');*/
+
+            CALL int$pkg_grcadhoc_calculate_term_item(i.GRCcode,
+                                 J.GRCDT,
+                                 v_tradegrp_code,
+                                 v_FORMCODE,
+                                 J.PCODE,
+                                 v_TERMCODE);
+
+            V_DET_CNT := 0;
+
+            SELECT COUNT(*)
+              INTO STRICT V_DET_CNT
+              FROM INVGRCDET
+             WHERE GRCCODE = i.GRCcode;
+
+            IF coalesce(V_DET_CNT, 0) = 0
+            THEN
+               ROLLBACK;
+               G_ERROR := 'Detail record not found';
+               RAISE EXCEPTION 'insert_violation' USING ERRCODE = '50002';
+            END IF;
+         -- Header level charge
+         --calculate_term (i.GRCcode, j.purtermcode);
+         END LOOP;                                  -- Document main entry END
+      END LOOP;                                         -- Suplier  wise entry
+     /*CALL erraudit(USER,
+                'grcadhoc',
+                p_userid,
+                '76 - Updating charge amount in  main table ... ');*/
+
+      FOR i IN c1
+      LOOP
+         v_scheme_docno := NULL;
+
+         SELECT DISTINCT P_CONNECT_OU,
+                         P_CONNECT_SITE,
+                         ycode,
+                         GRCdt
+           INTO STRICT v_admou_code,
+                v_admsite_code,
+                v_ycode,
+                v_GRCdt
+           FROM int$stg_grcadhoc_all_fld
+          WHERE GRCcode = i.GRCcode;
+
+         SELECT coalesce(SUM(coalesce(netamt, 0)), 0)
+           INTO STRICT v_grsamt
+           FROM INVGRCDET
+          WHERE GRCcode = i.GRCcode;
+
+         SELECT round((coalesce(SUM(coalesce(chgamt, 0)), 0))::numeric, 2)
+           INTO STRICT v_chgamt
+           FROM INVGRCchg
+          WHERE GRCcode = i.GRCcode;
+
+         v_netamt := coalesce(v_grsamt, 0) + coalesce(v_chgamt, 0);
+
+         UPDATE INVGRCMAIN
+            SET grsamt = v_grsamt,
+                chgamt = v_chgamt,
+                netamt = v_netamt,
+                GRCdt = v_GRCdt,
+                GRCno = NULL--db_pkg_genentryno.g_tempno
+          WHERE GRCcode = i.GRCcode;
+
+         UPDATE INVGRCDET
+            SET GRCNO =
+                   (SELECT M.GRCNO
+                      FROM INVGRCMAIN M
+                     WHERE M.GRCCODE = I.GRCCODE)
+          WHERE GRCcode = i.GRCcode;
+
+         SELECT scheme_docno
+           INTO STRICT v_scheme_docno
+           FROM INVGRCMAIN
+          WHERE GRCcode = i.GRCcode;
+
+         IF UPPER(v_scheme_docno) = 'AUTOMATIC'
+         THEN
+            ROLLBACK;
+            RAISE EXCEPTION 'insert_violation' USING ERRCODE = '50002';
+         END IF;
+
+         UPDATE int$stg_GRCADHOC_all_fld
+            SET GRC_scheme_docno = v_scheme_docno,
+                scheme_docno = v_scheme_docno
+          WHERE GRCcode = i.GRCcode;
+          
+          -- start rev : 004
+          CALL DB_PRO_UPD_LAST_IN_RATE(i.GRCcode,
+                                  'GRC',
+                                  NULL,
+                                  NULL,
+                                  v_GRCdt,
+                                  NULL,
+                                  NULL,
+                                  v_admsite_code,
+                                  v_admou_code,
+                                  NULL);
+          -- End rev : 004         
+      END LOOP;
+
+      -- log to be added in history table
+      SELECT nextval('int$error_log_code') INTO STRICT vsession;
+
+      vdetailtbl :=
+            'CREATE TABLE ginarchive.GRCADHOC_'
+         || vsession
+         || ' AS
+                                    SELECT TRANSACTION_SITE, GRC_DATE GRC_DATE,DOCUMENT_NO,STOCK_POINT_NAME
+                                    FROM
+                                    (
+                                    SELECT  b.name TRANSACTION_SITE,a.GRCDT GRC_DATE, a.DOCNO DOCUMENT_NO,a.STOCKPOINT_NAME STOCK_POINT_NAME
+                                            ,COUNT(1)
+                                    FROM int$stg_GRCADHOC_all_fld a, ADMSITE b,INVGRCMAIN P
+                                    WHERE a.grccode = P.GRCCODE
+                                    AND  P.ADMSITE_CODE_IN = B.CODE
+                                    AND userid ='
+         || p_userid::text
+         || ' GROUP BY b.name ,a.GRCDT, a.DOCNO ,a.STOCKPOINT_NAME
+                                    )B';
+
+      EXECUTE vdetailtbl;
+
+      vdetailrec := 'SELECT count(1) FROM ginarchive.GRCADHOC_' || vsession::text;
+
+      EXECUTE vdetailrec INTO STRICT vcount;
+
+      IF coalesce(vcount, 0) = 0
+      THEN
+         RAISE EXCEPTION 'insert_violation' USING ERRCODE = '50002';
+      END IF;
+
+      INSERT INTO int$history(code,
+                               importedby,
+                               importedon,
+                               classname,
+                               summary,
+                               history_detail_tablename,
+                               history_detail_row_count)
+           --values (int$history_code.nextval, p_userid, sysdate, 'CREATEPO', vcount::TEXT||' PO imported successfully.', 'createpoimport_'||vsession, vcount);
+           VALUES (nextval('int$history_code'),
+                   p_userid,
+                   clock_timestamp(),
+                   'GRCADHOC',
+                   vcount::TEXT || ' GRC imported successfully.',
+                   'ginarchive.GRCADHOC_' || vsession::text,
+                   vcount);
+
+      RETURN('1');
+   EXCEPTION
+   -- START REV : 005
+      WHEN SQLSTATE '50001' THEN
+         RETURN('0');
+   -- END REV : 005
+      WHEN SQLSTATE '50002' THEN
+         errcode := -02222;
+         errmsg := 'Data inconsistency / Zero Rate Item.';
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'GRCADHOC',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'GRCADHOC',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

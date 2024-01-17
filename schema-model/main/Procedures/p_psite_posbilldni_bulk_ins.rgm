@@ -1,0 +1,66 @@
+procedure "main"."p_psite_posbilldni_bulk_ins(bigint, text)" {
+  text = """
+
+BEGIN
+   DELETE FROM psite_posbilldn
+         WHERE code IN (SELECT p_sitecuid || '-' || posbilldnid
+                          FROM staging_posbilldni);
+   INSERT INTO psite_posbilldn(code,
+                                admsite_code,
+                                dnno,
+                                dndate,
+                                psite_customer_code,
+                                remarks,
+                                amount,
+                                dnibilltype,
+                                dni_bill_code,
+                                isadjusted,
+                                dnadate,
+                                dnabilltype,
+                                dna_bill_code,
+                                terminalid,
+                                psite_docscheme_code
+                                )
+      SELECT p_sitecuid || '-' || posbilldnid,
+             p_admsite_code,
+             dnno,
+             dndate,
+             coalesce(m.new_psite_customer_code, s.customerid) customerid,
+             remarks,
+             amount,
+             dnibilltype,
+             p_sitecuid || '-' || dnibillid,
+             isadjusted,
+             dnadate,
+             dnabilltype,
+             CASE
+                WHEN dnabillid IS NOT NULL
+                THEN
+                   p_sitecuid || '-' || dnabillid
+                ELSE
+                   NULL
+             END
+                dnabillid,
+               terminalid,
+               docschemeid
+        FROM staging_posbilldni s
+LEFT OUTER JOIN psite_customer_merge m ON (s.customerid = m.old_psite_customer_code);
+END;
+"""
+  arguments = <
+    {
+      name = p_admsite_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_sitecuid
+      type = text
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

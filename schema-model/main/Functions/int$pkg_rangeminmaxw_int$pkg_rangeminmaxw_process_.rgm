@@ -1,0 +1,208 @@
+function "main"."int$pkg_rangeminmaxw_int$pkg_rangeminmaxw_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        errmsg              varchar(500);
+        vsession            varchar(100);
+        vdetailtbl          varchar(1000);
+        vdetailrec          varchar(500);
+        errcode             bigint;
+        vmaxno              bigint;
+        vcount              bigint;
+		-- start rev : 001
+		v_repl_type			varchar(50);
+		-- end rev : 001
+BEGIN
+        -- start rev : 001
+		
+
+		select distinct
+			   upper(a.repln_type)
+		into STRICT   v_repl_type
+		from   int$stg_rangeminmaxw a
+		where  a.userid = p_userid;
+
+		if	   v_repl_type = 'TRANSFER' then
+			   INSERT INTO pln_assrt_range (admsite_code,pln_assrt_code,min_qty,max_qty,repln_source,repln_admsite_code,
+	                        repln_vendor_code,repln_jobber_code,isblock,createdby,createdon)
+    SELECT
+		SRC.admsite_code,
+		SRC.pln_assrt_code,
+		SRC.min_qty,
+		SRC.max_qty,
+		SRC.repln_source,
+		SRC.repln_admsite_code,
+		SRC.repln_vendor_code,
+		SRC.repln_jobber_code,
+		NULL,
+		p_userid,
+		clock_timestamp()
+		FROM
+		(SELECT  distinct
+                        s.code          admsite_code,
+                        a.assort_code   pln_assrt_code,
+                        a.min_qty       min_qty,
+                        a.max_qty       max_qty,
+	                        case when upper(a.repln_type) = 'TRANSFER' then 'TRN'
+	                             when upper(a.repln_type) = 'PROCURE' then 'PROC'
+	                             when upper(a.repln_type) = 'PRODUCE' then 'PRO'
+	                             else
+	                                    null
+	                        end         repln_source,
+	                        st.code     repln_admsite_code,
+	                        null        repln_vendor_code,
+	                        null        repln_jobber_code
+	                from
+	                        int$stg_rangeminmaxw    a,
+	                        admsite                 s,
+							admsite                 st
+	                where
+	                        upper(a.site_shortname) = upper(s.shrtname)
+	                and     a.repln_shrt_name = st.shrtname
+					and     a.userid = p_userid
+		 ) SRC
+    ON CONFLICT (admsite_code, pln_assrt_code)
+	DO UPDATE
+	SET min_qty = EXCLUDED.min_qty,
+	    max_qty            = EXCLUDED.max_qty,
+	    repln_source       = EXCLUDED.repln_source,
+	    repln_admsite_code = EXCLUDED.repln_admsite_code,
+	    repln_vendor_code  = EXCLUDED.repln_vendor_code,
+	    repln_jobber_code  = EXCLUDED.repln_jobber_code,
+	    isblock             = NULL,
+	    lastmodifiedby     = p_userid,
+	    lastmodifiedon     = clock_timestamp();
+		
+		elsif v_repl_type in ('PROCURE','PROCURE') then
+            INSERT INTO pln_assrt_range (admsite_code,pln_assrt_code,min_qty,max_qty,repln_source,repln_admsite_code,
+                            repln_vendor_code,repln_jobber_code,isblock,createdby,createdon)
+    SELECT
+		SRC.admsite_code,
+		SRC.pln_assrt_code,
+		SRC.min_qty,
+		SRC.max_qty,
+		SRC.repln_source,
+		SRC.repln_admsite_code,
+		SRC.repln_vendor_code,
+		SRC.repln_jobber_code,
+		NULL,
+		p_userid,
+		clock_timestamp()
+		FROM
+		(SELECT  distinct
+                            s.code          admsite_code,
+                            a.assort_code   pln_assrt_code,
+                            a.min_qty       min_qty,
+                            a.max_qty       max_qty,
+                            case when upper(a.repln_type) = 'TRANSFER' then 'TRN'
+                                 when upper(a.repln_type) = 'PROCURE' then 'PROC'
+                                 when upper(a.repln_type) = 'PRODUCE' then 'PRO'
+                                 else
+                                        null
+                            end             repln_source,
+                            null            repln_admsite_code,
+                            case when upper(a.repln_type) = 'PROCURE' then
+                                    f.slcode
+                                 else
+                                    null
+                            end             repln_vendor_code,
+                            case when upper(a.repln_type) = 'PRODUCE' then
+                                    f.slcode
+                                 else
+                                    null
+                            end             repln_jobber_code
+                    from
+                            int$stg_rangeminmaxw    a,
+                            admsite                 s,
+                            finsl                   f
+                    where
+                            upper(a.site_shortname) = upper(s.shrtname)
+                    and     a.repln_shrt_name = f.slid
+                    and     a.userid = p_userid
+		 ) SRC
+    ON CONFLICT (admsite_code, pln_assrt_code)
+	DO UPDATE
+	SET min_qty            = EXCLUDED.min_qty,
+        max_qty            = EXCLUDED.max_qty,
+        repln_source       = EXCLUDED.repln_source,
+        repln_admsite_code = EXCLUDED.repln_admsite_code,
+        repln_vendor_code  = EXCLUDED.repln_vendor_code,
+        repln_jobber_code  = EXCLUDED.repln_jobber_code,
+        isblock             = NULL,
+        lastmodifiedby     = p_userid,
+        lastmodifiedon     = clock_timestamp();
+		end if;
+
+        --COMMIT;
+
+        -- log to be added in history table
+        select  nextval('int$error_log_code')
+        into STRICT    vsession
+;
+
+        -- start rev : 002
+        --vdetailtbl := 'create table rangeminmaxw_'||vsession||' as select distinct site_shortname,assrt_name,assort_code,repln_type,repln_shrt_name from int$stg_rangeminmaxw where userid ='|| p_userid::text;
+        vdetailtbl := 'create table ginarchive.rangeminmaxw_'||vsession||' as select distinct site_shortname,assrt_name,assort_code,repln_type,repln_shrt_name from int$stg_rangeminmaxw where userid ='|| p_userid::text;
+        -- end rev : 002
+        EXECUTE vdetailtbl;
+
+        -- start rev : 002
+        --vdetailrec := 'select count(1) from rangeminmaxw_'||vsession;
+        vdetailrec := 'select count(1) from ginarchive.rangeminmaxw_'||vsession;
+        -- end rev : 002
+        EXECUTE vdetailrec into STRICT vcount;
+
+        insert into int$history(code, importedby, importedon, classname, summary, history_detail_tablename, history_detail_row_count)
+        -- start rev : 002
+        --values (int$history_code.nextval, p_userid, sysdate, 'RANGEMINMAXW', vcount::TEXT||' Data updated successfully.', 'rangeminmaxw_'||vsession, vcount);
+        values (nextval('int$history_code'), p_userid, clock_timestamp(), 'RANGEMINMAXW', vcount::TEXT||' Data updated successfully.', 'ginarchive.rangeminmaxw_'||vsession, vcount);
+        -- end rev : 002
+        --COMMIT;
+
+        return('1');
+
+    exception
+        when others then
+            errcode := SQLSTATE;
+            errmsg  := sqlerrm;
+
+            -- error log for oracle internal error
+            insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            values (nextval('int$error_log_code'), 0, 'RANGEMINMAXW', p_userid, errcode, 'INT$PKG_RANGEMINMAXW_PROCESS'||'==>'||errmsg, clock_timestamp());
+            --COMMIT;
+
+            return('0');
+    end;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

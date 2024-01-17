@@ -1,0 +1,190 @@
+procedure "main"."db_pro_update_inv_valuation(text, timestamp without time zone, text, text, bigint)" {
+  text = """
+
+DECLARE
+
+    v_itemtab	varchar(30);
+	v_ratetab	varchar(30);
+	v_last_in_rate	double precision;
+	v_rows_updated	bigint;
+	errcode		varchar(50);
+	errmsg		varchar(2000);
+	v_rate		double precision;
+
+BEGIN
+-- Starting procedure
+	IF p_report = 'V' THEN -- For Inventory VAluation
+		v_itemtab := 'GLOBAL_INVITEM';
+		v_ratetab := 'GLOBAL_INVITEM_RATE';
+	ELSIF p_report = 'S' THEN -- For Sale Stock Analysis
+		v_itemtab := 'TEMP_ITEM_SALE_STOCK';
+		v_ratetab := 'TEMP_ITEM_SALE_STOCK_RATE';
+	END IF;
+	EXECUTE 'TRUNCATE TABLE '||v_itemtab||' REUSE STORAGE';
+	EXECUTE 'TRUNCATE TABLE '||v_ratetab||' REUSE STORAGE';
+	EXECUTE 'INSERT INTO '||v_itemtab||' '
+			|| '(icode, grpcode, cname1, cname2, cname3, cname4, cname5,'
+			|| 'cname6, rate, costrate, mrp, wsp, charge, unitname, barcode, partyname) '
+			|| 'SELECT I.icode, A.grpcode, I.cname1, I.cname2, I.cname3, I.cname4, I.cname5,'
+			|| 'I.cname6,0, I.costrate, I.mrp, I.wsp, I.charge, I.unitname, I.barcode, I.partyname '
+			|| 'FROM INVITEM I,INVARTICLE A '
+			|| REPLACE(p_grp_string, 'GRPCODE', 'I.GRPCODE')
+			|| 'AND I.INVARTICLE_CODE = A.CODE ';
+	COMMIT;
+	IF p_valuation_type IN ('S', 'W', 'F') THEN
+		RETURN;
+	END IF;
+	/* Calculating Last-In Rate, and populating Rate Table */
+
+	DECLARE
+		/*TYPE ICODE_type IS TABLE OF GLOBAL_INVITEM_RATE.ICODE%TYPE INDEX BY integer;
+		TYPE RATE_type IS TABLE OF GLOBAL_INVITEM_RATE.RATE%TYPE INDEX BY integer;
+		ICODE_col	ICODE_type;
+		RATE_col	RATE_type;
+		c1		REFCURSOR;*/
+		ICODE_RATE 		TYPE_ICODE_RATE_DB_PRO_UPDATE_INV_VALUATION[];
+		V_COUNT BIGINT;
+	BEGIN
+		V_COUNT := 0;
+		LOOP 
+			ICODE_RATE := '{}';
+			
+			SELECT ARRAY_AGG(T)
+			INTO ICODE_RATE
+			FROM (SELECT Q.ICODE,Q.RATE FROM 
+					( 
+					SELECT 
+						STOCK.ICODE, 
+						STOCK.RATE, 
+						ROW_NUMBER() OVER (PARTITION BY STOCK.ICODE ORDER BY STOCK.ENTDT DESC, STOCK.RATE DESC) RN 
+					FROM INVSTOCK STOCK, v_itemtab ITEM
+					WHERE UPD_COST = 'Y'
+					AND STOCK.ICODE = ITEM.ICODE 
+					AND STOCK.ADMOU_CODE=coalesce(P_OUCODE,0)
+					AND STOCK.ENTDT <= P_ASON) Q 
+			WHERE Q.ICODE > V_COUNT AND Q.RN=1 
+			ORDER BY Q.ICODE 
+		    LIMIT 100)T;
+						
+			EXIT WHEN array_lower(ICODE_RATE) IS NULL;
+				
+			FOR I IN array_lower(ICODE_RATE,1)..array_upper(ICODE_RATE,1) 
+			LOOP
+				V_COUNT := ICODE_RATE[I].icode;
+				EXECUTE 
+					'INSERT INTO '||v_ratetab||' (ICODE, RATE) VALUES ($1,$2)'
+				USING	ICODE_RATE[I].ICODE, ICODE_RATE[I].RATE;
+			END LOOP;
+		END LOOP;	
+			
+			/*OPEN c1 FOR(
+				'SELECT Q.ICODE,Q.RATE FROM ( '||
+				'SELECT '||
+					'STOCK.ICODE, '||
+					'STOCK.RATE, '||
+					'ROW_NUMBER() OVER (PARTITION BY STOCK.ICODE ORDER BY STOCK.ENTDT DESC, STOCK.RATE DESC) RN '||
+				'FROM INVSTOCK STOCK, '||v_itemtab||' ITEM '||
+				'WHERE UPD_COST = ''Y'' '||
+				'AND STOCK.ICODE = ITEM.ICODE '||
+				'AND STOCK.ADMOU_CODE='||coalesce(P_OUCODE,0)||' '||
+				'AND STOCK.ENTDT <= '''||P_ASON||''') Q '||
+				'WHERE Q.ICODE > V_COUNT AND Q.RN=1 ORDER BY Q.ICODE' 
+			);
+				LOOP
+				FETCH c1
+					BULK COLLECT INTO ICODE_col, RATE_col LIMIT 100;
+				EXIT WHEN ICODE_col.COUNT = 0;
+					FORALL i IN ICODE_col.FIRST .. ICODE_col.LAST
+						EXECUTE
+							'INSERT INTO '||v_ratetab||' (ICODE, RATE) VALUES (:1,:2)'
+						USING	ICODE_col(i), RATE_col(i);
+						COMMIT;
+				END LOOP;
+			CLOSE c1;*/
+	END;
+	/* Updating rate to item table */
+
+	DECLARE
+		/*TYPE ROWID_type IS TABLE OF ROWID INDEX BY PLS_INTEGER;
+		V_ROW		ROWID_type;
+		c1		REFCURSOR;*/
+		V_COUNT BIGINT;
+		V_CTID TYPE_CTID_DB_PRO_UPDATE_INV_VALUATION[];
+	BEGIN
+		V_COUNT := 0;
+		LOOP
+			V_CTID := '{}';	
+			SELECT ARRAY_AGG(T)
+			STRICT INTO V_CTID 
+			FROM (SELECT CTID 
+					FROM (SELECT CTID, ROW_NUMBER() OVER() RN
+						  FROM v_itemtab)T1
+					WHERE T1.RN > V_COUNT 
+					ORDER BY RN)T;
+			
+			EXIT WHEN array_lower(V_CTID) IS NULL;
+			
+			FOR I IN array_lower(V_CTID,1)..array_upper(V_CTID,1) 
+			LOOP
+				V_COUNT := V_COUNT + 1;
+				EXECUTE
+					'UPDATE '||v_itemtab||' ITEM SET item.rate = (SELECT R.RATE FROM '||v_ratetab||' R WHERE R.ICODE=ITEM.ICODE) WHERE CTID = $1'
+				USING V_CTID[i];
+			END LOOP;
+			
+		END LOOP;
+		/*OPEN c1 FOR('SELECT ROWID FROM '||v_itemtab);
+		LOOP
+		FETCH c1
+			BULK COLLECT INTO V_ROW LIMIT 100;
+			EXIT WHEN V_ROW.COUNT = 0;
+			FORALL i IN V_ROW.FIRST .. V_ROW.LAST
+				EXECUTE
+					'UPDATE '||v_itemtab||' ITEM SET item.rate = (SELECT R.RATE FROM '||v_ratetab||' R WHERE R.ICODE=ITEM.ICODE) WHERE ROWID = :1'
+				USING V_ROW(i);
+				COMMIT;
+			END LOOP;
+		CLOSE c1;*/
+	END;
+EXCEPTION
+	WHEN OTHERS THEN
+		errcode := SQLSTATE;
+		errmsg := SQLERRM;
+		CALL erraudit(USER, 'Db_Pro_Update_Inv_Valuation', errcode, errmsg);
+END;
+"""
+  arguments = <
+    {
+      name = p_report
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_ason
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_grp_string
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_valuation_type
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_oucode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

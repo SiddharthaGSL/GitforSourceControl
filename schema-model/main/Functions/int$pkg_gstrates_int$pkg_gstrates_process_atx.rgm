@@ -1,0 +1,120 @@
+function "main"."int$pkg_gstrates_int$pkg_gstrates_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        ora2pg_rowcount int;
+errmsg              varchar(500);
+        vsession            varchar(100);
+        vdetailtbl          varchar(1000);
+        vdetailrec          varchar(500);
+        errcode             bigint;
+        vmaxno              bigint;
+        vcount              bigint;c1 RECORD;
+
+BEGIN
+         --START REV :002
+        for c1 in (
+                   SELECT  a.effective_date,
+                        a.hsn_sac_code,
+                        a.remarks,
+                        r.code  gst_rate_code,
+                        m.code  main_code
+                    from    int$stg_gstrates    a,
+                            invhsnsacmain       m,
+                            invgstrate          r
+                    where   upper(a.hsn_sac_code)   = upper(m.hsn_sac_code)
+                    and     upper(gst_rate_name)    = upper(r.tax_name)
+                    and     a.userid                = p_userid
+                    )
+        LOOP
+           update invhsnsacdet 
+           set      invgstrate_code = c1.gst_rate_code,
+                    remarks = c1.remarks
+           WHERE  invhsnsacmain_code = c1.main_code
+           and effective_date = c1.effective_date;
+
+           GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+           THEN         
+        
+                insert INTO INVHSNSACDET(invhsnsacmain_code,effective_date,invgstrate_code,remarks)
+                values (C1.main_code,C1.effective_date,C1.gst_rate_code,C1.remarks);
+           END IF;
+            
+        END LOOP;
+
+        update  invhsnsacmain 
+        set     lastmodifiedon = clock_timestamp()
+        where   hsn_sac_code in (
+                                    SELECT  distinct
+                                            a.hsn_sac_code
+                                    from    int$stg_gstrates a
+                                    where   a.userid = p_userid
+                                );
+        -- END REV : 001
+        --COMMIT;
+
+        -- log to be added in history table
+        select  nextval('int$error_log_code')
+        into STRICT    vsession
+;
+
+        vdetailtbl := 'create table ginarchive.gstrates_'||vsession||' as select distinct hsn_sac_code hsn_sac_id,effective_date,gst_rate_name,remarks from int$stg_gstrates where userid ='|| p_userid::text;
+        EXECUTE vdetailtbl;
+
+        vdetailrec := 'select count(1) from ginarchive.gstrates_'||vsession;
+        EXECUTE vdetailrec into STRICT vcount;
+
+        insert into int$history(code, importedby, importedon, classname, summary, history_detail_tablename, history_detail_row_count)
+        values (nextval('int$history_code'), p_userid, clock_timestamp(), 'GSTRATES', vcount::TEXT||' Data updated successfully.', 'ginarchive.gstrates_'||vsession, vcount);
+
+        --COMMIT;
+
+        return('1');
+
+    exception
+        when others then
+        errcode := SQLSTATE;
+        errmsg  := sqlerrm;
+
+        -- error log for oracle internal error
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        values (nextval('int$error_log_code'), 0, 'GSTRATES', p_userid, errcode, errmsg, clock_timestamp());
+        --COMMIT;
+
+        return('0');
+    end;
+
+    -- clear stagging table
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

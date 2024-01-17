@@ -1,0 +1,145 @@
+procedure "main"."db_pro_upd_invitem_hsn(bigint, bigint, bigint, character, bigint)" {
+  text = """
+
+DECLARE
+
+ /*******************************************************************************************************************
+   No.		  Date        Author                   Description
+   ---------  ----------  ----------------------   ------------------------------------------------------------------
+   REV : 001  19/06/2017  DIPTIMAN                 (TFS ID : XXXXX) .
+ *********************************************************************************************************************/
+    v_cnt               bigint;
+    v_tot_item_cnt      bigint;
+    v_found             integer;
+    v_show_val          char(1) := 'N';
+	v_code				BIGINT;
+	v_table_rec			TYPE_REC_db_pro_upd_invitem_hsn[];
+
+BEGIN
+    IF v_show_val = 'Y' THEN
+      call erraudit(user, 'db_pro_upd_invitem_hsn', '1',
+                       'p_grpcode = '||p_grpcode||chr(10)||
+                       'p_invhsnsacmain_code = '||p_invhsnsacmain_code||chr(10)||
+                       'p_updbasis = '||p_updbasis||chr(10)||
+                       'p_terminal = '||p_terminal||chr(10)||
+                       'p_created_by = '||p_created_by);
+    END IF;
+    IF  p_grpcode IS NOT NULL AND
+        p_invhsnsacmain_code IS NOT NULL AND
+        p_updbasis IS NOT NULL AND
+        p_created_by IS NOT NULL THEN
+        SELECT COUNT(1) INTO STRICT v_tot_item_cnt
+        FROM   invitem i, invarticle a, invgrp g
+        WHERE  i.invarticle_code = a.code
+        AND    a.grpcode = g.grpcode
+        AND    g.grpcode = p_grpcode
+        AND (
+                    coalesce(p_updbasis,0) = 0
+                    OR
+                    i.invhsnsacmain_code = p_updbasis
+                );
+        UPDATE track_item_upd
+        SET    tot_item = v_tot_item_cnt
+        WHERE  terminal = p_terminal
+        AND    grpcode = p_grpcode;
+ 
+		v_code := 0;
+		LOOP
+
+		v_table_rec := '{}';
+		SELECT ARRAY_AGG(t)
+				STRICT INTO v_table_rec
+				FROM 
+				(SELECT CTID FROM
+				(SELECT i.CTID,ROW_NUMBER() OVER () AS RN
+                   FROM   invitem i, invarticle a, invgrp g
+            WHERE  i.invarticle_code = a.code
+            AND    a.grpcode = g.grpcode
+            AND    g.grpcode = p_grpcode
+            AND (
+                        coalesce(p_updbasis,0) = 0
+                        OR
+                        i.invhsnsacmain_code = p_updbasis
+                    ))T1
+				WHERE T1.RN	> v_code	
+                
+			   LIMIT 100)t;
+			   
+			IF ARRAY_LENGTH(v_table_rec,1) IS NULL THEN
+				EXIT; 
+			END IF;
+			
+			FOR i IN ARRAY_LOWER(v_table_rec, 1)..ARRAY_UPPER(v_table_rec, 1)
+				LOOP
+                  UPDATE invitem
+                SET    invhsnsacmain_code = p_invhsnsacmain_code
+                   WHERE CTID = v_table_rec[i].CTID;
+
+				 v_cnt := coalesce(v_cnt,0) + 100;
+					IF  v_cnt >= v_tot_item_cnt THEN
+						v_cnt := v_tot_item_cnt;
+					END IF;
+					UPDATE track_item_upd
+					SET    item_updated = v_cnt
+					WHERE  terminal = p_terminal
+					AND    grpcode = p_grpcode
+					AND    start_time IS NOT NULL
+					AND    end_time IS NULL;
+			 V_CODE := V_CODE + 1;
+            END LOOP;
+        
+ 
+        END LOOP;
+        UPDATE invgrp
+        SET    invhsnsacmain_code = p_invhsnsacmain_code
+        WHERE  grpcode = p_grpcode;
+        UPDATE track_item_upd
+        SET    end_time = clock_timestamp()
+        WHERE  terminal = p_terminal
+        AND    grpcode = p_grpcode
+        AND    start_time IS NOT NULL
+        AND    end_time IS NULL;
+        insert into depthsnchangelog(grpcode, invhsnsacmain_code, updbasis, createdby, createdon)
+        values (p_grpcode, p_invhsnsacmain_code, CASE WHEN p_updbasis=0 THEN 'A' WHEN p_updbasis=1 THEN 'N' END , p_created_by, clock_timestamp());
+   
+    END IF;
+END;
+"""
+  arguments = <
+    {
+      name = p_grpcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_invhsnsacmain_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_updbasis
+      type = bigint
+      mode = IN
+      default = 0
+    }
+
+    {
+      name = p_terminal
+      type = character
+      mode = IN
+      default = NULL::bpchar
+    }
+
+    {
+      name = p_created_by
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+  >
+  language = plpgsql
+}
+

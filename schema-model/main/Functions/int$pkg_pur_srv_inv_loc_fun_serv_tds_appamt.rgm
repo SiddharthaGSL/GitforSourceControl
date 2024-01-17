@@ -1,0 +1,74 @@
+function "main"."int$pkg_pur_srv_inv_loc_fun_serv_tds_appamt(bigint, bigint)" {
+  text = """
+
+DECLARE
+
+      v_chg_tds_appamt   double precision := 0;
+      v_tds_amt          double precision := 0;
+
+      c1_main CURSOR(p_srvcode bigint)
+      FOR
+         SELECT *
+           FROM pursrvmain
+          WHERE srvcode = p_srvcode;
+
+      c2_det CURSOR(p_srvcode bigint, p_pursrvdet_code bigint)
+      FOR
+           SELECT *
+             FROM pursrvdet
+            WHERE srvcode = p_srvcode AND code = p_pursrvdet_code
+         ORDER BY code;
+
+      c3_chg CURSOR(
+         p_srvcode           bigint,
+         p_pursrvdet_code    bigint)
+      FOR
+         SELECT chgamt
+           FROM pursrvchg_item
+          WHERE     srvcode = p_srvcode
+                AND pursrvdet_code = p_pursrvdet_code
+                AND coalesce(include_in_tds, 'N') = 'Y';
+
+BEGIN
+      FOR i IN c1_main(p_srvcode)
+      LOOP
+         FOR j IN c2_det(p_srvcode, p_pursrvdet_code)
+         LOOP
+            IF coalesce(i.tds_app, 'N') = 'Y' AND j.tdstypecode IS NOT NULL
+            THEN
+               FOR k IN c3_chg(p_srvcode, p_pursrvdet_code)
+               LOOP
+                  v_chg_tds_appamt :=
+                     coalesce(v_chg_tds_appamt, 0) + coalesce(k.chgamt, 0);
+               END LOOP;
+
+               v_chg_tds_appamt :=
+                  coalesce(v_chg_tds_appamt, 0) + coalesce(j.srvamt, 0);
+
+               RETURN(v_chg_tds_appamt);
+            ELSE
+               RETURN(0);
+            END IF;
+         END LOOP;
+      END LOOP;
+   END;
+
+"""
+  returnType = bigint
+  arguments = <
+    {
+      name = p_srvcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_pursrvdet_code
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

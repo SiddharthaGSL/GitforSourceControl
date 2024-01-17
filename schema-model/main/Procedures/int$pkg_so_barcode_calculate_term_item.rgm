@@ -1,0 +1,612 @@
+procedure "main"."int$pkg_so_barcode_calculate_term_item(bigint, timestamp without time zone, bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+		c1 CURSOR FOR
+		SELECT code,
+               icode, 
+               coalesce(rsp,0)		rsp,
+               coalesce(ordqty,0)	qty,
+               round((coalesce(ordqty,0)*coalesce(rate,0)), 2) netamt,
+               excisemain_code,
+               ex_basis,
+               ex_effrate,
+               ex_abtfactor,
+               ex_dutyfactor,
+               ex_cessfactor,
+               ex_appamt,
+               ex_dutyamt,
+               ex_cessamt
+		from   salorddet
+		where  ordcode = p_ordcode
+        order by 1;
+
+		c2 CURSOR FOR
+		SELECT saltermdet.saltermcode,
+               saltermdet.chgcode chgcode,
+               coalesce(saltermdet.rate,0) rate,
+               saltermdet.formulae,
+               length(saltermdet.formulae) formlen,
+               saltermdet.sign,
+               coalesce(salchg.glcode,p_glcode) glcode,
+               salchg.formcode,
+               salchg.roundoff,
+               saltermdet.seq,
+               salchg.basis,
+               saltermdet.operation_level,
+               salchg.istax,
+               salchg.source,
+               CASE WHEN salchg.glcode IS NULL THEN coalesce(salchg.slcode,p_slcode)  ELSE salchg.slcode END  slcode,
+               CASE WHEN salchg.source='G' THEN gst_component  ELSE null END  gst_component 
+		from   saltermdet, salchg
+		where  saltermdet.chgcode = salchg.salchgcode
+		and	   saltermcode = p_saltermcode
+		and	   saltermdet.operation_level = 'L'
+		order by saltermdet.seq;
+
+        dummy_appamt            double precision;
+        dummy_totchgamt         double precision;
+        dummy_chkchgamt         double precision;
+        dummy_chk               char(1);
+        dummy_prvchk            char(1);
+        dummy_sign              char(1);
+        v_rate                  double precision;
+        v_taxcode               bigint;
+        v_tax_status            char(1);
+        v_item_chg              double precision := 0;
+        v_ordamt                double precision;
+        v_code                  bigint;
+        v_sign                  char(1);
+        v_taxamt				salorddet.taxamt%type := 0;
+
+        v_max_code              bigint;
+        v_totappamt             double precision;
+        v_totchgamt             double precision;
+        v_diffamt               double precision;
+        v_cal_rate              double precision;
+
+        v_glcode                bigint;
+        v_slcode                bigint;
+
+        v_range_appl            fintaxdet.range_appl%TYPE;
+        v_tax_basis             fintaxdet.tax_basis%TYPE;
+        v_taxdetcode            fintaxdet.taxdetcode%TYPE;
+        dup_rate                fintaxdet.rate%TYPE;
+        v_rangefrom             fintax_range.rangefrom%TYPE;
+        v_appamt                purordchg.appamt%TYPE;
+		v_flag					char(1) := 'N';
+
+        v_fintax_range_glcode   fintax_range.purtax_glcode%TYPE := NULL;
+        v_fintax_range_slcode   fintax_range.purtax_slcode%TYPE := NULL;
+        v_final_glcode          bigint;
+        v_final_slcode          bigint;
+        v_final_gl_cc_appl      char(1);
+
+        v_roundoff_adj_amt      pursrvchg_item.roundoff_adj_amt%TYPE := 0;
+        v_chg_rate              pursrvchg_item.rate%TYPE;
+
+        v_ou_admcmptax_code     bigint;
+        v_excise_appl           char(1);
+        V_SL_SITE                FINSL.SLCODE%TYPE;
+        V_GL_SITE                FINGL.GLCODE%TYPE;
+        V_CC_GLCODE              FINGL.GLCODE%TYPE;
+
+    
+  i RECORD;
+
+BEGIN
+        begin
+            select isexcise
+            into STRICT   v_excise_appl
+            from   admdocscheme
+            where  doccode = (SELECT doccode from purordmain where ordcode = p_ordcode);
+        exception
+            when no_data_found then null;
+        end;
+
+        delete FROM salordchg
+        WHERE  ordcode = p_ordcode
+        and    operation_level = 'L';
+
+        select psite_admcmptax_code
+        into STRICT   v_ou_admcmptax_code
+        from   admsite
+        where  code = p_admsite_code_owner;
+
+        select sum(netamt)
+        into STRICT   v_ordamt
+        from   salorddet
+        where  ordcode = p_ordcode;
+
+        IF coalesce(v_ordamt, 0) = 0 THEN
+           v_ordamt := 1;
+        END IF;
+
+        for c1rec in c1 loop
+            for c2rec in c2 loop
+                if 	c2rec.source = 'E' and c1rec.excisemain_code is not null and coalesce(v_excise_appl, 'N') = 'Y' then
+                    insert into salordchg_item(ordcode, salorddet_code, seq, salchgcode,
+                                                glcode, slcode, rate, basis, sign, chgamt,
+                                                appamt, formulae, istax, source)
+                        SELECT p_ordcode, c1rec.code, c2rec.seq, c2rec.chgcode,
+                               c2rec.glcode, c2rec.slcode, c1rec.ex_dutyfactor, c2rec.basis, 
+                               c2rec.sign, c1rec.ex_dutyamt, c1rec.ex_appamt,
+                               c2rec.formulae, c2rec.istax, c2rec.source
+                        from   salorddet
+                        where  code	= c1rec.code
+                        and    excisemain_code = c1rec.excisemain_code;
+                else
+                    v_fintax_range_glcode := null;
+                    v_fintax_range_slcode := null;
+
+                    if 	c2rec.source = 'V' then
+                       BEGIN
+                        select taxcode
+                        into STRICT   v_taxcode
+                        from   invitem
+                        where  icode = c1rec.icode;
+                       EXCEPTION
+                       WHEN no_data_found THEN
+                         NULL;
+                       END;
+
+                        if 	v_taxcode is not null and coalesce(c2rec.istax,'N') ='Y' then
+                            begin
+                                select t2.rate, 
+                                       saltax_glcode, 
+                                       saltax_slcode,
+                                       t2.range_appl   range_appl,
+                                       t2.tax_basis	   tax_basis,
+                                       t2.taxdetcode   taxdetcode
+                                into STRICT   v_rate, 
+                                       v_glcode, 
+                                       v_slcode, 
+                                       v_range_appl, 
+                                       v_tax_basis, 
+                                       v_taxdetcode
+                                FROM invitem t1
+LEFT OUTER JOIN fintaxdet t2 ON (t1.taxcode = t2.taxcode)
+WHERE t1.icode = c1rec.icode  and t2.admcmptax_code = v_ou_admcmptax_code and t2.fintradegrp_code= p_saltradegrp_code and t2.formcode = p_formcode and (
+                                            t1.taxcode is null
+                                            or
+                                            t2.taxdetcode = (
+                                                                SELECT taxdetcode
+                                                                from   fintaxdet b
+                                                                where  t2.taxcode = b.taxcode
+                                                                and    b.admcmptax_code = v_ou_admcmptax_code
+                                                                and    b.fintradegrp_code= p_saltradegrp_code
+                                                                and    b.formcode = p_formcode
+                                                                and    b.dtfr =	
+                                                                                (
+                                                                                    SELECT max(c.dtfr)
+                                                                                    from   fintaxdet c
+                                                                                    where  c.dtfr <= p_orddt
+                                                                                    and (c.dtto >=  p_orddt
+                                                                                            or
+                                                                                            c.dtto is null)
+                                                                                    and    c.admcmptax_code   = v_ou_admcmptax_code
+                                                                                    and    c.taxcode          = t2.taxcode
+                                                                                    and	   c.fintradegrp_code = p_saltradegrp_code
+                                                                                    and	   c.formcode         = p_formcode
+                                                                                )
+                                                            )
+                                        );
+
+                                if  coalesce(v_range_appl,'N') = 'Y' and v_tax_basis = 'M' then
+                                    v_rangefrom := 0;
+                                    v_flag := 'N';
+
+                                    v_fintax_range_glcode := null;
+                                    v_fintax_range_slcode := null;
+
+                                    select coalesce(min(rangefrom),0), min('Y')
+                                    into STRICT   v_rangefrom, v_flag
+                                    from   fintax_range	r
+                                    where  taxdetcode = v_taxdetcode;
+
+                                    if  v_flag = 'N' then
+                                        v_rate := 0;
+                                        v_fintax_range_glcode := null;
+                                        v_fintax_range_slcode := null;
+                                    else		
+                                        if  c1rec.rsp >= v_rangefrom then
+                                            begin
+                                                select coalesce(rate,0), saltax_glcode, saltax_slcode
+                                                into STRICT   dup_rate, v_fintax_range_glcode, v_fintax_range_slcode
+                                                from   fintax_range	r
+                                                where  taxdetcode = v_taxdetcode
+                                                and    c1rec.rsp between coalesce(rangefrom,0) and coalesce(rangeto,999999999999999999);
+
+                                                v_rate := dup_rate;
+                                            exception
+                                                when no_data_found then
+                                                    v_rate := 0;
+                                                    v_fintax_range_glcode := null;
+                                                    v_fintax_range_slcode := null;
+                                                when others then
+                                                    v_rate := 0;
+                                                    v_fintax_range_glcode := null;
+                                                    v_fintax_range_slcode := null;
+                                                end;
+                                        else
+                                            v_rate := 0;
+                                            v_fintax_range_glcode := null;
+                                            v_fintax_range_slcode := null;
+                                        end if;
+                                    end if;	
+                                end if;		
+
+                                v_tax_status := 'I';
+                            exception
+                                when no_data_found then
+                                    v_tax_status := 'C';
+                                    v_rate       := 0;
+                            end;
+                        else
+                            v_tax_status := 'N';
+                        end if;
+                    elsif c2rec.source = 'G' then
+                          v_tax_status          := 'I';
+                          v_fintax_range_glcode := db_func_get_gst_gl_sl(c2rec.gst_component, p_admsite_code_owner, c2rec.istax, 'OGL', null);
+                          v_fintax_range_slcode := db_func_get_gst_gl_sl(c2rec.gst_component, p_admsite_code_owner, c2rec.istax, 'OSL', null);
+                          v_range_appl          := 'N';
+                    else
+                        if	c2rec.source = 'E' then
+                            v_tax_status := 'N';
+                        else
+                            v_tax_status := 'C';
+                        end if;
+                    end if;
+
+                    if  v_tax_status <> 'N' then
+                        dummy_totchgamt := 0;
+                        for i in 1..c2rec.formlen loop
+                            if  mod(i,2) != 0 then
+                                dummy_chk := substr(c2rec.formulae,i,1);
+                                dummy_chkchgamt := 0;
+
+								if  dummy_chk = 'B' then
+									dummy_chkchgamt :=  coalesce(c1rec.netamt,0);
+                                else
+                                    begin
+							            select salordchg_item.chgamt
+                                        into STRICT   dummy_chkchgamt
+                                        from   saltermdet, salordchg_item
+                                        where  saltermdet.chgcode = salordchg_item.salchgcode
+                                        and	   salordchg_item.salorddet_code = c1rec.code
+                                        and    saltermdet.saltermcode = c2rec.saltermcode
+                                        and	   saltermdet.operation_level = 'L'
+                                        and    saltermdet.seq = (dummy_chk)::numeric;
+                                    exception
+                                        when no_data_found then
+                                            dummy_chkchgamt := 0;
+                                    end;
+                                end if;
+
+					            dummy_prvchk := substr(c2rec.formulae,i-1,1);
+
+					            if	dummy_prvchk = '+' then
+                                    dummy_totchgamt := dummy_totchgamt + coalesce(dummy_chkchgamt,0);
+					            elsif dummy_prvchk = '-' then
+                                      dummy_totchgamt := dummy_totchgamt - coalesce(dummy_chkchgamt,0);
+                                else
+                                      dummy_totchgamt := coalesce(dummy_chkchgamt,0);
+                                end if;
+                            end if;
+                        end loop;
+
+                        dummy_appamt := dummy_totchgamt;
+
+                        if 	c2rec.source = 'G' then
+                            v_rate 	:= db_func_get_gst_tax_rate(
+                                                    c1rec.icode, 
+                                                    c2rec.gst_component,
+                                                    p_orddt, 
+                                                    c2rec.istax,
+                                                    null,
+                                                    null,
+                                                    c1rec.rsp,
+                                                    dummy_appamt, 
+                                                    c1rec.qty,
+                                                    p_admsite_code_owner, 
+                                                    p_admsite_code,
+                                                    p_pcode
+                                                );
+                            v_range_appl := 'N';
+
+                        end if;	
+
+                        if  coalesce(v_range_appl,'N') = 'Y' and v_tax_basis = 'N' then
+                            v_rangefrom := 0;
+                            v_flag := 'N';
+                            v_fintax_range_glcode := null;
+                            v_fintax_range_slcode := null;
+
+                            select coalesce(min(rangefrom),0), min('Y')
+                            into STRICT   v_rangefrom, v_flag
+                            from   fintax_range	r
+                            where  taxdetcode = v_taxdetcode;
+
+                            if  v_flag = 'N' then	
+                                v_rate := 0;
+                                v_fintax_range_glcode := null;
+                                v_fintax_range_slcode := null;
+                            else		
+                                v_appamt := 0;
+                                v_appamt := round((dummy_appamt / c1rec.qty)::numeric,2);
+
+                                if	v_appamt >=	v_rangefrom  then
+                                    begin
+                                        select coalesce(rate,0), saltax_glcode, saltax_slcode
+                                        into STRICT   dup_rate, v_fintax_range_glcode, v_fintax_range_slcode
+                                        from   fintax_range	r
+                                        where  taxdetcode = v_taxdetcode
+                                        and	   v_appamt between coalesce(rangefrom,0) and coalesce(rangeto,999999999999999999);
+
+                                        v_rate := dup_rate;
+                                    exception
+                                        when no_data_found then
+                                            v_rate := 0;
+                                            v_fintax_range_glcode := null;
+                                            v_fintax_range_slcode := null;
+
+                                        when others then
+                                            v_rate := 0;
+                                            v_fintax_range_glcode := null;
+                                            v_fintax_range_slcode := null;
+                                    end;
+                                else
+                                    v_rate := 0;
+                                    v_fintax_range_glcode := null;
+                                    v_fintax_range_slcode := null;
+                                end if;	
+                            end if;
+                        end if;
+
+                        if  c2rec.basis = 'P' then
+                            select (CASE WHEN v_tax_status='C' THEN c2rec.rate  ELSE v_rate END /100)*coalesce(dummy_totchgamt,0)
+                            into STRICT   dummy_totchgamt
+;
+                        else
+                            dummy_totchgamt := coalesce(c1rec.netamt,0) * c2rec.rate / v_ordamt;
+                        end if;
+
+                        if 	c2rec.sign = '-' and dummy_totchgamt >= 0 then  
+                            dummy_totchgamt := -1*coalesce(dummy_totchgamt,0);
+                        end if;
+
+                        if  dummy_totchgamt < 0 then
+                            dummy_sign := '-';
+                        elsif dummy_totchgamt > 0 then
+                            dummy_sign := '+';
+                        elsif dummy_totchgamt = 0 then
+                            dummy_sign := c2rec.sign;
+                        end if;
+                        
+                        if 	c2rec.roundoff = 'Y' then
+                            dummy_totchgamt := round(dummy_totchgamt);
+                        end if;
+
+                        if  v_tax_status = 'I' then
+                            if  v_fintax_range_glcode is null then  
+                                if  v_glcode is null then
+                                    v_final_glcode := c2rec.glcode;
+                                    v_final_slcode := c2rec.slcode;
+                                else
+                                    v_final_glcode := v_glcode;
+                                    v_final_slcode := v_slcode;											  	
+                                end if;
+                        else
+                            v_final_glcode := v_fintax_range_glcode;
+                            v_final_slcode := v_fintax_range_slcode;
+                        end if;
+
+                    else
+                        v_final_glcode := c2rec.glcode;
+                        v_final_slcode := c2rec.slcode;
+                    end if;
+
+                   --START REV : 002
+                    
+                    BEGIN
+                        SELECT  GLCODE
+                        INTO STRICT    V_CC_GLCODE
+                        FROM    fingl G
+                        WHERE   G.GLCODE = v_final_glcode
+                        AND  coalesce(G.COSTAPP,'N') = 'Y';
+                    EXCEPTION WHEN no_data_found THEN
+                       V_CC_GLCODE := NULL;
+                    END;
+
+                IF V_CC_GLCODE IS NOT NULL THEN
+                -- START REV : 002
+                        
+                            BEGIN
+                                SELECT  GLCODE
+                                INTO STRICT    V_GL_SITE
+                                FROM    FINGL_SITE S
+                                WHERE   S.GLCODE = v_final_glcode
+                                AND     S.ADMSITE_CODE = p_admsite_code_owner;
+                            EXCEPTION WHEN no_data_found THEN
+                               v_final_glcode := NULL;
+                               V_GL_SITE    := NULL;
+                            END;
+
+                             call ERRAUDIT(661,666,661,v_final_glcode||'*'||v_final_slcode||'*'||p_admsite_code_owner);
+
+                            IF  V_GL_SITE IS NULL THEN
+                                ROLLBACK;
+                                p_error_out := 1;
+                                EXIT;
+                            END IF;
+
+                        -- ERRAUDIT(669,666,669,v_final_glcode||'*'||v_final_slcode||'*'||p_admsite_code_owner);
+                         IF v_final_slcode  IS NOT NULL THEN
+
+                            BEGIN
+                                SELECT  SlcOdE
+                                INTO STRICT    V_SL_SITE
+                                FROM    FINSL_GL_SITE S,FINSL_GL SL
+                                WHERE    FINSL_GL_CODE = sL.code --1141
+                                AND     sl.glcOdE  = v_final_glcode                                
+                                AND     SLCODE = v_final_slcode
+                                AND     ADMSITE_CODE = p_admsite_code_owner;
+                            EXCEPTION WHEN no_data_found THEN
+                             -- v_final_slcode := NULL;
+                              V_SL_SITE    := NULL;
+                            END;
+                        END IF;
+
+                            IF  v_final_slcode IS NOT NULL AND V_SL_SITE IS NULL THEN
+                                ROLLBACK;
+                                p_error_out := 1;
+                                EXIT;
+                            END IF;
+                    END IF; -- REV :002
+                    insert into salordchg_item(ordcode, salorddet_code, seq, salchgcode,
+                                     glcode, slcode, rate, basis, sign, chgamt,
+                                     appamt, formulae, istax, source, gst_component)
+                    values (p_ordcode, c1rec.code, c2rec.seq, c2rec.chgcode,
+                           v_final_glcode, v_final_slcode,
+                           CASE WHEN v_tax_status='C' THEN c2rec.rate  ELSE v_rate END , c2rec.basis, 
+                           dummy_sign, dummy_totchgamt, dummy_appamt, c2rec.formulae, 
+                           c2rec.istax, c2rec.source, c2rec.gst_component);									
+
+                    if  c2rec.source <> 'E' then
+                        if  c2rec.istax = 'N' then
+                            v_item_chg := v_item_chg + coalesce(dummy_totchgamt, 0);
+                        else
+                            v_taxamt := v_taxamt + coalesce(dummy_totchgamt, 0);															
+                        end if;
+                    end if;
+                end if;
+                end if;
+            end loop;
+
+            update salorddet
+            set	   chgamt = coalesce(v_item_chg, 0),
+                   taxamt = coalesce(v_taxamt, 0)
+            where  code = c1rec.code;
+            
+            v_item_chg := 0;
+            v_taxamt   := 0;	
+        end loop;
+
+        -- ADJUSTMENT OF ROUNDOFF ERROR ON APPORTION OF AMOUNT BASIS CHARGE
+        for i in (select salchgcode,istax, rate, tot
+                  from (
+                            select salchgcode, istax, rate, abs(sum(chgamt)) tot
+                            from   salordchg_item
+                            where  ordcode = p_ordcode
+                            and	   basis = 'A'
+                            and    source <> 'E'
+                            group by salchgcode, istax, rate) alias2
+                  where	 coalesce(rate, 0) <> coalesce(tot, 0))
+        loop
+            select max(code), max(sign)
+            into STRICT   v_code, v_sign
+            from   salordchg_item
+            where  ordcode = p_ordcode
+            and	   salchgcode = i.salchgcode
+            and    coalesce(rate, 0) = coalesce(i.rate, 0)
+            and    abs(chgamt)	>	abs(i.rate - i.tot);
+
+            update salordchg_item
+            set	   chgamt = CASE WHEN v_sign='-' THEN chgamt - i.rate + i.tot  ELSE chgamt + i.rate - i.tot END 
+            where  code = v_code;
+
+            if 	i.istax = 'N' then
+                update salorddet
+                set	   chgamt = CASE WHEN v_sign='-' THEN chgamt - i.rate + i.tot  ELSE chgamt + i.rate - i.tot END 
+                where  code   =	(SELECT salorddet_code
+                                 from   salordchg_item
+                                 where  code = v_code);
+            else
+                update salorddet
+                set    taxamt = CASE WHEN                                         v_sign='-' THEN 	coalesce(taxamt, 0) - coalesce(i.rate, 0) + coalesce(i.tot, 0)  ELSE coalesce(taxamt, 0) + coalesce(i.rate, 0) - coalesce(i.tot, 0) END
+                where  code = (SELECT salorddet_code
+                               from   salordchg_item
+                               where  code = v_code);										
+            end if;
+        end loop;
+
+        CALL int$pkg_so_barcode_sumup_line_lvl_salordchg(p_ordcode);
+    EXCEPTION
+     --  WHEN  
+       WHEN OTHERS THEN
+          NULL;
+    END;
+
+"""
+  arguments = <
+    {
+      name = p_ordcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_orddt
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_saltradegrp_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_saltermcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_formcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_pcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_glcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_slcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_admsite_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_admsite_code_owner
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_error_out
+      type = bigint
+      mode = INOUT
+    }
+
+  >
+  language = plpgsql
+}
+

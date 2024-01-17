@@ -1,0 +1,308 @@
+function "main"."trigger_fct_t_psite_grtitem()" {
+  text = """
+
+DECLARE
+   v_type              varchar(100);
+   v_detail_code       invstock.detail_code%TYPE;
+   v_entcode           invstock.entcode%TYPE;
+   v_entno             invstock.entno%TYPE;
+   v_scheme_docno      invstock.scheme_docno%TYPE;
+   v_entdt             invstock.entdt%TYPE;
+   v_enttype           invstock.enttype%TYPE;
+   v_subenttype        invstock.subenttype%TYPE;
+   v_loccode           invstock.loccode%TYPE;
+   v_ycode             invstock.ycode%TYPE;
+   v_new_icode         invstock.icode%TYPE;
+   v_old_icode         invstock.icode%TYPE;
+   v_new_qty           invstock.qty%TYPE;
+   v_old_qty           invstock.qty%TYPE;
+   v_new_rate          invstock.rate%TYPE;
+   v_old_rate          invstock.rate%TYPE;
+   v_refpcode          invstock.refpcode%TYPE;
+   v_refsitecode       invstock.admsite_code%TYPE;
+   v_issecondary       invstock.issecondary%TYPE;
+   v_saletype          salinvmain.saletype%TYPE;
+   v_refloccode        invstock.refloccode%TYPE;
+   v_refcmpcode        invstock.refcmpcode%TYPE;
+   v_refglcode         invstock.refglcode%TYPE;
+   v_refdeptcode       invstock.refdeptcode%TYPE;
+   v_refprcode         invstock.refprcode%TYPE;
+   v_refdocno          invstock.refdocno%TYPE;
+   v_refpkgcode        invstock.refpkgcode%TYPE;
+   v_refdccode         invstock.refdccode%TYPE;
+   v_other_rate        invstock.costrate%TYPE;
+   v_item_remarks      invstock.item_remarks%TYPE;
+   v_ts_admsite_code   invstock.admsite_code%TYPE;
+   v_psite_stkpnt_code invstock.psite_stockpoint_code%TYPE;
+   v_slcode            finsl.slcode%TYPE;
+   -- START REV : 002
+   v_ref_family_code   invstock.ref_family_code%type;
+   -- END REV : 002
+BEGIN
+   /********************************************************************************************************************************
+        REV NO         OWNER         DATE           DESCRIPTION
+        ---------     -----------    -----------    ---------------------------------------------------------------------
+        REV : 001     ANINDYA        21-AUG-2017    (TFS ID : 29634) GST Related changes.
+        REV : 002     DIPTIMAN       10-OCT-2017    (TFS ID : 32259) Reference family code introduced.
+        REV : 003     DIPTIMAN       14-NOV-2017    (TFS ID : 32259) COGS costrate related changes.
+        REV : 004     ANINDYA        12-DEC-2022    (TFS ID : Batch Serial) Introduction of batch serial.
+   *********************************************************************************************************************************/
+   SELECT  slcode
+   INTO STRICT    v_slcode
+   FROM    ADMSITE
+   WHERE   code = coalesce(NEW.admsite_code, OLD.admsite_code);
+
+    
+   -- FOR OUTWARD POSTING
+   SELECT NULL entno, pg.docdt entdt, code entcode,
+          CASE WHEN v_slcode IS NULL
+          THEN 'STO'
+          ELSE
+              (SELECT CASE
+                         WHEN saletype = 'C'
+                            THEN 'STO'
+                         WHEN saletype = 'O'
+                            THEN 'GRT'
+                      END
+                 FROM finsl
+                WHERE slcode = (SELECT slcode
+                                  FROM admsite
+                                 WHERE code = pg.admsite_code))
+          END enttype,
+          CASE WHEN v_slcode IS NULL
+          THEN 'COO'
+          ELSE
+              (SELECT CASE
+                         WHEN saletype = 'C'
+                            THEN 'COO'
+                         WHEN saletype = 'O'
+                            THEN 'SOO'
+                      END
+                 FROM finsl
+                WHERE slcode = (SELECT slcode
+                                  FROM admsite
+                                 WHERE code = pg.admsite_code))
+          END sub_enttype,
+          pg.ycode ycode, pg.slcode refpcode, pg.admsite_code refsitecode,
+          pg.psite_intransit_loccode refloccode,
+          (SELECT CASE
+                     WHEN coalesce(issecondary, 'N') = 'N'
+                        THEN NULL
+                     ELSE issecondary
+                  END
+             FROM admsite
+            WHERE code = pg.admsite_code) refissecondary,
+          store_loccode loccode, NULL refsaletype, NULL refcmpcode,
+          NULL refglcode, NULL refdeptcode, NULL refprcode, NULL refdocno,
+          NULL refpkgcode, pg.docno scheme_docno,psite_stockpoint_code
+     INTO STRICT v_entno, v_entdt, v_entcode,
+          v_enttype,
+          v_subenttype,
+          v_ycode, v_refpcode, v_refsitecode,
+          v_refloccode,
+          v_issecondary,
+          v_loccode, v_saletype, v_refcmpcode,
+          v_refglcode, v_refdeptcode, v_refprcode, v_refdocno,
+          v_refpkgcode, v_scheme_docno, v_psite_stkpnt_code
+     FROM psite_grt pg
+    WHERE pg.code = coalesce(NEW.psite_grt_code,OLD.psite_grt_code);
+
+IF TG_OP = 'INSERT'
+THEN
+   v_type := 'INSERTING';
+END IF;
+
+IF TG_OP = 'DELETE'
+THEN
+    v_type := 'DELETING';
+END IF;
+   v_detail_code := coalesce(NEW.code,OLD.code);
+   v_new_icode := coalesce(NEW.icode,OLD.icode);
+   v_old_icode := OLD.icode;
+   v_new_qty := coalesce(NEW.rtqty,OLD.rtqty);
+   v_old_qty := NEW.rtqty;
+   -- START REV : 001
+   --v_new_rate := :NEW.grsamt / :NEW.rtqty;
+   --v_old_rate := :OLD.grsamt / :OLD.rtqty;
+   v_new_rate := coalesce(NEW.basicamt,OLD.basicamt) / coalesce(NEW.rtqty,OLD.rtqty);
+   v_old_rate := OLD.basicamt / OLD.rtqty;
+   --  END REV : 001
+   v_item_remarks := coalesce(NEW.lremarks,OLD.lremarks);
+   -- START REV : 002
+   v_ref_family_code := coalesce(NEW.ref_family_code,OLD.ref_family_code);
+
+   -- END REV : 002
+   CALL db_pkg_stock$reflect(v_detail_code,
+                         v_type,
+                         v_entcode,
+                         v_entno,
+                         v_entdt,
+                         v_enttype,
+                         v_loccode,
+                         v_ycode,
+                         v_new_icode,
+                         v_old_icode,
+                         v_new_qty,
+                         v_old_qty,
+                         v_new_rate,
+                         v_old_rate,
+                         v_refpcode,
+                         v_refloccode,
+                         v_refcmpcode,
+                         v_refglcode,
+                         v_refdeptcode,
+                         v_refprcode,
+                         v_refdocno,
+                         v_refpkgcode,
+                         v_refdccode,
+                         v_other_rate,
+                         v_scheme_docno,
+                         v_subenttype,
+                         NULL,
+                         v_item_remarks,
+                         v_refsitecode,
+                         v_issecondary,
+                         NULL,
+                         v_new_rate,
+                         NULL,
+                         v_psite_stkpnt_code,
+                         -- START REV : 002
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         0,
+                         v_ref_family_code
+                         --END REV : 002
+                         -- START REV : 003
+                         ,NEW.COSTRATE
+                         -- END REV : 003
+                         -- START REV : 004
+                         ,NULL
+                         ,NULL
+                         ,NULL
+                         ,NULL
+                         ,NULL
+                         ,NEW.INVBATCH_SERIAL_CODE
+                         -- END REV : 004
+                        );
+
+   -- FOR INWARD POSTING
+   SELECT NULL entno, pg.docdt entdt, code entcode, 'STI' enttype,
+          CASE WHEN v_slcode IS NULL
+          THEN 'COI'
+          ELSE
+              (SELECT CASE
+                         WHEN saletype = 'C'
+                            THEN 'COI'
+                         WHEN saletype = 'O'
+                            THEN 'SOI'
+                      END
+                 FROM finsl
+                WHERE slcode = (SELECT slcode
+                                  FROM admsite
+                                 WHERE code = pg.admsite_code))
+          END sub_enttype,
+          pg.ycode ycode, pg.slcode refpcode,
+          pg.repln_admsite_code refsitecode, pg.store_loccode refloccode,
+          (SELECT CASE
+                     WHEN coalesce(issecondary, 'N') = 'N'
+                        THEN NULL
+                     ELSE issecondary
+                  END
+             FROM admsite
+            WHERE code = pg.admsite_code) refissecondary,
+          pg.psite_intransit_loccode loccode, NULL refsaletype,
+          NULL refcmpcode, NULL refglcode, NULL refdeptcode, NULL refprcode,
+          NULL refdocno, NULL refpkgcode, pg.docno scheme_docno,
+          admsite_code admsite_code
+     INTO STRICT v_entno, v_entdt, v_entcode, v_enttype,
+          v_subenttype,
+          v_ycode, v_refpcode,
+          v_refsitecode, v_refloccode,
+          v_issecondary,
+          v_loccode, v_saletype,
+          v_refcmpcode, v_refglcode, v_refdeptcode, v_refprcode,
+          v_refdocno, v_refpkgcode, v_scheme_docno,
+          v_ts_admsite_code
+     FROM psite_grt pg
+    WHERE pg.code = coalesce(NEW.psite_grt_code,OLD.psite_grt_code);
+
+   CALL db_pkg_stock$reflect(v_detail_code,
+                         v_type,
+                         v_entcode,
+                         v_entno,
+                         v_entdt,
+                         v_enttype,
+                         v_loccode,
+                         v_ycode,
+                         v_new_icode,
+                         v_old_icode,
+                         v_new_qty,
+                         v_old_qty,
+                         v_new_rate,
+                         v_old_rate,
+                         v_refpcode,
+                         v_refloccode,
+                         v_refcmpcode,
+                         v_refglcode,
+                         v_refdeptcode,
+                         v_refprcode,
+                         v_refdocno,
+                         v_refpkgcode,
+                         v_refdccode,
+                         v_other_rate,
+                         v_scheme_docno,
+                         v_subenttype,
+                         NULL,
+                         v_item_remarks,
+                         v_refsitecode,
+                         v_issecondary,
+                         NULL,
+                         v_new_rate,
+                         v_ts_admsite_code,
+                         -- START REV : 002
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         0,
+                         v_ref_family_code
+                         --END REV : 002
+                         -- START REV : 003
+                         ,NEW.COSTRATE
+                         -- END REV : 003
+                         -- START REV : 004
+                         ,NULL
+                         ,NULL
+                         ,NULL
+                         ,NULL
+                         ,NULL
+                         ,NEW.INVBATCH_SERIAL_CODE
+                         -- END REV : 004
+                        );
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

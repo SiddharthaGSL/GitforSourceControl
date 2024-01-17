@@ -1,0 +1,84 @@
+function "main"."trigger_fct_t_prdlotdet()" {
+  text = """
+
+/************************************************************************************************************
+   NAME: CALCULATE_MRP
+
+   PURPOSE:
+
+   REVISIONS:
+   No     Date         Author       Description
+   ----   ----------   ---------    ------------------------------------------------------------
+   000    11-DEC-2013  MANASH       (BUG ID : 925) Production Planning Organization site wise Allocation related
+                         changes.
+   002    03-AUG-2020  MOUSUMI       (TFS ID : MIGRATION) MIGRATION RELATED CHANGES
+   NOTES:
+*************************************************************************************************************/
+DECLARE
+   V_ENTRY_SOURCE   varchar(25) := NULL;
+   V_SID            bigint;
+   V_PROGRAM        varchar(50);
+BEGIN
+  BEGIN
+   -- START REV : 002
+   BEGIN
+      SELECT ENTRY_SOURCE
+        INTO STRICT V_ENTRY_SOURCE
+        FROM PRDLOTMAIN
+       WHERE CODE = coalesce(NEW.LOTCODE, OLD.LOTCODE);
+   EXCEPTION
+      WHEN no_data_found
+      THEN
+         NULL;
+   END;
+
+SELECT PG_BACKEND_PID() INTO V_SID;
+
+SELECT APPLICATION_NAME INTO V_PROGRAM FROM PG_STAT_ACTIVITY WHERE PID=V_SID;
+
+   IF     coalesce(V_ENTRY_SOURCE, 'XX') <> 'WEB'
+AND not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+   THEN
+      IF    TG_OP = 'INSERT'
+         OR     TG_OP = 'UPDATE'
+            AND coalesce(NEW.PRDMPLANALLOC_CODE,
+                     coalesce(OLD.PRDMPLANALLOC_CODE, 0)) <> 0
+      THEN
+         UPDATE PRDMPLANALLOC
+            SET PROCESSED_QTY = coalesce(PROCESSED_QTY, 0) + coalesce(NEW.QTY, 0)
+          WHERE CODE = NEW.PRDMPLANALLOC_CODE;
+      END IF;
+
+      IF    TG_OP = 'DELETE'
+         OR     TG_OP = 'UPDATE'
+            AND coalesce(NEW.PRDMPLANALLOC_CODE,
+                     coalesce(OLD.PRDMPLANALLOC_CODE, 0)) <> 0
+      THEN
+         UPDATE PRDMPLANALLOC
+            SET PROCESSED_QTY = coalesce(PROCESSED_QTY, 0) - coalesce(OLD.QTY, 0)
+          WHERE CODE = OLD.PRDMPLANALLOC_CODE;
+      END IF;
+   END IF;
+EXCEPTION
+   WHEN OTHERS
+   THEN
+      CALL ERRAUDIT(USER,
+                'T_PRDLOTDET',
+                SQLSTATE::varchar,
+                SQLERRM);
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED  ' || SQLSTATE::varchar || '  ' || SQLERRM USING ERRCODE = '45001';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

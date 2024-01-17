@@ -1,0 +1,205 @@
+function "main"."trigger_fct_t_psite_packetitem()" {
+  text = """
+
+DECLARE
+    v_type                      varchar(100);
+    v_detail_code               invstock_intra.detail_code%TYPE;
+    v_entcode                   invstock_intra.entcode%TYPE;
+    v_entdt                     timestamp without time zone;
+    -- start rev : 003
+    v_voidon                    timestamp without time zone;
+    -- end rev : 003
+    v_enttype                   invstock_intra.enttype%TYPE;
+    v_loccode                   invstock_intra.loccode%type;
+    v_ycode                     bigint;
+    v_new_icode                 invstock_intra.icode%TYPE;
+    v_old_icode                 invstock_intra.icode%TYPE;
+    v_new_qty                   invstock_intra.qty%TYPE;
+    v_old_qty                   invstock_intra.qty%TYPE;
+    v_new_rate                  invstock_intra.rate%TYPE;
+    v_old_rate                  invstock_intra.rate%TYPE;
+    v_scheme_docno              text;
+    v_subenttype                invstock_intra.subenttype%TYPE;
+    v_refsitecode               bigint;
+    v_status                    character(1);
+    v_in_psite_stockpoint_code  text;
+    v_out_psite_stockpoint_code text;
+
+   /*******************************************************************************************************************
+     REV NO      DATE           OWNER            DESCRIPTION
+     ---------   -----------    -----------      ---------------------------------------------------------------------
+     REV : 001   08-MAR-2018    DEBNATH          (TFS ID : 38960) View Stockpoint wise Stock of POS Store in HO.
+     REV : 002   19-AUG-2022    ANINDYA          (TFS ID : BATCH SERIAL) Batch Serial related changes.
+     REV : 003   22-MAR-2023    PRADIPTA         (CARE : XXX)  Entry type mismatch in settlement audit for void packet.
+                                                               Previously released but missing in 12.13.0 release
+   *******************************************************************************************************************/
+BEGIN
+    
+    SELECT  loccode
+    INTO STRICT    v_loccode
+    FROM    invloc
+    WHERE   loctype = 'S';
+
+    SELECT  y.ycode,
+            a.packetdate,
+            a.admsite_code,
+            a.status,
+            a.in_psite_stockpoint_code,
+            a.out_psite_stockpoint_code,
+            a.packetno,
+            -- start rev : 003
+            a.voidon
+            -- end rev : 003
+    INTO    v_ycode,
+            v_entdt,
+            v_refsitecode,
+            v_status,
+            v_in_psite_stockpoint_code,
+            v_out_psite_stockpoint_code,
+            v_scheme_docno,
+            -- start rev : 003
+            v_voidon
+            -- end rev : 003
+    FROM    psite_packet a,
+            admyear y,
+            admsite s
+    WHERE   a.packetdate BETWEEN y.dtfr AND y.dtto
+    AND     a.admsite_code = s.code
+    AND     a.id = NEW.packetdocid :: text;
+
+    v_new_rate    := 0;
+    v_old_rate    := 0;
+    v_enttype     := 'PKT';
+    v_detail_code := NEW.id;
+    v_type        := 'INSERTING';
+    v_entcode     := NEW.packetdocid;
+    v_new_icode   := NEW.itemid;
+    v_old_icode   := OLD.itemid;
+
+    IF  TG_OP = 'INSERT'
+    THEN
+    		--  FOR NON VOID OUTWARD POSTING
+        	v_subenttype:= 'PKO';
+        	v_new_qty := NEW.qty;
+        	v_old_qty := NEW.qty;
+
+        	CALL db_pkg_stock_intra$reflect(v_detail_code,
+                                    	v_type,
+                                    	v_entcode,
+                                    	v_entdt,
+                                    	v_enttype,
+                                    	v_loccode,
+                                    	v_ycode,
+                                    	v_new_icode,
+                                    	v_old_icode,
+                                    	v_new_qty,
+                                    	v_old_qty,
+                                    	v_new_rate,
+                                    	v_old_rate,
+                                    	v_scheme_docno,
+                                    	v_subenttype,
+                                    	v_out_psite_stockpoint_code, 
+                                    	v_refsitecode,
+                                    	-- start rev : 002
+                                    	NEW.invbatch_serial_code
+                                    	-- end rev : 002
+                            		);
+
+        	--  FOR NON VOID INWARD POSTING
+        	v_new_qty := NEW.qty;
+        	v_old_qty := NEW.qty;
+        	v_subenttype:= 'PKI';
+
+        	CALL db_pkg_stock_intra$reflect(v_detail_code,
+                                    	v_type,
+                                    	v_entcode,
+                                    	v_entdt,
+                                    	v_enttype,
+                                    	v_loccode,
+                                    	v_ycode,
+                                    	v_new_icode,
+                                    	v_old_icode,
+                                    	v_new_qty,
+                                    	v_old_qty,
+                                    	v_new_rate,
+                                    	v_old_rate,
+                                    	v_scheme_docno,
+                                    	v_subenttype,
+                                    	v_in_psite_stockpoint_code,
+                                    	v_refsitecode,
+                                    	-- start rev : 002
+                                    	NEW.invbatch_serial_code
+                                    	-- end rev : 002
+                            		);
+	END IF;
+    
+    	IF V_STATUS = 'V' THEN
+        	-- Insert packet into stock as Void (Outward)
+        	v_subenttype:= 'PCO';
+        	v_new_qty := 0-NEW.qty;
+        	v_old_qty := 0-NEW.qty;
+
+        	CALL db_pkg_stock_intra$reflect(v_detail_code,
+                                    	v_type,
+                                    	v_entcode,
+                                    	-- start rev : 003
+                                    	--v_entdt,
+                                    	v_voidon,
+                                    	-- end rev : 003
+                                    	v_enttype,
+                                    	v_loccode,
+                                    	v_ycode,
+                                    	v_new_icode,
+                                    	v_old_icode,
+                                    	v_new_qty,
+                                    	v_old_qty,
+                                    	v_new_rate,
+                                    	v_old_rate,
+                                    	v_scheme_docno,
+                                    	v_subenttype,
+                                    	v_in_psite_stockpoint_code,
+                                    	v_refsitecode,
+                                    	-- start rev : 002
+                                    	NEW.invbatch_serial_code
+                                    	-- end rev : 002
+                            		);
+
+        	-- Insert packet into stock as Void (Inward)
+        	v_new_qty := NEW.qty;
+        	v_old_qty := NEW.qty;
+        	v_subenttype:= 'PCI';
+
+        	CALL db_pkg_stock_intra$reflect(v_detail_code,
+                                    	v_type,
+                                    	v_entcode,
+                                    	-- start rev : 003
+                                    	--v_entdt,
+                                    	v_voidon,
+                                    	-- end rev : 003
+                                    	v_enttype,
+                                    	v_loccode,
+                                    	v_ycode,
+                                    	v_new_icode,
+                                    	v_old_icode,
+                                    	v_new_qty,
+                                    	v_old_qty,
+                                    	v_new_rate,
+                                    	v_old_rate,
+                                    	v_scheme_docno,
+                                    	v_subenttype,
+                                    	v_out_psite_stockpoint_code,
+                                    	v_refsitecode,
+                                    	-- start rev :  002
+                                    	NEW.invbatch_serial_code
+                                    	-- end rev : 002
+                            		);
+    	END IF;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

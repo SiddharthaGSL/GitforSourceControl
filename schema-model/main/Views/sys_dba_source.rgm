@@ -1,0 +1,77 @@
+view "main"."sys_dba_source" {
+  text = """-
+SELECT (n.nspowner)::character varying(30) AS owner,
+    (s.name)::character varying(30) AS name,
+    (s.type)::character varying(12) AS type,
+    (generate_subscripts(s.text, 1))::numeric AS line,
+    (unnest(s.text))::character varying(4000) AS text
+   FROM (( SELECT c.relnamespace AS nsp,
+            t.tgname AS name,
+            'TRIGGER'::text AS type,
+            string_to_array(pg_get_triggerdef(t.oid), chr(10)) AS text
+           FROM ((pg_trigger t
+             JOIN pg_class c ON ((c.oid = t.tgrelid)))
+             JOIN pg_user u ON ((u.usesysid = c.relowner)))
+        UNION ALL
+         SELECT f.pronamespace AS nsp,
+            f.proname AS name,
+                CASE
+                    WHEN (f.prokind = 'f'::"char") THEN 'FUNCTION'::text
+                    WHEN (f.prokind = 'p'::"char") THEN 'PROCEDURE'::text
+                    ELSE NULL::text
+                END AS type,
+            string_to_array(pg_get_functiondef(f.oid), chr(10)) AS text
+           FROM ((pg_proc f
+             JOIN pg_type ret ON ((f.prorettype = ret.oid)))
+             JOIN pg_user u ON ((u.usesysid = f.proowner)))
+          WHERE (f.prokind = ANY (ARRAY['f'::"char", 'p'::"char"]))
+        UNION ALL
+         SELECT t.typnamespace AS nsp,
+            t.typname AS name,
+            'TYPE'::text AS type,
+                CASE
+                    WHEN (t.typtype = 'c'::"char") THEN ARRAY( SELECT ((('CREATE OR REPLACE TYPE '::text || (t.typname)::text) || ' AS ('::text) || chr(10))
+                    UNION ALL
+                     SELECT (((((a.attname)::text || ' '::text) || format_type(a.atttypid, a.atttypmod)) ||
+                            CASE
+                                WHEN (lead(a.attrelid, 1) OVER () IS NULL) THEN ''::text
+                                ELSE ','::text
+                            END) || chr(10))
+                       FROM pg_attribute a
+                      WHERE (a.attrelid = t.typrelid)
+                    UNION ALL
+                     SELECT ');'::text AS text)
+                    WHEN (t.typtype = 'd'::"char") THEN ARRAY( SELECT ((('CREATE OR REPLACE DOMAIN '::text || (t.typname)::text) || ' AS '::text) || format_type(tt.oid, NULL::integer))
+                       FROM pg_type tt
+                      WHERE (tt.typarray = t.typbasetype))
+                    ELSE NULL::text[]
+                END AS text
+           FROM (pg_type t
+             JOIN pg_user u ON ((u.usesysid = t.typowner)))
+          WHERE (((t.typrelid = (0)::oid) OR ( SELECT (c.relkind = 'c'::"char")
+                   FROM pg_class c
+                  WHERE (c.oid = t.typrelid))) AND (NOT (EXISTS ( SELECT 1
+                   FROM pg_type el
+                  WHERE ((el.oid = t.typelem) AND (el.typarray = t.oid))))))) s
+     JOIN pg_namespace n ON ((s.nsp = n.oid)))
+  WHERE ((n.nspname <> 'pg_catalog'::name) AND (n.nspname <> 'information_schema'::name) AND (n.nspname !~ '^pg_toast'::text));
+"""
+  columns = (
+    column "owner" {
+      type = "character varying(30)"
+    }
+    column "name" {
+      type = "character varying(30)"
+    }
+    column "type" {
+      type = "character varying(12)"
+    }
+    column "line" {
+      type = "numeric"
+    }
+    column "text" {
+      type = "character varying(4000)"
+    }
+  )
+}
+

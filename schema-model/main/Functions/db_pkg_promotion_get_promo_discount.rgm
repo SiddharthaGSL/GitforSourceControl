@@ -1,0 +1,117 @@
+function "main"."db_pkg_promotion_get_promo_discount(numeric, numeric, character, numeric, character, numeric, numeric, character, character)" {
+  text = """
+
+DECLARE
+
+		V_DISCOUNT double precision := 0;
+	
+BEGIN
+		PERFORM set_config('db_pkg_promotion.g_mark', 'Calculating promo discount.', false);
+		IF P_DISCOUNT_TYPE = 'P' THEN
+			IF coalesce(P_DISCOUNT_PRICE_BASIS,'M') IN ('M','L','W') THEN
+				V_DISCOUNT := P_QTY*((coalesce(P_SALEPRICE,0)*coalesce(P_DISCOUNT_FACTOR,0))/100);
+			ELSIF coalesce(P_DISCOUNT_PRICE_BASIS,'M') = 'R' THEN -- MARK UP
+				V_DISCOUNT := (coalesce(P_RATE,0)*(100+coalesce(P_DISCOUNT_FACTOR,0)))/100;
+				IF coalesce(V_DISCOUNT,0) < coalesce(P_SALEPRICE,0) THEN
+					V_DISCOUNT := (coalesce(P_SALEPRICE,0)-V_DISCOUNT)*P_QTY;
+				ELSE
+					V_DISCOUNT := 0;
+				END IF;
+			END IF;
+		ELSIF P_DISCOUNT_TYPE = 'A' THEN
+			IF P_ISVSLABAMT = 'Y' THEN
+				V_DISCOUNT := ROUND(((coalesce(P_SALEPRICE,0)*P_QTY)/P_TOTMRP)*coalesce(P_DISCOUNT_FACTOR,0),2);
+			ELSE
+				IF coalesce(P_DISCOUNT_PRICE_BASIS,'M') IN ('M','L','W') THEN
+					V_DISCOUNT := P_QTY*coalesce(P_DISCOUNT_FACTOR,0);
+				ELSIF coalesce(P_DISCOUNT_PRICE_BASIS,'M') = 'R' THEN -- MARK UP
+					V_DISCOUNT := coalesce(P_RATE,0)+coalesce(P_DISCOUNT_FACTOR,0);
+					IF coalesce(V_DISCOUNT,0) < coalesce(P_SALEPRICE,0) THEN
+						V_DISCOUNT := (coalesce(P_SALEPRICE,0)-V_DISCOUNT)*P_QTY;
+					ELSE
+						V_DISCOUNT := 0;
+					END IF;
+				END IF;
+			END IF;
+		ELSIF P_DISCOUNT_TYPE = 'F' THEN
+			IF coalesce(P_DISCOUNT_PRICE_BASIS,'M') = 'E' AND P_ISCOMBO = 'N' THEN
+				V_DISCOUNT := ROUND((coalesce(P_SALEPRICE,0)-coalesce(P_DISCOUNT_FACTOR,0))*P_QTY,2);
+			ELSE
+				IF P_TOTMRP <> 0 THEN
+					V_DISCOUNT := ROUND((coalesce(P_SALEPRICE,0)*P_QTY)-(((coalesce(P_SALEPRICE,0)*P_QTY)/P_TOTMRP)*coalesce(P_DISCOUNT_FACTOR,0)),2);
+				ELSE
+					V_DISCOUNT := 0;
+				END IF;
+			END IF;
+		END IF;
+		IF V_DISCOUNT>0 AND (coalesce(P_SALEPRICE,0)*P_QTY)>=V_DISCOUNT THEN
+			RETURN coalesce(V_DISCOUNT,0);
+		ELSE
+			RETURN 0;
+		END IF;
+	END;
+
+"""
+  returnType = bigint
+  arguments = <
+    {
+      name = p_saleprice
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_qty
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_discount_type
+      type = character
+      mode = IN
+    }
+
+    {
+      name = p_discount_factor
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_discount_price_basis
+      type = character
+      mode = IN
+    }
+
+    {
+      name = p_rate
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_totmrp
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_isvslabamt
+      type = character
+      mode = IN
+      default = 'N'::bpchar
+    }
+
+    {
+      name = p_iscombo
+      type = character
+      mode = IN
+      default = 'N'::bpchar
+    }
+
+  >
+  language = plpgsql
+  volatility = IMMUTABLE
+}
+

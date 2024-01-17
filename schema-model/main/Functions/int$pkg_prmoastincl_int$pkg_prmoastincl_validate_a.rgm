@@ -1,0 +1,968 @@
+function "main"."int$pkg_prmoastincl_int$pkg_prmoastincl_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        v_status        char(1);
+        errmsg          varchar(200);
+        g_mark          varchar(100);
+        errcode         bigint;
+        v_item_batch_separator char(1);
+BEGIN
+
+    -- START REV : 003
+        select item_batch_separator into STRICT v_item_batch_separator from admcmpprof;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation', 'Please remove value from batch/serial column and try again.', clock_timestamp()
+        from   int$stg_prmoastincl a
+        where  a.item_barcode is not null
+        and    a.batch_serial_no is not null
+        and    coalesce((position(v_item_batch_separator in a.item_barcode)),0) <> 0
+        and    a.userid = p_userid;
+
+        declare
+         v_count                     bigint;
+         c_separator CURSOR FOR
+                    SELECT *
+                    from   int$stg_prmoastincl
+                    where  userid = p_userid
+                    order by lineno;
+         begin
+           for c1 in c_separator loop
+                   select count(*) into STRICT v_count from int$stg_prmoastincl where item_barcode like '%'||v_item_batch_separator||'%'
+                   and lineno = c1.lineno
+                   and    userid = p_userid;
+                   if v_count > 0 then
+
+                   update int$stg_prmoastincl
+                   set    batch_serial_no = SUBSTR(item_barcode, INSTR(item_barcode,v_item_batch_separator, -1) + 1),
+                   item_barcode = SUBSTR(item_barcode, 1, position(v_item_batch_separator in item_barcode)-1)
+                   where  lineno = c1.lineno
+                   and    item_barcode like '%'||v_item_batch_separator||'%'
+                   and    userid = p_userid;
+
+                   end if;
+           end loop;
+         end;
+
+        --COMMIT;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation', 'System Batch Serial is not allowed. Please remove and proceed.', clock_timestamp()
+        from   int$stg_prmoastincl a
+        where  UPPER(a.batch_serial_no) = 'SYSTEM BATCH SERIAL'
+        and    a.batch_serial_no is not null
+        and    a.userid = p_userid;
+
+       -- END REV : 003
+        g_mark := 'D1001';
+        --Behaviour is mandatory
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Mandatory Validation','Behaviour is mandatory.',clock_timestamp()
+        FROM    int$stg_prmoastincl a
+        WHERE   a.behaviour is null
+        AND     a.userid = p_userid;
+
+        g_mark := 'D1002';
+        --Behaviour is valid
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Behaviour is invalid.',clock_timestamp()
+        FROM    int$stg_prmoastincl a
+        WHERE   upper(a.behaviour) NOT IN ('ADD TO EXISTING', 'REMOVE EXISTING THEN ADD')
+        AND     a.userid = p_userid;
+
+        g_mark := 'D1003';
+        --Avoid Item Validation is mandatory
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Mandatory Validation','Avoid Item Validation is mandatory.',clock_timestamp()
+        FROM    int$stg_prmoastincl a
+        WHERE   a.avoid_item_validation is null
+        AND     a.userid = p_userid;
+
+        g_mark := 'D1004';
+        --Avoid Item Validation is valid
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Avoid Item Validation is invalid.',clock_timestamp()
+        FROM    int$stg_prmoastincl a
+        WHERE   upper(a.avoid_item_validation) NOT IN ('YES', 'NO')
+        AND     a.userid = p_userid;
+
+        g_mark := 'D1005';
+        --Assortment is mandatory
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Mandatory Validation','Assortment is mandatory.',clock_timestamp()
+        FROM    int$stg_prmoastincl a
+        WHERE   a.assortment_name is null
+        AND     a.userid = p_userid;
+
+        g_mark := 'D1006';
+        --Assortment should be valid and non-extinct.
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Assortment should be valid and non-extinct.',clock_timestamp()
+        FROM int$stg_prmoastincl a 
+		LEFT OUTER JOIN (SELECT upper(name) name, coalesce(extinct,'N') ext FROM promo_assortment) l ON UPPER (a.assortment_name) = l.name
+        WHERE (coalesce(l.ext,'N') = 'Y' or l.name IS NULL) AND a.userid = p_userid;
+
+        g_mark := 'D1007';
+        --Include/Exclude is mandatory
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'prmoastincl', userid, 'Mandatory Validation','Include/Exclude is mandatory.',clock_timestamp()
+        FROM    int$stg_prmoastincl a
+        WHERE   a.includeorexclude is null
+        AND     a.userid = p_userid;
+
+        g_mark := 'D1008';
+        --Invalid IncludeOrExclude
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Please specify either INCLUDE or EXCLUDE.',clock_timestamp()
+        FROM    int$stg_prmoastincl a
+        WHERE   upper(a.includeorexclude) NOT IN ('INCLUDE', 'EXCLUDE')
+        AND     a.userid = p_userid;
+
+        g_mark := 'D1009';
+        -- START REV : 001
+        
+        --Item doesn't exist or is extinct.
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Item Data Validation','Item doesn''t exist or is extinct.',clock_timestamp()
+        FROM int$stg_prmoastincl a
+		LEFT OUTER JOIN (
+		                    SELECT  upper(icode) icode, ext
+		                    FROM    invitem		
+							UNION		
+		                    SELECT  upper(barcode), ext
+		                    FROM    invitem
+		                )b ON (upper(a.item_barcode) = b.icode)
+		WHERE (b.icode IS NULL OR coalesce(b.ext,'N') = 'Y') -- START REV : 001
+		 AND a.item_barcode IS NOT NULL -- END REV : 001
+		 AND a.userid = p_userid AND upper(a.avoid_item_validation) = 'NO';
+
+        -- START REV : 001
+        -- Barcode
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Promo Assortment is Value Type. It would accept only barcode.',clock_timestamp()
+        FROM   int$stg_prmoastincl a, promo_assortment b
+        WHERE  UPPER(a.assortment_name) = UPPER(b.name)
+        AND    b.type = 'V'
+        AND (a.item_barcode IS NULL OR
+                a.division_name IS NOT NULL OR
+                a.section_name IS NOT NULL OR
+                a.department_name IS NOT NULL OR
+                a.article_name IS NOT NULL OR
+                a.cname1 IS NOT NULL OR
+                a.cname2 IS NOT NULL OR
+                a.cname3 IS NOT NULL OR
+                a.cname4 IS NOT NULL OR
+                a.cname5 IS NOT NULL OR
+                a.cname6 IS NOT NULL OR
+                a.desc1 IS NOT NULL OR
+                a.desc2 IS NOT NULL OR
+                a.desc3 IS NOT NULL OR
+                a.desc4 IS NOT NULL OR
+                a.desc5 IS NOT NULL OR
+                a.desc6 IS NOT NULL OR
+                a.price_range_basis IS NOT NULL OR
+                a.price_range_from IS NOT NULL OR
+                a.price_range_to IS NOT NULL OR
+                a.creation_date_from IS NOT NULL OR
+                a.creation_date_to IS NOT NULL
+               )
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1010';
+        -- BENEFIT_VALUE (1)
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Promo Assortment is not Assortment Value Type.',clock_timestamp()
+        FROM   int$stg_prmoastincl a, promo_assortment b
+        WHERE  UPPER(a.assortment_name) = UPPER(b.name)
+        AND    a.benefit_value IS NOT NULL
+        AND    b.type <> 'V'
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1010.1';
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Benefit value should not be negative or zero.',clock_timestamp()
+        FROM   int$stg_prmoastincl a, promo_assortment b
+        WHERE  UPPER(a.assortment_name) = UPPER(b.name)
+        AND    a.benefit_value <= 0
+        AND    b.type = 'V'
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1010.2';
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Benefit value should not be negative.',clock_timestamp()
+        FROM   int$stg_prmoastincl a, promo_assortment b
+        WHERE  UPPER(a.assortment_name) = UPPER(b.name)
+        AND    coalesce(a.benefit_value,0) < 0
+        AND    b.type = 'V'
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1011';
+        -- BENEFIT_VALUE (2)
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Exclude Items are Restricted for Value Type Assortment.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  a.benefit_value IS NOT NULL
+        AND    SUBSTR(UPPER(a.includeorexclude),1,1) <> 'I'
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1012';
+        -- First validate the value for DIVISION_NAME, SECTION_NAME, DEPARTMENT_NAME, ARTICLE_NAME
+        -- Then validate the combination is valid or not
+        -- DIVISION_NAME
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Division doesn''t exist or is extinct.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  UPPER(a.division_name) not in (SELECT UPPER(g.division)
+                                              FROM   v_invgrp g
+                                              WHERE  g.lev = 1
+                                              AND    coalesce(g.ext,'N') = 'N')
+        AND    a.division_name IS NOT NULL
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1013';
+        -- SECTION_NAME (1)
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Section doesn''t exist or is extinct.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  UPPER(a.section_name) not in (SELECT UPPER(g.section)
+                                              FROM  v_invgrp g
+                                              WHERE g.lev = 2
+                                              AND   coalesce(g.ext,'N') = 'N')
+        AND    a.section_name IS NOT NULL
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1014';
+        -- SECTION_NAME (2)
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Section doesn''t belong to the selected division.',clock_timestamp()
+        FROM   int$stg_prmoastincl a, invgrp g
+        WHERE  UPPER(a.section_name) = UPPER(g.lev2grpname)
+        AND    g.lev = 2
+        AND (a.division_name IS NULL OR UPPER(g.lev1grpname) <> UPPER(a.division_name));
+
+        g_mark := 'D1015';
+        -- DEPARTMENT_NAME (1)
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Department doesn''t exist or is extinct.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  UPPER(a.department_name) not in (SELECT DISTINCT UPPER(g.department)
+                                                FROM   v_invgrp g
+                                                WHERE  g.lev = 3
+                                                AND    coalesce(g.ext,'N') = 'N')
+        AND    a.department_name IS NOT NULL
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1016';
+        -- DEPARTMENT_NAME (2)      
+        g_mark := 'D1017';
+        -- ARTICLE_NAME (1)
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Article doesn''t exist or is extinct.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  UPPER(a.article_name) not in (SELECT UPPER(g.name)
+                                             FROM   invarticle g
+                                             WHERE  coalesce(g.ext,'N') = 'N')
+        AND    a.article_name IS NOT NULL
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1018';
+        -- Combination chcek
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Group information doesn''t belong to the selected product hierarchy (division, section or department).',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  UPPER(
+                    CASE WHEN a.division_name IS NULL THEN NULL  ELSE a.division_name END ||
+                    CASE WHEN a.section_name IS NULL THEN NULL  ELSE '-'||a.section_name END ||
+                    CASE WHEN a.department_name IS NULL THEN NULL  ELSE '-'||a.department_name END ||
+                    CASE WHEN a.article_name IS NULL THEN NULL  ELSE '-'||a.article_name END
+               ) NOT IN (
+                    SELECT UPPER(CASE WHEN a.division_name IS NULL THEN NULL  ELSE division END ||
+                                 CASE WHEN a.section_name IS NULL THEN NULL  ELSE '-'||section END ||
+                                 CASE WHEN a.department_name IS NULL THEN NULL  ELSE '-'||department END ||
+                                 CASE WHEN a.article_name IS NULL THEN NULL  ELSE '-'||article_name END )
+                    FROM   v_invgrp
+               )
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1018.1';
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Group information doesn''t belong to the selected product hierarchy (division, section or department) or multiple entries found.',clock_timestamp()
+        FROM   (
+                    SELECT  s.lineno, s.userid, g.article_name, COUNT(1)
+                    FROM    v_invgrp g, int$stg_prmoastincl s
+                    WHERE   s.userid = p_userid
+                    AND     (
+                                (
+                                    s.department_name IS NOT NULL
+                                    AND g.lev = 3
+                                    AND (
+                                        UPPER(g.department) = UPPER(s.department_name)
+                                        AND (s.section_name IS NULL OR UPPER(g.section) = UPPER(s.section_name))
+                                        AND (s.division_name IS NULL OR UPPER(g.division) = UPPER(s.division_name))
+                                        AND (s.article_name IS NULL OR UPPER(g.article_name) = UPPER(s.article_name))
+                                    )
+                                )
+                                OR (
+                                    s.department_name IS NULL AND s.section_name IS NOT NULL
+                                    AND g.lev = 2
+                                    AND (
+                                            UPPER(g.section) = UPPER(s.section_name)
+                                            AND (s.division_name IS NULL OR UPPER(g.division) = UPPER(s.division_name))
+                                            AND (s.article_name IS NULL OR UPPER(g.article_name) = UPPER(s.article_name))
+                                        )
+                                )
+                                OR (
+                                    s.department_name IS NULL AND s.section_name IS NULL
+                                    AND g.lev = 1
+                                    AND UPPER(g.division) = UPPER(s.division_name)
+                                    AND (s.article_name IS NULL OR UPPER(g.article_name) = UPPER(s.article_name))
+                                )
+                            )
+                    GROUP BY s.lineno, s.userid, g.article_name
+                    HAVING COUNT(1) <> 1
+                    ORDER BY s.lineno
+               ) alias35;
+
+        g_mark := 'D1018.1';
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Invalid division name - '||a.division_name,clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  upper(a.division_name) in (
+                                                SELECT upper(b.division_name) from int$stg_prmoastincl b where b.userid = p_userid
+                                                EXCEPT
+                                                select upper(c.division) from v_invgrp c where lev = 1
+                                           )
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1018.2';
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Invalid section name - '||a.section_name,clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  upper(a.section_name) in (
+                                                SELECT upper(b.section_name) from int$stg_prmoastincl b where b.userid = p_userid
+                                                EXCEPT
+                                                select upper(c.section) from v_invgrp c where lev = 2
+                                        )
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1018.3';
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Invalid department name - '||a.department_name,clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  upper(a.department_name) in (
+                                                SELECT upper(b.department_name) from int$stg_prmoastincl b where b.userid = p_userid
+                                                EXCEPT
+                                                select upper(c.department) from v_invgrp c where lev = 3
+                                           )
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1018.4';
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Invalid article name - '||a.article_name,clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  upper(a.article_name) in (
+                                                SELECT upper(b.article_name) from int$stg_prmoastincl b where b.userid = p_userid
+                                                EXCEPT
+                                                select upper(c.name) from invarticle c where coalesce(c.ext,'N') = 'N'
+                                        )
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1019';
+        -- CATEGORY1
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Category1 doesn''t exist or is extinct.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  UPPER(a.cname1) not in (SELECT UPPER(b.cname)
+                                       FROM   invcat1 b
+                                       WHERE  coalesce(b.ext,'N') = 'N')
+        AND    a.cname1 IS NOT NULL
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1019.1';
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Duplicate entries found in Category1 for - '||cname1,clock_timestamp()
+        from (
+                    SELECT a.lineno, a.userid, a.cname1, COUNT(1)
+                    FROM   int$stg_prmoastincl a, invcat1 b
+                    WHERE  UPPER(a.cname1) = UPPER(b.cname)
+                    and    coalesce(b.ext,'N') = 'N'
+                    AND    a.cname1 IS NOT NULL
+                    AND    a.userid = p_userid
+                    group by a.lineno, a.userid, a.cname1
+                    having count(1) > 1
+               ) alias8;
+
+        g_mark := 'D1020';
+        -- CATEGORY2
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Category2 doesn''t exist or is extinct.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  UPPER(a.cname2) not in (SELECT UPPER(b.cname)
+                                       FROM   invcat2 b
+                                       WHERE  coalesce(b.ext,'N') = 'N')
+        AND    a.cname2 IS NOT NULL
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1020.1';
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Duplicate entries found in Category2 for - '||cname2,clock_timestamp()
+        from (
+                    SELECT a.lineno, a.userid, a.cname2, COUNT(1)
+                    FROM   int$stg_prmoastincl a, invcat2 b
+                    WHERE  upper(a.cname2) = upper(b.cname)
+                    and    coalesce(b.ext,'N') = 'N'
+                    AND    a.cname2 IS NOT NULL
+                    AND    a.userid = p_userid
+                    group by a.lineno, a.userid, a.cname2
+                    having count(1) > 1
+               ) alias8;
+
+        g_mark := 'D1021';
+        -- CATEGORY3
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Category3 doesn''t exist or is extinct.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  UPPER(a.cname3) not in (SELECT UPPER(b.cname)
+                                       FROM   invcat3 b
+                                       WHERE  coalesce(b.ext,'N') = 'N')
+        AND    a.cname3 IS NOT NULL
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1021.1';
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Duplicate entries found in Category3 for - '||cname3,clock_timestamp()
+        from (
+                    SELECT a.lineno, a.userid, a.cname3, COUNT(1)
+                    FROM   int$stg_prmoastincl a, invcat3 b
+                    WHERE  upper(a.cname3) = upper(b.cname)
+                    and    coalesce(b.ext,'N') = 'N'
+                    AND    a.cname3 IS NOT NULL
+                    AND    a.userid = p_userid
+                    group by a.lineno, a.userid, a.cname3
+                    having count(1) > 1
+               ) alias8;
+
+        g_mark := 'D1022';
+        -- CATEGORY4
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Category4 doesn''t exist or is extinct.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  UPPER(a.cname4) not in (SELECT UPPER(b.cname)
+                                       FROM   invcat4 b
+                                       WHERE  coalesce(b.ext,'N') = 'N')
+        AND    a.cname4 IS NOT NULL
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1022.1';
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Duplicate entries found in Category4 for - '||cname4,clock_timestamp()
+        from (
+                    SELECT a.lineno, a.userid, a.cname4, COUNT(1)
+                    FROM   int$stg_prmoastincl a, invcat4 b
+                    WHERE  upper(a.cname4) = upper(b.cname)
+                    and    coalesce(b.ext,'N') = 'N'
+                    AND    a.cname4 IS NOT NULL
+                    AND    a.userid = p_userid
+                    group by a.lineno, a.userid, a.cname4
+                    having count(1) > 1
+               ) alias8;
+
+        g_mark := 'D1023';
+        -- CATEGORY5
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Category5 doesn''t exist or is extinct.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  UPPER(a.cname5) not in (SELECT UPPER(b.cname)
+                                       FROM   invcat5 b
+                                       WHERE  coalesce(b.ext,'N') = 'N')
+        AND    a.cname5 IS NOT NULL
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1023.1';
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Duplicate entries found in Category5 for - '||cname5,clock_timestamp()
+        from (
+                    SELECT a.lineno, a.userid, a.cname5, COUNT(1)
+                    FROM   int$stg_prmoastincl a, invcat5 b
+                    WHERE  upper(a.cname5) = upper(b.cname)
+                    and    coalesce(b.ext,'N') = 'N'
+                    AND    a.cname5 IS NOT NULL
+                    AND    a.userid = p_userid
+                    group by a.lineno, a.userid, a.cname5
+                    having count(1) > 1
+               ) alias8;
+
+        g_mark := 'D1024';
+        -- CATEGORY6
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Category6 doesn''t exist or is extinct.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  UPPER(a.cname6) not in (SELECT UPPER(b.cname)
+                                       FROM   invcat6 b
+                                       WHERE  coalesce(b.ext,'N') = 'N')
+        AND    a.cname6 IS NOT NULL
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1024.1';
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Duplicate entries found in Category6 for - '||cname6,clock_timestamp()
+        from (
+                    SELECT a.lineno, a.userid, a.cname6, COUNT(1)
+                    FROM   int$stg_prmoastincl a, invcat6 b
+                    WHERE  upper(a.cname6) = upper(b.cname)
+                    and    coalesce(b.ext,'N') = 'N'
+                    AND    a.cname6 IS NOT NULL
+                    AND    a.userid = p_userid
+                    group by a.lineno, a.userid, a.cname6
+                    having count(1) > 1
+               ) alias8;
+
+        g_mark := 'D1025';
+        -- DESCRIPTION1
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Description1 doesn''t exist.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  UPPER(a.desc1) not in (SELECT UPPER(i.desc1)
+                                      FROM   invitem i
+                                      WHERE  coalesce(i.ext,'N') = 'N'
+                                      AND    i.desc1 IS NOT NULL)
+        AND    a.desc1 IS NOT NULL
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1026';
+        -- DESCRIPTION2
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Description2 doesn''t exist.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  UPPER(a.desc2) not in (SELECT UPPER(i.desc2)
+                                      FROM   invitem i
+                                      WHERE  coalesce(i.ext,'N') = 'N'
+                                      AND    i.desc2 IS NOT NULL)
+        AND    a.desc2 IS NOT NULL
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1027';
+        -- DESCRIPTION3
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Description3 doesn''t exist.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  UPPER(a.desc3) not in (SELECT UPPER(i.desc3)
+                                      FROM   invitem i
+                                      WHERE  coalesce(i.ext,'N') = 'N'
+                                      AND    i.desc3 IS NOT NULL)
+        AND    a.desc3 IS NOT NULL
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1028';
+        -- DESCRIPTION4
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Description4 doesn''t exist.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  UPPER(a.desc4) not in (SELECT UPPER(i.desc4)
+                                      FROM   invitem i
+                                      WHERE  coalesce(i.ext,'N') = 'N'
+                                      AND    i.desc4 IS NOT NULL)
+        AND    a.desc4 IS NOT NULL
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1029';
+        -- DESCRIPTION5
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Description5 doesn''t exist.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  UPPER(a.desc5) not in (SELECT UPPER(i.desc5)
+                                      FROM   invitem i
+                                      WHERE  coalesce(i.ext,'N') = 'N'
+                                      AND    i.desc5 IS NOT NULL)
+        AND    a.desc5 IS NOT NULL
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1030';
+        -- DESCRIPTION6
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Description6 doesn''t exist.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  UPPER(a.desc6) not in (SELECT UPPER(i.desc6)
+                                      FROM   invitem i
+                                      WHERE  coalesce(i.ext,'N') = 'N'
+                                      AND    i.desc6 IS NOT NULL)
+        AND    a.desc6 IS NOT NULL
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1031';
+        -- PRICE_RANGE_BASIS (1)
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Price range basis can be ''RSP'' or ''MRP'' only.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  UPPER(a.price_range_basis) not in ('MRP', 'RSP')
+        AND    a.price_range_basis IS NOT NULL
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1032';
+        -- PRICE_RANGE_BASIS (2)
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','''Price range basis'' is required since price range is provided.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  a.price_range_basis IS NULL
+        AND (a.price_range_from IS NOT NULL OR a.price_range_to IS NOT NULL)
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1033';
+        -- PRICE_RANGE_FROM (1)
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','''Price range from'' is required since ''basis'' is selected.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  a.price_range_basis IS NOT NULL
+        AND    a.price_range_from IS NULL
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1034';
+        -- PRICE_RANGE_FROM (2)
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','''Price range from'' should be less than ''Price range to''.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  a.price_range_from > a.price_range_to
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1035';
+        -- PRICE_RANGE_FROM (3)
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','''Price range'' should contain positive values only.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  a.price_range_from < 0
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1036';
+        -- PRICE_RANGE_TO (1)
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','''Price range to'' is required since ''basis'' is selected.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  a.price_range_basis IS NOT NULL
+        AND    a.price_range_to IS NULL
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1036';
+        -- PRICE_RANGE_TO (2)
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','''Price range'' should contain positive values only.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  a.price_range_to < 0
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1037';
+        -- CREATION_DATE_FROM (1)
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','''Creation date from'' is required since ''date to'' is selected.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  a.creation_date_from IS NULL
+        AND    a.creation_date_to IS NOT NULL
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1038';
+        -- CREATION_DATE_FROM (2)
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','''Creation date from'' should be less than ''Creation date to''.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  a.creation_date_from > a.creation_date_to
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1039';
+        -- CREATION_DATE_TO (1)
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','''Creation date to'' is required since ''date from'' is selected.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  a.creation_date_from IS NOT NULL
+        AND    a.creation_date_to IS NULL
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1040';
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Atleast one assortment criteria or Item is required.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  a.item_barcode IS NULL
+        AND    a.division_name IS NULL
+        AND    a.section_name IS NULL
+        AND    a.department_name IS NULL
+        AND    a.article_name IS NULL
+        AND    a.cname1 IS NULL
+        AND    a.cname2 IS NULL
+        AND    a.cname3 IS NULL
+        AND    a.cname4 IS NULL
+        AND    a.cname5 IS NULL
+        AND    a.cname6 IS NULL
+        AND    a.desc1 IS NULL
+        AND    a.desc2 IS NULL
+        AND    a.desc3 IS NULL
+        AND    a.desc4 IS NULL
+        AND    a.desc5 IS NULL
+        AND    a.desc6 IS NULL
+        AND (a.price_range_basis IS NULL OR a.price_range_from IS NULL OR a.price_range_to IS NULL)
+        AND (a.creation_date_from IS NULL OR a.creation_date_to IS NULL)
+        AND    a.userid = p_userid;
+
+        g_mark := 'D1041';
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Barcode is already provided, no other criteria selection allowed.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  a.item_barcode IS NOT NULL
+        AND (
+                       a.division_name IS NOT NULL
+                    OR a.section_name IS NOT NULL
+                    OR a.department_name IS NOT NULL
+                    OR a.article_name IS NOT NULL
+                    OR a.cname1 IS NOT NULL
+                    OR a.cname2 IS NOT NULL
+                    OR a.cname3 IS NOT NULL
+                    OR a.cname4 IS NOT NULL
+                    OR a.cname5 IS NOT NULL
+                    OR a.cname6 IS NOT NULL
+                    OR a.desc1 IS NOT NULL
+                    OR a.desc2 IS NOT NULL
+                    OR a.desc3 IS NOT NULL
+                    OR a.desc4 IS NOT NULL
+                    OR a.desc5 IS NOT NULL
+                    OR a.desc6 IS NOT NULL
+                    OR a.price_range_basis IS NOT NULL
+                    OR a.price_range_from IS NOT NULL
+                    OR a.price_range_to IS NOT NULL
+                    OR a.creation_date_from IS NOT NULL
+                    OR a.creation_date_to IS NOT NULL
+                )
+        AND    a.userid = p_userid;
+
+        --START REV : 003
+        /*INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Batch Validity is not applicable if Item Information is given.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  a.item_barcode IS NOT NULL
+        AND (
+                       a.batch_valid_from IS NOT NULL
+                    OR a.batch_valid_upto IS NOT NULL
+                )
+        AND    a.userid = p_userid;*/
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Item Data Validation','Invalid batch/serial information provided.',clock_timestamp()
+		FROM int$stg_prmoastincl a 
+		INNER JOIN invitem i ON (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+		LEFT OUTER JOIN invbatch_serial b ON ((UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no )) AND (i.icode = b.icode))
+		WHERE a.batch_serial_no is not null
+		and (b.icode is null or b.batch_serial_no is null)
+		and i.item_management_mode in ('B','S') and a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation', 'Batch/Serial information is not applicable for the item, Please delete batch/serial info and try again.', clock_timestamp()
+        FROM   int$stg_prmoastincl a, invitem i
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        and    a.item_barcode is not null
+        and    a.batch_serial_no is not null
+        and    i.item_management_mode = 'I'
+        and    a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Duplicate entry found. Please rectify and try again.',clock_timestamp()
+        FROM   int$stg_prmoastincl a, invitem i
+        WHERE  a.item_barcode IS NOT NULL
+        AND (a.item_barcode = i.icode or a.item_barcode = i.barcode)
+        AND    a.batch_serial_no IS NOT NULL
+        AND    i.icode IN (SELECT i.icode from int$stg_prmoastincl a, invitem i
+                                  WHERE (a.item_barcode = i.icode or a.item_barcode = i.barcode)
+                                  GROUP BY i.icode, batch_serial_no
+                 HAVING count(*) > 1
+                                  )
+        AND    a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Batch/Serial no. required for the item. Please rectify and try again.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  a.item_barcode IS NOT NULL
+        AND    a.batch_serial_no IS NULL
+        AND    a.item_barcode IN (/*(SELECT item_barcode from int$stg_prmoastincl
+                                  GROUP BY item_barcode
+                 HAVING count(*) > 1
+                                  )*/
+								  SELECT item_barcode
+                                         FROM
+                                         ( 
+                                         SELECT assortment_name,item_barcode
+                                           FROM int$stg_prmoastincl
+                                            where userid = p_userid
+                                             GROUP BY assortment_name,item_barcode
+                                         HAVING COUNT (*) > 1
+                                        -- END REV : 004
+                                         ) rr
+                                      )
+        AND    a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Item information required for the item. Please add and try again.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  a.item_barcode IS NULL
+        AND    a.batch_serial_no IS NOT NULL
+        AND    a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Either both Batch Valid from and to is required or both should be blank.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  ((a.batch_valid_from IS NOT NULL AND a.batch_valid_upto IS NULL)
+        OR (a.batch_valid_from IS NULL AND a.batch_valid_upto IS NOT NULL))
+        AND    a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'PRMOASTINCL', userid, 'Data Validation','Batch Valid from should not be greater than Batch Valid to.',clock_timestamp()
+        FROM   int$stg_prmoastincl a
+        WHERE  a.batch_valid_from IS NOT NULL
+        AND    a.batch_valid_upto IS NOT NULL
+        AND    date_trunc('day', a.batch_valid_from) > date_trunc('day', a.batch_valid_upto)
+        AND    a.userid = p_userid;
+
+        --END REV : 003
+        g_mark := 'D1042';
+        update int$stg_prmoastincl a
+        set    article_code = (SELECT  code
+                                from   invarticle b
+                                where  upper(a.article_name) = upper(b.name))
+        where a.article_name is not null
+        and   a.userid = p_userid;
+
+        g_mark := 'D1043';
+        update int$stg_prmoastincl a
+        set    department_code = (SELECT distinct department_code
+                                  from   v_invgrp b
+                                  where  upper(a.department_name) = upper(b.department)
+                                  and (a.division_name is null or upper(a.division_name) = upper(b.division))
+                                  and (a.section_name is null or upper(a.section_name) = upper(b.section))
+                                  and    b.lev = 3)
+        where a.department_name is not null
+        and   a.userid = p_userid;
+
+        g_mark := 'D1044';
+        update int$stg_prmoastincl a
+        set    section_code = ( SELECT distinct section_code
+                                from   v_invgrp b
+                                where  upper(a.section_name) = upper(b.section)
+                                and (a.division_name is null or upper(a.division_name) = upper(b.division))
+                                and    b.lev = 2)
+        where a.section_name is not null
+        and   a.userid = p_userid;
+
+        g_mark := 'D1045';
+        update int$stg_prmoastincl a
+        set    division_code = (SELECT distinct division_code
+                                from   v_invgrp b
+                                where  upper(a.division_name) = upper(b.division)
+                                and    b.lev = 1)
+        where a.division_name is not null
+        and   a.userid = p_userid;
+
+        g_mark := 'D1046';
+        update int$stg_prmoastincl a
+        set    ccode1 = (SELECT ccode
+                         from   invcat1 b
+                         where  UPPER(a.cname1) = UPPER(b.cname))
+        where a.cname1 is not null
+        and   a.userid = p_userid;
+
+        g_mark := 'D1047';
+        update int$stg_prmoastincl a
+        set    ccode2 = (SELECT ccode
+                         from   invcat2 b
+                         where  UPPER(a.cname2) = UPPER(b.cname))
+        where a.cname2 is not null
+        and   a.userid = p_userid;
+
+        g_mark := 'D1048';
+        update int$stg_prmoastincl a
+        set    ccode3 = (SELECT ccode
+                         from   invcat3 b
+                         where  UPPER(a.cname3) = UPPER(b.cname))
+        where a.cname3 is not null
+        and   a.userid = p_userid;
+
+        g_mark := 'D1049';
+        update int$stg_prmoastincl a
+        set    ccode4 = (SELECT ccode
+                         from   invcat4 b
+                         where  UPPER(a.cname4) = UPPER(b.cname))
+        where a.cname4 is not null
+        and   a.userid = p_userid;
+
+        g_mark := 'D1050';
+        update int$stg_prmoastincl a
+        set    ccode5 = (SELECT ccode
+                         from   invcat5 b
+                         where  UPPER(a.cname5) = UPPER(b.cname))
+        where a.cname5 is not null
+        and   a.userid = p_userid;
+
+        g_mark := 'D1051';
+        update int$stg_prmoastincl a
+        set    ccode6 = (SELECT ccode
+                         from   invcat6 b
+                         where  UPPER(a.cname6) = UPPER(b.cname))
+        where a.cname6 is not null
+        and   a.userid = p_userid;
+        -- END REV : 001
+        g_mark := 'D1052';
+
+        -- Check whether records are valid or not
+        BEGIN
+            SELECT  'S'
+            INTO STRICT    v_status
+            
+            WHERE   EXISTS (
+                            SELECT  'S'
+                            FROM    int$error_log
+                            WHERE   userid = p_userid
+                            );
+            RETURN('0');
+        EXCEPTION
+            WHEN no_data_found THEN
+                RETURN('1');
+        END;
+
+    EXCEPTION
+        WHEN OTHERS THEN
+            errcode := SQLSTATE;
+            errmsg := SQLERRM;
+
+            INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            VALUES (nextval('int$error_log_code'), 0, 'PRMOASTINCL', p_userid, errcode, errmsg||'~'||g_mark, clock_timestamp());
+            --COMMIT;
+
+            RETURN('0');
+    END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

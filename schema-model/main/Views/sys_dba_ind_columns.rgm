@@ -1,0 +1,64 @@
+view "main"."sys_dba_ind_columns" {
+  text = """-
+SELECT (insp.nspname)::character varying(128) AS index_owner,
+    (irel.relname)::character varying(128) AS index_name,
+    (tnsp.nspname)::character varying(128) AS table_owner,
+    (trel.relname)::character varying(128) AS table_name,
+    (a.attname)::character varying(4000) AS column_name,
+    (c.ordinality)::integer AS column_position,
+    COALESCE(information_schema._pg_char_max_length(information_schema._pg_truetypid(a.*, t.*), information_schema._pg_truetypmod(a.*, t.*)), information_schema._pg_numeric_precision(information_schema._pg_truetypid(a.*, t.*), information_schema._pg_truetypmod(a.*, t.*))) AS column_length,
+    COALESCE(information_schema._pg_char_max_length(information_schema._pg_truetypid(a.*, t.*), information_schema._pg_truetypmod(a.*, t.*)), 0) AS char_length,
+    (
+        CASE ((o.option)::integer & 1)
+            WHEN 1 THEN 'DESC'::text
+            ELSE 'ASC'::text
+        END)::character varying(4) AS descend,
+    NULL::integer AS collated_column_id
+   FROM ((((((((pg_index i
+     JOIN pg_class trel ON ((trel.oid = i.indrelid)))
+     JOIN pg_namespace tnsp ON ((trel.relnamespace = tnsp.oid)))
+     JOIN pg_class irel ON ((irel.oid = i.indexrelid)))
+     JOIN pg_namespace insp ON ((irel.relnamespace = insp.oid)))
+     CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY c(colnum, ordinality))
+     LEFT JOIN LATERAL unnest(i.indoption) WITH ORDINALITY o(option, ordinality) ON ((c.ordinality = o.ordinality)))
+     JOIN pg_attribute a ON (((trel.oid = a.attrelid) AND (a.attnum = c.colnum))))
+     JOIN (pg_type t
+     JOIN pg_namespace nt ON ((t.typnamespace = nt.oid))) ON ((a.atttypid = t.oid)))
+  WHERE (( SELECT pg_user.usesuper
+           FROM pg_user
+          WHERE (pg_user.usename = USER)) OR pg_has_role('rds_superuser'::name, 'member'::text));
+"""
+  columns = (
+    column "index_owner" {
+      type = "character varying(128)"
+    }
+    column "index_name" {
+      type = "character varying(128)"
+    }
+    column "table_owner" {
+      type = "character varying(128)"
+    }
+    column "table_name" {
+      type = "character varying(128)"
+    }
+    column "column_name" {
+      type = "character varying(4000)"
+    }
+    column "column_position" {
+      type = "integer"
+    }
+    column "column_length" {
+      type = "integer"
+    }
+    column "char_length" {
+      type = "integer"
+    }
+    column "descend" {
+      type = "character varying(4)"
+    }
+    column "collated_column_id" {
+      type = "integer"
+    }
+  )
+}
+

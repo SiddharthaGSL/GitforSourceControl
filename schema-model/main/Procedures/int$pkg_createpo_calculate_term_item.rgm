@@ -1,0 +1,708 @@
+procedure "main"."int$pkg_createpo_calculate_term_item(bigint)" {
+  text = """
+
+DECLARE
+
+      dummy_appamt         double precision;
+      dummy_totchgamt      double precision;
+      dummy_chkchgamt      double precision;
+      dummy_chk            char(1);
+      dummy_prvchk         char(1);
+      dummy_sign           char(1);
+      v_rate               double precision;
+      v_taxcode            bigint;
+      v_tax_status         char(1);
+      v_item_chg           double precision := 0;
+      v_rtamt              double precision;
+      v_code               bigint;
+      v_sign               char(1);
+      v_max_code           bigint;
+      v_totappamt          double precision;
+      v_totchgamt          double precision;
+      v_diffamt            double precision;
+      v_cal_rate           double precision;
+      v_range_appl         fintaxdet.range_appl%TYPE;
+      v_tax_basis          fintaxdet.tax_basis%TYPE;
+      v_taxdetcode         fintaxdet.taxdetcode%TYPE;
+      dup_rate             fintaxdet.rate%TYPE;
+      v_rangefrom          fintax_range.rangefrom%TYPE;
+      v_appamt             purordchg.appamt%TYPE;
+      v_excise_appl        char(1);
+      v_admcmptax_code     bigint;
+      v_fintradegrp_code   bigint;
+      v_formcode           bigint;
+      v_orddt              timestamp;
+      v_purtermcode        bigint;
+      -- START REV : 006
+      v_admsite_code       bigint;
+      v_pcode              bigint;
+
+      -- END REV : 006
+      C1 CURSOR FOR
+         SELECT code,
+                icode,
+                coalesce(rsp, 0)    rsp,
+                coalesce(ordqty, 0) qty,
+                netamt          ordamt,
+                excisemain_code,
+                ex_basis,
+                ex_effrate,
+                ex_abtfactor,
+                ex_dutyfactor,
+                ex_cessfactor,
+                ex_appamt,
+                ex_dutyamt,
+                ex_cessamt
+           FROM purorddet
+          WHERE ordcode = p_ordcode;
+
+      C2 CURSOR(
+         p_purtermcode    bigint)
+      FOR
+           SELECT d.purtermmain_code                        purtermcode,
+                  d.chgcode,
+                  coalesce(d.rate, 0)                           rate,
+                  d.formulae,
+                  LENGTH(d.formulae)                       formlen,
+                  d.SIGN,
+                  g.formcode,
+                  g.roundoff,
+                  d.seq,
+                  g.basis,
+                  d.operation_level,
+                  g.istax,
+                  g.source                                   -- START REV : 006
+                          ,
+                  CASE WHEN g.source='G' THEN  gst_component  ELSE NULL END  gst_component,
+                  g.isreverse
+             -- END REV : 006
+             FROM purtermdet d, finchg g
+            WHERE     d.chgcode = g.chgcode
+                  AND purtermmain_code = p_purtermcode
+                  AND d.operation_level = 'L'
+         ORDER BY d.seq;
+
+  i RECORD;
+
+BEGIN
+      DELETE FROM purordchg
+       WHERE ordcode = p_ordcode;
+
+      SELECT ROUND (
+                SUM (
+                     (coalesce(rate, 0) * coalesce(ordqty, 0))
+                   - coalesce(discount, 0)
+                   + coalesce(taxamt, 0)),
+                2)
+        INTO STRICT v_rtamt
+        FROM purorddet
+       WHERE ordcode = p_ordcode;
+
+      SELECT isexcise
+        INTO STRICT v_excise_appl
+        FROM admdocscheme
+       WHERE doccode = (SELECT doccode
+                          FROM purordmain
+                         WHERE ordcode = p_ordcode);
+
+      IF coalesce(v_rtamt, 0) = 0
+      THEN
+         v_rtamt := 1;
+      END IF;
+
+      DELETE FROM global_temp_storage;
+
+      BEGIN
+         SELECT a.admcmptax_code
+           INTO STRICT v_admcmptax_code
+           FROM finsl a, purordmain b
+          WHERE a.slcode = b.pcode AND b.ordcode = p_ordcode;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            NULL;
+      END;
+
+      BEGIN
+         SELECT fintradegrp_code,
+                formcode,
+                orddt,
+                purtermcode,
+                -- START REV :  006
+                orddt,
+                admsite_code,
+                pcode
+           -- END REV : 006
+           INTO STRICT v_fintradegrp_code,
+                v_formcode,
+                v_orddt,
+                v_purtermcode,
+                -- START REV :  006
+                v_orddt,
+                v_admsite_code,
+                v_pcode
+           -- END REV : 006
+           FROM purordmain
+          WHERE ordcode = p_ordcode;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            NULL;
+      END;
+
+      FOR i IN c1
+      LOOP
+         FOR j IN c2(v_purtermcode)
+         LOOP
+            IF     j.source = 'E'
+               AND i.excisemain_code IS NOT NULL
+               AND coalesce(v_excise_appl, 'N') = 'Y'
+            THEN
+               NULL;
+            ELSE
+               IF j.source = 'V'
+               THEN
+                  SELECT taxcode
+                    INTO STRICT v_taxcode
+                    FROM invitem
+                   WHERE icode = i.icode;
+
+                  IF v_taxcode IS NOT NULL
+                  THEN
+                     v_tax_status := 'C';
+                  ELSE
+                     v_tax_status := 'N';
+                  END IF;
+               -- START REV : 006
+               ELSIF j.source = 'G'
+               THEN
+                  v_tax_status := 'I';
+               -- END REV : 006
+               ELSE
+                  IF j.source = 'E'
+                  THEN
+                     v_tax_status := 'N';            -- Not applicable for tax
+                  ELSE
+                     v_tax_status := 'C';                       -- FROM CHARGE
+                  END IF;
+               END IF;
+
+               IF v_tax_status <> 'N'
+               THEN         -- (ORDCODE, PURORDDET_CODE, CHGCODE, RATE, BASIS)
+                  INSERT INTO global_temp_storage(code_1,
+                                                   code_2,
+                                                   code_3,
+                                                   value_1,
+                                                   char_1)
+                       VALUES (p_ordcode,
+                               i.code,
+                               j.chgcode,
+                               NULL,
+                               j.basis);
+               END IF;
+            END IF;
+         END LOOP;
+      END LOOP;
+
+      FOR c1rec IN c1
+      LOOP
+         FOR c2rec IN c2(v_purtermcode)
+         LOOP
+            IF     c2rec.source = 'E'
+               AND c1rec.excisemain_code IS NOT NULL
+               AND coalesce(v_excise_appl, 'N') = 'Y'
+            THEN
+               INSERT INTO purordchg_item(ordcode,
+                                           purorddet_code,
+                                           seq,
+                                           chgcode,
+                                           rate,
+                                           basis,
+                                           SIGN,
+                                           chgamt,
+                                           appamt,
+                                           formulae,
+                                           istax,
+                                           source,
+                                           -- START REV : 006
+                                           gst_component,
+                                           isreverse          -- END REV : 006
+                                                    )
+                  (SELECT p_ordcode,
+                          c1rec.code,
+                          c2rec.seq,
+                          c2rec.chgcode,
+                          c1rec.ex_dutyfactor,
+                          c2rec.basis,
+                          c2rec.SIGN,
+                          c1rec.ex_dutyamt,
+                          c1rec.ex_appamt,
+                          c2rec.formulae,
+                          c2rec.istax,
+                          c2rec.source,
+                          -- START REV : 006
+                          c2rec.gst_component,
+                          coalesce(c2rec.isreverse, 'N')
+                     -- END REV : 006
+                     FROM purorddet
+                    WHERE     code = c1rec.code
+                          AND excisemain_code = c1rec.excisemain_code);
+            ELSE
+               IF c2rec.source = 'V'
+               THEN
+                  SELECT taxcode
+                    INTO STRICT v_taxcode
+                    FROM invitem
+                   WHERE icode = c1rec.icode;
+
+                  IF v_taxcode IS NOT NULL
+                  THEN
+                     BEGIN
+                        SELECT coalesce(t2.rate, 0),
+                               t2.range_appl,
+                               t2.tax_basis,
+                               t2.taxdetcode
+                          INTO STRICT v_rate,
+                               v_range_appl,
+                               v_tax_basis,
+                               v_taxdetcode
+                          FROM invitem t1
+LEFT OUTER JOIN fintaxdet t2 ON (t1.taxcode = t2.taxcode)
+WHERE t1.icode = c1rec.icode  AND t2.admcmptax_code = v_admcmptax_code AND t2.fintradegrp_code = v_fintradegrp_code AND (   (    coalesce(v_formcode, 0) = 0
+                                        AND coalesce(t2.formcode, 0) = 0)
+                                    OR t2.formcode = v_formcode) AND (   t1.taxcode IS NULL
+                                    OR t2.taxdetcode =
+                                          (SELECT taxdetcode
+                                             FROM fintaxdet b
+                                            WHERE     t2.taxcode = b.taxcode
+                                                  AND b.admcmptax_code =
+                                                         v_admcmptax_code
+                                                  AND b.fintradegrp_code =
+                                                         v_fintradegrp_code
+                                                  AND (   (    coalesce(
+                                                                  v_formcode,
+                                                                  0) = 0
+                                                           AND coalesce(
+                                                                  b.formcode,
+                                                                  0) = 0)
+                                                       OR b.formcode =
+                                                             v_formcode)
+                                                  AND b.dtfr =
+                                                         (SELECT MAX(c.dtfr)
+                                                            FROM fintaxdet c
+                                                           WHERE     c.dtfr <=
+                                                                        v_orddt
+                                                                 AND (   c.dtto >=
+                                                                            v_orddt
+                                                                      OR c.dtto
+                                                                            IS NULL)
+                                                                 AND c.admcmptax_code =
+                                                                        v_admcmptax_code
+                                                                 AND c.taxcode =
+                                                                        t2.taxcode
+                                                                 AND c.fintradegrp_code =
+                                                                        v_fintradegrp_code
+                                                                 AND (   (    coalesce(
+                                                                                 v_formcode,
+                                                                                 0) =
+                                                                                 0
+                                                                          AND coalesce(
+                                                                                 c.formcode,
+                                                                                 0) =
+                                                                                 0)
+                                                                      OR c.formcode =
+                                                                            v_formcode))));
+
+                        IF     coalesce(v_range_appl, 'N') = 'Y'
+                           AND v_tax_basis = 'M'
+                        THEN
+                           v_rangefrom := 0;
+
+                           SELECT coalesce(MIN(rangefrom), 0)
+                             INTO STRICT v_rangefrom
+                             FROM fintax_range r
+                            WHERE taxdetcode = v_taxdetcode;
+
+                           IF v_rangefrom = 0
+                           THEN
+                              v_rate := 0;
+                           ELSE
+                              IF c1rec.rsp >= v_rangefrom
+                              THEN
+                                 BEGIN
+                                    SELECT coalesce(rate, 0)
+                                      INTO STRICT dup_rate
+                                      FROM fintax_range r
+                                     WHERE     taxdetcode = v_taxdetcode
+                                           AND c1rec.rsp BETWEEN coalesce(
+                                                                    rangefrom,
+                                                                    0)
+                                                             AND coalesce(
+                                                                    rangeto,
+                                                                    999999999999999999);
+
+                                    v_rate := dup_rate;
+                                 EXCEPTION
+                                    WHEN no_data_found
+                                    THEN
+                                       v_rate := 0;
+                                    WHEN OTHERS
+                                    THEN
+                                       v_rate := 0;
+                                 END;
+                              ELSE
+                                 v_rate := 0;
+                              END IF;
+                           END IF;
+                        END IF;
+
+                        v_tax_status := 'I';                      -- FROM ITEM
+                     EXCEPTION
+                        WHEN no_data_found
+                        THEN
+                           v_tax_status := 'C';                 -- FROM CHARGE
+                     END;
+                  ELSE
+                     v_tax_status := 'N';                       -- NON TAXABLE
+                  END IF;
+               -- START REV : 006
+               ELSIF c2rec.SOURCE = 'G'
+               THEN
+                  v_tax_status := 'I';
+               -- END REV : 006
+               ELSE
+                  IF c2rec.source = 'E'
+                  THEN
+                     v_tax_status := 'N';            -- Not applicable for tax
+                  ELSE
+                     v_tax_status := 'C';                       -- FROM CHARGE
+                  END IF;
+               END IF;
+
+               IF v_tax_status <> 'N'
+               THEN
+                  dummy_totchgamt := 0;
+
+                  FOR i IN 1 .. c2rec.formlen
+                  LOOP
+                     IF MOD(i, 2) != 0
+                     THEN
+                        dummy_chk := SUBSTR(c2rec.formulae, i, 1);
+                        dummy_chkchgamt := 0;
+
+                        IF dummy_chk = 'B'
+                        THEN
+                           dummy_chkchgamt := coalesce(c1rec.ordamt, 0);
+                        ELSE
+                           BEGIN
+                              SELECT CASE WHEN                                         finchg.roundoff='Y' THEN  ROUND(purordchg_item.chgamt)  ELSE purordchg_item.chgamt END
+                                INTO STRICT dummy_chkchgamt
+                                FROM purtermdet, purordchg_item, finchg
+                               WHERE     purtermdet.chgcode =
+                                            purordchg_item.chgcode
+                                     AND purtermdet.chgcode = finchg.chgcode
+                                     AND purordchg_item.purorddet_code =
+                                            c1rec.code
+                                     AND purtermdet.purtermmain_code =
+                                            c2rec.purtermcode
+                                     AND purtermdet.operation_level = 'L'
+                                     AND purtermdet.seq =
+                                            (dummy_chk)::numeric;
+                           EXCEPTION
+                              WHEN no_data_found
+                              THEN
+                                 dummy_chkchgamt := 0;
+                           END;
+                        END IF;
+
+                        dummy_prvchk := SUBSTR(c2rec.formulae, i - 1, 1);
+
+                        IF dummy_prvchk = '+'
+                        THEN
+                           dummy_totchgamt :=
+                              dummy_totchgamt + coalesce(dummy_chkchgamt, 0);
+                        ELSIF dummy_prvchk = '-'
+                        THEN
+                           dummy_totchgamt :=
+                              dummy_totchgamt - coalesce(dummy_chkchgamt, 0);
+                        ELSE
+                           dummy_totchgamt := coalesce(dummy_chkchgamt, 0);
+                        END IF;
+                     END IF;
+                  END LOOP;
+
+                  dummy_appamt := dummy_totchgamt;
+
+                  -- START REV : 006
+                  -- if  nvl(v_range_appl,'N') = 'Y' and v_tax_basis = 'N' then
+                  IF     coalesce(v_range_appl, 'N') = 'Y'
+                     AND v_tax_basis = 'N'
+                     AND c2rec.source <> 'G'
+                  THEN
+                     -- END REV : 006
+                     v_rangefrom := 0;
+
+                     SELECT coalesce(MIN(rangefrom), 0)
+                       INTO STRICT v_rangefrom
+                       FROM fintax_range r
+                      WHERE taxdetcode = v_taxdetcode;
+
+                     IF v_rangefrom = 0
+                     THEN
+                        v_rate := 0;
+                     ELSE
+                        v_appamt := 0;
+                        v_appamt := round((dummy_appamt / c1rec.qty)::numeric, 2);
+
+                        IF v_appamt >= v_rangefrom
+                        THEN
+                           BEGIN
+                              SELECT coalesce(rate, 0)
+                                INTO STRICT dup_rate
+                                FROM fintax_range r
+                               WHERE     taxdetcode = v_taxdetcode
+                                     AND v_appamt BETWEEN coalesce(rangefrom, 0)
+                                                      AND coalesce(
+                                                             rangeto,
+                                                             999999999999999999);
+
+                              v_rate := dup_rate;
+                           EXCEPTION
+                              WHEN no_data_found
+                              THEN
+                                 v_rate := 0;
+                              WHEN OTHERS
+                              THEN
+                                 v_rate := 0;
+                           END;
+                        ELSE
+                           v_rate := 0;
+                        END IF;
+                     END IF;
+                  END IF;
+
+                  -- START REV : 006
+                  IF c2rec.source = 'G'
+                  THEN
+                     v_rate :=
+                        db_func_get_gst_tax_rate( c1rec.icode::text,
+                                                  c2rec.gst_component::text,
+                                                  v_orddt::timestamp without time zone,
+                                                  c2rec.istax::text,
+                                                  NULL::text,
+                                                  NULL::bigint,
+                                                  c1rec.rsp::bigint,
+                                                  dummy_appamt::bigint,
+                                                  c1rec.qty::bigint,
+                                                  v_admsite_code::bigint,
+                                                  NULL::bigint,
+                                                  v_pcode::bigint);
+                  END IF;
+
+                  -- END REV : 006
+                  -- for round off purpose
+                  UPDATE global_temp_storage g
+                     SET value_1 = v_rate
+                   WHERE     code_1 = p_ordcode
+                         AND code_2 = c1rec.code
+                         AND code_3 = c2rec.chgcode
+                         AND char_1 = c2rec.basis;
+
+                  IF v_tax_status = 'C'
+                  THEN
+                     v_cal_rate := coalesce(c2rec.rate, 0);
+                  ELSE
+                     v_cal_rate := coalesce(v_rate, 0);
+                  END IF;
+
+                  IF c2rec.basis = 'P'
+                  THEN
+                     dummy_totchgamt :=
+                        (ROUND ((v_cal_rate / 100) * coalesce(dummy_totchgamt, 0)::integer,2))::double precision;
+
+                     SELECT MAX(code_2)
+                       INTO STRICT v_max_code
+                       FROM global_temp_storage
+                      WHERE     code_1 = p_ordcode
+                            AND code_3 = c2rec.chgcode
+                            AND value_1 = v_cal_rate
+                            AND value_1 <> 0
+                            AND char_1 = 'P';
+
+                     IF c1rec.code = v_max_code
+                     THEN
+                        -- ROUND OFF ADJUSTED IN MAIN CHARGE TABLE
+                        IF v_cal_rate <> 0
+                        THEN
+                           SELECT SUM(coalesce(appamt, 0)) + dummy_appamt
+                                     totappamt,
+                                    SUM(ABS(coalesce(chgamt, 0)))
+                                  + ABS(dummy_totchgamt)
+                                     totchgamt
+                             INTO STRICT v_totappamt, v_totchgamt
+                             FROM purordchg_item
+                            WHERE     ordcode = p_ordcode
+                                  AND chgcode = c2rec.chgcode
+                                  AND basis = 'P'
+                                  AND rate = v_cal_rate
+                                  AND source <> 'E';
+
+                           v_diffamt :=
+                              ROUND (
+                                   (v_totappamt * v_cal_rate / 100)
+                                 - v_totchgamt,
+                                 2);
+
+                           IF coalesce(v_diffamt, 0) <> 0
+                           THEN
+                              dummy_totchgamt := dummy_totchgamt + v_diffamt;
+                           END IF;
+                        END IF;
+                     END IF;
+                  ELSIF c2rec.basis = 'A'
+                  THEN
+                     SELECT MAX(code_2)
+                       INTO STRICT v_max_code
+                       FROM global_temp_storage
+                      WHERE     code_1 = p_ordcode
+                            AND code_3 = c2rec.chgcode
+                            AND char_1 = 'A';
+
+                     IF c1rec.code = v_max_code
+                     THEN
+                        BEGIN
+                           SELECT SUM(ABS(chgamt))
+                             INTO STRICT v_totchgamt
+                             FROM purordchg_item
+                            WHERE     ordcode = p_ordcode
+                                  AND purorddet_code < v_max_code
+                                  AND chgcode = c2rec.chgcode;
+
+                           IF v_totchgamt IS NULL
+                           THEN
+                              dummy_totchgamt :=
+                                 ROUND (
+                                    (  coalesce(c1rec.ordamt, 0)
+                                     * c2rec.rate
+                                     / v_rtamt),
+                                    2);
+                           ELSE
+                              dummy_totchgamt :=
+                                 round((c2rec.rate - v_totchgamt)::numeric, 2);
+                           END IF;
+                        EXCEPTION
+                           WHEN no_data_found
+                           THEN
+                              dummy_totchgamt :=
+                                 ROUND (
+                                    (  coalesce(c1rec.ordamt, 0)
+                                     * c2rec.rate
+                                     / v_rtamt),
+                                    2);
+                        END;
+                     ELSE
+                        dummy_totchgamt :=
+                           ROUND (
+                              (coalesce(c1rec.ordamt, 0) * c2rec.rate / v_rtamt),
+                              2);
+                     END IF;
+                  END IF;
+
+                  IF c2rec.SIGN = '-' AND dummy_totchgamt >= 0
+                  THEN
+                     dummy_totchgamt := -1 * coalesce(dummy_totchgamt, 0);
+                  END IF;
+
+                  dummy_sign := c2rec.SIGN;
+
+                  IF c2rec.roundoff = 'Y'
+                  THEN
+                     dummy_totchgamt := ROUND(dummy_totchgamt);
+                  END IF;
+
+                  INSERT INTO purordchg_item(ordcode,
+                                              purorddet_code,
+                                              seq,
+                                              chgcode,
+                                              rate,
+                                              basis,
+                                              SIGN,
+                                              chgamt,
+                                              appamt,
+                                              formulae,
+                                              istax,
+                                              source,
+                                              operation_level,
+                                              -- START REV : 006
+                                              gst_component,
+                                              isreverse       -- END REV : 006
+                                                       )
+                          VALUES (
+                                    p_ordcode,
+                                    c1rec.code,
+                                    c2rec.seq,
+                                    c2rec.chgcode,
+                                    CASE WHEN                                        c2rec.basis='A' THEN  ABS(dummy_totchgamt)  ELSE CASE WHEN v_tax_status='C' THEN  c2rec.rate  ELSE v_rate END  END ,
+                                    c2rec.basis,
+                                    dummy_sign,
+                                    dummy_totchgamt,
+                                    dummy_appamt,
+                                    c2rec.formulae,
+                                    c2rec.istax,
+                                    c2rec.source,
+                                    c2rec.operation_level,
+                                    -- START REV : 006
+                                    c2rec.gst_component,
+                                    c2rec.isreverse           -- END REV : 006
+                                                   );
+               END IF;
+            END IF;
+         END LOOP;
+      END LOOP;
+
+      -- ADJUSTMENT OF ROUNDOFF ERROR ON APPORTION OF AMOUNT BASIS CHARGE
+      FOR i
+         IN (SELECT chgcode, rate, tot
+               FROM (  SELECT g.chgcode, g.rate, ABS(SUM(g.chgamt)) tot
+                         FROM purordchg_item g, finchg c
+                        WHERE     g.ordcode = p_ordcode
+                              AND g.chgcode = c.chgcode
+                              AND g.basis = 'A'
+                     GROUP BY g.chgcode, g.rate) alias2
+              WHERE rate <> tot)
+      LOOP
+         SELECT MAX(code), MAX(SIGN)
+           INTO STRICT v_code, v_sign
+           FROM purordchg_item
+          WHERE     ordcode = p_ordcode
+                AND chgcode = i.chgcode
+                AND rate = i.rate
+                AND ABS(chgamt) > ABS(i.rate - i.tot);
+
+         UPDATE purordchg_item
+            SET chgamt =
+                   round((
+                      CASE WHEN v_sign='-' THEN  chgamt - i.rate + i.tot  ELSE chgamt + i.rate - i.tot END )::numeric,
+                      2)
+          WHERE code = v_code;
+      END LOOP;
+
+      CALL int$pkg_createpo_sumup_line_lvl_purordchg(p_ordcode);
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         NULL;
+   END;
+
+"""
+  arguments = <
+    {
+      name = p_ordcode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

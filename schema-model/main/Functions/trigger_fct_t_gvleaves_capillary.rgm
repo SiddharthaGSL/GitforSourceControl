@@ -1,0 +1,44 @@
+function "main"."trigger_fct_t_gvleaves_capillary()" {
+  text = """
+
+DECLARE
+   v_psite_customer_code   psite_posgvbill.psite_customer_code%TYPE;
+   v_billno                psite_posgvbill.billno%TYPE;
+   v_customer_mobile       psite_customer.mobile%TYPE;
+BEGIN
+   IF OLD.STATUS = 'A' AND NEW.STATUS = 'I'
+   THEN
+      SELECT BILLNO, PSITE_CUSTOMER_CODE, MOBILE
+        INTO STRICT V_BILLNO, V_PSITE_CUSTOMER_CODE, V_CUSTOMER_MOBILE
+        FROM psite_posgvbill pgb
+LEFT OUTER JOIN psite_customer c ON (PGB.PSITE_CUSTOMER_CODE = C.CODE)
+WHERE PGB.CODE = NEW.ISSUED_PSITE_POSGVBILL_CODE;
+
+      INSERT INTO CAPILLARY_GV_SYNC_CUSTOM(GVLEAVES_CODE,
+                                            GVNO,
+                                            ISSUED_PSITE_POSGVBILL_CODE,
+                                            PSITE_CUSTOMER_CODE,
+                                            CUSTOMER_MOBILE,
+                                            STATUS,
+                                            TRACKED_ON,
+                                            GVBILLNO,
+                                            AMOUNT)
+           VALUES (NEW.CODE,
+                   coalesce(NEW.GVNO_UDF, NEW.GVNO),
+                   NEW.ISSUED_PSITE_POSGVBILL_CODE,
+                   V_PSITE_CUSTOMER_CODE,
+                   V_CUSTOMER_MOBILE,
+                   'P',
+                   statement_timestamp(),
+                   V_BILLNO,
+                   NEW.VALUE);
+   END IF;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

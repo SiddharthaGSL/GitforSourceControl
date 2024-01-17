@@ -1,0 +1,78 @@
+view "main"."invstock_onhand" {
+  text = """-
+SELECT t.loccode,
+    t.icode,
+    t.admsite_code,
+    t.invbatch_serial_code,
+    t.gds_refcode_site,
+    sum(COALESCE(t.qty, (0)::numeric)) AS qty,
+    sum(COALESCE(t.amount, (0)::numeric)) AS amount,
+    sum(COALESCE((t.costamount)::double precision, (0)::double precision)) AS costamount,
+    0 AS count_qty,
+    0 AS count_costamount,
+    0 AS count_amount,
+    0 AS count_rows
+   FROM ( SELECT invstock_onhand_agg.loccode,
+            invstock_onhand_agg.icode,
+            invstock_onhand_agg.admsite_code,
+            invstock_onhand_agg.invbatch_serial_code,
+            invstock_onhand_agg.gds_refcode_site,
+            invstock_onhand_agg.qty,
+            invstock_onhand_agg.amount,
+            invstock_onhand_agg.costamount
+           FROM main.invstock_onhand_agg
+        UNION ALL
+         SELECT invstock_log.loccode,
+            invstock_log.icode,
+            invstock_log.admsite_code,
+            invstock_log.invbatch_serial_code,
+            concat_ws(''::text, invstock_log.icode, '~', invstock_log.admsite_code) AS gds_refcode_site,
+            invstock_log.qty,
+            invstock_log.amount,
+            invstock_log.costamount
+           FROM main.invstock_log
+          WHERE ((COALESCE((invstock_log.logseq)::numeric, (0)::numeric) > ( SELECT COALESCE((log_tag_agg.logseq)::numeric, (0)::numeric) AS "coalesce"
+                   FROM main.log_tag_agg
+                  WHERE (((log_tag_agg.consumer)::text = 'INVSTOCK_ONHAND_AGG'::text) AND ((log_tag_agg.logname)::text = 'INVSTOCK_LOG'::text)))) OR (invstock_log.logseq IS NULL))) t
+  GROUP BY t.loccode, t.icode, t.admsite_code, t.invbatch_serial_code, t.gds_refcode_site;
+"""
+  columns = (
+    column "loccode" {
+      type = "bigint"
+    }
+    column "icode" {
+      type = "character varying(9)"
+    }
+    column "admsite_code" {
+      type = "bigint"
+    }
+    column "invbatch_serial_code" {
+      type = "bigint"
+    }
+    column "gds_refcode_site" {
+      type = "character varying"
+    }
+    column "qty" {
+      type = "numeric"
+    }
+    column "amount" {
+      type = "numeric"
+    }
+    column "costamount" {
+      type = "double precision"
+    }
+    column "count_qty" {
+      type = "integer"
+    }
+    column "count_costamount" {
+      type = "integer"
+    }
+    column "count_amount" {
+      type = "integer"
+    }
+    column "count_rows" {
+      type = "integer"
+    }
+  )
+}
+

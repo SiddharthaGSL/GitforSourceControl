@@ -1,0 +1,330 @@
+procedure "main"."int$pkg_so_barcode_sumup_line_lvl_salordchg(bigint)" {
+  text = """
+
+DECLARE
+
+        ora2pg_rowcount int;
+v_ordno             salordmain.ordno%type;
+        v_orddt             timestamp;
+        v_ycode             salordmain.ycode%type;
+        v_seq               integer  := 1;
+        v_termed            char(1);
+        v_cnt               smallint := 0;
+        v_saltermcode       bigint;
+        v_item_lvl_seq      bigint := 1;
+
+        c3 CURSOR FOR
+            SELECT  i.ordcode,
+                    i.salchgcode, 
+                    i.rate, 
+                    i.sign, 
+                    i.glcode, 
+                    i.slcode ,
+                    i.basis, 
+                    i.istax,
+                    i.source, 
+                    i.formulae, 
+                    round((sum(i.chgamt))::numeric, 2) chgamt, 
+                    round((sum(i.appamt))::numeric, 2) appamt, 
+                    sum(i.seq),
+                    gst_component
+            from	salordchg_item i
+            where   i.ordcode = p_ordcode
+        group by	
+                    i.ordcode, 
+                    i.salchgcode, 
+                    i.rate, 
+                    i.sign, 
+                    i.glcode, 
+                    i.slcode, 
+                    i.basis, 
+                    i.istax,
+                    i.source, 
+                    i.formulae,
+                    gst_component
+        order by sum(i.seq);
+
+BEGIN
+        select ordno, orddt, ycode, saltermcode
+        into STRICT   v_ordno, v_orddt, v_ycode, v_saltermcode
+        from   salordmain
+        where  ordcode = p_ordcode;
+
+		delete FROM salordchg 
+		where  ordcode = p_ordcode
+		and    operation_level = 'L';
+		
+        begin
+            select count(distinct glcode) + count(distinct slcode)
+            into STRICT   v_cnt
+            from   salordchg_item i
+            where  i.ordcode = p_ordcode
+            group by i.ordcode, i.salchgcode, i.rate
+            having count(distinct glcode) > 1 or count(distinct slcode) > 1;
+            /*
+            if  nvl(v_cnt,0) > 0 then -- SAME CHARGE, RATE HAVING DIFFERENT GL/SL COMBINATION
+                raise unique_err;
+            end if;
+            */
+        exception
+            when no_data_found then null;
+        end;
+
+        for c3rec in c3 loop
+            begin
+                select 'Y', seq
+                into STRICT   v_termed, v_seq
+                from   saltermdet
+                where  saltermcode = v_saltermcode
+                and	   chgcode = c3rec.salchgcode;
+            exception
+                when no_data_found then
+                    v_termed := 'N';
+                    v_seq    := 999;
+            end;
+
+            if 	c3rec.basis = 'A' then
+                select min(seq)
+                into STRICT   v_seq
+                from   salordchg_item
+                where  ordcode = p_ordcode
+                and	   salchgcode = c3rec.salchgcode
+                and	   operation_level = 'L';
+            else
+                select min(seq)
+                into STRICT   v_seq
+                from   salordchg_item
+                where  ordcode = p_ordcode
+                and	   salchgcode = c3rec.salchgcode
+                and    coalesce(rate, 0) = coalesce(c3rec.rate, 0)
+                and    operation_level = 'L';
+            end if;
+
+            if 	coalesce(v_seq,0) = 0 then
+                v_seq := 800 + v_item_lvl_seq;
+                v_item_lvl_seq := v_item_lvl_seq + 1;
+            end if;	
+
+            insert into salordchg(ordcode, seq, chgcode, rate, sign, glcode, slcode,
+                     basis, istax, source, formulae, chgamt, appamt,
+                     operation_level, without_term_formula, gst_component)
+            values (c3rec.ordcode, v_seq, c3rec.salchgcode, c3rec.rate, c3rec.sign, c3rec.glcode, c3rec.slcode,
+                    c3rec.basis, c3rec.istax, c3rec.source, c3rec.formulae, c3rec.chgamt, c3rec.appamt, 
+                    'L', CASE WHEN v_termed='N' THEN 'Y'  ELSE 'N' END , c3rec.gst_component);	
+        end loop;
+		
+		---- ROUND OFF ADJUSTED IN MAIN CHARGE TABLE		
+		declare
+            c1 CURSOR FOR
+				SELECT  a.code,
+                        coalesce(b.roundoff, 'N')		roundoff,
+                        coalesce(a.chgamt, 0)				chgamt,
+                        coalesce(a.appamt, 0)				appamt,
+                        coalesce(a.rate, 0)					rate,
+                        a.sign									sign
+				from    salordchg a, salchg b
+				where   a.ordcode = p_ordcode
+				and     a.chgcode = b.salchgcode	
+				and     a.basis = 'P'
+				and     b.source <> 'E';
+		begin
+            for c1_loop in c1 loop
+                update salordchg
+				set	   chgamt = CASE WHEN                                         c1_loop.sign='+' THEN 	round(coalesce(c1_loop.chgamt, 0) + (((coalesce(c1_loop.appamt, 0) * coalesce(c1_loop.rate, 0)) / 100) - coalesce(c1_loop.chgamt, 0)), CASE WHEN c1_loop.roundoff='N' THEN  2  ELSE 0 END )  ELSE -1*(round(coalesce(c1_loop.chgamt, 0) + (((coalesce(c1_loop.appamt, 0) * coalesce(c1_loop.rate, 0)) / 100) - coalesce(c1_loop.chgamt, 0)), CASE WHEN c1_loop.roundoff='N' THEN  2  ELSE 0 END )) END 				
+                where   code = c1_loop.code;
+            end loop;
+		end;
+
+		---- ROUND OFF ADJUSTED IN ITEM CHARGE TABLE
+		declare
+            v_totchgamt	    salordchg.chgamt%type;
+            v_maxcode		salordchg_item.code%type := 0;
+
+            c1 CURSOR FOR
+				SELECT  a.salchgcode,
+                        coalesce(a.rate, 0)				rate,
+                        b.istax								istax,
+                        coalesce(b.roundoff, 'N')	roundoff,
+                        sum(coalesce(a.chgamt, 0))	chgamt
+				from	salordchg_item	a, salchg b
+				where   a.ordcode = p_ordcode
+				and	    a.salchgcode = b.salchgcode				
+				and     a.basis = 'P'
+				and	    b.source <> 'E'
+				group by a.salchgcode, coalesce(a.rate, 0), coalesce(b.roundoff, 'N'), b.istax;
+		begin
+            for	c1_loop in c1 loop
+                begin
+                    select coalesce(chgamt, 0)
+                    into STRICT   v_totchgamt
+                    from   salordchg
+                    where  chgcode = c1_loop.salchgcode
+                    and	   ordcode = p_ordcode
+                    and	   coalesce(rate, 0)	= coalesce(c1_loop.rate, 0);
+                exception
+                    when no_data_found then
+                        v_totchgamt	:=	0;
+                end;
+
+                select  max(code)
+                into STRICT    v_maxcode
+                from    salordchg_item
+                where   ordcode = p_ordcode
+                and     salchgcode = c1_loop.salchgcode
+                and     coalesce(appamt, 0) <> 0;
+
+                update  salordchg_item
+                set	    chgamt = round(coalesce(chgamt, 0) + (coalesce(v_totchgamt, 0) - coalesce(c1_loop.chgamt, 0)), CASE WHEN c1_loop.roundoff='N' THEN  2  ELSE 0 END )
+                where   code = v_maxcode
+                and	    ordcode = p_ordcode;
+							
+                GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+if  ora2pg_rowcount <> 0 then
+                    delete  FROM global_temp_storage
+                    where	code_1	=	v_maxcode;
+
+					insert into global_temp_storage(code_1) 
+                            (SELECT salorddet_code from salordchg_item where code = v_maxcode);
+                end if;
+
+                if  c1_loop.istax = 'N' then
+                    update  salorddet
+                    set	    chgamt = round(coalesce(chgamt, 0) + (coalesce(v_totchgamt, 0) - coalesce(c1_loop.chgamt, 0)), CASE WHEN c1_loop.roundoff='N' THEN  2  ELSE 0 END )
+                    where   code = (
+                                        SELECT  a.salorddet_code
+                                        from    salordchg_item	a
+                                        where   code =	
+                                                        (	
+                                                            SELECT  max(b.code)
+                                                            from    salordchg_item	b
+                                                            where   b.ordcode = p_ordcode
+                                                            and	    b.salchgcode = c1_loop.salchgcode
+                                                        )	
+                                    )
+                    and	    ordcode = p_ordcode;
+                end if;
+            end loop;
+		end;
+		
+
+		declare
+            v_chgamt		salordchg_item.chgamt%type := 0;
+            v_dummy_chgamt	salordchg_item.chgamt%type := 0;
+            v_sign			char(1);
+
+            c2 CURSOR FOR
+				SELECT  source,
+                        slcode,
+                        sign,
+                        seq,
+                        salorddet_code,
+                        salchgcode,
+                        rate,
+                        ordcode,
+                        operation_level,
+                        istax,
+                        gst_component,
+                        glcode,
+                        formulae,
+                        code,
+                        chgamt,
+                        basis,
+                        appamt 
+				from    salordchg_item	
+				where   salorddet_code in (
+                                SELECT	code_1
+                                from		global_temp_storage
+                            )
+				and	    ordcode = p_ordcode																																		 
+				order by code, seq;
+				
+            c4 CURSOR FOR
+				SELECT	i.ordcode,
+                        i.salchgcode, 
+                        i.rate, 
+                        i.sign, 
+                        i.glcode 
+                        costapp, 
+                        i.slcode, 
+                        i.basis, 
+                        i.istax,
+                        i.source, 
+                        i.formulae, 
+                        round((sum(i.chgamt))::numeric, 2) chgamt, 
+                        round((sum(i.appamt))::numeric, 2) appamt, 
+                        sum(i.seq),
+                        gst_component
+                from    salordchg_item i
+                where   i.ordcode = p_ordcode
+                group by	
+                        i.ordcode, 
+                        i.salchgcode, 
+                        i.rate, 
+                        i.sign, 
+                        i.glcode, 
+                        i.slcode, 
+                        i.basis, 
+                        i.istax,
+                        i.source, 
+                        i.formulae, 
+                        gst_component
+                order by sum(i.seq);
+		begin			
+            for	c2_loop in c2 loop
+                if  c2_loop.formulae <> 'B' then
+                    for i in 1..length(c2_loop.formulae) loop
+                        if	substr(c2_loop.formulae, i,1) <> 'B' then
+                            if	substr(c2_loop.formulae, i,1) in ('-', '+') then
+                                v_sign := substr(c2_loop.formulae, i,1);
+                            else
+                                begin
+                                    select chgamt
+                                    into STRICT   v_dummy_chgamt
+                                    from   salordchg_item
+                                    where  ordcode = p_ordcode	
+                                    and	   salorddet_code = c2_loop.salorddet_code
+                                    and	   seq = substr(c2_loop.formulae, i,1);
+                                exception
+                                    when no_data_found then
+                                        null;	--V_DUMMY_CHGAMT := 0;
+                                end;			
+
+                                if	v_sign = '+' then
+                                    v_chgamt := coalesce(v_chgamt, 0) + coalesce(v_dummy_chgamt, 0);
+                                else
+                                        v_chgamt := coalesce(v_chgamt, 0) - coalesce(v_dummy_chgamt, 0);
+                                end if;
+                            end if;
+                        end if;	
+                    end loop;
+                end if;	
+            end loop;	
+
+            for	c4_loop in c4 loop
+                update  salordchg
+                set	    appamt  = c4_loop.appamt
+                where   ordcode = p_ordcode
+                and	    chgcode	= c4_loop.salchgcode
+                and     rate    = c4_loop.rate;
+            end loop;
+		end;
+    /*
+    exception
+        when unique_err then
+            erraudit('x6','11','0','error');
+            null;
+    */
+    END;
+
+"""
+  arguments = <
+    {
+      name = p_ordcode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

@@ -1,0 +1,527 @@
+function "main"."trigger_fct_t_purinvmain()" {
+  text = """
+
+DECLARE
+   ora2pg_rowcount integer;
+-- START REV : 007
+   V_POSTCODE FINPOST.POSTCODE%TYPE;
+   V_CCCODE FINCOSTTAG.CODE%TYPE;
+   -- END REV : 007
+   -- start rev : 013
+   v_admgstin_code admsite.admgstin_code%TYPE;
+-- end rev : 013
+-- START REV : 017
+   
+   V_SID                        bigint;
+   V_PROGRAM                    varchar(50);
+-- END REV : 017
+BEGIN
+  BEGIN
+   /***************************************************************************************************************************************************
+    REV : 012 MOUSUMI       (TFS ID : 26844)    Need an option to create Multi OU and all operation will be according to the same.
+    REV : 013 MANASH        (TFS ID: 30869)    [GST] Document numbering scheme related changes.
+    Rev : 014 manash        (care iD : #3372)  PI getting locked.
+    Rev : 015 MOUSUMI       (TFS ID: 37820)    Non-trading flow - Purchase/Sale/Transfer
+    Rev : 016 Siddhartha    (TFS ID: 11826)    Web Related Check
+    Rev : 017 MOUSUMI       (TFS ID: MIGRATION)    MIGRATION RELATED CHANGES
+    Rev : 018 SABYASACHI     (TFS ID : )   SCHEME DOC NOT UPDATED AT ACCOUNTS POSTING
+    ****************************************************************************************************************************************************/
+   -- start rev : 013
+   SELECT admgstin_code
+     INTO STRICT v_admgstin_code
+     FROM admsite
+    WHERE code = coalesce(NEW.admsite_code, OLD.admsite_code);
+
+   -- end rev : 013
+   IF TG_OP = 'UPDATE'
+   THEN
+
+      -- START REV : 013
+      -- start rev : 014
+      --IF :NEW.GSTAPPL = 'Y' THEN
+      IF NEW.GSTAPPL IN ('Y','D','C') AND NEW.SCHEME_DOCNO IS NOT NULL AND UPPER(NEW.SCHEME_DOCNO) <> 'AUTOMATIC' THEN
+      -- end rev : 014
+         -- START REV : 016
+         -- Considering :NEW Instead of :OLD because we are trying to restrict the
+         -- execution of this dependent table update from trigger when update is done 
+         -- from web application even if the document was created from any other source
+         -- like (Import Excel, D2K etc.) 
+         IF  coalesce(NEW.ENTRY_SOURCE,'XX') <> 'WEB'
+         THEN
+         UPDATE GST_DOCNO_CHECK DC
+            SET SCHEME_DOCNO = NEW.SCHEME_DOCNO, DOCCODE = NEW.DOCCODE
+          WHERE ENTTYPE = 'PIM'
+                AND ENTCODE = NEW.INVCODE
+                AND YCODE = NEW.YCODE;
+
+         GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+         THEN
+            INSERT INTO GST_DOCNO_CHECK (ENTTYPE,
+                                            ENTCODE,
+                                            DOCCODE,
+                                            SCHEME_DOCNO,
+                                            ENTDATE,
+                                            YCODE,
+                                            ADMSITE_CODE_OWNER,
+                                            ADMGSTIN_CODE)
+                 VALUES ('PIM',
+                         NEW.INVCODE,
+                         NEW.DOCCODE,
+                         NEW.SCHEME_DOCNO,
+                         NEW.INVDT,
+                         NEW.YCODE,
+                         NEW.ADMSITE_CODE,
+                         V_ADMGSTIN_CODE);
+         END IF;
+      END IF;
+      END IF;
+      -- END REV : 013
+      -- END REV : 016
+      -- START REV : 008
+      UPDATE FINPOST
+         SET ADMSITE_CODE_OWNER = NEW.ADMSITE_CODE,
+             ECODE = NEW.ECODE,
+             TIME = NEW.TIME,
+             LAST_ACCESS_ECODE = NEW.LAST_ACCESS_ECODE,
+             LAST_ACCESS_TIME = NEW.LAST_ACCESS_TIME,
+             -- START REV : 010
+             REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE-- END REV : 010
+                                                     -- START REV : 012
+             ,
+             ADMOU_CODE = NEW.ADMOU_CODE
+       -- END REV : 012
+             ,DOCNO = NEW.DOCNO
+             -- START Rev : 018 
+             ,SCHEME_DOCNO=NEW.SCHEME_DOCNO
+             -- END Rev : 018 
+       WHERE ENTCODE = NEW.INVCODE::varchar AND ENTTYPE IN ('PIM', 'PIC','PID');
+   -- END REV : 008
+   END IF;
+
+   IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE'
+   THEN
+      IF coalesce(OLD.ADJAMT, 0) = 0
+      THEN
+         UPDATE FINPOST
+            SET SCHEME_DOCNO = NEW.SCHEME_DOCNO,
+                DOCDT = NEW.DOCDT,
+                DOCNO = NEW.DOCNO,
+                DUEDT = NEW.DUEDT,
+                ENTNO = NEW.INVNO::varchar-- START REV : 010
+                ,
+                REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE-- END REV : 010
+                                                        -- START REV : 012
+                ,
+                ADMOU_CODE = NEW.ADMOU_CODE
+          -- END REV : 012
+          WHERE ENTCODE = NEW.INVCODE::varchar AND ENTTYPE IN ('PIC','PID');
+
+         UPDATE FINPOST
+            SET ENTNO = NEW.INVNO::varchar,
+                SCHEME_DOCNO = NEW.SCHEME_DOCNO,
+                ENTDT = NEW.INVDT,
+                DOCNO = NEW.DOCNO,
+                DOCDT = NEW.DOCDT,
+                DUEDT = NEW.DUEDT,
+                GLCODE = NEW.GLCODE,
+                SLCODE = NEW.SLCODE,
+                NARTEXT = NEW.REM,
+                DAMOUNT =
+                   CASE
+                      WHEN( coalesce(DAMOUNT, 0)
+                            - coalesce(CAMOUNT, 0)
+                            - coalesce(OLD.GRSAMT, 0)) > 0
+                      THEN ( coalesce(DAMOUNT, 0)
+                          - coalesce(CAMOUNT, 0)
+                          - coalesce(OLD.GRSAMT, 0))
+                      ELSE
+                         0
+                   END,
+                CAMOUNT = 0-- START REV : 010
+                ,
+                REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE-- END REV : 010
+                                                        -- START REV : 012
+                ,
+                ADMOU_CODE = NEW.ADMOU_CODE-- END REV : 012
+                                            -- START REV : 011
+                ,
+                CASH_DISCOUNT_APPLICABLE = NEW.CASH_DISCOUNT_APPLICABLE,
+                CASH_DISCOUNT_PERCENTAGE = NEW.CASH_DISCOUNT_PERCENTAGE,
+                CASH_DISCOUNT_PERIOD = NEW.CASH_DISCOUNT_PERIOD
+          -- END REV : 011
+          WHERE ENTCODE = NEW.INVCODE::varchar
+                AND ENTTYPE = 'PIM'
+                AND GLCODE = OLD.GLCODE
+                AND ( (OLD.SLCODE IS NULL AND SLCODE IS NULL)
+                     OR SLCODE = OLD.SLCODE);
+
+         UPDATE FINPOST
+            SET ENTNO = NEW.INVNO::varchar,
+                SCHEME_DOCNO = NEW.SCHEME_DOCNO,
+                ENTDT = NEW.INVDT,
+                DOCNO = NEW.DOCNO,
+                DOCDT = NEW.DOCDT,
+                DUEDT = NEW.DUEDT,
+                GLCODE = NEW.GLCODE,
+                SLCODE = NEW.SLCODE,
+                NARTEXT = NEW.REM,
+                -- START REV : 014
+                /*DAMOUNT = -- REV : 001
+                   CASE
+                      WHEN ( NVL (DAMOUNT, 0)
+                            - NVL (CAMOUNT, 0)
+                            + NVL (:NEW.GRSAMT, 0)) > 0
+                      THEN
+                         ( NVL (DAMOUNT, 0)
+                          - NVL (CAMOUNT, 0)
+                          + NVL (:NEW.GRSAMT, 0))
+                      ELSE
+                         0
+                   END,*/
+                 DAMOUNT = -- REV : 001
+                   CASE
+                      WHEN( coalesce(DAMOUNT, 0)
+                            - coalesce(CAMOUNT, 0)
+                            + coalesce(NEW.MAIN_GL_AMT, 0)) > 0
+                      THEN ( coalesce(DAMOUNT, 0)
+                          - coalesce(CAMOUNT, 0)
+                          + coalesce(NEW.MAIN_GL_AMT, 0))
+                      ELSE
+                         0
+                   END,
+                -- END REV : 014
+                CAMOUNT = 0-- START REV : 010
+                ,
+                REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE-- END REV : 010
+                                                        -- START REV : 012
+                ,
+                ADMOU_CODE = NEW.ADMOU_CODE-- END REV : 012
+                                            -- START REV : 011
+                ,
+                CASH_DISCOUNT_APPLICABLE = NEW.CASH_DISCOUNT_APPLICABLE,
+                CASH_DISCOUNT_PERCENTAGE = NEW.CASH_DISCOUNT_PERCENTAGE,
+                CASH_DISCOUNT_PERIOD = NEW.CASH_DISCOUNT_PERIOD
+          -- END REV : 011
+          WHERE ENTCODE = NEW.INVCODE::varchar
+                AND ENTTYPE = 'PIM'
+                AND GLCODE = NEW.GLCODE
+                AND ( (NEW.SLCODE IS NULL AND SLCODE IS NULL)
+                     OR SLCODE = NEW.SLCODE);
+
+         GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+         THEN
+            INSERT INTO FINPOST(POSTCODE,
+                                 ENTCODE,
+                                 ENTNO,
+                                 ENTDT,
+                                 ENTTYPE,
+                                 DOCNO,
+                                 DOCDT,
+                                 DUEDT,
+                                 GLCODE,
+                                 SLCODE,
+                                 DAMOUNT,
+                                 YCODE,
+                                 NARTEXT -- REV : 001
+                                        ,
+                                 SCHEME_DOCNO-- START REV : 010
+                                 ,
+                                 REF_ADMSITE_CODE-- END REV : 010
+                                                 -- START REV : 011
+                                 ,
+                                 CASH_DISCOUNT_APPLICABLE,
+                                 CASH_DISCOUNT_PERCENTAGE,
+                                 CASH_DISCOUNT_PERIOD-- END REV : 011
+                                 ,
+                                 ADMOU_CODE -- REV : 012
+                                           )
+                 VALUES (nextval('erp01'),
+                         NEW.INVCODE::varchar,
+                         NEW.INVNO::varchar,
+                         NEW.INVDT,
+                         'PIM',
+                         NEW.DOCNO,
+                         NEW.DOCDT,
+                         NEW.DUEDT,
+                         NEW.GLCODE,
+                         NEW.SLCODE,
+                     -- START REV : 014
+                        -- NVL (:NEW.GRSAMT, 0),
+                        coalesce(NEW.MAIN_GL_AMT,0),
+                     -- END REV : 014
+                         NEW.YCODE,
+                         NEW.REM,
+                         NEW.SCHEME_DOCNO-- START REV : 010
+                         ,
+                         NEW.REF_ADMSITE_CODE-- END REV : 010
+                                              -- START REV : 011
+                         ,
+                         NEW.CASH_DISCOUNT_APPLICABLE,
+                         NEW.CASH_DISCOUNT_PERCENTAGE,
+                         NEW.CASH_DISCOUNT_PERIOD-- END REV : 011
+                         ,
+                         NEW.ADMOU_CODE -- REV : 012
+                                        );
+         END IF;
+
+         -- START REV : 007
+         BEGIN
+            SELECT POSTCODE
+              INTO STRICT V_POSTCODE
+              FROM FINPOST
+             WHERE ENTCODE = NEW.INVCODE::varchar
+                   AND ENTTYPE = 'PIM'
+                   AND coalesce(DAMOUNT, 0) > 0;
+         EXCEPTION
+            WHEN no_data_found
+            THEN
+               NULL;
+         END;
+
+            DELETE FROM FINCOSTTAG
+             WHERE ENTCODE = NEW.INVCODE::varchar AND ENTTYPE = 'PIM'
+         RETURNING CODE
+              INTO V_CCCODE;
+
+         IF V_POSTCODE IS NOT NULL AND NEW.GL_CC_APPL = 'Y'
+         THEN
+            INSERT INTO FINCOSTTAG(ENTCODE,
+                                    ENTNO,
+                                    ENTDT,
+                                    ENTTYPE,
+                                    GLCODE,
+                                    SLCODE,
+                                    COSTCODE,
+                                    DAMOUNT,
+                                    CAMOUNT,
+                                    YCODE,
+                                    CODE,
+                                    POSTCODE,
+                                    ADMSITE_CODE-- START REV : 009
+                                    ,
+                                    REF_ADMSITE_CODE-- END REV : 009
+                                    ,
+                                    ADMOU_CODE -- REV : 012
+                                              )
+                 VALUES (NEW.INVCODE::varchar,
+                         NEW.INVNO::varchar,
+                         NEW.INVDT,
+                         'PIM',
+                         NEW.GLCODE,
+                         NEW.SLCODE,
+                         NULL,
+                         -- START REV : 014
+                         --NVL (:NEW.GRSAMT, 0),
+                         coalesce(NEW.MAIN_GL_AMT,0),
+                         -- END REV : 014
+                         0,
+                         NEW.YCODE,
+                         V_CCCODE,
+                         V_POSTCODE,
+                         NEW.ADMSITE_CODE-- START REV : 009
+                         ,
+                         NEW.ADMSITE_CODE-- END REV : 009
+                         ,
+                         NEW.ADMOU_CODE -- REV : 012
+                                        );
+         END IF;
+
+         -- END REV : 007
+         UPDATE FINPOST
+            SET ENTNO = NEW.INVNO::varchar,
+                SCHEME_DOCNO = NEW.SCHEME_DOCNO,
+                ENTDT = NEW.INVDT,
+                DOCNO = NEW.DOCNO,
+                DOCDT = NEW.DOCDT,
+                DUEDT = NEW.DUEDT,
+                GLCODE = NEW.PGLCODE,
+                SLCODE = NEW.PCODE,
+                NARTEXT = NEW.REM,
+                DAMOUNT = 0,
+                CAMOUNT =
+                   CASE
+                      WHEN( coalesce(DAMOUNT, 0)
+                            - coalesce(CAMOUNT, 0)
+                            - coalesce(OLD.NETAMT, 0)) > 0
+                      THEN ( coalesce(DAMOUNT, 0)
+                          - coalesce(CAMOUNT, 0)
+                          - coalesce(OLD.NETAMT, 0))
+                      ELSE
+                         0
+                   END-- START REV : 010
+                ,
+                REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE-- END REV : 010
+                                                        -- START REV : 011
+                ,
+                CASH_DISCOUNT_APPLICABLE = NEW.CASH_DISCOUNT_APPLICABLE,
+                CASH_DISCOUNT_PERCENTAGE = NEW.CASH_DISCOUNT_PERCENTAGE,
+                CASH_DISCOUNT_PERIOD = NEW.CASH_DISCOUNT_PERIOD-- END REV : 011
+                                                                -- START REV : 012
+                ,
+                ADMOU_CODE = NEW.ADMOU_CODE
+          -- END REV : 012
+          WHERE ENTCODE = NEW.INVCODE::varchar
+                AND ENTTYPE = 'PIM'
+                AND GLCODE = OLD.PGLCODE -- REV : 005
+                AND SLCODE = OLD.PCODE;
+
+         UPDATE FINPOST
+            SET ENTNO = NEW.INVNO::varchar,
+                SCHEME_DOCNO = NEW.SCHEME_DOCNO,
+                ENTDT = NEW.INVDT,
+                DOCNO = NEW.DOCNO,
+                DOCDT = NEW.DOCDT,
+                DUEDT = NEW.DUEDT,
+                GLCODE = NEW.PGLCODE,
+                SLCODE = NEW.PCODE,
+                NARTEXT = NEW.REM,
+                DAMOUNT = 0,
+                CAMOUNT =
+                   CASE
+                      WHEN( coalesce(DAMOUNT, 0)
+                            - coalesce(CAMOUNT, 0)
+                            + coalesce(NEW.NETAMT, 0)) > 0
+                      THEN ( coalesce(DAMOUNT, 0)
+                          - coalesce(CAMOUNT, 0)
+                          + coalesce(NEW.NETAMT, 0))
+                      ELSE
+                         0
+                   END-- START REV : 010
+                ,
+                REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE-- END REV : 010
+                                                        -- START REV : 011
+                ,
+                CASH_DISCOUNT_APPLICABLE = NEW.CASH_DISCOUNT_APPLICABLE,
+                CASH_DISCOUNT_PERCENTAGE = NEW.CASH_DISCOUNT_PERCENTAGE,
+                CASH_DISCOUNT_PERIOD = NEW.CASH_DISCOUNT_PERIOD-- END REV : 011
+                                                                -- START REV : 012
+                ,
+                ADMOU_CODE = NEW.ADMOU_CODE
+          -- END REV : 012
+          WHERE ENTCODE = NEW.INVCODE::varchar
+                AND ENTTYPE = 'PIM'
+                AND GLCODE = NEW.PGLCODE -- REV : 005
+                AND SLCODE = NEW.PCODE;
+
+         GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+         THEN
+            INSERT INTO FINPOST(POSTCODE,
+                                 ENTCODE,
+                                 ENTNO,
+                                 ENTDT,
+                                 ENTTYPE,
+                                 DOCNO,
+                                 DOCDT,
+                                 DUEDT,
+                                 GLCODE,
+                                 SLCODE,
+                                 CAMOUNT,
+                                 YCODE,
+                                 NARTEXT,
+                                 SCHEME_DOCNO-- START REV : 010
+                                 ,
+                                 REF_ADMSITE_CODE-- END REV : 010
+                                                 -- START REV : 011
+                                 ,
+                                 CASH_DISCOUNT_APPLICABLE,
+                                 CASH_DISCOUNT_PERCENTAGE,
+                                 CASH_DISCOUNT_PERIOD-- END REV : 011
+                                 ,
+                                 ADMOU_CODE -- REV : 012
+                                           )
+                 VALUES (nextval('erp01'),
+                         NEW.INVCODE::varchar,
+                         NEW.INVNO::varchar,
+                         NEW.INVDT,
+                         'PIM',
+                         NEW.DOCNO,
+                         NEW.DOCDT,
+                         NEW.DUEDT,
+                         NEW.PGLCODE,
+                         NEW.PCODE,
+                         coalesce(NEW.NETAMT, 0),
+                         NEW.YCODE,
+                         NEW.REM,
+                         NEW.SCHEME_DOCNO-- START REV : 010
+                         ,
+                         NEW.REF_ADMSITE_CODE-- END REV : 010
+                                              -- START REV : 011
+                         ,
+                         NEW.CASH_DISCOUNT_APPLICABLE,
+                         NEW.CASH_DISCOUNT_PERCENTAGE,
+                         NEW.CASH_DISCOUNT_PERIOD-- END REV : 011
+                         ,
+                         NEW.ADMOU_CODE -- REV : 012
+                                        );
+         END IF;
+      END IF;
+   END IF;
+
+   IF TG_OP = 'DELETE'
+   THEN
+                -- START REV : 017
+  SELECT PG_BACKEND_PID() INTO STRICT V_SID;
+  SELECT APPLICATION_NAME INTO STRICT V_PROGRAM FROM PG_STAT_ACTIVITY WHERE PID=V_SID;
+
+IF not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+                  THEN
+                     RAISE EXCEPTION 'del_from_wrong_application' USING ERRCODE = '50001';
+                  END IF;
+                 -- END REV : 017
+      DELETE FROM FINCOSTTAG
+       WHERE POSTCODE IN
+                (SELECT POSTCODE
+                   FROM FINPOST
+                  WHERE ENTCODE = OLD.INVCODE::varchar
+                        AND ENTTYPE = 'PIM'
+                        AND GLCODE = OLD.GLCODE
+                        AND ( (OLD.SLCODE IS NULL AND SLCODE IS NULL)
+                             OR SLCODE = OLD.SLCODE));
+
+      DELETE FROM FINPOST
+       WHERE ENTCODE = OLD.INVCODE::varchar AND ENTTYPE = 'PIM';
+   END IF;
+
+   DELETE FROM FINCOSTTAG
+    WHERE POSTCODE IN (SELECT POSTCODE
+                FROM FINPOST
+               WHERE ENTCODE = OLD.INVCODE::varchar
+                     AND ENTTYPE = 'PIM'
+                     AND coalesce(DAMOUNT, 0) = 0
+                     AND coalesce(CAMOUNT, 0) = 0);
+
+   DELETE FROM FINPOST
+    WHERE ENTCODE = OLD.INVCODE::varchar
+          AND ENTTYPE = 'PIM'
+          AND coalesce(DAMOUNT, 0) = 0
+          AND coalesce(CAMOUNT, 0) = 0;
+EXCEPTION
+-- START REV : 017
+   WHEN SQLSTATE '50001' THEN
+      RAISE EXCEPTION '%', 'T_Purinvmain == >> Deletion from other application except GINESYS WEB not allowed.' USING ERRCODE = '45112';
+-- END REV : 017
+   WHEN OTHERS
+   THEN
+      CALL ERRAUDIT(USER,
+                'T_Purinvmain',
+                SQLSTATE::varchar,
+                SQLERRM);
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED ' || SQLSTATE::varchar || ' ' || SQLERRM USING ERRCODE = '45001';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

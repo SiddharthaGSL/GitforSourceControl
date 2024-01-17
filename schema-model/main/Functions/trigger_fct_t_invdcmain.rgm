@@ -1,0 +1,168 @@
+function "main"."trigger_fct_t_invdcmain()" {
+  text = """
+
+-- START REV : 012
+DECLARE
+  I RECORD;
+  V_INV_MONTH_CLOSING   char(1) := NULL;
+-- END REV : 12
+    
+    V_SID                           bigint;
+    V_PROGRAM                       varchar(50);
+-- END REV : 013
+V_CNL_YCODE   bigint := NULL;
+BEGIN
+  BEGIN
+/*******************************************************************************************************************************************************
+  NO.       DATE        AUTHOR                   DESCRIPTION
+  --------- ----------  ----------------------   -------------------------------------------------------------------------------------------------------
+  REV : 001 25/03/2009   SUJOY / RAJKUMAR         (BUG ID : 1120) POS Lite I
+  REV : 002 06/02/2012   DIPTIMAN                 (BUG ID : 216)  Site related changes.
+  REV : 003 24/09/2013   PRASANTA                 (BUG ID : 919)  Updating of Sales Order Status should be from DC Against Order Form.
+  REV : 004 24/02/2017   SABYASACHI               (BUG ID : 25985)  Non inventry Item treating as inventory
+                                                                      and its getting posted in stock after cancellation of delivery challan..
+  REV : 005 27/04/2017   MOUSUMI                  (TFS ID : 24060)    BIN Reservation.
+  REV : 006 27/04/2017   MOUSUMI                  (TFS ID : 26844)    MULTIOU.
+  REV : 007 11/05/2017   MANASH                   (TFS ID : 21200)    COGS Revamp.
+  REV : 008 13/06/2017   MANASH                   (TFS ID : 29959)    Stock not get reverted after DC cancel.
+  REV : 009 16/08/2017   SABYASACHI               (TFS ID : 31963)    SALES ORDER DQTY NOT BEEN UPDATED AFTER CANCELLATION OF DELIVERY CHALLAN .
+  REV : 010  02/01/2018  PRASANTA                  (TFS ID : 36444)   Delivery Challan Cancellation is not posting in Invstock 
+                                                                      table when Delivery Challan date is closed
+  REV : 011 01/06/2018   MANASH                   (TFS ID : 35306)  User unable to create Delivery Challan against Reservation.
+  REV : 012 14/08/2018   PRASANTA                 (TFS ID : 41739)  Unable to created Transfer Out if Delivery Challan creation date is closed
+  REV : 013 03/12/2019   MANASH                    (TFS ID : 37742)  Unable to delete Sales Invoice. 
+  REV : 014 23/05/2019   MOUSUMI                  (TFS ID : 4223)  ENTRY SOURCE,STATUS RELATED CHANGES 
+  REV : 015 25/08/2020   MOUSUMI                  (TFS ID : 84098)  cancel date, ycodeRELATED CHANGES 
+  ******************************************************************************************************************************************************/
+  
+    IF TG_OP = 'UPDATE' THEN
+        --REV 9.3.4.0018
+        --END OF REV 9.3.4.0018
+        -- START REV : 010
+        /* STOCK AND COSTING REFLECTION */
+
+        -- START REV : 012
+        BEGIN
+          SELECT CHAR_2
+          INTO STRICT V_INV_MONTH_CLOSING
+          FROM GLOBAL_TEMP_STORAGE
+          WHERE CHAR_1 = 'CHECK MONTH CLOSING'
+          AND CODE_1   IN (711,465)
+          AND CODE_2   = NEW.DCCODE;
+        EXCEPTION
+           WHEN no_data_found THEN
+             V_INV_MONTH_CLOSING := NULL;
+        END;
+        IF (coalesce(OLD.STATUS,'P') = 'P' AND NEW.STATUS = 'P' AND coalesce(V_INV_MONTH_CLOSING,'@@') <> 'C') THEN
+       -- END REV : 014
+        -- END REV : 012
+         CALL DB_PKG_STOCK$REFLECT(NEW.DCCODE,NEW.DCNO,NEW.DCDT, 'DCI',
+                    NEW.INLOCCODE,NEW.YCODE,NEW.PCODE,NEW.OUTLOCCODE,
+                    NULL,NULL,NULL,NULL,NEW.DOCNO,NULL,
+                    -- START REV : 001
+                    NEW.SCHEME_DOCNO
+                    -- END REV : 001
+                    -- START REV : 002
+                    ,NULL
+                    ,NEW.ADMOU_CODE
+                    ,NEW.ADMSITE_CODE_OWNER
+                    -- END REV : 002
+                    );
+        CALL DB_PKG_STOCK$REFLECT(NEW.DCCODE,NEW.DCNO,NEW.DCDT, 'DCO',
+                    NEW.OUTLOCCODE,NEW.YCODE,NEW.PCODE,NEW.INLOCCODE,
+                    NULL,NULL,NULL,NULL,NEW.DOCNO,NULL,
+                    -- START REV : 001
+                    NEW.SCHEME_DOCNO
+                    -- END REV : 001
+                    -- START REV : 002
+                    ,NULL
+                    ,NEW.ADMOU_CODE
+                    ,NEW.ADMSITE_CODE_OWNER
+                    -- END REV : 002
+                    );
+        END IF;
+        -- START REV : 001
+        IF  NEW.STATUS = 'C' THEN
+            -- START REV : 008
+    BEGIN SELECT YCODE INTO STRICT V_CNL_YCODE FROM ADMYEAR
+    WHERE date_trunc('day', NEW.CNLDT) BETWEEN DTFR AND DTTO;
+    EXCEPTION WHEN no_data_found THEN V_CNL_YCODE := NULL;
+    END;
+
+            CALL DB_PRO_CANCEL_DC(
+                            OLD.DCCODE,
+                            NEW.DCCODE,
+                            NEW.DCNO,
+                            NEW.SCHEME_DOCNO,
+                            date_trunc('day', NEW.CNLDT), -- REV : 015
+                            NEW.OUTLOCCODE,
+                            NEW.INLOCCODE,
+                            V_CNL_YCODE, -- REV : 015
+                            NEW.PCODE,
+                            NEW.ADMSITE_CODE_OWNER,
+                            NEW.ADMOU_CODE
+                        );
+            -- END REV : 008
+        END IF;
+        -- END REV : 001
+    END IF;
+
+    -- START REV : 009
+     IF  NEW.STATUS IS NOT NULL THEN
+     -- START REV : 014
+     -- Considering :NEW Instead of :OLD because we are trying to restrict the
+     -- execution of this dependent table update from trigger when update is done 
+     -- from web application even if the document was created from any other source
+     -- like (Import Excel, D2K etc.) 
+        IF  coalesce(NEW.ENTRY_SOURCE,'XX') <> 'WEB'
+         THEN
+         -- END REV : 014
+             UPDATE INVDCDET SET INVDCMAIN_STATUS=NEW.STATUS WHERE DCCODE=NEW.DCCODE;
+        END IF; -- END REV :014
+     END IF;
+    -- START REV : 014
+    IF  coalesce(NEW.ENTRY_SOURCE,'XX') <> 'WEB' THEN
+    -- END REV : 014
+        -- START REV : 009
+        FOR I IN (SELECT DISTINCT CODE_1 FROM GLOBAL_TEMP_STORAGE) LOOP
+            CALL UPDATE_SALORDMAIN_STATUS(I.CODE_1);
+            DELETE FROM GLOBAL_TEMP_STORAGE;
+        END LOOP;
+    END IF; -- END REV : 014
+    
+    -- START REV  : 014
+    IF TG_OP = 'DELETE' THEN
+    SELECT PG_BACKEND_PID() INTO STRICT V_SID;
+    SELECT APPLICATION_NAME INTO STRICT V_PROGRAM FROM PG_STAT_ACTIVITY WHERE PID=V_SID;
+    
+
+      if not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'   	  
+      THEN
+          RAISE EXCEPTION 'del_from_wrong_application' USING ERRCODE = '50001';
+       END IF;
+    END IF;
+
+EXCEPTION
+    WHEN SQLSTATE '50001' THEN
+    RAISE EXCEPTION '%', 'T_INVDCMAIN == >> Deletion from other application except GINESYS WEB not allowed.' USING ERRCODE = '45112';
+     -- END REV : 014
+    WHEN OTHERS THEN
+    CALL ERRAUDIT(USER,'T_INVDCMAIN',SQLSTATE,SQLERRM);
+    -- START REV : 011
+    RAISE EXCEPTION '%', 'Internal error occured. Unable to update Stock.' USING ERRCODE = '45111';
+    -- END REV : 011
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

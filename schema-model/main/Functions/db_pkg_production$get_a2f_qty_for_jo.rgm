@@ -1,0 +1,212 @@
+function "main"."db_pkg_production$get_a2f_qty_for_jo(character, timestamp without time zone, bigint, character varying, bigint, numeric, bigint, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+        V_P_STD_QTY     bigint;
+        V_P_NON_STD_QTY bigint;
+        V_N_QTY         bigint;
+        V_PREV_STD_SEQ  PRDLOTOPERATION.OPERATION_SEQ%TYPE;
+        V_NEXT_STD_SEQ  PRDLOTOPERATION.OPERATION_SEQ%TYPE;
+        V_SHOW_VAL      char(1) := 'N';
+        V_REC_PSD_QTY   PRDWIPTRANS.TXN_QTY%TYPE;
+        V_ORD_PSD_QTY   PRDWIPTRANS.TXN_QTY%TYPE;
+        V_NXT_ORD_QTY   PRDJOBDET.QTY%TYPE;
+
+BEGIN
+        IF  V_SHOW_VAL = 'Y' THEN
+            CALL ERRAUDIT('1','1','1',CHR(10)||
+                   'P_TYPE            = '||P_TYPE||CHR(10)||
+                   'P_DATE            = '||P_DATE||CHR(10)||
+                   'P_CODE            = '||P_CODE||CHR(10)||
+                   'P_AICODE          = '||P_AICODE||CHR(10)||
+                   'P_SAICODE         = '||P_SAICODE||CHR(10)||
+                   'P_OP_SEQ          = '||P_OP_SEQ||CHR(10)||
+                   'P_ADMSITE_CODE IN = '||P_ADMSITE_CODE||CHR(10)||
+                   'P_CUR_PRCODE      = '||P_CUR_PRCODE||CHR(10)||
+                   'P_PRV_PRCODE      = '||P_PRV_PRCODE);
+        END IF;
+
+        V_P_STD_QTY     := 0;
+        V_P_NON_STD_QTY := 0;
+        V_N_QTY         := 0;
+        V_PREV_STD_SEQ  := NULL;
+        V_NEXT_STD_SEQ  := NULL;
+        V_SHOW_VAL      := 'N';
+        V_REC_PSD_QTY   := 0;
+        V_ORD_PSD_QTY   := 0;
+        V_NXT_ORD_QTY   := 0;
+
+        IF  P_TYPE IN ('LS','LN') THEN
+            SELECT  MIN(OPERATION_SEQ)
+            INTO STRICT    V_PREV_STD_SEQ
+            FROM    PRDLOTOPERATION
+            WHERE   LOTCODE                = P_CODE
+            AND     ASSEMBLY_ICODE         = P_AICODE
+            AND     coalesce(ASS_SAITEM_CODE,0) = coalesce(P_SAICODE,0)
+            AND     IS_STANDARD            = 'Y';
+
+            IF  P_OP_SEQ = V_PREV_STD_SEQ AND P_TYPE = 'LS' THEN
+                SELECT  SUM(coalesce(LOT_QTY,0) - coalesce(ORD_QTY,0) + coalesce(CNL_QTY,0))
+                INTO STRICT    V_N_QTY
+                FROM    PRDLOTOPERATION
+                WHERE   LOTCODE                = P_CODE
+                AND     ASSEMBLY_ICODE         = P_AICODE
+                AND     coalesce(ASS_SAITEM_CODE,0) = coalesce(P_SAICODE,0)
+                AND     OPERATION_SEQ          = P_OP_SEQ;
+            ELSE
+                IF  P_TYPE = 'LN' THEN
+                    SELECT  SUM(AVAILABLE_TO_FORWARD)
+                    INTO STRICT    V_N_QTY
+                    FROM    PRDLOTOPERATION
+                    WHERE   LOTCODE                = P_CODE
+                    AND     ASSEMBLY_ICODE         = P_AICODE
+                    AND     coalesce(ASS_SAITEM_CODE,0) = coalesce(P_SAICODE,0)
+                    AND     OPERATION_SEQ          = P_OP_SEQ
+                    AND     IS_STANDARD            = 'Y';
+                ELSE
+                    SELECT  SUM(AVAILABLE_TO_FORWARD)
+                    INTO STRICT    V_N_QTY
+                    FROM    PRDLOTOPERATION
+                    WHERE   LOTCODE                = P_CODE
+                    AND     ASSEMBLY_ICODE         = P_AICODE
+                    AND     coalesce(ASS_SAITEM_CODE,0) = coalesce(P_SAICODE,0)
+                    AND     OPERATION_SEQ          =
+                                                        (
+                                                            SELECT  MAX(OPERATION_SEQ)
+                                                            FROM    PRDLOTOPERATION
+                                                            WHERE   LOTCODE                = P_CODE
+                                                            AND     ASSEMBLY_ICODE         = P_AICODE
+                                                            AND     coalesce(ASS_SAITEM_CODE,0) = coalesce(P_SAICODE,0)
+                                                            AND     IS_STANDARD            = 'Y'
+                                                            AND     OPERATION_SEQ          < P_OP_SEQ
+                                                        );
+                END IF;
+            END IF;
+
+            IF  coalesce(V_N_QTY,0) <= 0 THEN
+                RETURN 0;
+            ELSE
+                RETURN V_N_QTY;
+            END IF;
+
+        ELSE
+            -- For non-std seq
+            IF  P_OP_SEQ-date_trunc('day', P_OP_SEQ)<>0 THEN
+                SELECT  MAX(CASE WHEN R.OPERATION_SEQ<P_OP_SEQ THEN R.OPERATION_SEQ ELSE NULL END),
+                        MIN(CASE WHEN R.OPERATION_SEQ>P_OP_SEQ THEN R.OPERATION_SEQ ELSE NULL END)
+                INTO STRICT    V_PREV_STD_SEQ,
+                        V_NEXT_STD_SEQ
+                FROM    PRDROUTEDET R
+                WHERE   R.ROUTECODE=P_CODE;
+
+            --for std seq
+            ELSE
+                SELECT  MAX(R.OPERATION_SEQ)
+                INTO STRICT    V_PREV_STD_SEQ
+                FROM    PRDROUTEDET R
+                WHERE   R.ROUTECODE     = P_CODE
+                AND     R.OPERATION_SEQ < P_OP_SEQ;
+
+                V_NEXT_STD_SEQ := P_OP_SEQ;
+            END IF;
+
+            -- There are no any previous seq
+            IF  V_PREV_STD_SEQ IS NULL THEN
+                RETURN NULL;
+            END IF;
+
+            -- Get previous standard seq and qty
+            SELECT  SUM
+                    (
+                        CASE WHEN D.OPERATION_SEQ = V_NEXT_STD_SEQ THEN
+                                  0-(coalesce(QTY,0)-coalesce(CNL_QTY,0))
+                             WHEN D.OPERATION_SEQ=V_PREV_STD_SEQ THEN
+                                  coalesce(COMPLETED_QTY,0)+coalesce(ALTERNATE_QTY,0)
+                             ELSE
+                                  coalesce(COMPLETED_QTY,0)+coalesce(ALTERNATE_QTY,0)+coalesce(CNL_QTY,0)
+                        END
+                    )
+            INTO STRICT    V_P_STD_QTY
+            FROM    PRDJOBDET D
+            WHERE   D.ASSEMBLY_ICODE = P_AICODE
+            AND     D.JOBCODE IN (
+                                    SELECT  M.CODE
+                                    FROM    PRDJOBMAIN M
+                                    WHERE   M.JOBTYPE NOT IN ('LN', 'LS')
+                                    AND     M.ADMSITE_CODE = P_ADMSITE_CODE
+                                    AND     M.JOB_DATE <= P_DATE
+                                )
+            AND     D.OPERATION_SEQ BETWEEN V_PREV_STD_SEQ AND V_NEXT_STD_SEQ;
+
+            RETURN V_P_STD_QTY;
+        END IF;
+    EXCEPTION
+        WHEN OTHERS THEN
+             RETURN NULL;
+    END;
+
+"""
+  returnType = bigint
+  arguments = <
+    {
+      name = p_type
+      type = character
+      mode = IN
+    }
+
+    {
+      name = p_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_aicode
+      type = character varying
+      mode = IN
+    }
+
+    {
+      name = p_saicode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_op_seq
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_admsite_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_cur_prcode
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_prv_prcode
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+  >
+  language = plpgsql
+  volatility = STABLE
+}
+

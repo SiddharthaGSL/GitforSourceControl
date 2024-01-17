@@ -1,0 +1,348 @@
+function "main"."int$pkg_sal_pricelist_int$pkg_sal_pricelist_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        errmsg                      varchar(2000);
+        vsession                    varchar(100);
+        vdetailtbl                  varchar(2000);
+        vdetailrec                  varchar(500);
+        errcode                     bigint;
+        vcount                      bigint;
+        v_mark                      varchar(1000);
+        v_pricelist_found           char(1);
+
+        v_pricetype                 salpricelistmain.price_type%type;
+        v_discount_mode             salpricelistmain.discount_mode%type;
+        v_include_vat_in_discount   salpricelistmain.include_vat_in_discount%type;
+        v_discount_basis            salpricelistmain.discount_basis%type;
+        v_discount_factor           salpricelistmain.discount_factor%type;
+        v_net_price_multiples_of    salpricelistmain.net_price_multiples_of%type;
+        v_net_price_round_limit     salpricelistmain.net_price_round_limit%type;
+        v_cmptax_code_basis         salpricelistmain.cmptax_code_basis%type;c1 CURSOR FOR
+            SELECT *
+            from   int$stg_sal_pricelist a
+            where  userid = p_userid
+            order by 1;
+
+BEGIN
+        v_mark := 'P01';
+
+        FOR i IN c1 LOOP
+            v_pricetype                 := null;
+            v_discount_mode             := null;
+            v_include_vat_in_discount   := null;
+            v_discount_basis            := null;
+            v_discount_factor           := null;
+            v_net_price_multiples_of    := null;
+            v_net_price_round_limit     := null;
+            v_cmptax_code_basis         := null;
+
+            begin
+                v_pricelist_found := 'N';
+
+                select 'Y'
+                into STRICT   v_pricelist_found
+                from   salpricelistmain
+                where  upper(pricelistname) = upper(i.price_list_name);
+            exception
+                when no_data_found then null;
+            end;
+
+            if    upper(i.price_type) = 'MRP' then 
+                  v_pricetype := 'L';
+            elsif upper(i.price_type) = 'RSP' then
+                  v_pricetype := 'M';
+            elsif upper(i.price_type) = 'WSP' then
+                  v_pricetype := 'W';
+            elsif upper(i.price_type) = 'STANDARD RATE' then
+                  v_pricetype := 'R';
+            elsif upper(i.price_type) = 'EFFECTIVE RATE' then
+                  v_pricetype := 'C';
+            end if;
+            
+            if    upper(i.discount_mode) = 'MARKUP' then
+                  v_discount_mode := 'U';
+            elsif upper(i.discount_mode) = 'MARKDOWN' then
+                  v_discount_mode := 'D';
+
+                  if  coalesce(v_pricelist_found,'N') = 'N' then -- new entries
+                      if i.include_tax is null then
+                         v_include_vat_in_discount := 'N';
+                         v_cmptax_code_basis := 'S';
+                         v_discount_basis := 'N';
+                      end if;
+                  end if;
+            end if;
+
+            if    upper(i.include_tax) = 'DO NOT INCLUDE' then
+                  v_include_vat_in_discount := 'N';
+                  v_cmptax_code_basis := 'S';
+                  v_discount_basis := 'N';
+            elsif upper(i.include_tax) = 'BASED ON SELECTED PRICE TYPE BEFORE MARKDOWN' then
+                  v_include_vat_in_discount := 'Y';
+                  v_cmptax_code_basis := 'D';
+                  v_discount_basis := 'B';
+            elsif upper(i.include_tax) = 'BASED ON SELECTED PRICE TYPE AFTER MARKDOWN' then
+                  v_include_vat_in_discount := 'Y';
+                  v_cmptax_code_basis := 'D';
+                  v_discount_basis := 'N';
+            elsif upper(i.include_tax) = 'BASED ON NET PRICE BEFORE MARKDOWN' then
+                  v_include_vat_in_discount := 'Y';
+                  v_cmptax_code_basis := 'S';
+                  v_discount_basis := 'B';
+            elsif upper(i.include_tax) = 'BASED ON NET PRICE AFTER MARKDOWN' then
+                  v_include_vat_in_discount := 'Y';
+                  v_cmptax_code_basis := 'S';
+                  v_discount_basis := 'N';
+            end if;
+
+            if    upper(i.round_off) = 'DO NOT ROUND' then
+                  v_net_price_round_limit := 'N';
+            elsif upper(i.round_off) = 'UPPER' then
+                  v_net_price_round_limit := 'U';
+            elsif upper(i.round_off) = 'LOWER' then
+                  v_net_price_round_limit := 'L';
+            elsif upper(i.round_off) = 'ROUND' then
+                  v_net_price_round_limit := 'R';
+            end if;
+
+            if  upper(i.include_tax) = 'DO NOT INCLUDE' then
+                if  i.round_off is null then
+                    begin
+                       select coalesce(m.net_price_round_limit, 'N')
+                       into STRICT   v_net_price_round_limit
+                       from   salpricelistmain m
+                       where  upper(pricelistname) = upper(i.price_list_name);
+                    exception
+                       when no_data_found then
+                           v_net_price_round_limit := 'N';
+                    end;
+                end if;
+            end if;
+
+            if v_net_price_round_limit = 'N' then
+               v_net_price_multiples_of := null;
+            else
+               v_net_price_multiples_of := i.round_in_multiples_of;
+            end if;
+
+            v_mark := 'P02';
+
+            update salpricelistmain m
+            set    price_type = coalesce(v_pricetype,price_type)
+            where  upper(pricelistname) = upper(i.price_list_name)
+            and    pricelistcode not in (
+                                            SELECT pricelistcode from finsl_ou_site where pricelistcode is not null
+                                            
+union
+ 
+                                            SELECT pricelistcode from finsl_ou where pricelistcode is not null
+                                            
+union
+ 
+                                            select pricelistcode from finsl where pricelistcode is not null
+                                            
+union
+ 
+                                            select pricelist_code from admsite where pricelist_code is not null
+                                        );
+
+            update salpricelistmain m
+            set    rem = i.remarks,
+                   last_access_ecode = p_userid,
+                   last_access_time = clock_timestamp(),
+                   discount_mode = coalesce(v_discount_mode, m.discount_mode),
+                   include_vat_in_discount = coalesce(v_include_vat_in_discount, m.include_vat_in_discount),
+                   discount_basis = coalesce(v_discount_basis, m.discount_basis),
+                   discount_factor = coalesce(i.discount_rate, m.discount_factor),
+                   net_price_multiples_of = case 
+                                                when v_net_price_round_limit = 'N' then null
+                                                else coalesce(v_net_price_multiples_of, m.net_price_multiples_of)
+                                            end,
+                   net_price_round_limit = coalesce(v_net_price_round_limit, m.net_price_round_limit),
+                   cmptax_code_basis = coalesce(v_cmptax_code_basis, m.cmptax_code_basis)
+            where  upper(pricelistname) = upper(i.price_list_name);
+
+            v_mark := 'P03';
+
+            if NOT FOUND then
+               v_pricetype := coalesce(v_pricetype,'M');
+
+               if   v_discount_mode is null then
+                    v_include_vat_in_discount := 'N';
+                    v_cmptax_code_basis := 'S';
+                    v_discount_basis := 'N';
+               end if;
+
+               v_discount_mode := coalesce(v_discount_mode, 'D');
+               v_include_vat_in_discount := coalesce(v_include_vat_in_discount, 'N');
+               v_discount_basis := coalesce(v_discount_basis, 'N');
+               v_net_price_round_limit := coalesce(v_net_price_round_limit, 'N');
+               v_cmptax_code_basis := coalesce(v_cmptax_code_basis, 'D');
+
+               insert into salpricelistmain(pricelistcode, pricelistname, ecode, time, rem, 
+                            price_type, discount_mode, include_vat_in_discount, discount_basis, 
+                            discount_factor, net_price_multiples_of, net_price_round_limit, cmptax_code_basis,
+                            last_access_ecode, last_access_time)
+               values (nextval('salpricelistmain_pricelistcode'), i.price_list_name, p_userid, clock_timestamp(), i.remarks,
+                       v_pricetype, v_discount_mode, v_include_vat_in_discount, v_discount_basis, 
+                       i.discount_rate, v_net_price_multiples_of, v_net_price_round_limit, v_cmptax_code_basis,
+                       p_userid, clock_timestamp());
+
+               --COMMIT;
+            end if;
+            v_mark := 'P04';
+        end loop;
+
+        v_mark := 'P05';
+
+        -- log to be added in history table
+        select nextval('int$error_log_code') into STRICT vsession;
+
+        vdetailtbl :=
+            'CREATE TABLE ginarchive.salpricelistmain_'|| vsession|| ' AS
+                    SELECT price_list_name, remarks, price_type, discount_mode, discount_rate, include_tax, round_off, round_in_multiples_of
+                    FROM   int$stg_sal_pricelist a
+                    WHERE  userid = '|| p_userid::text||' '||
+                   'ORDER BY 1';
+
+        v_mark := 'P06';
+
+        EXECUTE vdetailtbl;
+
+        vdetailrec := 'SELECT count(1) FROM ginarchive.salpricelistmain_' || vsession::text;
+
+        EXECUTE vdetailrec INTO STRICT vcount;
+
+        IF coalesce(vcount, 0) = 0 THEN
+           null;
+           --RAISE insert_violation;
+        END IF;
+
+        v_mark := 'P07';
+
+        insert into int$history(code, importedby, importedon, classname, summary, history_detail_tablename, history_detail_row_count)
+        values (nextval('int$history_code'), p_userid, clock_timestamp(), 'SAL_PRICELIST',
+                   vcount::TEXT || ' pricelist imported successfully.',
+                   'ginarchive.salpricelistmain_' || vsession, vcount);
+
+        v_mark := 'P08';
+
+        --COMMIT;
+
+        return('1');
+    exception
+        when others then
+            errcode := SQLSTATE;
+            errmsg := sqlerrm;
+
+            --Error log for Oracle Internal Error
+            insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            values (nextval('int$error_log_code'), 0, 'SAL_PRICELIST', p_userid, errcode, errmsg||','||v_mark, clock_timestamp());
+
+            --COMMIT;
+            return('0');
+    END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+
+function "main"."int$pkg_sal_pricelist_int$pkg_sal_pricelist_process(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+ 
+DECLARE
+	-- Change this to reflect the dblink connection string
+	 --v_conn_str  text := format('port=%s dbname=%s user=%s', current_setting('port'), current_database(), current_user);
+    v_srvname       name;
+    v_connname      text;
+    v_connstr       text;
+    v_conn_result   text;
+    v_query         text;
+
+	v_ret    text;
+BEGIN
+
+	v_srvname := 'foreign_pgbase';
+    v_connname := replace(uuid_generate_v4()::text,'-','');
+    v_connstr  := v_srvname;
+    
+    --Open the connection  
+    SELECT dblink_connect(v_connname,v_connstr) 
+    INTO v_conn_result;
+	
+	
+	v_query := 'SELECT * FROM int$pkg_sal_pricelist_int$pkg_sal_pricelist_process_atx ( ' || quote_nullable(p_userid::text) || '::bigint,' || quote_nullable(p_connect_site::text) || '::bigint,' || quote_nullable(p_logging_date::text) || '::timestamp without time zone,' || quote_nullable(p_connect_ou::text) || '::bigint )';
+	SELECT * INTO v_ret FROM dblink(v_connname, v_query) AS p (ret text);
+
+	
+	SELECT dblink_disconnect(v_connname) 
+    INTO v_conn_result;
+	
+	RETURN v_ret;
+EXCEPTION 
+   WHEN OTHERS THEN
+        SELECT dblink_disconnect(v_connname) 
+        INTO v_conn_result;
+
+END;
+"""
+  returnType = text
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

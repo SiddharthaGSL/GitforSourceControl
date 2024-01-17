@@ -1,0 +1,748 @@
+procedure "main"."db_pro_validate_staging_data(character, bigint, bigint, bigint, character, character, character)" {
+  text = """
+
+DECLARE
+
+/*********************************************************************************************************************************
+   NAME: DB_PRO_VALIDATE_STAGGING_DATA
+
+   PURPOSE:
+
+   REVISIONS:
+   No.         Date         Author                   Description
+   ---------  ----------    ----------------------   ----------------------------------------------------------------------------
+   REV : 000  17/01/2018    DIPTIMAN                 (TFS ID : 36604) Difference posting related changes.
+   REV : 002  28/08/2018    DIPTIMAN                 (TFS ID : 41806, 41810) Migration would be done for TS site also.
+   REV : 003  04/09/2018    DIPTIMAN                 (TFS ID : 41770) QTY is 0 but value in amount related problem in cube.
+   REV : 004  26/09/2018    DIPTIMAN                 (TFS ID : 41909) To determine which sites are provided by user and which are from stock table.
+   REV : 005  20/02/2019    DIPTIMAN                 (NEW TFS ID : 13999) Only connected OU's data should come in migration window.
+
+   NOTES:
+**********************************************************************************************************************************/
+    --V_ROWID                         DBMS_SQL.VARCHAR2A;
+    --V_ICODE                         DBMS_SQL.VARCHAR2A;
+    --RET_CUR                         REFCURSOR;
+    V_ADMOU_CODE                    bigint;
+    V_ADMSITE_CODE                  bigint;
+    V_ITM_CNT                       bigint;
+    V_COST_AMOUNT                   bigint;
+    V_ADMMONTH_LAST_DATE            timestamp;
+    V_INVVAL_MIGRATION_MAIN_CODE    bigint;
+    V_SHOW_PARAM_VAL                char(1) := 'N';
+    V_CUBE_CONFIG_NAME              varchar(100);
+    V_CUBE_CODE                     bigint;
+    V_TRANSIT_LOCCODE               bigint;
+    V_FLAG                          char(1);
+	v_offset						bigint;
+	v_limit							bigint;
+	--v_code							bigint;
+	i								record;
+	v_table_rec						type_rec_db_pro_populate_item[];
+	
+    C1 CURSOR(P_ADMMONTH_LAST_DATE timestamp, P_TRANSIT_LOCCODE bigint) FOR
+        SELECT DISTINCT ADMSITE_CODE
+        FROM (
+                SELECT ADMSITE_CODE
+                FROM   INVVAL_MIGRATION_DET_STAGING
+                WHERE  TERMINAL_NAME = P_TERMINAL
+                AND    SITE_SHRTNAME IN (
+                            SELECT DISTINCT SITE_SHRTNAME
+                            FROM   INVVAL_MIGRATION_DET_STAGING
+                            WHERE  TERMINAL_NAME = P_TERMINAL
+                            EXCEPT
+                            SELECT DISTINCT SITE_SHRTNAME
+                            FROM   INVVAL_MIGRATION_DET_ERR
+                            WHERE  TERMINAL_NAME = P_TERMINAL
+                   )
+UNION ALL
+                SELECT A.ADMSITE_CODE
+                FROM   INVSTOCK A 
+                WHERE  A.ENTDT <= P_ADMMONTH_LAST_DATE
+                AND    A.LOCCODE <> P_TRANSIT_LOCCODE
+                AND    A.ADMOU_CODE = P_ADMOU_CODE
+            	) alias2;
+BEGIN
+    IF  V_SHOW_PARAM_VAL = 'Y' THEN
+        CALL ERRAUDIT('2m', '1', '1',
+                        'P_TERMINAL = '|| P_TERMINAL || CHR(10) ||
+                        'P_ADMOU_CODE = '||P_ADMOU_CODE || CHR(10) ||
+                        'P_ECODE = '||P_ECODE|| CHR(10) ||
+                        'P_ADMMONTH_CODE = '||P_ADMMONTH_CODE|| CHR(10) ||
+                        'P_FILENAME = '||P_FILENAME|| CHR(10) ||
+                        'P_UPLOAD_TYPE = '||P_UPLOAD_TYPE|| CHR(10) ||
+                        'P_STATUS = '||P_STATUS);
+    END IF;
+	
+    SELECT DTTO
+    	INTO STRICT   V_ADMMONTH_LAST_DATE
+    	FROM   ADMMONTH
+    WHERE  MCODE = P_ADMMONTH_CODE;
+	
+    SELECT LOCCODE
+    	INTO STRICT   V_TRANSIT_LOCCODE
+    	FROM   INVLOC
+    WHERE  LOCTYPE = 'T';
+    IF  P_STATUS = 'V' THEN
+        DELETE FROM INVVAL_MIGRATION_DET_ERR
+        WHERE  TERMINAL_NAME = P_TERMINAL;
+        EXECUTE 'TRUNCATE TABLE TEMP_DIFFERENCE';
+        COMMIT;
+    END IF;
+    IF  P_STATUS = 'V' THEN
+        INSERT INTO INVVAL_MIGRATION_DET_ERR(KEY, TERMINAL_NAME, LINENO, SITE_SHRTNAME, BARCODE, SHOW_ERR)
+        SELECT A.SITE_SHRTNAME||'-'||A.BARCODE, A.TERMINAL_NAME, A.LINENO, A.SITE_SHRTNAME, A.BARCODE, 'Site Short Name is missing.'
+        FROM   INVVAL_MIGRATION_DET_STAGING A
+        WHERE  A.SITE_SHRTNAME IS NULL
+        AND    TERMINAL_NAME = P_TERMINAL;
+		
+        INSERT INTO INVVAL_MIGRATION_DET_ERR(KEY, TERMINAL_NAME, LINENO, SITE_SHRTNAME, BARCODE, SHOW_ERR)
+        SELECT A.SITE_SHRTNAME||'-'||A.BARCODE, A.TERMINAL_NAME, A.LINENO, A.SITE_SHRTNAME, A.BARCODE, 'Barcode is missing.'
+        FROM   INVVAL_MIGRATION_DET_STAGING A
+        WHERE  A.SITE_SHRTNAME IS NULL
+        AND    TERMINAL_NAME = P_TERMINAL;
+		
+        INSERT INTO INVVAL_MIGRATION_DET_ERR(KEY, TERMINAL_NAME, LINENO, SITE_SHRTNAME, BARCODE, SHOW_ERR)
+        SELECT A.SITE_SHRTNAME||'-'||A.BARCODE, A.TERMINAL_NAME, A.LINENO, A.SITE_SHRTNAME, A.BARCODE, 'Site Short Name not available in master.'
+        FROM invval_migration_det_staging a LEFT OUTER JOIN admsite b
+		ON (upper(A.SITE_SHRTNAME) = upper(B.SHRTNAME))
+		WHERE TERMINAL_NAME = P_TERMINAL
+		AND B.CODE IS NULL;
+					  
+        INSERT INTO INVVAL_MIGRATION_DET_ERR(KEY, TERMINAL_NAME, LINENO, SITE_SHRTNAME, BARCODE, SHOW_ERR)
+        SELECT SHRTNAME, P_TERMINAL, 0, SHRTNAME, NULL, 'Site Short Name is assigned in Multiple Site.'
+        FROM   ADMSITE
+        WHERE  upper(SHRTNAME) IN (SELECT DISTINCT upper(SHRTNAME) FROM INVVAL_MIGRATION_DET_STAGING)
+        GROUP BY SHRTNAME, P_TERMINAL
+        HAVING COUNT(*) > 1;
+					  
+     	IF  P_UPLOAD_TYPE = 'F' AND P_FILENAME IS NOT NULL THEN
+            -- Icode derivation
+			v_offset := 0;
+			v_limit := 100;
+		LOOP 
+			SELECT ARRAY_REMOVE(v_table_rec);
+				SELECT ARRAY_AGG(t)
+				STRICT INTO v_table_rec
+				FROM
+				(
+                	SELECT B.CTID ROWID, A.ICODE
+                	FROM   INVITEM A, INVVAL_MIGRATION_DET_STAGING B
+                	WHERE (A.BARCODE = B.BARCODE OR A.ICODE = B.BARCODE)
+                	AND    TERMINAL_NAME = P_TERMINAL
+					LIMIT v_limit OFFSET v_offset
+				) t;
+			
+			EXIT WHEN ARRAY_LENGTH(v_table_rec) = 0;
+			
+			FOR i IN ARRAY_LOWER(v_table_rec, 1)..ARRAY_UPPER(v_table_rec, 1)
+            LOOP
+                    UPDATE INVVAL_MIGRATION_DET_STAGING
+                    SET    ICODE = v_table_rec[var].ICODE
+                    WHERE  CTID = v_table_rec[var].ROWID;
+				v_offset := (v_offset+100);
+				v_limit	:= (v_offset+100);
+            END LOOP;
+		END LOOP;
+        END IF;
+		
+        FOR I IN (SELECT DISTINCT UPPER(SITE_SHRTNAME) SITE_SHRTNAME
+				  	FROM INVVAL_MIGRATION_DET_STAGING WHERE TERMINAL_NAME = P_TERMINAL) LOOP
+            BEGIN
+                V_ADMSITE_CODE  := NULL;
+                V_ADMOU_CODE    := NULL;
+                SELECT CODE, ADMOU_CODE
+                INTO STRICT   V_ADMSITE_CODE, V_ADMOU_CODE
+                FROM   ADMSITE
+                WHERE  UPPER(SHRTNAME) = I.SITE_SHRTNAME;
+                UPDATE INVVAL_MIGRATION_DET_STAGING
+                SET    ADMSITE_CODE = V_ADMSITE_CODE,
+                       ADMOU_CODE   = V_ADMOU_CODE
+                WHERE  upper(SITE_SHRTNAME) = I.SITE_SHRTNAME
+                AND    TERMINAL_NAME = P_TERMINAL;
+            EXCEPTION
+                WHEN OTHERS THEN NULL;
+            END;
+        END LOOP;
+        INSERT INTO INVVAL_MIGRATION_DET_ERR(KEY, TERMINAL_NAME, LINENO, SITE_SHRTNAME, BARCODE, SHOW_ERR)
+        SELECT A.SITE_SHRTNAME||'-'||A.BARCODE, P_TERMINAL, A.LINENO, A.SITE_SHRTNAME, A.BARCODE, 'Barcode not available in master'
+        FROM   INVVAL_MIGRATION_DET_STAGING A
+        WHERE  A.ICODE IS NULL
+        AND    A.TERMINAL_NAME = P_TERMINAL;
+
+        INSERT INTO INVVAL_MIGRATION_DET_ERR(KEY, TERMINAL_NAME, LINENO, SITE_SHRTNAME, BARCODE, SHOW_ERR)
+        SELECT A.SITE_SHRTNAME||'-'||A.BARCODE, P_TERMINAL, 0, A.SITE_SHRTNAME, A.BARCODE, 'Duplicate Data exists in site item combination. Please check and upload once again.'
+        FROM   INVVAL_MIGRATION_DET_STAGING A
+        WHERE  A.TERMINAL_NAME = P_TERMINAL
+        GROUP BY A.SITE_SHRTNAME, A.BARCODE
+        HAVING COUNT(*) > 1;
+		
+        V_ADMOU_CODE := NULL;
+		
+        INSERT INTO INVVAL_MIGRATION_DET_ERR(KEY, TERMINAL_NAME, LINENO, SITE_SHRTNAME, BARCODE, SHOW_ERR)
+        SELECT A.SITE_SHRTNAME||'-'||A.BARCODE, P_TERMINAL, 0, A.SITE_SHRTNAME, A.BARCODE, 'Site Short Name is not belongs to the connected OU.'
+        FROM   INVVAL_MIGRATION_DET_STAGING A
+        WHERE  coalesce(ADMOU_CODE, P_ADMOU_CODE) <> P_ADMOU_CODE
+        AND    TERMINAL_NAME = P_TERMINAL;
+        COMMIT;
+		
+        INSERT INTO TEMP_DIFFERENCE
+        SELECT A.ADMSITE_CODE, A.ICODE, SUM(A.QTY) TOT_STK_QTY, SUM(A.COSTAMOUNT) TOT_STK_COSTAMOUNT
+        FROM   INVSTOCK A, INVVAL_MIGRATION_DET_STAGING B, ADMSITE C
+        WHERE  A.ADMSITE_CODE = B.ADMSITE_CODE
+        AND    A.ICODE = B.ICODE
+        AND    A.ADMSITE_CODE = C.CODE
+        AND    A.ENTDT <= V_ADMMONTH_LAST_DATE
+        AND    B.TERMINAL_NAME = P_TERMINAL
+        AND    A.LOCCODE <> V_TRANSIT_LOCCODE
+        AND    (P_UPLOAD_TYPE = 'F' OR (P_UPLOAD_TYPE = 'C' AND
+                        ((A.ISSECONDARY IS NULL AND C.SITETYPE LIKE 'OS%')
+				OR C.SITETYPE NOT LIKE 'OS%')))
+        GROUP BY A.ADMSITE_CODE, A.ICODE;
+        COMMIT;
+
+        EXECUTE 'ANALYZE TABLE TEMP_DIFFERENCE COMPUTE STATISTICS';
+
+        INSERT INTO INVVAL_MIGRATION_DET_ERR(KEY, TERMINAL_NAME, LINENO, SITE_SHRTNAME, BARCODE, SHOW_ERR)
+        SELECT A.SITE_SHRTNAME||'-'||A.BARCODE, P_TERMINAL, A.LINENO, A.SITE_SHRTNAME, A.BARCODE,
+               'Provided qty mismatch with stock - (stock qty = '||coalesce(B.QTY,0)||', provided qty = '||coalesce(A.QTY,0)||')'
+        FROM   INVVAL_MIGRATION_DET_STAGING A, TEMP_DIFFERENCE B
+        WHERE  A.ADMSITE_CODE = B.ADMSITE_CODE
+        AND    A.ICODE = B.ICODE
+        AND    coalesce(A.QTY,0) <> coalesce(B.QTY,0)
+        AND    TERMINAL_NAME = P_TERMINAL;
+		
+       IF  P_UPLOAD_TYPE != 'C' THEN
+            INSERT INTO INVVAL_MIGRATION_DET_ERR(KEY, TERMINAL_NAME, LINENO, SITE_SHRTNAME, BARCODE, SHOW_ERR)
+            SELECT A.SITE_SHRTNAME||'-'||A.BARCODE, P_TERMINAL, A.LINENO, A.SITE_SHRTNAME, A.BARCODE,
+                   'Sign of quantity and costamount shoud be same'
+            FROM   INVVAL_MIGRATION_DET_STAGING A
+            WHERE  SIGN(A.QTY) <> SIGN(A.COST_AMOUNT)
+            AND    TERMINAL_NAME = P_TERMINAL;
+        END IF;
+		
+        INSERT INTO INVVAL_MIGRATION_DET_ERR(KEY, TERMINAL_NAME, LINENO, SITE_SHRTNAME, BARCODE, SHOW_ERR)
+        SELECT A.SITE_SHRTNAME||'-'||A.BARCODE, P_TERMINAL, A.LINENO, A.SITE_SHRTNAME, A.BARCODE, 'Item is not present in given site till given month'
+        FROM invval_migration_det_staging a
+		LEFT OUTER JOIN temp_difference b ON (A.ICODE = B.ICODE)
+		WHERE A.ADMSITE_CODE = B.ADMSITE_CODE
+		AND TERMINAL_NAME = P_TERMINAL
+		AND A.ICODE IS NOT NULL
+		AND B.ICODE IS NULL;
+        COMMIT;
+		
+     ELSIF P_STATUS = 'I' THEN  -- Insert
+        FOR I IN C1(V_ADMMONTH_LAST_DATE, V_TRANSIT_LOCCODE)
+			LOOP
+            DELETE FROM INVVAL_MIGRATION_DET
+            WHERE  ADMSITE_CODE = I.ADMSITE_CODE;
+            UPDATE INVVAL_MIGRATION_MAIN
+            SET    ADMMONTH_LAST_DATE = V_ADMMONTH_LAST_DATE,
+                   UPLOAD_TYPE = P_UPLOAD_TYPE,
+                   UPLOADED_ON = clock_timestamp(),
+                   UPLOADED_BY = P_ECODE,
+                   UPLOAD_SOURCE_NAME = P_FILENAME,
+                   FREEZE_STATUS = 'U',
+                   ITEM_COUNT = 0,
+                   COST_AMOUNT = 0,
+                   REMARKS  = NULL
+            WHERE  ADMSITE_CODE = I.ADMSITE_CODE
+            AND    ADMMONTH_CODE = P_ADMMONTH_CODE
+            RETURNING CODE INTO V_INVVAL_MIGRATION_MAIN_CODE;
+			
+            IF  NOT FOUND THEN
+                SELECT nextval('invval_migration_main_code')
+                INTO STRICT   V_INVVAL_MIGRATION_MAIN_CODE;
+				
+                INSERT INTO INVVAL_MIGRATION_MAIN(CODE, ADMSITE_CODE, ADMMONTH_CODE, ADMMONTH_LAST_DATE,
+                             UPLOAD_TYPE, UPLOADED_ON, UPLOADED_BY, UPLOAD_SOURCE_NAME,
+                             FREEZE_STATUS, ITEM_COUNT, COST_AMOUNT, REMARKS)
+                VALUES (V_INVVAL_MIGRATION_MAIN_CODE, I.ADMSITE_CODE, P_ADMMONTH_CODE, V_ADMMONTH_LAST_DATE,
+                        P_UPLOAD_TYPE, clock_timestamp(), P_ECODE, P_FILENAME,
+                        'U', 0, 0, NULL);
+            END IF;
+			
+            INSERT INTO INVVAL_MIGRATION_DET(INVVAL_MIGRATION_MAIN_CODE, ADMSITE_CODE, ICODE, ADMMONTH_CODE, ADMMONTH_LAST_DATE, QTY, COST_AMOUNT)
+            SELECT V_INVVAL_MIGRATION_MAIN_CODE, A.ADMSITE_CODE, A.ICODE, P_ADMMONTH_CODE, V_ADMMONTH_LAST_DATE, A.QTY, coalesce(A.COST_AMOUNT,0)
+            FROM   INVVAL_MIGRATION_DET_STAGING A
+            WHERE  ADMSITE_CODE = I.ADMSITE_CODE
+            AND    TERMINAL_NAME = P_TERMINAL;
+			
+            V_ITM_CNT := NULL;
+			
+            SELECT COUNT(*) INTO STRICT V_ITM_CNT
+            FROM   INVVAL_MIGRATION_DET_STAGING
+            WHERE  ADMSITE_CODE = I.ADMSITE_CODE
+            AND    TERMINAL_NAME = P_TERMINAL;
+			
+            -- site is not present in provided data, may be in stock
+			
+            IF coalesce(V_ITM_CNT,0) = 0 THEN
+                V_FLAG := 'N';
+                INSERT INTO INVVAL_MIGRATION_DET(INVVAL_MIGRATION_MAIN_CODE, ADMSITE_CODE, ICODE, ADMMONTH_CODE, ADMMONTH_LAST_DATE, QTY, COST_AMOUNT)
+                SELECT V_INVVAL_MIGRATION_MAIN_CODE, A.ADMSITE_CODE, A.ICODE, P_ADMMONTH_CODE, V_ADMMONTH_LAST_DATE, (-1)*SUM(coalesce(A.QTY,0)), (-1)*SUM(coalesce(A.COSTAMOUNT,0))
+                FROM   INVSTOCK A
+                WHERE  ADMSITE_CODE = I.ADMSITE_CODE
+                GROUP BY A.ADMSITE_CODE, A.ICODE;
+            END IF;
+			
+            V_ITM_CNT := NULL;
+            V_COST_AMOUNT := NULL;
+			
+            SELECT COUNT(ICODE), SUM(COST_AMOUNT)
+            INTO STRICT   V_ITM_CNT, V_COST_AMOUNT
+            FROM   INVVAL_MIGRATION_DET
+            WHERE  INVVAL_MIGRATION_MAIN_CODE = V_INVVAL_MIGRATION_MAIN_CODE;
+            UPDATE INVVAL_MIGRATION_MAIN
+            SET    ITEM_COUNT = V_ITM_CNT,
+                   COST_AMOUNT = V_COST_AMOUNT
+            WHERE  CODE = V_INVVAL_MIGRATION_MAIN_CODE;
+            IF V_FLAG = 'N' THEN
+                UPDATE INVVAL_MIGRATION_DET
+                SET    QTY = 0,
+                       COST_AMOUNT = 0
+                WHERE  INVVAL_MIGRATION_MAIN_CODE = V_INVVAL_MIGRATION_MAIN_CODE;
+                V_FLAG := 'Y';
+            END IF;
+            COMMIT;
+        END LOOP;
+
+        UPDATE INVVAL_MIGRATION_MAIN A
+        SET    SITE_SOURCE = CASE WHEN A.ADMSITE_CODE IN (SELECT ADMSITE_CODE FROM INVVAL_MIGRATION_DET_STAGING) THEN 'U'
+                             ELSE 'S'
+                             END,
+               UPLOAD_TYPE = CASE WHEN A.ADMSITE_CODE IN (SELECT ADMSITE_CODE FROM INVVAL_MIGRATION_DET_STAGING) THEN UPLOAD_TYPE
+                             ELSE 'S'
+                             END,
+               UPLOAD_SOURCE_NAME = CASE WHEN A.ADMSITE_CODE IN (SELECT ADMSITE_CODE FROM INVVAL_MIGRATION_DET_STAGING) THEN UPLOAD_SOURCE_NAME
+                                    ELSE 'Available Stock'
+                                    END;
+        COMMIT;
+    END IF;
+EXCEPTION
+   WHEN OTHERS THEN
+      CALL ERRAUDIT(USER, 'DB_PRO_VALIDATE_STAGING_DATA', SQLSTATE, SQLERRM||' - '||P_TERMINAL||'~'||P_ADMOU_CODE||'~'||P_ECODE||'~'||P_ADMMONTH_CODE||'~'||P_FILENAME||'~'||P_UPLOAD_TYPE||'~'||P_STATUS);
+END;
+"""
+  arguments = <
+    {
+      name = p_terminal
+      type = character
+      mode = IN
+    }
+
+    {
+      name = p_admou_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_ecode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_admmonth_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_filename
+      type = character
+      mode = IN
+    }
+
+    {
+      name = p_upload_type
+      type = character
+      mode = IN
+      default = 'F'::bpchar
+    }
+
+    {
+      name = p_status
+      type = character
+      mode = IN
+      default = 'V'::bpchar
+    }
+
+  >
+  language = plpgsql
+}
+
+procedure "main"."db_pro_validate_staging_data(text, bigint, bigint, bigint, text, character, character)" {
+  text = """
+
+DECLARE
+
+/*********************************************************************************************************************************
+   NAME: DB_PRO_VALIDATE_STAGGING_DATA
+
+   PURPOSE:
+
+   REVISIONS:
+   No.         Date         Author                   Description
+   ---------  ----------    ----------------------   ----------------------------------------------------------------------------
+   REV : 000  17/01/2018    DIPTIMAN                 (TFS ID : 36604) Difference posting related changes.
+   REV : 002  28/08/2018    DIPTIMAN                 (TFS ID : 41806, 41810) Migration would be done for TS site also.
+   REV : 003  04/09/2018    DIPTIMAN                 (TFS ID : 41770) QTY is 0 but value in amount related problem in cube.
+   REV : 004  26/09/2018    DIPTIMAN                 (TFS ID : 41909) To determine which sites are provided by user and which are from stock table.
+   REV : 005  20/02/2019    DIPTIMAN                 (NEW TFS ID : 13999) Only connected OU's data should come in migration window.
+
+   NOTES:
+**********************************************************************************************************************************/
+    --V_ROWID                         DBMS_SQL.VARCHAR2A;
+    --V_ICODE                         DBMS_SQL.VARCHAR2A;
+    --RET_CUR                         REFCURSOR;
+    V_ADMOU_CODE                    bigint;
+    V_ADMSITE_CODE                  bigint;
+    V_ITM_CNT                       bigint;
+    V_COST_AMOUNT                   double precision;
+    V_ADMMONTH_LAST_DATE            timestamp;
+    V_INVVAL_MIGRATION_MAIN_CODE    bigint;
+    V_SHOW_PARAM_VAL                char(1) := 'N';
+    V_CUBE_CONFIG_NAME              varchar(100);
+    V_CUBE_CODE                     bigint;
+    V_TRANSIT_LOCCODE               bigint;
+    V_FLAG                          char(1);
+	v_offset						bigint;
+	v_limit							bigint;
+	--v_code							bigint;
+	i								record;
+	v_table_rec						type_rec_db_pro_populate_item[];
+	
+    C1 CURSOR(P_ADMMONTH_LAST_DATE timestamp, P_TRANSIT_LOCCODE bigint) FOR
+        SELECT DISTINCT ADMSITE_CODE
+        FROM (
+                SELECT ADMSITE_CODE
+                FROM   INVVAL_MIGRATION_DET_STAGING
+                WHERE  TERMINAL_NAME = P_TERMINAL
+                AND    SITE_SHRTNAME IN (
+                            SELECT DISTINCT SITE_SHRTNAME
+                            FROM   INVVAL_MIGRATION_DET_STAGING
+                            WHERE  TERMINAL_NAME = P_TERMINAL
+                            EXCEPT
+                            SELECT DISTINCT SITE_SHRTNAME
+                            FROM   INVVAL_MIGRATION_DET_ERR
+                            WHERE  TERMINAL_NAME = P_TERMINAL
+                   )
+UNION ALL
+                SELECT A.ADMSITE_CODE
+                FROM   INVSTOCK A 
+                WHERE  A.ENTDT <= P_ADMMONTH_LAST_DATE
+                AND    A.LOCCODE <> P_TRANSIT_LOCCODE
+                AND    A.ADMOU_CODE = P_ADMOU_CODE
+            	) alias2;
+BEGIN
+    IF  V_SHOW_PARAM_VAL = 'Y' THEN
+        CALL ERRAUDIT('2m', '1', '1',
+                        'P_TERMINAL = '|| P_TERMINAL || CHR(10) ||
+                        'P_ADMOU_CODE = '||P_ADMOU_CODE || CHR(10) ||
+                        'P_ECODE = '||P_ECODE|| CHR(10) ||
+                        'P_ADMMONTH_CODE = '||P_ADMMONTH_CODE|| CHR(10) ||
+                        'P_FILENAME = '||P_FILENAME|| CHR(10) ||
+                        'P_UPLOAD_TYPE = '||P_UPLOAD_TYPE|| CHR(10) ||
+                        'P_STATUS = '||P_STATUS);
+    END IF;
+	
+    SELECT DTTO
+    	INTO STRICT   V_ADMMONTH_LAST_DATE
+    	FROM   ADMMONTH
+    WHERE  MCODE = P_ADMMONTH_CODE;
+	
+    SELECT LOCCODE
+    	INTO STRICT   V_TRANSIT_LOCCODE
+    	FROM   INVLOC
+    WHERE  LOCTYPE = 'T';
+    IF  P_STATUS = 'V' THEN
+        DELETE FROM INVVAL_MIGRATION_DET_ERR
+        WHERE  TERMINAL_NAME = P_TERMINAL;
+        EXECUTE 'TRUNCATE TABLE TEMP_DIFFERENCE';
+        COMMIT;
+    END IF;
+    IF  P_STATUS = 'V' THEN
+        INSERT INTO INVVAL_MIGRATION_DET_ERR(KEY, TERMINAL_NAME, LINENO, SITE_SHRTNAME, BARCODE, SHOW_ERR)
+        SELECT A.SITE_SHRTNAME||'-'||A.BARCODE, A.TERMINAL_NAME, A.LINENO, A.SITE_SHRTNAME, A.BARCODE, 'Site Short Name is missing.'
+        FROM   INVVAL_MIGRATION_DET_STAGING A
+        WHERE  A.SITE_SHRTNAME IS NULL
+        AND    TERMINAL_NAME = P_TERMINAL;
+		
+        INSERT INTO INVVAL_MIGRATION_DET_ERR(KEY, TERMINAL_NAME, LINENO, SITE_SHRTNAME, BARCODE, SHOW_ERR)
+        SELECT A.SITE_SHRTNAME||'-'||A.BARCODE, A.TERMINAL_NAME, A.LINENO, A.SITE_SHRTNAME, A.BARCODE, 'Barcode is missing.'
+        FROM   INVVAL_MIGRATION_DET_STAGING A
+        WHERE  A.SITE_SHRTNAME IS NULL
+        AND    TERMINAL_NAME = P_TERMINAL;
+		
+        INSERT INTO INVVAL_MIGRATION_DET_ERR(KEY, TERMINAL_NAME, LINENO, SITE_SHRTNAME, BARCODE, SHOW_ERR)
+        SELECT A.SITE_SHRTNAME||'-'||A.BARCODE, A.TERMINAL_NAME, A.LINENO, A.SITE_SHRTNAME, A.BARCODE, 'Site Short Name not available in master.'
+        FROM invval_migration_det_staging a LEFT OUTER JOIN admsite b
+		ON (upper(A.SITE_SHRTNAME) = upper(B.SHRTNAME))
+		WHERE TERMINAL_NAME = P_TERMINAL
+		AND B.CODE IS NULL;
+					  
+        INSERT INTO INVVAL_MIGRATION_DET_ERR(KEY, TERMINAL_NAME, LINENO, SITE_SHRTNAME, BARCODE, SHOW_ERR)
+        SELECT SHRTNAME, P_TERMINAL, 0, SHRTNAME, NULL, 'Site Short Name is assigned in Multiple Site.'
+        FROM   ADMSITE
+        WHERE  upper(SHRTNAME) IN (SELECT DISTINCT upper(SHRTNAME) FROM INVVAL_MIGRATION_DET_STAGING)
+        GROUP BY SHRTNAME, P_TERMINAL
+        HAVING COUNT(*) > 1;
+					  
+     	IF  P_UPLOAD_TYPE = 'F' AND P_FILENAME IS NOT NULL THEN
+            -- Icode derivation
+			v_offset := 0;
+			v_limit := 100;
+		LOOP 
+			SELECT ARRAY_REMOVE(v_table_rec);
+				SELECT ARRAY_AGG(t)
+				STRICT INTO v_table_rec
+				FROM
+				(
+                	SELECT B.CTID ROWID, A.ICODE
+                	FROM   INVITEM A, INVVAL_MIGRATION_DET_STAGING B
+                	WHERE (A.BARCODE = B.BARCODE OR A.ICODE = B.BARCODE)
+                	AND    TERMINAL_NAME = P_TERMINAL
+					LIMIT v_limit OFFSET v_offset
+				) t;
+			
+			EXIT WHEN COALESCE(ARRAY_LENGTH(v_table_rec),0) = 0;
+			
+			FOR var IN ARRAY_LOWER(v_table_rec, 1)..ARRAY_UPPER(v_table_rec, 1)
+            LOOP
+                    UPDATE INVVAL_MIGRATION_DET_STAGING
+                    SET    ICODE = v_table_rec[var].ICODE
+                    WHERE  CTID = v_table_rec[var].ROWID;
+				v_offset := (v_offset+100);
+				v_limit	:= (v_offset+100);
+            END LOOP;
+		END LOOP;
+        END IF;
+		
+        FOR I IN (SELECT DISTINCT UPPER(SITE_SHRTNAME) SITE_SHRTNAME
+				  	FROM INVVAL_MIGRATION_DET_STAGING WHERE TERMINAL_NAME = P_TERMINAL) LOOP
+            BEGIN
+                V_ADMSITE_CODE  := NULL;
+                V_ADMOU_CODE    := NULL;
+                SELECT CODE, ADMOU_CODE
+                INTO STRICT   V_ADMSITE_CODE, V_ADMOU_CODE
+                FROM   ADMSITE
+                WHERE  UPPER(SHRTNAME) = I.SITE_SHRTNAME;
+                UPDATE INVVAL_MIGRATION_DET_STAGING
+                SET    ADMSITE_CODE = V_ADMSITE_CODE,
+                       ADMOU_CODE   = V_ADMOU_CODE
+                WHERE  upper(SITE_SHRTNAME) = I.SITE_SHRTNAME
+                AND    TERMINAL_NAME = P_TERMINAL;
+            EXCEPTION
+                WHEN OTHERS THEN NULL;
+            END;
+        END LOOP;
+        INSERT INTO INVVAL_MIGRATION_DET_ERR(KEY, TERMINAL_NAME, LINENO, SITE_SHRTNAME, BARCODE, SHOW_ERR)
+        SELECT A.SITE_SHRTNAME||'-'||A.BARCODE, P_TERMINAL, A.LINENO, A.SITE_SHRTNAME, A.BARCODE, 'Barcode not available in master'
+        FROM   INVVAL_MIGRATION_DET_STAGING A
+        WHERE  A.ICODE IS NULL
+        AND    A.TERMINAL_NAME = P_TERMINAL;
+
+        INSERT INTO INVVAL_MIGRATION_DET_ERR(KEY, TERMINAL_NAME, LINENO, SITE_SHRTNAME, BARCODE, SHOW_ERR)
+        SELECT A.SITE_SHRTNAME||'-'||A.BARCODE, P_TERMINAL, 0, A.SITE_SHRTNAME, A.BARCODE, 'Duplicate Data exists in site item combination. Please check and upload once again.'
+        FROM   INVVAL_MIGRATION_DET_STAGING A
+        WHERE  A.TERMINAL_NAME = P_TERMINAL
+        GROUP BY A.SITE_SHRTNAME, A.BARCODE
+        HAVING COUNT(*) > 1;
+		
+        V_ADMOU_CODE := NULL;
+		
+        INSERT INTO INVVAL_MIGRATION_DET_ERR(KEY, TERMINAL_NAME, LINENO, SITE_SHRTNAME, BARCODE, SHOW_ERR)
+        SELECT A.SITE_SHRTNAME||'-'||A.BARCODE, P_TERMINAL, 0, A.SITE_SHRTNAME, A.BARCODE, 'Site Short Name is not belongs to the connected OU.'
+        FROM   INVVAL_MIGRATION_DET_STAGING A
+        WHERE  coalesce(ADMOU_CODE, P_ADMOU_CODE) <> P_ADMOU_CODE
+        AND    TERMINAL_NAME = P_TERMINAL;
+        COMMIT;
+		
+        INSERT INTO TEMP_DIFFERENCE
+        SELECT A.ADMSITE_CODE, A.ICODE, SUM(A.QTY) TOT_STK_QTY, SUM(A.COSTAMOUNT) TOT_STK_COSTAMOUNT
+        FROM   INVSTOCK A, INVVAL_MIGRATION_DET_STAGING B, ADMSITE C
+        WHERE  A.ADMSITE_CODE = B.ADMSITE_CODE
+        AND    A.ICODE = B.ICODE
+        AND    A.ADMSITE_CODE = C.CODE
+        AND    A.ENTDT <= V_ADMMONTH_LAST_DATE
+        AND    B.TERMINAL_NAME = P_TERMINAL
+        AND    A.LOCCODE <> V_TRANSIT_LOCCODE
+        AND    (P_UPLOAD_TYPE = 'F' OR (P_UPLOAD_TYPE = 'C' AND
+                        ((A.ISSECONDARY IS NULL AND C.SITETYPE LIKE 'OS%')
+				OR C.SITETYPE NOT LIKE 'OS%')))
+        GROUP BY A.ADMSITE_CODE, A.ICODE;
+        COMMIT;
+
+        EXECUTE 'ANALYZE TABLE TEMP_DIFFERENCE COMPUTE STATISTICS';
+
+        INSERT INTO INVVAL_MIGRATION_DET_ERR(KEY, TERMINAL_NAME, LINENO, SITE_SHRTNAME, BARCODE, SHOW_ERR)
+        SELECT A.SITE_SHRTNAME||'-'||A.BARCODE, P_TERMINAL, A.LINENO, A.SITE_SHRTNAME, A.BARCODE,
+               'Provided qty mismatch with stock - (stock qty = '||coalesce(B.QTY,0)||', provided qty = '||coalesce(A.QTY,0)||')'
+        FROM   INVVAL_MIGRATION_DET_STAGING A, TEMP_DIFFERENCE B
+        WHERE  A.ADMSITE_CODE = B.ADMSITE_CODE
+        AND    A.ICODE = B.ICODE
+        AND    coalesce(A.QTY,0) <> coalesce(B.QTY,0)
+        AND    TERMINAL_NAME = P_TERMINAL;
+		
+       IF  P_UPLOAD_TYPE != 'C' THEN
+            INSERT INTO INVVAL_MIGRATION_DET_ERR(KEY, TERMINAL_NAME, LINENO, SITE_SHRTNAME, BARCODE, SHOW_ERR)
+            SELECT A.SITE_SHRTNAME||'-'||A.BARCODE, P_TERMINAL, A.LINENO, A.SITE_SHRTNAME, A.BARCODE,
+                   'Sign of quantity and costamount shoud be same'
+            FROM   INVVAL_MIGRATION_DET_STAGING A
+            WHERE  SIGN(A.QTY) <> SIGN(A.COST_AMOUNT)
+            AND    TERMINAL_NAME = P_TERMINAL;
+        END IF;
+		
+        INSERT INTO INVVAL_MIGRATION_DET_ERR(KEY, TERMINAL_NAME, LINENO, SITE_SHRTNAME, BARCODE, SHOW_ERR)
+        SELECT A.SITE_SHRTNAME||'-'||A.BARCODE, P_TERMINAL, A.LINENO, A.SITE_SHRTNAME, A.BARCODE, 'Item is not present in given site till given month'
+        FROM invval_migration_det_staging a
+		LEFT OUTER JOIN temp_difference b ON (A.ICODE = B.ICODE)
+		WHERE A.ADMSITE_CODE = B.ADMSITE_CODE
+		AND TERMINAL_NAME = P_TERMINAL
+		AND A.ICODE IS NOT NULL
+		AND B.ICODE IS NULL;
+        COMMIT;
+		
+     ELSIF P_STATUS = 'I' THEN  -- Insert
+        FOR I IN C1(V_ADMMONTH_LAST_DATE, V_TRANSIT_LOCCODE)
+			LOOP
+            DELETE FROM INVVAL_MIGRATION_DET
+            WHERE  ADMSITE_CODE = I.ADMSITE_CODE;
+            UPDATE INVVAL_MIGRATION_MAIN
+            SET    ADMMONTH_LAST_DATE = V_ADMMONTH_LAST_DATE,
+                   UPLOAD_TYPE = P_UPLOAD_TYPE,
+                   UPLOADED_ON = clock_timestamp(),
+                   UPLOADED_BY = P_ECODE,
+                   UPLOAD_SOURCE_NAME = P_FILENAME,
+                   FREEZE_STATUS = 'U',
+                   ITEM_COUNT = 0,
+                   COST_AMOUNT = 0,
+                   REMARKS  = NULL
+            WHERE  ADMSITE_CODE = I.ADMSITE_CODE
+            AND    ADMMONTH_CODE = P_ADMMONTH_CODE
+            RETURNING CODE INTO V_INVVAL_MIGRATION_MAIN_CODE;
+			
+            IF  NOT FOUND THEN
+                SELECT nextval('invval_migration_main_code')
+                INTO STRICT   V_INVVAL_MIGRATION_MAIN_CODE;
+				
+                INSERT INTO INVVAL_MIGRATION_MAIN(CODE, ADMSITE_CODE, ADMMONTH_CODE, ADMMONTH_LAST_DATE,
+                             UPLOAD_TYPE, UPLOADED_ON, UPLOADED_BY, UPLOAD_SOURCE_NAME,
+                             FREEZE_STATUS, ITEM_COUNT, COST_AMOUNT, REMARKS)
+                VALUES (V_INVVAL_MIGRATION_MAIN_CODE, I.ADMSITE_CODE, P_ADMMONTH_CODE, V_ADMMONTH_LAST_DATE,
+                        P_UPLOAD_TYPE, clock_timestamp(), P_ECODE, P_FILENAME,
+                        'U', 0, 0, NULL);
+            END IF;
+			
+            INSERT INTO INVVAL_MIGRATION_DET(INVVAL_MIGRATION_MAIN_CODE, ADMSITE_CODE, ICODE, ADMMONTH_CODE, ADMMONTH_LAST_DATE, QTY, COST_AMOUNT)
+            SELECT V_INVVAL_MIGRATION_MAIN_CODE, A.ADMSITE_CODE, A.ICODE, P_ADMMONTH_CODE, V_ADMMONTH_LAST_DATE, A.QTY, coalesce(A.COST_AMOUNT,0)
+            FROM   INVVAL_MIGRATION_DET_STAGING A
+            WHERE  ADMSITE_CODE = I.ADMSITE_CODE
+            AND    TERMINAL_NAME = P_TERMINAL;
+			
+            V_ITM_CNT := NULL;
+			
+            SELECT COUNT(*) INTO STRICT V_ITM_CNT
+            FROM   INVVAL_MIGRATION_DET_STAGING
+            WHERE  ADMSITE_CODE = I.ADMSITE_CODE
+            AND    TERMINAL_NAME = P_TERMINAL;
+			
+            -- site is not present in provided data, may be in stock
+			
+            IF coalesce(V_ITM_CNT,0) = 0 THEN
+                V_FLAG := 'N';
+                INSERT INTO INVVAL_MIGRATION_DET(INVVAL_MIGRATION_MAIN_CODE, ADMSITE_CODE, ICODE, ADMMONTH_CODE, ADMMONTH_LAST_DATE, QTY, COST_AMOUNT)
+                SELECT V_INVVAL_MIGRATION_MAIN_CODE, A.ADMSITE_CODE, A.ICODE, P_ADMMONTH_CODE, V_ADMMONTH_LAST_DATE, (-1)*SUM(coalesce(A.QTY,0)), (-1)*SUM(coalesce(A.COSTAMOUNT,0))
+                FROM   INVSTOCK A
+                WHERE  ADMSITE_CODE = I.ADMSITE_CODE
+                GROUP BY A.ADMSITE_CODE, A.ICODE;
+            END IF;
+			
+            V_ITM_CNT := NULL;
+            V_COST_AMOUNT := NULL;
+			
+            SELECT COUNT(ICODE), SUM(COST_AMOUNT)
+            INTO STRICT   V_ITM_CNT, V_COST_AMOUNT
+            FROM   INVVAL_MIGRATION_DET
+            WHERE  INVVAL_MIGRATION_MAIN_CODE = V_INVVAL_MIGRATION_MAIN_CODE;
+            UPDATE INVVAL_MIGRATION_MAIN
+            SET    ITEM_COUNT = V_ITM_CNT,
+                   COST_AMOUNT = V_COST_AMOUNT
+            WHERE  CODE = V_INVVAL_MIGRATION_MAIN_CODE;
+            IF V_FLAG = 'N' THEN
+                UPDATE INVVAL_MIGRATION_DET
+                SET    QTY = 0,
+                       COST_AMOUNT = 0
+                WHERE  INVVAL_MIGRATION_MAIN_CODE = V_INVVAL_MIGRATION_MAIN_CODE;
+                V_FLAG := 'Y';
+            END IF;
+            COMMIT;
+        END LOOP;
+
+        UPDATE INVVAL_MIGRATION_MAIN A
+        SET    SITE_SOURCE = CASE WHEN A.ADMSITE_CODE IN (SELECT ADMSITE_CODE FROM INVVAL_MIGRATION_DET_STAGING) THEN 'U'
+                             ELSE 'S'
+                             END,
+               UPLOAD_TYPE = CASE WHEN A.ADMSITE_CODE IN (SELECT ADMSITE_CODE FROM INVVAL_MIGRATION_DET_STAGING) THEN UPLOAD_TYPE
+                             ELSE 'S'
+                             END,
+               UPLOAD_SOURCE_NAME = CASE WHEN A.ADMSITE_CODE IN (SELECT ADMSITE_CODE FROM INVVAL_MIGRATION_DET_STAGING) THEN UPLOAD_SOURCE_NAME
+                                    ELSE 'Available Stock'
+                                    END;
+        COMMIT;
+    END IF;
+EXCEPTION
+   WHEN OTHERS THEN
+      CALL ERRAUDIT(USER, 'DB_PRO_VALIDATE_STAGING_DATA', SQLSTATE, SQLERRM||' - '||P_TERMINAL||'~'||P_ADMOU_CODE||'~'||P_ECODE||'~'||P_ADMMONTH_CODE||'~'||P_FILENAME||'~'||P_UPLOAD_TYPE||'~'||P_STATUS);
+END;
+"""
+  arguments = <
+    {
+      name = p_terminal
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_admou_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_ecode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_admmonth_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_filename
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_upload_type
+      type = character
+      mode = IN
+      default = 'F'::bpchar
+    }
+
+    {
+      name = p_status
+      type = character
+      mode = IN
+      default = 'V'::bpchar
+    }
+
+  >
+  language = plpgsql
+}
+

@@ -1,0 +1,68 @@
+procedure "main"."p_psite_validatevatreclreqdata()" {
+  text = """
+
+DECLARE
+
+   v_failurereason   varchar(500);
+
+BEGIN
+   --Check 1: If any date is not settled at site then failed.
+   UPDATE staging_vatrecalreqdata
+      SET status = -1,
+          statusdisplay = 'Error',
+          remarks = remarks || '#Date is not settled at site.'
+    WHERE (sitecode, requesteddate) NOT IN (SELECT admsite_code, stlmfor
+                                              FROM psite_posstlm);
+   --Check 2: If request request has been sent then failed.
+   UPDATE staging_vatrecalreqdata
+      SET status = -1,
+          statusdisplay = 'Error',
+          remarks = remarks || '#Request has been sent.'
+    WHERE (sitecode, requesteddate) IN (SELECT admsite_code, recalcdate
+                                          FROM tax_recalc_history
+                                         WHERE status = 'S');
+   --Check 3: If this date is already processed at site then failed.
+   UPDATE staging_vatrecalreqdata
+      SET status = -1,
+          statusdisplay = 'Error',
+          remarks = remarks || '#This date is already processed at site.'
+    WHERE (sitecode, requesteddate) IN (SELECT admsite_code, recalcdate
+                                          FROM tax_recalc_history
+                                         WHERE status = 'PS');
+   --Check 4: If this date is already failed to frocess at HO for this site then failed.
+   UPDATE staging_vatrecalreqdata
+      SET status = -1,
+          statusdisplay = 'Error',
+          remarks =
+                remarks || '#This date is already failed at HO for this site.'
+    WHERE (sitecode, requesteddate) IN (SELECT admsite_code, recalcdate
+                                          FROM tax_recalc_history
+                                         WHERE status = 'EH');
+   --Check 5: If any account adjustment exist for Consignment/Secondary Sale entry
+  UPDATE staging_vatrecalreqdata
+      SET status = -1,
+          statusdisplay = 'Error',
+          remarks =
+                remarks || '#Account adjustment exist for Consignment Sale entry for this date.'
+    WHERE (sitecode, requesteddate) IN (
+             SELECT admsite_code, date_trunc('day', csdate)
+               FROM salcsmain
+              WHERE cscode IN (
+                       SELECT entcode
+                         FROM finpost
+                        WHERE enttype = 'CSM'
+                          AND entcode IN (
+                                 SELECT cscode
+                                   FROM salcsmain
+                                  WHERE (admsite_code, date_trunc('day', csdate)) IN (
+                                              SELECT sitecode, requesteddate
+                                                FROM staging_vatrecalreqdata
+                                               ))
+                          AND coalesce(adjamt, 0) <> 0));
+END;
+"""
+  arguments = [
+  ]
+  language = plpgsql
+}
+

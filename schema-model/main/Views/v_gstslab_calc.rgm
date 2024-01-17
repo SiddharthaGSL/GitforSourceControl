@@ -1,0 +1,73 @@
+view "main"."v_gstslab_calc" {
+  text = """-
+SELECT var_sbq.invhsnsacslab_code,
+    var_sbq.invhsnsacdet_code,
+    var_sbq.amount_from,
+    var_sbq.invgstrate_code,
+    var_sbq.slab_factor,
+    var_sbq.slab_basis,
+        CASE
+            WHEN (var_sbq.prev_invgstrate_code = (999999999)::numeric) THEN NULL::numeric
+            ELSE var_sbq.prev_invgstrate_code
+        END AS prev_invgstrate_code,
+    COALESCE(var_sbq.prev_slab_factor, var_sbq.slab_factor) AS prev_slab_factor,
+        CASE
+            WHEN (var_sbq.slab_basis = 'R'::bpchar) THEN var_sbq.amount_from
+            ELSE
+            CASE
+                WHEN (var_sbq.prev_slab_factor IS NULL) THEN var_sbq.amount_from
+                ELSE round((((var_sbq.amount_from - 0.01) * (var_sbq.prev_slab_factor / (100)::numeric)) + var_sbq.amount_from), 2)
+            END
+        END AS eff_amount_from
+   FROM ( SELECT s.invhsnsacslab_code,
+            s.invhsnsacdet_code,
+            s.slab_basis,
+            s.amount_from,
+            s.invgstrate_code,
+            ((gr.cgst_rate + gr.sgst_rate) + gr.cess_rate) AS slab_factor,
+            s.prev_invgstrate_code,
+            ((pgr.cgst_rate + pgr.sgst_rate) + pgr.cess_rate) AS prev_slab_factor
+           FROM ((( SELECT a.code AS invhsnsacslab_code,
+                    a.invhsnsacdet_code,
+                    b.slab_basis,
+                    a.amount_from,
+                    a.invgstrate_code,
+                    lag((a.invgstrate_code)::numeric, 1, (999999999)::numeric) OVER (PARTITION BY a.invhsnsacdet_code ORDER BY a.invhsnsacdet_code, a.amount_from) AS prev_invgstrate_code
+                   FROM main.invhsnsacslab a,
+                    main.invhsnsacdet b
+                  WHERE (a.invhsnsacdet_code = b.code)) s
+             JOIN main.invgstrate gr ON ((s.invgstrate_code = gr.code)))
+             LEFT JOIN main.invgstrate pgr ON ((s.prev_invgstrate_code = (pgr.code)::numeric)))) var_sbq
+  ORDER BY var_sbq.invhsnsacdet_code;
+"""
+  columns = (
+    column "invhsnsacslab_code" {
+      type = "bigint"
+    }
+    column "invhsnsacdet_code" {
+      type = "bigint"
+    }
+    column "amount_from" {
+      type = "numeric(12,2)"
+    }
+    column "invgstrate_code" {
+      type = "bigint"
+    }
+    column "slab_factor" {
+      type = "numeric"
+    }
+    column "slab_basis" {
+      type = "character(1)"
+    }
+    column "prev_invgstrate_code" {
+      type = "numeric"
+    }
+    column "prev_slab_factor" {
+      type = "numeric"
+    }
+    column "eff_amount_from" {
+      type = "numeric"
+    }
+  )
+}
+

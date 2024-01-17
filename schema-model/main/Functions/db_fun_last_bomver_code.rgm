@@ -1,0 +1,59 @@
+function "main"."db_fun_last_bomver_code(text, bigint, timestamp without time zone)" {
+  text = """
+
+DECLARE
+
+  V_BOMVER_CODE  PRDBOMVER.CODE%TYPE;
+
+BEGIN
+    BEGIN
+         SELECT MAX(V.CODE)
+         INTO STRICT   V_BOMVER_CODE
+         FROM   PRDBOMVER V,PRDBOMMAIN M
+         WHERE  V.BOMCODE           = M.CODE
+         AND    ASSEMBLY_ICODE      = P_ICODE
+         AND    ROUTECODE           = P_ROUTECODE
+         AND    coalesce(STATUS,'N')     = 'A'
+         /*AND    V.BOM_VERSION_NO = ( SELECT MAX(BOM_VERSION_NO)
+                                     FROM   PRDBOMVER
+                                     WHERE  BOMCODE = M.CODE
+                                     AND    NVL(STATUS,'N') = 'A'
+                                    )*/
+         AND    date_trunc('day', V.APPROV_TIME)  =
+                                   (      SELECT MAX(date_trunc('day', V1.APPROV_TIME))
+                                     FROM   PRDBOMVER V1
+                                     WHERE  V1.BOMCODE = M.CODE
+                                     AND    coalesce(V1.STATUS,'N') = 'A'
+                                     AND    date_trunc('day', V1.APPROV_TIME)     <= P_LOTDT
+                                    );
+    EXCEPTION WHEN no_data_found THEN
+     V_BOMVER_CODE := NULL;
+    END;
+  RETURN(V_BOMVER_CODE);
+END;
+"""
+  returnType = bigint
+  arguments = <
+    {
+      name = p_icode
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_routecode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_lotdt
+      type = timestamp without time zone
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+  volatility = STABLE
+}
+

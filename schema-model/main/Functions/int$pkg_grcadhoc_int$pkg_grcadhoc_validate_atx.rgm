@@ -1,0 +1,1468 @@
+function "main"."int$pkg_grcadhoc_int$pkg_grcadhoc_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status                char(1);
+      errmsg                  varchar(200);
+      errcode                 TEXT;
+      v_grcdt                 timestamp;
+      v_icode                 varchar(9);
+      v_barcode               varchar(50);
+      v_pono                  varchar(25) := NULL;
+      v_cnt                   bigint;
+      v_userid                bigint;
+      v_profcode              bigint;
+      v_rlcode                bigint;
+      v_doccode               bigint;
+      v_create_new_itemcode   char(1);
+      v_create_itm_status     char(1);
+      v_item_batch_separator  char(1);
+      g_mark                  varchar(100);
+BEGIN
+      DELETE FROM int$stg_GRCADHOC_all_fld
+       WHERE userid = p_userid;
+
+            -- START REV : 005
+            
+            select item_batch_separator into STRICT v_item_batch_separator from admcmpprof;
+
+            insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            SELECT nextval('int$error_log_code'), lineno, 'GRCADHOC', userid, 'Data Validation', 'Please remove value from batch/serial column and try again.', clock_timestamp()
+            from   int$stg_grcadhoc a
+            where  a.icode_barcode is not null
+            and    a.batch_serial_no is not null
+            and    coalesce((position(v_item_batch_separator in a.icode_barcode)),0) <> 0
+            and    a.userid = p_userid;
+
+            declare 
+            v_count                     bigint;
+            c_separator CURSOR FOR
+                        SELECT *
+                        from   int$stg_grcadhoc
+                        where  userid = p_userid
+                        order by lineno;
+            begin
+                for c1 in c_separator loop
+                        select count(*) into STRICT v_count from int$stg_grcadhoc where icode_barcode like '%'||v_item_batch_separator||'%'
+                        and lineno = c1.lineno
+                        and    userid = p_userid;
+                        if v_count > 0 then
+
+                        update int$stg_grcadhoc
+                        set    batch_serial_no = substr(icode_barcode, instr(icode_barcode,v_item_batch_separator, -1) + 1),
+                        icode_barcode = substr(icode_barcode, 1, position(v_item_batch_separator in icode_barcode)-1)
+                        where  lineno = c1.lineno
+                        and    icode_barcode like '%'||v_item_batch_separator||'%'
+                        and    userid = p_userid;
+
+                        end if;
+                end loop;
+            end;
+
+            --COMMIT;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'GRCADHOC', userid, 'Data Validation', 'System Batch Serial is not allowed. Please remove and proceed.', clock_timestamp()
+        from   int$stg_grcadhoc a
+        where  UPPER(a.batch_serial_no) = 'SYSTEM BATCH SERIAL'
+        and    a.batch_serial_no is not null
+        and    a.userid = p_userid;
+
+            -- END REV : 005
+      INSERT INTO int$stg_GRCADHOC_all_fld(scheme_doc_format,
+                                            GRCdt,
+                                            supplier_slid,
+                                            docno,
+                                            whether_consignment,
+                                            icode_barcode,
+                                            GRCqty,
+                                            grc_rate,
+                                            lineno,
+                                            userid,
+                                            stockpoint_name,
+                                            grc_remarks,
+                                            grc_item_rem,
+                                            ref_no,
+                                            rate,
+                                            ou_admcmptax_code,
+                                            batch_serial_no,
+                                            mfg_date,
+                                            valid_upto,
+                                            standardrate,
+                                            wsp,
+                                            rsp,
+                                            mrp)
+         SELECT scheme_doc_format,
+                GRCdt,
+                supplier_slid,
+                docno,
+                whether_consignment,
+                icode_barcode,
+                GRCqty,
+                GRC_rate,
+                lineno,
+                userid,
+                stockpoint_name,
+                grc_remarks,
+                grc_item_rem,
+                ref_no,
+                grc_rate,
+                s.psite_admcmptax_code,
+                batch_serial_no,
+                mfg_date,
+                valid_upto,
+                standardrate,
+                wsp,
+                rsp,
+                mrp
+           FROM int$stg_grcadhoc a, admsite s
+          WHERE userid = p_userid AND s.code = p_connect_site;
+
+      IF 1 = 1
+      THEN
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+            SELECT nextval('int$error_log_code'),
+                   0,
+                   'GRCADHOC',
+                   p_userid,
+                   'Mandatory Validation',
+                   'GRC Adhoc Import Excel is allowed only for ''OS-OO-CM''',
+                   clock_timestamp()
+              FROM admsite a
+             WHERE CODE = P_CONNECT_SITE AND sitetype <> 'OS-OO-CM';
+
+         --and     a.userid = p_userid;
+         g_mark := 'M1000';
+
+         -- scheme_doc_format is null
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+            SELECT nextval('int$error_log_code'),
+                   lineno,
+                   'GRCADHOC',
+                   userid,
+                   'Mandatory Validation',
+                   'Column is Mandatory - scheme_doc_format.',
+                   clock_timestamp()
+              FROM int$stg_GRCADHOC a
+             WHERE a.scheme_doc_format IS NULL AND a.userid = p_userid;
+
+         -- GRCdt is null
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+            SELECT nextval('int$error_log_code'),
+                   lineno,
+                   'GRCADHOC',
+                   userid,
+                   'Mandatory Validation',
+                   'Column is Mandatory - grcdt.',
+                   clock_timestamp()
+              FROM int$stg_GRCADHOC a
+             WHERE a.GRCdt IS NULL AND a.userid = p_userid;
+
+         -- supplier_slid is null
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+            SELECT nextval('int$error_log_code'),
+                   lineno,
+                   'GRCADHOC',
+                   userid,
+                   'Mandatory Validation',
+                   'Column is Mandatory - supplier_slid.',
+                   clock_timestamp()
+              FROM int$stg_GRCADHOC a
+             WHERE a.supplier_slid IS NULL AND a.userid = p_userid;
+
+         -- docno is null
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+            SELECT nextval('int$error_log_code'),
+                   lineno,
+                   'GRCADHOC',
+                   userid,
+                   'Mandatory Validation',
+                   'Column is Mandatory - docno.',
+                   clock_timestamp()
+              FROM int$stg_GRCADHOC a
+             WHERE a.docno IS NULL AND a.userid = p_userid;
+
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+            SELECT nextval('int$error_log_code'),
+                   lineno,
+                   'GRCADHOC',
+                   userid,
+                   'Mandatory Validation',
+                   'Column is Mandatory - ICODE/BARCODE.',
+                   clock_timestamp()
+              FROM int$stg_GRCADHOC a
+             WHERE a.ICODE_BARCODE IS NULL AND a.userid = p_userid;
+
+         -- whether_consignment is null
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+            SELECT nextval('int$error_log_code'),
+                   lineno,
+                   'GRCADHOC',
+                   userid,
+                   'Mandatory Validation',
+                   'Column is Mandatory - whether_consignment.',
+                   clock_timestamp()
+              FROM int$stg_GRCADHOC a
+             WHERE a.whether_consignment IS NULL AND a.userid = p_userid;
+
+         -- ordqty is null
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+            SELECT nextval('int$error_log_code'),
+                   lineno,
+                   'GRCADHOC',
+                   userid,
+                   'Mandatory Validation',
+                   'Column is Mandatory - ordqty.',
+                   clock_timestamp()
+              FROM int$stg_GRCADHOC a
+             WHERE a.GRCqty IS NULL AND a.userid = p_userid;
+      END IF;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'GRCADHOC',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'Supplier should be same for a particular GRC - '
+                        || a.docno
+                           dup_fld
+                   FROM int$stg_GRCADHOC a
+                  WHERE     a.userid = p_userid
+                        AND a.docno IN (SELECT x.docno
+                                  FROM (  SELECT m.docno,
+                                                 COUNT(DISTINCT SUPPLIER_SLID)
+                                            FROM int$stg_GRCADHOC m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.docno
+                                          HAVING COUNT(
+                                                    DISTINCT SUPPLIER_SLID) >
+                                                    1) x)) alias7;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'GRCADHOC',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'Remarks should be same for a particular GRC - '
+                        || a.docno
+                           dup_fld
+                   FROM int$stg_GRCADHOC a
+                  WHERE     a.userid = p_userid
+                        AND a.docno IN (SELECT x.docno
+                                  FROM (  SELECT m.docno,
+                                                 COUNT(DISTINCT grc_remarks)
+                                            FROM int$stg_GRCADHOC m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.docno
+                                          HAVING COUNT(DISTINCT grc_remarks) >
+                                                    1) x)) alias7;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'GRCADHOC',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'Stockpoint should be same for a particular GRC - '
+                        || a.docno
+                           dup_fld
+                   FROM int$stg_GRCADHOC a
+                  WHERE     a.userid = p_userid
+                        AND a.docno IN (SELECT x.docno
+                                  FROM (  SELECT m.docno,
+                                                 COUNT(
+                                                    DISTINCT STOCKPOINT_NAME)
+                                            FROM int$stg_GRCADHOC m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.docno
+                                          HAVING COUNT(
+                                                    DISTINCT STOCKPOINT_NAME) >
+                                                    1) x)) alias7;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'GRCADHOC',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'Ref. No. should be same for a particular GRC - '
+                        || a.docno
+                           dup_fld
+                   FROM int$stg_GRCADHOC a
+                  WHERE     a.userid = p_userid
+                        AND a.docno IN (SELECT x.docno
+                                  FROM (  SELECT m.docno,
+                                                 COUNT(
+                                                    DISTINCT coalesce(REF_NO, '@@'))
+                                            FROM int$stg_GRCADHOC m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.docno
+                                          HAVING COUNT(
+                                                    DISTINCT coalesce(REF_NO,
+                                                                  '@@')) > 1)
+                                       x)) alias9;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'GRCADHOC',
+                p_userid,
+                'Data Validation',
+                'Invalid Stock Point.',
+                clock_timestamp()
+           FROM int$stg_GRCADHOC a
+          WHERE     UPPER(a.STOCKPOINT_NAME) NOT IN (SELECT UPPER(LOCNAME)
+                          FROM INVLOC A, HRDEMP_OU B, ADMSITE C
+                         WHERE     A.ADMSITE_CODE = B.ADMSITE_CODE
+                               AND A.ADMSITE_CODE = C.CODE
+                               AND A.LOCTYPE IN ('W', 'M')
+                               AND B.HRDEMP_CODE = P_USERID
+                               AND A.ADMSITE_CODE = P_CONNECT_SITE
+                               AND coalesce(A.EXT, 'N') = 'N'
+                               AND EXISTS (SELECT NULL
+                                         FROM ADMSITE
+                                        WHERE     CODE = P_CONNECT_SITE
+                                              AND SITETYPE = 'OS-OO-CM'))
+                AND a.userid = p_userid;
+
+      g_mark := 'D1007';
+
+      g_mark := 'D1008';
+
+      -- orddt > sysdate
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'GRCADHOC',
+                userid,
+                'Data Validation',
+                'Invalid GRC date (' || TO_CHAR(GRCdt, 'dd-mm-yyyy') || ')',
+                clock_timestamp()
+           FROM int$stg_GRCADHOC a
+          WHERE date_trunc('day', GRCdt) > date_trunc('day', clock_timestamp()) AND a.userid = p_userid;
+
+      g_mark := 'D1009';
+
+      -- grcDT checking for the following -
+      -- Year extinct,
+      DECLARE
+         v_dtfr           DATE;
+         v_dtto           DATE;
+         v_yr_ext         CHAR(1);
+         v_day_status     CHAR(1);
+         v_locdays        hrdemp.locdays%TYPE;
+         v_last_dt_lock   CHAR(1);
+
+         c1 CURSOR
+         FOR
+            SELECT DISTINCT date_trunc('day', GRCDT) grcdt
+              FROM int$stg_GRCADHOC
+
+             WHERE userid = p_userid;
+      -- END REV : 005
+      BEGIN
+         FOR i IN c1
+         LOOP
+            -- Ycode related checking, min trans date checking, lockday checking, Year exists or not, Day status related checking
+            BEGIN
+               SELECT ext, dtfr, dtto
+                 INTO STRICT v_yr_ext, v_dtfr, v_dtto
+                 FROM admyear
+                WHERE i.grcdt BETWEEN dtfr AND dtto;
+
+               IF coalesce(v_yr_ext, 'N') = 'Y'
+               THEN
+                  INSERT INTO int$error_log(code,
+                                             lineno,
+                                             classname,
+                                             userid,
+                                             errortype,
+                                             errordesc,
+                                             createdon)
+                     SELECT nextval('int$error_log_code'),
+                            lineno,
+                            'GRCADHOC',
+                            userid,
+                            'Data Validation',
+                            'Year of the Date is not open / extinct',
+                            clock_timestamp()
+                       FROM int$stg_GRCADHOC
+                      WHERE date_trunc('day', GRCdt) = i.grcdt AND userid = p_userid;
+               ELSE
+                  IF i.grcdt < v_dtfr
+                  THEN
+                     INSERT INTO int$error_log(code,
+                                                lineno,
+                                                classname,
+                                                userid,
+                                                errortype,
+                                                errordesc,
+                                                createdon)
+                        SELECT nextval('int$error_log_code'),
+                               lineno,
+                               'GRCADHOC',
+                               userid,
+                               'Data Validation',
+                                  'Date can not be less than start date of current accounting year date '
+                               || TO_CHAR(v_dtfr, 'DD/MM/YYYY'),
+                               clock_timestamp()
+                          FROM int$stg_GRCADHOC
+                         WHERE date_trunc('day', GRCdt) = i.GRCdt AND userid = p_userid;
+                  ELSE
+                     BEGIN
+                        SELECT locdays, allow_last_fy_day_mode
+                          INTO STRICT v_locdays, v_last_dt_lock
+                          FROM hrdemp
+                         WHERE ecode = p_userid;
+
+                        IF v_locdays IS NOT NULL
+                        THEN
+                           IF coalesce(
+                                 db_fun_chk_last_dt_lock(v_last_dt_lock,
+                                                          clock_timestamp()),
+                                 0) <> 0
+                           THEN
+                              INSERT INTO int$error_log(code,
+                                                         lineno,
+                                                         classname,
+                                                         userid,
+                                                         errortype,
+                                                         errordesc,
+                                                         createdon)
+                                 SELECT nextval('int$error_log_code'),
+                                        lineno,
+                                        'GRCADHOC',
+                                        userid,
+                                        'Data Validation',
+                                        'user do not have priviledge to igonre lock days on the last day of accounting year',
+                                        clock_timestamp()
+                                   FROM int$stg_GRCADHOC
+                                  WHERE     date_trunc('day', grcdt) = i.grcdt
+                                        AND userid = p_userid;
+                           ELSE
+                              IF date_trunc('day', i.grcdt) <
+                                    (current_date - v_locdays::integer)
+                              THEN
+                                 INSERT INTO int$error_log(code,
+                                                            lineno,
+                                                            classname,
+                                                            userid,
+                                                            errortype,
+                                                            errordesc,
+                                                            createdon)
+                                    SELECT nextval('int$error_log_code'),
+                                           lineno,
+                                           'GRCADHOC',
+                                           userid,
+                                           'Data Validation',
+                                           'User lock days logic fails',
+                                           clock_timestamp()
+                                      FROM int$stg_GRCADHOC
+                                     WHERE     date_trunc('day', grcdt) = i.grcdt
+                                           AND userid = p_userid;
+                              END IF;
+                           END IF;
+                        END IF;
+                     EXCEPTION
+                        WHEN no_data_found
+                        THEN
+                           INSERT INTO int$error_log(code,
+                                                      lineno,
+                                                      classname,
+                                                      userid,
+                                                      errortype,
+                                                      errordesc,
+                                                      createdon)
+                              SELECT nextval('int$error_log_code'),
+                                     lineno,
+                                     'GRCADHOC',
+                                     userid,
+                                     'Data Validation',
+                                     'User not exists',
+                                     clock_timestamp()
+                                FROM int$stg_GRCADHOC
+                               WHERE     date_trunc('day', grcdt) = i.grcdt
+                                     AND userid = p_userid;
+                     END;
+                  END IF;
+               END IF;
+            EXCEPTION
+               WHEN no_data_found
+               THEN
+                  INSERT INTO int$error_log(code,
+                                             lineno,
+                                             classname,
+                                             userid,
+                                             errortype,
+                                             errordesc,
+                                             createdon)
+                     SELECT nextval('int$error_log_code'),
+                            lineno,
+                            'GRCADHOC',
+                            userid,
+                            'Data Validation',
+                            'Year not exists',
+                            clock_timestamp()
+                       FROM int$stg_GRCADHOC
+                      WHERE date_trunc('day', grcdt) = i.grcdt AND userid = p_userid;
+            END;
+
+            -- day status related checking
+            -- START REV : 004
+            -- Day check
+            INSERT INTO int$error_log(code,
+                                       lineno,
+                                       classname,
+                                       userid,
+                                       errortype,
+                                       errordesc,
+                                       createdon)
+               SELECT nextval('int$error_log_code'),
+                      0,
+                      'GRCADHOC',
+                      p_userid,
+                      'Mandatory Validation',
+                      'Finance Month is Closed not Import possible for the date.',
+                      clock_timestamp()
+                 FROM admmonth a, admou_month b
+                WHERE     a.mcode = b.admmonth_code
+                      AND i.grcdt BETWEEN dtfr AND dtto
+                      AND b.inv_month_status = 'C'
+					  AND admou_code = p_connect_ou;
+
+            UPDATE int$stg_GRCADHOC_all_fld a
+               SET ycode =
+                      (SELECT ycode
+                         FROM admyear
+                        WHERE a.grcdt BETWEEN dtfr AND dtto)
+             WHERE a.grcdt = i.grcdt AND a.userid = p_userid;
+         END LOOP;
+      END;
+
+      g_mark := 'D1010';
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'GRCADHOC',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                        'GRC date different for same GRC - ' || a.docno
+                           dup_fld
+                   FROM int$stg_GRCADHOC a
+                  WHERE     a.userid = p_userid
+                        AND a.docno IN (SELECT x.docno
+                                  FROM (  SELECT m.docno,
+                                                 COUNT(DISTINCT m.GRCdt)
+                                            FROM int$stg_GRCADHOC m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.docno
+                                          HAVING COUNT(DISTINCT m.grcdt) > 1)
+                                       x)) alias7;
+
+      g_mark := 'D1011';
+
+      g_mark := 'D1012';
+
+      -- scheme_docno chking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'GRCADHOC',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'Different Scheme Doc Format for same GRC - '
+                        || a.docno
+                           dup_fld
+                   FROM int$stg_GRCADHOC a
+                  WHERE     a.userid = p_userid
+                        AND a.docno IN (SELECT x.docno
+                                  FROM (  SELECT a.docno,
+                                                 COUNT(
+                                                    DISTINCT scheme_doc_format)
+                                            FROM int$stg_GRCADHOC a
+                                           WHERE a.userid = p_userid
+                                        GROUP BY a.docno
+                                          HAVING COUNT(
+                                                    DISTINCT scheme_doc_format) >
+                                                    1) x)) alias7;
+
+      g_mark := 'V1013';
+
+      g_mark := 'D1018';
+
+      -- supplier_slid checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'GRCADHOC',
+                p_userid,
+                'Data Validation',
+                'Invalid Supplier SLID (' || a.supplier_slid::text || ')',
+                clock_timestamp()
+           FROM int$stg_GRCADHOC a
+          WHERE     NOT EXISTS (SELECT slid
+                          FROM finsl b
+                         WHERE     UPPER(b.slid) =
+                                      coalesce(UPPER(a.supplier_slid), 'x')
+                               AND coalesce(ext, 'N') = 'N')
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'GRCADHOC',
+                p_userid,
+                'Data Validation',
+                'Invalid Supplier SLID (' || a.supplier_slid::text || ')',
+                clock_timestamp()
+           FROM int$stg_GRCADHOC a
+		   INNER JOIN FINSL s ON  UPPER(s.slid) =
+                                      coalesce(UPPER(a.supplier_slid), 'x')
+          WHERE     NOT EXISTS
+                       (SELECT FINSL.slid
+                          FROM FINSL
+LEFT OUTER JOIN fintaxmain ON (FINSL.TAXCODE = FINTAXMAIN.TAXCODE)
+LEFT OUTER JOIN finsl a ON (FINSL.AGCODE = A.SLCODE)
+LEFT OUTER JOIN invloc ON (FINSL.INLOCCODE = INVLOC.LOCCODE)
+LEFT OUTER JOIN finsl_ou ON (FINSL.SLCODE = FINSL_OU.SLCODE)
+INNER JOIN ADMCLS ON FINSL.CLSCODE = ADMCLS.CLSCODE	
+INNER JOIN FINGL ON FINSL.GLCODE = FINGL.GLCODE						
+WHERE 
+									--FINSL.CLSCODE = ADMCLS.CLSCODE AND 
+									--UPPER(FINSL.slid) =
+                                      --coalesce(UPPER(a.supplier_slid), 'x') AND 
+										ADMCLS.CLSTYPE <> 'D' 
+									 --AND FINSL.GLCODE = FINGL.GLCODE 
+									AND FINGL.SRCTYPE = 'R' AND FINSL.EXT = 'N'  
+									 AND (   (    (SELECT COUNT(*)
+                                               FROM FINSL_OU
+                                              WHERE SLCODE = FINSL.SLCODE) >
+                                               0
+                                        AND (FINSL_OU.ADMSITE_CODE =
+                                                P_CONNECT_SITE))
+                                    OR ( (SELECT COUNT(*)
+                                            FROM FINSL_OU
+                                           WHERE SLCODE = FINSL.SLCODE) = 0)) )
+                AND a.userid = p_userid;
+
+      g_mark := 'D1019';
+
+      -- supplier_slid checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'GRCADHOC',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'Same GRC should have same Supplier''s SLID for same GRC - '
+                        || a.docno
+                           dup_fld
+                   FROM int$stg_GRCADHOC a
+                  WHERE     a.userid = p_userid
+                        AND a.docno IN (SELECT x.docno
+                                  FROM (  SELECT b.docno,
+                                                 COUNT(DISTINCT supplier_slid)
+                                            FROM int$stg_GRCADHOC b
+                                           WHERE b.userid = p_userid
+                                        GROUP BY b.docno
+                                          HAVING COUNT(
+                                                    DISTINCT supplier_slid) >
+                                                    1) x)) alias7;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'GRCADHOC',
+                p_userid,
+                'Data Validation',
+                'Supplier is TDS agency Type - ' || a.supplier_slid::text,
+                clock_timestamp()
+           FROM int$stg_GRCADHOC a, finsl b, admcls c
+          WHERE     UPPER(a.supplier_slid) = UPPER(b.slid)
+                AND b.clscode = c.clscode
+                AND c.clstype = 'D'
+                AND a.userid = p_userid;
+
+      g_mark := 'D1021';
+
+      UPDATE int$stg_GRCADHOC_all_fld a
+         SET pcode =
+                (SELECT slcode
+                   FROM finsl b
+                  WHERE (UPPER(b.slid) = UPPER(a.supplier_slid)))
+       WHERE a.supplier_slid IS NOT NULL AND a.userid = p_userid;
+
+      --PCODE WITH LGT_APPL/GATE_IN_APPL IS NOT ALLOWED
+      -- ERRAUDIT(3333,3333,3333,P_CONNECT_OU||'*'||p_connect_site);
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'GRCADHOC',
+                userid,
+                'Data Validation',
+                'Goods receive for logistics/gate entry applicable vendors are not allowed from Excel Import.',
+                clock_timestamp()
+           FROM int$stg_grcadhoc_all_fld a, finsl s
+LEFT OUTER JOIN (SELECT lgt_appl, gatein_appl, slcode slcode
+                   FROM finsl_ou
+                  WHERE     ADMOU_CODE = P_CONNECT_OU
+                        AND admsite_code = p_connect_site) slou ON (s.slcode = slou.slcode)
+WHERE a.pcode = s.slcode  AND (   coalesce(slou.lgt_appl, s.lgt_appl) = 'Y'
+                     OR coalesce(slou.gatein_appl, s.gatein_appl) = 'Y') AND a.userid = p_userid;
+
+      g_mark := 'D1024';
+
+      -- docno chking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'GRCADHOC',
+                p_userid,
+                'Data Validation',
+                'Duplicate Doc No. (' || a.docno || ')',
+                clock_timestamp()
+           FROM int$stg_GRCADHOC a, INVGRCMAIN b
+          WHERE     UPPER(a.docno) = UPPER(b.docno)
+                AND a.userid = p_userid
+                AND b.ycode = (SELECT ycode
+                                 FROM admyear
+                                WHERE p_logging_date BETWEEN dtfr AND dtto);
+
+      g_mark := 'D1025';
+
+      g_mark := 'D1026';
+
+      g_mark := 'D1042';
+
+      -- whether_consignment checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'GRCADHOC',
+                p_userid,
+                'Data Validation',
+                'Selected Supplier is Non-Consignment hence Whether consignment Value should be ''No''',
+                clock_timestamp()
+           FROM int$stg_GRCADHOC a, finsl b
+          WHERE     a.userid = p_userid
+                AND UPPER(a.supplier_slid) = UPPER(b.slid)
+                AND b.whether_consignment = 'N'
+                AND UPPER(a.whether_consignment) <> 'NO';
+
+      g_mark := 'D1043';
+
+      -- whether_consignment checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'GRCADHOC',
+                p_userid,
+                'Data Validation',
+                'Selected Supplier is Consignment hence consignment Value should be YES / NO',
+                clock_timestamp()
+           FROM int$stg_GRCADHOC a, finsl b
+          WHERE     a.userid = p_userid
+                AND UPPER(a.supplier_slid) = UPPER(b.slid)
+                AND b.whether_consignment = 'Y'
+                AND UPPER(a.whether_consignment) NOT IN ('YES', 'NO');
+
+      g_mark := 'D1044';
+
+      -- whether_consignment checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'GRCADHOC',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'Whether consignment Should be same for same GRC- '
+                        || a.docno
+                           dup_fld
+                   FROM int$stg_GRCADHOC a
+                  WHERE     a.userid = p_userid
+                        AND a.docno IN (SELECT x.docno
+                                  FROM (  SELECT m.docno,
+                                                 COUNT(
+                                                    DISTINCT m.whether_consignment)
+                                            FROM int$stg_GRCADHOC m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.docno
+                                          HAVING COUNT(
+                                                    DISTINCT m.whether_consignment) >
+                                                    1) x)) alias7;
+
+      g_mark := 'D1056';
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'GRCADHOC',
+                p_userid,
+                'Data Validation',
+                'Invalid currency shortcode (' || a.supplier_slid::text || ')',
+                clock_timestamp()
+           FROM int$stg_GRCADHOC_all_fld a
+          WHERE     NOT EXISTS (SELECT shortcode
+                          FROM admcurrency b
+                         WHERE isextinct = 0)
+                AND a.userid = p_userid;
+
+      g_mark := 'D1068';
+
+      g_mark := 'D1069';
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'GRCADHOC',
+                userid,
+                'Data Validation',
+                'Supplier has Price Chart Applicability hence Rate should be blank in excel and rate will be picked from Price Chart of the Item',
+                clock_timestamp()
+           FROM int$stg_GRCADHOC_all_fld a, finsl b
+          WHERE     a.pcode = b.slcode
+                AND a.icode_barcode IS NOT NULL
+                AND b.pur_price_chart_appl = 'Y'
+                AND a.GRC_rate IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'GRCADHOC',
+                userid,
+                'Item Data Validation',
+                'Item doesn''t exist or is extinct.',
+                clock_timestamp()
+           FROM int$stg_grcadhoc a
+LEFT OUTER JOIN (SELECT icode, ext FROM invitem
+				UNION
+				SELECT barcode, ext FROM invitem) b ON (UPPER(a.icode_barcode) = UPPER(b.icode))
+WHERE (b.icode IS NULL OR coalesce(b.ext, 'N') = 'Y') AND a.userid = p_userid;
+
+      g_mark := 'V003';
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'GRCADHOC',
+                userid,
+                'Data Validation',
+                'GRC Rate value should be greater than zero',
+                clock_timestamp()
+           FROM int$stg_GRCADHOC_all_fld a
+          WHERE     a.GRC_RATE < 0
+                AND a.GRC_RATE IS NOT NULL
+                AND a.userid = p_userid;
+
+      -- ordqty checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'GRCADHOC',
+                userid,
+                'Data Validation',
+                'GRC qty value should be greater than zero',
+                clock_timestamp()
+           FROM int$stg_GRCADHOC_all_fld a
+          WHERE a.GRCqty <= 0 AND a.userid = p_userid;
+
+      -- ordqty checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'GRCADHOC',
+                userid,
+                'Data Validation',
+                'Valid Value should mutiplier of the BARUNIT of the item',
+                clock_timestamp()
+           FROM int$stg_GRCADHOC_all_fld a, invitem b
+          WHERE     a.icode = b.icode
+                AND MOD(a.GRCqty, b.barunit) <> 0
+                AND b.item_management_mode  <> 'S'
+                AND a.userid = p_userid;
+
+      UPDATE int$stg_GRCADHOC_all_fld t
+	  set rate = coalesce(s.GRC_Rate, s.calc_rate)
+	  FROM(
+      SELECT a.*, db_fun_item_rate_web(a.GRCdt,a.pcode, i.icode, 'P',a.ou_admcmptax_code) calc_rate
+      FROM   int$stg_GRCADHOC_all_fld a, INVITEM i
+      WHERE  a.icode_barcode IS NOT NULL AND a.userid = p_userid
+      AND (UPPER(a.icode_barcode) = i.icode OR UPPER(a.icode_barcode) = i.barcode)
+      AND    coalesce(i.ITEM_MANAGEMENT_MODE, 'I') = 'I'
+      ) s
+      WHERE (t.userid = s.userid AND t.lineno = s.lineno);
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'GRCADHOC',
+                userid,
+                'Data Validation',
+                'Same Items with same rate found.',
+                clock_timestamp()
+           FROM int$stg_GRCADHOC_all_fld a,
+                (  SELECT lineno,
+                          A1.DOCNO,
+                          A1.ICODE_BARCODE,
+                          coalesce(A1.RATE, 0),
+                          COUNT(1)
+                     FROM int$stg_GRCADHOC_all_fld A1
+                    WHERE A1.userid = p_userid
+                 GROUP BY lineno,
+                          A1.DOCNO,
+                          A1.ICODE_BARCODE,
+                          coalesce(A1.RATE, 0)
+                   HAVING COUNT(1) > 1) b
+          WHERE a.lineno = b.lineno AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'GRCADHOC',
+                userid,
+                'Data Validation',
+                'Zero item rate is not allowed.',
+                clock_timestamp()
+           FROM int$stg_GRCADHOC_all_fld a, invitem i
+          WHERE (UPPER(a.icode_barcode) = i.icode OR UPPER(a.icode_barcode) = i.barcode)
+          AND coalesce(a.rate, 0) = 0
+          AND i.item_management_mode = 'I'
+          AND a.userid = p_userid;
+
+        -- START REV : 005
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'GRCADHOC', userid, 'Data Validation', 'Numbering scheme is not defined for the item. Please input the batch number manually or define the numbering scheme at item group level to proceed.', clock_timestamp()
+        FROM int$stg_grcadhoc_all_fld a, invitem i
+LEFT OUTER JOIN invgrp g ON (i.grpcode = g.grpcode)
+WHERE (UPPER(a.icode_barcode) = i.icode OR UPPER(a.icode_barcode) = i.barcode) and a.batch_serial_no is null and a.icode_barcode is not null  and g.iscreatebatchdocumentwise = 'N' and g.doccode is null and i.item_management_mode in ('B','S') and a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'GRCADHOC', userid, 'Data Validation', 'You can’t define Batch/Serial no. for this item manually.', clock_timestamp()
+        from    int$stg_grcadhoc_all_fld a, invitem i, invgrp g
+        where (UPPER(a.icode_barcode) = i.icode OR UPPER(a.icode_barcode) = i.barcode)
+        and    i.grpcode = g.grpcode
+        and    g.iscreatebatchdocumentwise = 'Y'
+        and    i.item_management_mode = 'B'
+        and    a.icode_barcode is not null
+        and    a.batch_serial_no is not null
+        and    a.userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GRCADHOC', userid, 'Mandatory Validation', 'Batch Serial No already exists in the system, expiry information is not required.', clock_timestamp()
+        from     int$stg_grcadhoc_all_fld a, invitem i, invbatch_serial b
+        where   ((a.icode_barcode = i.icode) OR (a.icode_barcode = i.barcode))
+        and     i.icode = b.icode
+        and     upper(a.batch_serial_no) = upper(b.batch_serial_no)
+        and (a.mfg_date is not null or a.valid_upto is not null)
+        and     userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GRCADHOC', userid, 'Mandatory Validation', 'Expiry information required. Can’t proceed.', clock_timestamp()
+        FROM int$stg_grcadhoc_all_fld a
+		INNER JOIN invitem i ON ((a.icode_barcode = i.icode) OR (a.icode_barcode = i.barcode))
+		LEFT OUTER JOIN invbatch_serial b ON (i.icode = b.icode)
+		LEFT OUTER JOIN invbatch_serial bs ON (upper(a.batch_serial_no) = upper(bs.batch_serial_no))
+		WHERE i.item_management_mode = 'B' 
+		and i.manage_expiry = 'Y'
+		and b.batch_serial_no is null 
+		and a.valid_upto is null 
+		and userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GRCADHOC', userid, 'Mandatory Validation', 'Valid Upto information not required for Serial Managed Item. Can’t proceed.', clock_timestamp()
+        from     int$stg_grcadhoc_all_fld a, invitem i
+        where   ((a.icode_barcode = i.icode) OR (a.icode_barcode = i.barcode))
+        and     i.item_management_mode = 'S'
+        and     a.valid_upto is not null
+        and     userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'GRCADHOC', userid, 'Data Validation', 'Expiry is not managed for the item. Remove expiry info. and try again.', clock_timestamp()
+        FROM int$stg_grcadhoc_all_fld a
+		INNER JOIN invitem i ON ((a.icode_barcode = i.icode) OR (a.icode_barcode = i.barcode))
+		LEFT OUTER JOIN invbatch_serial b ON (i.icode = b.icode)
+		LEFT OUTER JOIN invbatch_serial bs ON (upper(a.batch_serial_no) = upper(bs.batch_serial_no))
+WHERE (UPPER(a.icode_barcode) = i.icode OR UPPER(a.icode_barcode) = i.barcode) and i.item_management_mode = 'B' and i.manage_expiry = 'N'   and b.batch_serial_no is null and a.valid_upto is not null and a.userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GRCADHOC', userid, 'Mandatory Validation', 'Batch Serial No already exists in the system, pricing information is not required.', clock_timestamp()
+        from     int$stg_grcadhoc_all_fld a, invitem i, invbatch_serial b
+        where   ((a.icode_barcode = i.icode) OR (a.icode_barcode = i.barcode))
+        and     i.icode = b.icode
+        and     upper(a.batch_serial_no) = upper(b.batch_serial_no)
+        and     ((a.standardrate is not null) OR (a.wsp is not null) OR (a.rsp is not null) OR (a.mrp is not null))
+        and     userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GRCADHOC', userid, 'Mandatory Validation', 'Pricing information required at Batch Serial. Can’t proceed.', clock_timestamp()
+        FROM int$stg_grcadhoc_all_fld a
+		INNER JOIN invitem i ON ((a.icode_barcode = i.icode) OR (a.icode_barcode = i.barcode))
+		LEFT OUTER JOIN invbatch_serial b ON (i.icode = b.icode)
+		LEFT OUTER JOIN invbatch_serial bs ON (upper(a.batch_serial_no) = upper(bs.batch_serial_no))
+WHERE ((a.icode_barcode = i.icode) OR (a.icode_barcode = i.barcode)) and i.price_management in ('B', 'S')   and b.batch_serial_no is null and ((a.standardrate is null) OR (a.wsp is null) OR (a.rsp is null) OR (a.mrp is null)) and userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GRCADHOC', userid, 'Mandatory Validation', 'Pricing is managed for the Item at Item level. Remove pricing info. and try again.', clock_timestamp()
+        from     int$stg_grcadhoc_all_fld a, invitem i
+        where   ((a.icode_barcode = i.icode) OR (a.icode_barcode = i.barcode))
+        and     i.price_management = 'I'
+        and     ((a.standardrate is not null) OR (a.wsp is not null) OR (a.rsp is not null) OR (a.mrp is not null))
+        and     userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'GRCADHOC', userid, 'Data Validation', 'Mfg Date cannot be greater than Entry date.', clock_timestamp()
+        from    int$stg_grcadhoc_all_fld a
+        where  TO_DATE(TO_CHAR(date_trunc('day', a.mfg_date), 'YYYY-MM-DD'), 'YYYY-MM-DD')
+      			> TO_DATE(TO_CHAR(date_trunc('day', a.grcdt), 'YYYY-MM-DD'), 'YYYY-MM-DD')
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'GRCADHOC', userid, 'Data Validation', 'Valid Upto cannot be less than Entry Date.', clock_timestamp()
+        from    int$stg_grcadhoc_all_fld a, invitem i
+        where (UPPER(a.icode_barcode) = i.icode OR UPPER(a.icode_barcode) = i.barcode)
+        and    i.item_management_mode = 'B'
+        and    a.valid_upto is not null
+        and    TO_DATE(TO_CHAR(date_trunc('day', a.valid_upto), 'YYYY-MM-DD'), 'YYYY-MM-DD')
+      			< TO_DATE(TO_CHAR(date_trunc('day', a.grcdt), 'YYYY-MM-DD'), 'YYYY-MM-DD')
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'GRCADHOC', userid, 'Data Validation', 'Valid Upto cannot be less than Manufacturing Date.', clock_timestamp()
+        from    int$stg_grcadhoc_all_fld a, invitem i
+        where (UPPER(a.icode_barcode) = i.icode OR UPPER(a.icode_barcode) = i.barcode)
+        and    i.item_management_mode = 'B'
+        and    a.valid_upto is not null
+        and    a.mfg_date is not null
+        and    TO_DATE(TO_CHAR(date_trunc('day', a.valid_upto), 'YYYY-MM-DD'), 'YYYY-MM-DD')
+      			< TO_DATE(TO_CHAR(date_trunc('day', a.mfg_date), 'YYYY-MM-DD'), 'YYYY-MM-DD')
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'GRCADHOC', userid, 'Data Validation', 'Duplicate serial number is not allowed for an item.', clock_timestamp()
+        from    int$stg_grcadhoc_all_fld a, invitem i
+        where (UPPER(a.icode_barcode) = i.icode OR UPPER(a.icode_barcode) = i.barcode)
+        and    a.batch_serial_no is not null
+        and    i.item_management_mode = 'S'
+        and    i.icode in (SELECT i.icode
+                                    from int$stg_grcadhoc_all_fld a, invitem i
+                                  where (upper(a.icode_barcode) = i.icode or upper(a.icode_barcode) = i.barcode)
+                                  and batch_serial_no is not null
+                                  and i.item_management_mode = 'S'
+                                  and a.userid = p_userid
+                                  GROUP BY i.icode, a.batch_serial_no HAVING count(i.icode) > 1
+                                  )
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'GRCADHOC', userid, 'Data Validation', 'Batch/Serial details are not applicable for this item.', clock_timestamp()
+        from    int$stg_grcadhoc_all_fld a, invitem i
+        where (UPPER(a.icode_barcode) = i.icode OR UPPER(a.icode_barcode) = i.barcode)
+        and    i.item_management_mode = 'I'
+        and (a.batch_serial_no is not null or a.mfg_date is not null or a.valid_upto is not null or a.standardrate is not null or a.wsp is not null or a.rsp is not null or a.mrp is not null)
+        and    a.userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GRCADHOC', userid, 'Mandatory Validation', 'Value defined is out of range as per the limit prescribed in Article.', clock_timestamp()
+        from     int$stg_grcadhoc_all_fld a, invitem i, invarticle ar
+        where   ((a.icode_barcode = i.icode) OR (a.icode_barcode = i.barcode))
+        and     i.invarticle_code = ar.code
+        and     i.item_management_mode <> 'I'
+        and     coalesce(a.rsp,0) not between ar.mrprangefrom and ar.mrprangeto
+        and     userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'GRCADHOC', userid, 'Data Validation', 'Item Quantity for serial managed items must be equal to scan unit of item.', clock_timestamp()
+        from    int$stg_grcadhoc_all_fld a, invitem i
+        where (UPPER(a.icode_barcode) = i.icode OR UPPER(a.icode_barcode) = i.barcode)
+        --and    a.batch_serial_no is not null
+        and    i.item_management_mode = 'S'
+        and    coalesce(ABS(a.grcqty),0) <> coalesce(i.barunit,1)
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'GRCADHOC', userid, 'Data Validation', 'Expiry Batch Selected. Please rectify and proceed.', clock_timestamp()
+        from int$stg_grcadhoc_all_fld a, invitem i, invbatch_serial b
+        where (UPPER(a.icode_barcode) = i.icode OR UPPER(a.icode_barcode) = i.barcode)
+        and    UPPER(i.icode) = b.icode
+        and    UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no)
+        and    b.exp_date < a.grcdt
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), a.lineno, 'GRCADHOC', p_userid, 'Data Validation', 'Same Batch and Item with different Pricing and Expiry information. Please rectify and proceed.', clock_timestamp()
+        from int$stg_grcadhoc_all_fld a, int$stg_grcadhoc_all_fld b
+        where  UPPER(a.icode_barcode) = UPPER(b.icode_barcode)
+        and    UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no)
+        and ( a.mfg_date <> b.mfg_date OR a.valid_upto <> b.valid_upto OR a.wsp <> b.wsp OR a.rsp <> b.rsp OR a.mrp <> b.mrp OR a.standardrate <> b.standardrate)
+        and    a.userid = p_userid;
+		
+insert
+        into    int$error_log(
+                    code,
+                    lineno,
+                    classname,
+                    userid,
+                    errortype,
+                    errordesc,
+                    createdon
+                )
+        SELECT  int$nextval('error_log_code'),
+                a1.lineno,
+                'GRCADHOC',
+                p_userid,
+                'Data Validation',
+                'Trade Group / Term / Form Name is missing for the Vendor.',
+                clock_timestamp()
+        from    
+                int$stg_grcadhoc_all_fld a1
+        where   a1.userid = p_userid  
+        and     a1.pcode in
+                (
+                    SELECT  z3.pcode
+                    from    (
+                                select  z2.pcode,
+                                        max(z2.fintradegrp_code)  fintradegrp_code,
+                                        max(z2.purtermmain_code)  purtermmain_code,
+                                        max(z2.purformcode)       purformcode
+                                from    (
+                                            select  a.pcode,
+                                                    z1.fintradegrp_code,
+                                                    z1.purtermmain_code,
+                                                    z1.purformcode
+                                            FROM int$stg_grcadhoc_all_fld a
+LEFT OUTER JOIN (
+                                                        select  f.slcode,
+                                                                f.fintradegrp_code,
+                                                                f.purtermmain_code,
+                                                                f.purformcode
+                                                        from    finsl_ou f
+                                                        where (
+                                                                    p_connect_ou is null
+                                                                    or
+                                                                    f.admou_code = p_connect_ou
+                                                                )
+                                                        and     f.admsite_code = p_connect_site
+                                                    ) z1 ON (a.pcode = z1.slcode)
+WHERE a.userid = p_userid  
+union all
+
+                                            select  a.pcode,
+                                                    sl.fintradegrp_code,
+                                                    sl.purtermmain_code,
+                                                    sl.purformcode
+                                            FROM int$stg_grcadhoc_all_fld a
+LEFT OUTER JOIN finsl sl ON (a.pcode = sl.slcode)
+WHERE a.userid = p_userid  ) z2
+                                group by
+                                        z2.pcode
+                                having(
+                                            coalesce(max(fintradegrp_code),-1) = -1
+                                            or
+                                            coalesce(max(purtermmain_code),-1) = -1
+                                            or
+                                            coalesce(max(purformcode),-1) = -1
+                                        )   
+                            ) z3
+                );
+
+      --COMMIT;
+
+      -- Check whether records are valid or not
+      BEGIN
+         SELECT 'S'
+           INTO STRICT v_status
+
+          WHERE EXISTS (SELECT 'S'
+                      FROM int$error_log
+                     WHERE userid = p_userid);
+
+         RETURN('0');
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            RETURN('1');
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'V' || 'GRCADHOC',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

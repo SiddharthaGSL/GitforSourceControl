@@ -1,0 +1,290 @@
+function "main"."int$pkg_giftvoucher_int$pkg_giftvoucher_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        vstatus         char(1);
+
+        errmsg          varchar(200);
+        vdetailtbl      varchar(1000);
+        vdetailrec      varchar(500);
+        vsession        varchar(100);
+		V_SID			bigint;
+
+        v_process       bigint;
+        errcode         bigint;
+        vcount          bigint;
+
+        c CURSOR FOR
+            SELECT  a.bookletno, a.ecode, a.allocated_site
+            FROM (
+                        SELECT  count(1), bookletno, ecode, allocated_site
+                        FROM (
+                                SELECT  UPPER(booklet_no) bookletno, userid ecode, allocated_site
+                                FROM    int$stg_giftvoucher
+                                WHERE   userid = p_userid
+                                AND     allocated_site IS NOT NULL
+                            ) alias2
+                        GROUP BY
+                                  bookletno, ecode, allocated_site
+                    ) a
+                    , (
+                        SELECT UPPER(bookletno) bookletno, status
+                        FROM    gvbooklet
+                       ) b
+            WHERE   a.bookletno = b.bookletno;
+BEGIN
+        --Clear error log table before Create GV
+        DELETE FROM int$error_log WHERE userid = p_userid;
+
+        -- Populate gvbooklet
+        INSERT INTO gvbooklet(gvcategory_code, bookletno, pergvvalue, createdby, createdon, lastmodifiedby, lastmodifiedon, status, noofgv)
+        SELECT  gvcategory_code, a.bookletno, a.denomination, a.ecode createdby, clock_timestamp() createdon, a.ecode lastmodifiedby, clock_timestamp() lastmodifiedon, a.status, a.noofgv
+        FROM (
+                    SELECT  count(1), gvcategory_code, bookletno, denomination, ecode, status, noofgv
+                    FROM (
+                            SELECT  b.code gvcategory_code, UPPER(trim(both a.booklet_no)) bookletno, trim(both a.denomination) denomination, userid ecode, CASE WHEN a.allocated_site  IS NULL THEN 'N'  ELSE 'A' END  status, count(*) over (partition by a.booklet_no order by a.booklet_no) noofgv
+                            FROM    int$stg_giftvoucher a, gvcategory b
+                            WHERE   a.userid = p_userid
+                            AND     trim(both a.gv_category) = b.name
+                AND     a.booklet_no IS NOT NULL
+                        ) alias10
+                    GROUP BY
+                              gvcategory_code, bookletno, denomination, ecode, status, noofgv
+                ) a
+LEFT OUTER JOIN (
+                    SELECT UPPER(bookletno) bookletno
+                    FROM    gvbooklet
+                   ) b ON (a.bookletno = b.bookletno)
+WHERE b.bookletno IS NULL;
+
+        --update existing booklet
+        FOR r IN c LOOP
+
+           UPDATE   gvbooklet
+           SET      status = 'A'
+                    ,lastmodifiedby = r.ecode
+                    ,lastmodifiedon = clock_timestamp()
+           where  bookletno  = r.bookletno;
+
+        END LOOP;
+
+        -- populate gvleaves
+        INSERT INTO gvleaves(
+                gvcategory_code
+                ,gvno_udf
+                ,seq
+                ,gvbooklet_code
+                ,value
+                ,validity_days
+                ,expireson
+                ,status
+                ,createdby
+                ,createdon
+                ,allocate_admsite_code
+                ,allocateon
+                ,lastmodifiedon
+                ,lastmodifiedby
+                ,gvno
+                )
+        SELECT  gvcategory_code
+                ,gvno_udf
+                ,seq
+                ,booklet_code
+                ,value
+                ,validity_days
+                ,expireson
+                ,status
+                ,createdby
+                ,createdon
+                ,allocate_admsite_code
+                ,allocateon
+                ,lastmodifiedon
+                ,lastmodifiedby
+                ,CASE WHEN seqpaddingchar IS NULL THEN prefix||lastno :: text||suffix  ELSE prefix||LPAD(lastno::text,seqsegmentlength::integer,seqpaddingchar::text)||suffix END  gvno
+        FROM
+        (
+            SELECT  c.gvcategory_code
+                    ,a.gvno_udf
+                    ,sum(a.seq) over (partition by a.bookletno order by a.gvno_udf,a.bookletno) seq
+                    ,b.booklet_code
+                    ,a.value
+                    ,a.validity_days
+                    ,a.expireson
+                    ,a.status
+                    ,a.createdby
+                    ,a.createdon
+                    ,a.allocate_admsite_code
+                    ,a.allocateon
+                    ,a.lastmodifiedon
+                    ,a.lastmodifiedby
+                    ,(CASE WHEN coalesce(lastno,0) = 0 THEN seqstartfrom ELSE lastno END) + sum(a.seq) over (order by a.gvno_udf) lastno
+                    ,prefix
+                    ,suffix
+                    ,seqstartfrom
+                    ,seqpaddingchar
+                    ,seqsegmentlength
+            FROM (
+                    SELECT  code gvcategory_code
+                            ,seqstartfrom
+                            ,lastno
+                            ,replace(replace(replace(replace(replace(prefix,'[YYYY]',to_char(clock_timestamp(),'YYYY')),
+                                             '[YY]',to_char(clock_timestamp(),'YY')),
+                                             '[MON]',to_char(clock_timestamp(),'MON')),
+                                             '[dddd]',to_char(clock_timestamp(),'DY')),
+                                             '[dd]',to_char(clock_timestamp(),'dd')) prefix
+                            ,replace(replace(replace(replace(replace(suffix,'[YYYY]',to_char(clock_timestamp(),'YYYY')),
+                                             '[YY]',to_char(clock_timestamp(),'YY')),
+                                             '[MON]',to_char(clock_timestamp(),'MON')),
+                                             '[dddd]',to_char(clock_timestamp(),'DY')),
+                                             '[dd]',to_char(clock_timestamp(),'dd')) suffix
+                            ,seqpaddingchar
+                            ,seqsegmentlength
+                    FROM    gvcategory
+                ) c, (
+                    SELECT  trim(both a.gvno)                                gvno_udf
+                            ,1                                          seq
+                            ,b.code                                     gvcategory_code
+                            ,trim(both a.denomination)                       value
+                            ,coalesce(a.validity_days,b.validity_days)       validity_days
+                            ,coalesce(a.expireson,b.expireson)               expireson
+                            ,CASE WHEN trim(both a.allocated_site) IS NULL THEN 'N'  ELSE 'A' END  status
+                            ,userid                                     createdby
+                            ,clock_timestamp()                                    createdon
+                            ,s.code                                     allocate_admsite_code
+                            ,clock_timestamp()                                    allocateon
+                            ,clock_timestamp()                                    lastmodifiedon
+                            ,userid                                     lastmodifiedby
+                            ,UPPER(trim(both a.booklet_no))                   bookletno
+                    FROM gvcategory b, int$stg_giftvoucher a
+LEFT OUTER JOIN admsite s ON (a.allocated_site = s.shrtname)
+WHERE ( a.userid) = p_userid  AND trim(both a.gv_category) = b.name  ) a
+LEFT OUTER JOIN (
+                    SELECT code booklet_code, UPPER(bookletno) bookletno
+                    FROM gvbooklet
+                ) b ON (a.bookletno = b.bookletno)
+WHERE a.gvcategory_code = c.gvcategory_code  ) alias54;
+
+            -- To update lastno in gvcategory
+            UPDATE  gvcategory
+            SET     lastno = (
+                                SELECT SUM(lastno) lastno
+                                FROM (
+                                        SELECT  COUNT(1) lastno
+                                        FROM    int$stg_giftvoucher
+                                        WHERE   userid = p_userid
+
+UNION ALL
+
+                                        SELECT (CASE WHEN coalesce(lastno,0) = 0 THEN seqstartfrom ELSE lastno END) lastno
+                                        FROM   gvcategory
+                                        WHERE  name  IN ( SELECT DISTINCT gv_category FROM int$stg_giftvoucher WHERE userid = p_userid )
+                                    ) alias5
+                               )
+            WHERE   name  IN ( SELECT DISTINCT gv_category FROM int$stg_giftvoucher WHERE userid = p_userid );
+
+            --COMMIT;
+
+            BEGIN
+                SELECT  'S'
+                INTO STRICT    vstatus
+
+                WHERE   EXISTS (
+                                    SELECT  'S'
+                                    FROM    gvleaves a, int$stg_giftvoucher b
+                                    WHERE   a.gvno_udf = b.gvno
+                                    AND     b.userid =p_userid
+                                );
+
+               -- log to be added in history table
+      		SELECT nextval('int$error_log_code') INTO STRICT vsession;
+				
+				--SELECT PG_BACKEND_PID() INTO V_SID;
+				
+                --SELECT  V_SID||'_'||APPLICATION_NAME INTO vsession FROM PG_STAT_ACTIVITY WHERE PID=V_SID;
+
+                vdetailtbl :=
+                                -- start rev : 001
+                                --'CREATE TABLE GIFTVOUCHER_'
+                                'CREATE TABLE ginarchive.GIFTVOUCHER_'
+                                -- end rev : 001
+                                ||vsession||' AS
+                                    SELECT b.gv_category "GV Category Name", coalesce(a.gvno_udf,a.gvno) "GV No.", b.denomination "Denomination"
+                                    FROM    gvleaves a, int$stg_giftvoucher b
+                                    WHERE   a.gvno_udf = b.gvno
+                                    AND     b.userid ='|| p_userid::text;
+
+                EXECUTE vdetailtbl;
+
+                -- start rev : 001
+                --vdetailrec := 'SELECT count(1) FROM giftvoucher_'||vsession;
+                vdetailrec := 'SELECT count(1) FROM ginarchive.giftvoucher_'||vsession;
+                -- end rev : 001
+                EXECUTE vdetailrec INTO STRICT vcount;
+
+                INSERT INTO int$history(code, importedby, importedon, classname, summary, history_detail_tablename, history_detail_row_count)
+                -- strat rev : 001
+                --VALUES (int$history_code.NEXTVAL, p_userid, SYSDATE, 'GIFTVOUCHER', vcount::TEXT||' GV has been created', 'giftvoucher_'||vsession, vcount);
+                VALUES (nextval('int$history_code'), p_userid, clock_timestamp(), 'GIFTVOUCHER', vcount::TEXT||' GV has been created', 'ginarchive.giftvoucher_'||vsession, vcount);
+                -- end rev :
+                --COMMIT;
+                RETURN('1');
+            EXCEPTION
+                WHEN no_data_found THEN
+
+                    errcode := SQLSTATE;
+                    errmsg  := SQLERRM;
+
+                    INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                    VALUES (nextval('int$error_log_code'), 0, 'GIFTVOUCHER', p_userid, errcode, errmsg, clock_timestamp());
+                    --COMMIT;
+
+                    RETURN('0');
+            END;
+
+    EXCEPTION
+        WHEN OTHERS THEN
+            errcode := SQLSTATE;
+            errmsg := SQLERRM;
+
+            --Error log for Oracle Internal Error
+            INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            VALUES (nextval('int$error_log_code'), 0, 'GIFTVOUCHER', p_userid, errcode, errmsg, clock_timestamp());
+            --COMMIT;
+
+            RETURN('0');
+
+    END;
+
+   -- clear gv staging table
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

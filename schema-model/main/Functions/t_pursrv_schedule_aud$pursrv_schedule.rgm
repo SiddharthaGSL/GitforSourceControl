@@ -1,0 +1,161 @@
+function "main"."t_pursrv_schedule_aud$pursrv_schedule()" {
+  text = """
+
+DECLARE
+    V_RECORD_OLD AUD_PURSRV_SCHEDULE%ROWTYPE;
+	V_RECORD_NEW AUD_PURSRV_SCHEDULE%ROWTYPE;
+    V_SID DOUBLE PRECISION;
+    V_TRNID CHARACTER VARYING(50);
+    V_ACTION CHARACTER VARYING(10);
+    I RECORD;    
+	V_AUDIT_USER CHARACTER VARYING (100);
+	V_LOGINUSER  CHARACTER VARYING (100);
+	V_PROGRAM    CHARACTER VARYING (100);
+	V_REC_COUNT  BIGINT; 
+   
+BEGIN
+       SELECT current_setting('audit.AUDIT_USER', true) INTO V_AUDIT_USER;
+	   IF NULLIF(V_AUDIT_USER,'') IS NOT NULL THEN  
+		   BEGIN
+				SELECT FULLNAME
+				INTO   STRICT V_LOGINUSER
+				FROM   APPUSER
+				WHERE  ID =  substring (V_AUDIT_USER,8,position(';' in V_AUDIT_USER)-8)::NUMERIC; 
+		   EXCEPTION
+				WHEN no_data_found
+				THEN
+					V_LOGINUSER := 'System';
+			END;			
+		ELSE
+			V_LOGINUSER := 'SYSTEM';
+		END IF;
+	   
+	   select application_name
+	   INTO   V_PROGRAM
+	   from pg_stat_activity where pid = pg_backend_pid();
+
+       V_ACTION:=TG_OP;
+	   
+       SELECT TXID_CURRENT() INTO V_TRNID;
+       
+        IF TG_OP = 'INSERT' OR  TG_OP = 'UPDATE' THEN 
+	   
+           V_RECORD_NEW.ACTION := V_ACTION;
+           V_RECORD_NEW.ACTION_SUBTYPE := 'NEW';
+           V_RECORD_NEW.TRANSACTION_ID := V_TRNID::TEXT;		   
+		   V_RECORD_NEW.code := NEW.code;
+            V_RECORD_NEW.pursrvmain_code := NEW.pursrvmain_code;
+            V_RECORD_NEW.pursrvdet_code := NEW.pursrvdet_code;
+            V_RECORD_NEW.pursrvorddet_code := NEW.pursrvorddet_code;
+            V_RECORD_NEW.pursrvord_schedule_code := NEW.pursrvord_schedule_code;
+            V_RECORD_NEW.servicecode := NEW.servicecode;
+            V_RECORD_NEW.admsite_code := NEW.admsite_code;
+            V_RECORD_NEW.qty := NEW.qty;
+            V_RECORD_NEW.rate := NEW.rate;
+            V_RECORD_NEW.amt := NEW.amt;
+            V_RECORD_NEW.remarks := NEW.remarks;
+            V_RECORD_NEW.dataversion := NEW.dataversion;
+          END IF;  
+            
+         IF TG_OP = 'UPDATE' OR TG_OP = 'DELETE' THEN 
+	   
+            V_RECORD_OLD.ACTION := V_ACTION;
+            V_RECORD_OLD.ACTION_SUBTYPE := 'OLD';
+            V_RECORD_OLD.TRANSACTION_ID := V_TRNID::TEXT;			
+			V_RECORD_OLD.code := OLD.code;
+            V_RECORD_OLD.pursrvmain_code := OLD.pursrvmain_code;
+            V_RECORD_OLD.pursrvdet_code := OLD.pursrvdet_code;
+            V_RECORD_OLD.pursrvorddet_code := OLD.pursrvorddet_code;
+            V_RECORD_OLD.pursrvord_schedule_code := OLD.pursrvord_schedule_code;
+            V_RECORD_OLD.servicecode := OLD.servicecode;
+            V_RECORD_OLD.admsite_code := OLD.admsite_code;
+            V_RECORD_OLD.qty := OLD.qty;
+            V_RECORD_OLD.rate := OLD.rate;
+            V_RECORD_OLD.amt := OLD.amt;
+            V_RECORD_OLD.remarks := OLD.remarks;
+            V_RECORD_OLD.dataversion := OLD.dataversion;
+          END IF;  
+
+    IF TG_OP = 'INSERT' THEN
+	    V_REC_COUNT := 1;
+        INSERT INTO AUD_PURSRV_SCHEDULE SELECT V_RECORD_NEW.*;
+    END IF;
+
+    IF TG_OP = 'UPDATE' THEN
+	FOR I IN (
+		SELECT 
+		V_RECORD_OLD.remarks,
+                  V_RECORD_OLD.amt,
+                  V_RECORD_OLD.rate,
+                  V_RECORD_OLD.qty,
+                  V_RECORD_OLD.admsite_code,
+                  V_RECORD_OLD.servicecode,
+                  V_RECORD_OLD.pursrvord_schedule_code,
+                  V_RECORD_OLD.pursrvorddet_code,
+                  V_RECORD_OLD.pursrvdet_code,
+                  V_RECORD_OLD.pursrvmain_code,
+                  V_RECORD_OLD.code
+		EXCEPT
+		SELECT 
+		V_RECORD_NEW.remarks,
+                  V_RECORD_NEW.amt,
+                  V_RECORD_NEW.rate,
+                  V_RECORD_NEW.qty,
+                  V_RECORD_NEW.admsite_code,
+                  V_RECORD_NEW.servicecode,
+                  V_RECORD_NEW.pursrvord_schedule_code,
+                  V_RECORD_NEW.pursrvorddet_code,
+                  V_RECORD_NEW.pursrvdet_code,
+                  V_RECORD_NEW.pursrvmain_code,
+                  V_RECORD_NEW.code
+			 )
+	LOOP
+	  V_REC_COUNT := 1; 
+		INSERT INTO AUD_PURSRV_SCHEDULE SELECT V_RECORD_OLD.*;
+       INSERT INTO AUD_PURSRV_SCHEDULE SELECT V_RECORD_NEW.*;    
+	END LOOP;   
+    END IF;
+
+    IF TG_OP = 'DELETE' THEN
+		V_REC_COUNT := 1;
+		INSERT INTO AUD_PURSRV_SCHEDULE SELECT V_RECORD_OLD.*;
+    END IF;
+	
+	IF V_REC_COUNT >  0
+	THEN
+	   BEGIN
+            INSERT INTO AUD_TRANSACTION (TRANSACTION_ID, TRANSACTION_DATE, LOGIN_USER, PROGRAM, MODULE_SHORTCODE, MODULE_TYPE)
+            VALUES (V_TRNID,   current_date,V_LOGINUSER, V_PROGRAM, 'Purchase Service Invoice', 'Purchase Service Invoice');
+       EXCEPTION WHEN unique_violation THEN
+            NULL;
+       END;  
+
+       BEGIN  
+             INSERT INTO AUD_TRANSACTION_TABLE (TRANSACTION_ID, TABLE_NAME)
+             VALUES (V_TRNID,  'PURSRV_SCHEDULE');
+       EXCEPTION WHEN unique_violation THEN
+             NULL;
+       END; 
+	END IF;   
+    
+
+    IF TG_OP = 'INSERT' THEN
+        RETURN NEW;
+    ELSIF TG_OP = 'UPDATE' THEN
+        RETURN NEW;
+    ELSIF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    EXCEPTION
+        WHEN others THEN
+            CALL main.erraudit(SESSION_USER::text, 'T_PURSRV_SCHEDULE_AUD'::CHARACTER, SQLSTATE::text, SQLERRM);
+			RAISE;
+			RETURN NULL;
+END;
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

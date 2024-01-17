@@ -1,0 +1,930 @@
+function "main"."int$pkg_mngsiteimport_int$pkg_mngsiteimport_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      errmsg       varchar(500);
+      vsession     varchar(100);
+      vdetailtbl   varchar(1000);
+      vdetailrec   varchar(500);
+      errcode      text;
+      vmaxno       bigint;
+      vcount       bigint;
+
+      -- START REV : 017
+      v_sitecode            bigint;
+      v_sitetype            varchar(20);
+      v_psite_initial       admsite.psite_initial%type;
+      v_installation_type   admsite.installation_type%type;
+      -- END REV : 017
+BEGIN
+      DECLARE
+         C_SITE CURSOR FOR
+            SELECT a.code,
+                   a.NAME,
+                   a.psite_initial,
+                   1                                               cmpcode,
+                   a.shrtname,
+                   a.address,
+                   CITY.ctname                                     ctname,
+                   a.pin,
+                   a.oph1,
+                   a.oph2,
+                   a.oph3,
+                   a.rph1,
+                   a.mobile,
+                   a.fax,
+                   a.email1,
+                   a.email2,
+                   a.website,
+                   a.contact_person,
+                   a.lstno,
+                   a.lstdate,
+                   a.cstno,
+                   a.cstdate,
+                   a.transit_days,
+                   a.store_target_sales,
+                   a.store_size,
+                   a.store_startdt,
+                   a.store_closedt,
+                   1                                               store_loccode,
+                   CASE WHEN UPPER(a.psite_stopsync)='YES' THEN  'Y' WHEN UPPER(a.psite_stopsync)='NO' THEN  'N' END    psite_stopsync,
+                   CASE WHEN UPPER(a.pricetype)='MRP' THEN  'M' WHEN UPPER(a.pricetype)='RSP' THEN  'R' END        pricetype,
+                   a.pricefactor,
+                   -- START REV : 015
+                   --DECODE (UPPER (a.iscentrallymanaged), 'YES', 1, 0)   iscentrallymanaged,
+                   --DECODE (UPPER (a.issalespersonmanaged), 'YES', 1, 0) issalespersonmanaged,
+                   CASE WHEN UPPER(a.iscentrallymanaged)='YES' THEN  1 WHEN UPPER(a.iscentrallymanaged)='NO' THEN  0 END    iscentrallymanaged,
+                   CASE WHEN UPPER(a.issalespersonmanaged)='YES' THEN  1 WHEN UPPER(a.issalespersonmanaged)='NO' THEN  0 END  issalespersonmanaged,
+                   -- END REV : 015
+                   f.slcode                                        slcode,
+                   trp.slcode                                      trpcode,
+                   tx.code                                         psite_admcmptax_code,
+                   CASE WHEN UPPER(a.ext)='YES' THEN  'Y' WHEN UPPER(a.ext)='NO' THEN  'N' END  ext,
+                   CASE WHEN UPPER(a.issecondary)='YES' THEN  'Y'  ELSE 'N' END  issecondary,
+                   pl.code  psite_localpolicy_code,
+                   pa.code  psite_allocation_code,
+                   reportname,
+                   psite_timezone,
+                   ou.code  admou_code,
+                   a.slid,
+                   a.gst_identification_no,
+                   a.gst_registration_date,
+                   gs.code admgstin_code,
+                   -- START REV : 009
+--                   DECODE (UPPER (a.shipping_same_as_billing),
+--                           'YES', 'Y',
+--                           'NO', 'N',
+--                           DECODE (A.CODE, NULL, 'Y', NULL))
+--                      shipping_same_as_billing,
+                   --START REV : 012
+                   case WHEN UPPER(a.shipping_same_as_billing) = 'YES' then 'Y'
+                   --START REV : 014
+                   WHEN UPPER(a.shipping_same_as_billing) = 'NO' then 'N'
+                   --END REV : 014
+                   end     shipping_same_as_billing,
+                   --END REV : 012
+                   a.shipping_company_name,
+                   a.shipping_cinno,
+                   a.shipping_address,
+                   a.shipping_ctname,
+                   a.shipping_pin,
+                   a.shipping_oph1,
+                   a.shipping_oph2,
+                   a.shipping_oph3,
+                   a.shipping_rph1,
+                   a.shipping_mobile,
+                   a.shipping_fax,
+                   a.shipping_email1,
+                   a.shipping_email2,
+                   a.shipping_website,
+                   a.shipping_contact_person,
+                   admg.code     shipping_gst_category,
+                   a.shipping_gstin,
+                   a.shipping_gst_reg_date -- END REV : 009
+                                          -- START REV : 010
+                   ,
+                   CASE WHEN a.slid IS NULL THEN  'C'  ELSE F.SALETYPE END           SALETYPE -- END REV : 010
+                                                                           -- START REV : 011
+                   ,
+                   a.allow_any_store_return
+                   -- END REV : 011
+                   -- START REV : 016
+                   ,coalesce(a.installation_type, 'GINESYSPOS')  installation_type_val,
+                   -- END REV : 016
+                   -- START REV : 019
+                   a.udfstring01,
+                   a.udfstring02,
+                   a.udfstring03,
+                   a.udfstring04,
+                   a.udfstring05,
+                   a.udfstring06,
+                   a.udfstring07,
+                   a.udfstring08,
+                   a.udfstring09,
+                   a.udfstring10,
+                   a.udfstring11,
+                   a.udfstring12,
+                   a.udfstring13,
+                   a.udfstring14,
+                   a.udfstring15,
+                   a.udfnum01,
+                   a.udfnum02,
+                   a.udfnum03,
+                   a.udfnum04,
+                   a.udfnum05,
+                   a.udfdate01,
+                   a.udfdate02,
+                   a.udfdate03,
+                   a.udfdate04,
+                   a.udfdate05
+                   -- END REV : 019
+              FROM  int$stg_mngsiteimport a
+LEFT OUTER JOIN finsl f ON (UPPER(a.slid) = UPPER(f.slid))
+LEFT OUTER JOIN finsl trp ON (UPPER(a.trpid) = UPPER(trp.slid))
+LEFT OUTER JOIN admcmptax tx ON (UPPER(a.psite_admcmptax_name) = UPPER(tx.NAME))
+LEFT OUTER JOIN psite_localpolicy pl ON (UPPER(a.psite_localpolicy_name) = UPPER(pl.NAME))
+LEFT OUTER JOIN psite_allocation pa ON (UPPER(a.psite_allocation_name) = UPPER(pa.NAME))
+LEFT OUTER JOIN admcity city ON (UPPER(a.ctname) = UPPER(CITY.ctname))
+LEFT OUTER JOIN admou ou ON (UPPER(a.OU_NAME) = UPPER(OU.NAME))
+LEFT OUTER JOIN admgstcategory admg ON (UPPER(a.shipping_gst_category) = UPPER(admg.name))
+LEFT OUTER JOIN admgstin gs ON (UPPER(coalesce(a.gst_identification_no, '@@')) = UPPER(gs.gstin_no))
+WHERE -- END REV : 010
+   a.userid = p_userid;
+      BEGIN
+         FOR TMP IN C_SITE
+         LOOP
+            --  ON (s.code = tmp.code)
+            --   WHEN MATCHED THEN
+            IF TMP.CODE IS NOT NULL
+            THEN
+               UPDATE ADMSITE S
+                  SET name = coalesce(tmp.name, s.name),
+                      cmpcode = 1,
+                      shrtname = coalesce(tmp.shrtname, s.shrtname),
+                      address = coalesce(tmp.address, s.address),
+                      ctname = coalesce(tmp.ctname, s.ctname),
+                      pin = coalesce(tmp.pin, s.pin),
+                      oph1 = coalesce(tmp.oph1, s.oph1),
+                      oph2 = coalesce(tmp.oph2, s.oph2),
+                      oph3 = coalesce(tmp.oph3, s.oph3),
+                      rph1 = coalesce(tmp.rph1, s.rph1),
+                      mobile = coalesce(tmp.mobile, s.mobile),
+                      fax = coalesce(tmp.fax, s.fax),
+                      email1 = coalesce(tmp.email1, s.email1),
+                      email2 = coalesce(tmp.email2, s.email2),
+                      website = coalesce(tmp.website, s.website),
+                      contact_person =
+                         coalesce(tmp.contact_person, s.contact_person),
+                      lstno = coalesce(tmp.lstno, s.lstno),
+                      lstdate = coalesce(tmp.lstdate, s.lstdate),
+                      cstno = coalesce(tmp.cstno, s.cstno),
+                      cstdate = coalesce(tmp.cstdate, s.cstdate)-- issecondary = tmp.issecondary,
+                      ,
+                      trpcode = coalesce(tmp.trpcode, s.trpcode),
+                      lgt_appl = 'N',
+                      permit_appl = 'N',
+                      out_lgt_appl = 'N',
+                      out_permit_appl = 'N',
+                      gatein_appl = 'N',
+                      transit_days =
+                         coalesce(tmp.transit_days, s.transit_days),
+                      store_target_sales =
+                         coalesce(tmp.store_target_sales, s.store_target_sales),
+                      store_size = coalesce(tmp.store_size, s.store_size),
+                      store_startdt =
+                         coalesce(tmp.store_startdt, s.store_startdt),
+                      store_closedt =
+                         coalesce(tmp.store_closedt, s.store_closedt),
+                      store_loccode = 1,
+                      ispos = 'Y',
+                      psite_transit_loccode = 2,
+                      psite_admcmptax_code =
+                         coalesce(tmp.psite_admcmptax_code,
+                              s.psite_admcmptax_code),
+                      ext = coalesce(tmp.ext, s.ext),
+                      psite_localpolicy_code =
+                         coalesce(tmp.psite_localpolicy_code,
+                              s.psite_localpolicy_code),
+                      psite_allocation_code =
+                         coalesce(tmp.psite_allocation_code,
+                              s.psite_allocation_code),
+                      psite_stopsync =
+                         coalesce(tmp.psite_stopsync, s.psite_stopsync),
+                      pricetype =
+                         coalesce(tmp.pricetype, s.pricetype),
+                      pricefactor =
+                         coalesce(tmp.pricefactor, s.pricefactor),
+                      iscentrallymanaged =
+                         coalesce(tmp.iscentrallymanaged, s.iscentrallymanaged),
+                      issalespersonmanaged =
+                         coalesce(tmp.issalespersonmanaged,
+                              s.issalespersonmanaged),
+                      reportname =
+                         coalesce(tmp.reportname, s.reportname),
+                      psite_timezone =
+                         coalesce(tmp.psite_timezone, s.psite_timezone)-- START REV : 010                                                                  
+                      ,
+                      admgstin_code =
+                         CASE WHEN                             tmp.admgstin_code = NULL THEN  admgstin_code  ELSE CASE                               WHEN sitetype = 'MS-OO-CM'                               THEN                                  coalesce(tmp.admgstin_code, admgstin_code)                               ELSE                                  NULL                            END END ,
+                      cp_gstin_no =
+                         CASE WHEN                             tmp.gst_identification_no = NULL THEN  S.cp_gstin_no  ELSE CASE                               WHEN sitetype = 'MS-OO-CM'                               THEN                                  NULL                               ELSE                                  coalesce(tmp.gst_identification_no,                                       cp_gstin_no)                            END END ,
+                      cp_gstin_date =
+                         CASE WHEN                             tmp.gst_registration_date = NULL THEN  s.cp_gstin_date  ELSE CASE                               WHEN sitetype = 'MS-OO-CM'                               THEN                                  NULL                               ELSE                                  coalesce(tmp.gst_registration_date,                                       cp_gstin_date)                            END END ,
+                      cp_gstin_state_code =
+                         CASE WHEN                             tmp.gst_identification_no = NULL THEN  s.cp_gstin_state_code  ELSE CASE                               WHEN sitetype = 'MS-OO-CM'                               THEN                                  NULL                               ELSE                                  coalesce(                                     (SUBSTR(tmp.gst_identification_no,                                              1,                                              2)),                                     cp_gstin_state_code)                            END END -- END REV : 010
+                                -- START REV : 009
+                      ,
+                      isbillingshippingsame =
+                         CASE
+                            WHEN tmp.shipping_same_as_billing IS NOT NULL
+                            THEN
+                               tmp.shipping_same_as_billing
+                            ELSE
+                               s.isbillingshippingsame
+                         END,
+                      ship_legal_name =
+                         CASE
+                            WHEN coalesce(tmp.shipping_same_as_billing,
+                                      s.isbillingshippingsame) = 'N'
+                            THEN
+                               coalesce(tmp.shipping_company_name,
+                                    s.ship_legal_name)
+                            ELSE
+                               NULL
+                         END,
+                      ship_cinno =
+                         CASE
+                            WHEN coalesce(tmp.shipping_same_as_billing,
+                                      s.isbillingshippingsame) = 'N'
+                            THEN
+                               coalesce(tmp.shipping_cinno, s.ship_cinno)
+                            ELSE
+                               NULL
+                         END,
+                      ship_address =
+                         CASE
+                            WHEN coalesce(tmp.shipping_same_as_billing,
+                                      s.isbillingshippingsame) = 'N'
+                            THEN
+                               coalesce(tmp.shipping_address, s.ship_address)
+                            ELSE
+                               NULL
+                         END,
+                      ship_ctname =
+                         CASE
+                            WHEN coalesce(tmp.shipping_same_as_billing,
+                                      s.isbillingshippingsame) = 'N'
+                            THEN
+                               coalesce(tmp.shipping_ctname, s.ship_ctname)
+                            ELSE
+                               NULL
+                         END,
+                      ship_pin =
+                         CASE
+                            WHEN coalesce(tmp.shipping_same_as_billing,
+                                      s.isbillingshippingsame) = 'N'
+                            THEN
+                               coalesce(tmp.shipping_pin, s.ship_pin)
+                            ELSE
+                               NULL
+                         END,
+                      ship_oph1 =
+                         CASE
+                            WHEN coalesce(tmp.shipping_same_as_billing,
+                                      s.isbillingshippingsame) = 'N'
+                            THEN
+                               coalesce(tmp.shipping_oph1, s.ship_oph1)
+                            ELSE
+                               NULL
+                         END,
+                      ship_oph2 =
+                         CASE
+                            WHEN coalesce(tmp.shipping_same_as_billing,
+                                      s.isbillingshippingsame) = 'N'
+                            THEN
+                               coalesce(tmp.shipping_oph2, s.ship_oph2)
+                            ELSE
+                               NULL
+                         END,
+                      ship_oph3 =
+                         CASE
+                            WHEN coalesce(tmp.shipping_same_as_billing,
+                                      s.isbillingshippingsame) = 'N'
+                            THEN
+                               coalesce(tmp.shipping_oph3, s.ship_oph3)
+                            ELSE
+                               NULL
+                         END,
+                      ship_rph1 =
+                         CASE
+                            WHEN coalesce(tmp.shipping_same_as_billing,
+                                      s.isbillingshippingsame) = 'N'
+                            THEN
+                               coalesce(tmp.shipping_rph1, s.ship_rph1)
+                            ELSE
+                               NULL
+                         END,
+                      ship_mobile =
+                         CASE
+                            WHEN coalesce(tmp.shipping_same_as_billing,
+                                      s.isbillingshippingsame) = 'N'
+                            THEN
+                               coalesce(tmp.shipping_mobile, s.ship_mobile)
+                            ELSE
+                               NULL
+                         END,
+                      ship_fax =
+                         CASE
+                            WHEN coalesce(tmp.shipping_same_as_billing,
+                                      s.isbillingshippingsame) = 'N'
+                            THEN
+                               coalesce(tmp.shipping_fax, s.ship_fax)
+                            ELSE
+                               NULL
+                         END,
+                      ship_email1 =
+                         CASE
+                            WHEN coalesce(tmp.shipping_same_as_billing,
+                                      s.isbillingshippingsame) = 'N'
+                            THEN
+                               coalesce(tmp.shipping_email1, s.ship_email1)
+                            ELSE
+                               NULL
+                         END,
+                      ship_email2 =
+                         CASE
+                            WHEN coalesce(tmp.shipping_same_as_billing,
+                                      s.isbillingshippingsame) = 'N'
+                            THEN
+                               coalesce(tmp.shipping_email2, s.ship_email2)
+                            ELSE
+                               NULL
+                         END,
+                      ship_website =
+                         CASE
+                            WHEN coalesce(tmp.shipping_same_as_billing,
+                                      s.isbillingshippingsame) = 'N'
+                            THEN
+                               coalesce(tmp.shipping_website, s.ship_website)
+                            ELSE
+                               NULL
+                         END,
+                      ship_contact_person =
+                         CASE
+                            WHEN coalesce(tmp.shipping_same_as_billing,
+                                      s.isbillingshippingsame) = 'N'
+                            THEN
+                               coalesce(tmp.shipping_contact_person,
+                                    s.ship_contact_person)
+                            ELSE
+                               NULL
+                         END,
+                      ship_cp_category_code =
+                         CASE
+                            WHEN coalesce(tmp.shipping_same_as_billing,
+                                      s.isbillingshippingsame) = 'N'
+                            THEN
+                               coalesce(tmp.shipping_gst_category,
+                                    s.ship_cp_category_code)
+                            ELSE
+                               NULL
+                         END,
+                      ship_cp_gstin_no =
+                         CASE
+                            WHEN coalesce(tmp.shipping_same_as_billing,
+                                      s.isbillingshippingsame) = 'N'
+                            THEN
+                               coalesce(tmp.shipping_gstin, s.ship_cp_gstin_no)
+                            ELSE
+                               NULL
+                         END,
+                      ship_cp_gstin_date =
+                         CASE
+                            WHEN coalesce(tmp.shipping_same_as_billing,
+                                      s.isbillingshippingsame) = 'N'
+                            THEN
+                               coalesce(tmp.shipping_gst_reg_date,
+                                    s.ship_cp_gstin_date)
+                            ELSE
+                               NULL
+                         END-- END REV : 009
+                            -- START REV : 011
+                      ,
+                      isglobalposreturnallowed =
+                         CASE
+                            WHEN UPPER(
+                                    coalesce(tmp.allow_any_store_return, 'NO')) =
+                                    'YES'
+                            THEN
+                               1
+                            ELSE
+                               0
+                         END,
+                -- END REV : 01
+                -- START REV : 018
+                        udfstring01 = coalesce(tmp.udfstring01,s.udfstring01),
+                        udfstring02 = coalesce(tmp.udfstring02,s.udfstring02),
+                        udfstring03 = coalesce(tmp.udfstring03,s.udfstring03),
+                        udfstring04 = coalesce(tmp.udfstring04,s.udfstring04),
+                        udfstring05 = coalesce(tmp.udfstring05,s.udfstring05),
+                        udfstring06 = coalesce(tmp.udfstring06,s.udfstring06),
+                        udfstring07 = coalesce(tmp.udfstring07,s.udfstring07),
+                        udfstring08 = coalesce(tmp.udfstring08,s.udfstring08),
+                        udfstring09 = coalesce(tmp.udfstring09,s.udfstring09),
+                        udfstring10 = coalesce(tmp.udfstring10,s.udfstring10),
+                        udfstring11 = coalesce(tmp.udfstring11,s.udfstring11),
+                        udfstring12 = coalesce(tmp.udfstring12,s.udfstring12),
+                        udfstring13 = coalesce(tmp.udfstring13,s.udfstring13),
+                        udfstring14 = coalesce(tmp.udfstring14,s.udfstring14),
+                        udfstring15 = coalesce(tmp.udfstring15,s.udfstring15),
+                        udfnum01 = coalesce(tmp.udfnum01,s.udfnum01),
+                        udfnum02 = coalesce(tmp.udfnum02,s.udfnum02),
+                        udfnum03 = coalesce(tmp.udfnum03,s.udfnum03),
+                        udfnum04 = coalesce(tmp.udfnum04,s.udfnum04),
+                        udfnum05 = coalesce(tmp.udfnum05,s.udfnum05),
+                        udfdate01 = coalesce(tmp.udfdate01,s.udfdate01),
+                        udfdate02 = coalesce(tmp.udfdate02,s.udfdate02),
+                        udfdate03 = coalesce(tmp.udfdate03,s.udfdate03),
+                        udfdate04 = coalesce(tmp.udfdate04,s.udfdate04),
+                        udfdate05 = coalesce(tmp.udfdate05,s.udfdate05)
+                -- END REV : 018
+                WHERE S.CODE = TMP.CODE;
+            ELSE
+               --ERRAUDIT(34,34,34, SQL%ROWCOUNT);
+               --IF SQL%ROWCOUNT = 0 THEN
+                -- START REV : 017
+                select nextval('admsite_code') into STRICT v_sitecode;
+                -- END REV : 017
+               INSERT INTO ADMSITE(code,
+                                    NAME,
+                                    psite_initial,
+                                    slcode,
+                                    cmpcode,
+                                    shrtname,
+                                    address,
+                                    ctname,
+                                    pin,
+                                    oph1,
+                                    oph2,
+                                    oph3,
+                                    rph1,
+                                    mobile,
+                                    fax,
+                                    email1,
+                                    email2,
+                                    website,
+                                    contact_person,
+                                    lstno,
+                                    lstdate,
+                                    cstno,
+                                    cstdate,
+                                    termcode,
+                                    issecondary,
+                                    trpcode,
+                                    lgt_appl,
+                                    permit_appl,
+                                    out_lgt_appl,
+                                    out_permit_appl,
+                                    gatein_appl,
+                                    transit_days,
+                                    store_target_sales,
+                                    store_size,
+                                    store_startdt,
+                                    store_closedt,
+                                    store_loccode,
+                                    ispos,
+                                    psite_transit_loccode,
+                                    psite_admcmptax_code,
+                                    ext,
+                                    psite_localpolicy_code,
+                                    psite_allocation_code,
+                                    psite_ispublished,
+                                    psite_stopsync,
+                                    pricetype,
+                                    pricefactor,
+                                    admou_code,
+                                    iscentrallymanaged,
+                                    issalespersonmanaged,
+                                    reportname,
+                                    psite_timezone,
+                                    admgstin_code,
+                                    cp_gstin_no,
+                                    cp_gstin_date,
+                                    cp_gstin_state_code-- START REV : 009
+                                    ,
+                                    isbillingshippingsame,
+                                    ship_legal_name,
+                                    ship_cinno,
+                                    ship_address,
+                                    ship_ctname,
+                                    ship_pin,
+                                    ship_oph1,
+                                    ship_oph2,
+                                    ship_oph3,
+                                    ship_rph1,
+                                    ship_mobile,
+                                    ship_fax,
+                                    ship_email1,
+                                    ship_email2,
+                                    ship_website,
+                                    ship_contact_person,
+                                    ship_cp_category_code,
+                                    ship_cp_gstin_no,
+                                    ship_cp_gstin_date-- END REV : 010
+                                                      -- START REV : 011
+                                    ,
+                                    isglobalposreturnallowed-- END REV : 011
+                                    -- START REV : 016
+                                    ,installation_type,
+                                    -- END REV : 016
+                                    -- START REV : 018
+                                    udfstring01,
+                                    udfstring02,
+                                    udfstring03,
+                                    udfstring04,
+                                    udfstring05,
+                                    udfstring06,
+                                    udfstring07,
+                                    udfstring08,
+                                    udfstring09,
+                                    udfstring10,
+                                    udfstring11,
+                                    udfstring12,
+                                    udfstring13,
+                                    udfstring14,
+                                    udfstring15,
+                                    udfnum01,
+                                    udfnum02,
+                                    udfnum03,
+                                    udfnum04,
+                                    udfnum05,
+                                    udfdate01,
+                                    udfdate02,
+                                    udfdate03,
+                                    udfdate04,
+                                    udfdate05
+                                    -- END REV : 018
+                                    )
+                       VALUES (
+                                 -- START REV : 017
+                                 -- admsite_code.NEXTVAL,
+                                 v_sitecode,
+                                 -- END REV : 017
+                                 tmp.NAME,
+                                 tmp.psite_initial,
+                                 tmp.slcode,
+                                 tmp.cmpcode,
+                                 tmp.shrtname,
+                                 tmp.address,
+                                 tmp.ctname,
+                                 tmp.pin,
+                                 tmp.oph1,
+                                 tmp.oph2,
+                                 tmp.oph3,
+                                 tmp.rph1,
+                                 tmp.mobile,
+                                 tmp.fax,
+                                 tmp.email1,
+                                 tmp.email2,
+                                 tmp.website,
+                                 tmp.contact_person,
+                                 tmp.lstno,
+                                 tmp.lstdate,
+                                 tmp.cstno,
+                                 tmp.cstdate,
+                                 NULL-- START REV : 001
+                                     -- tmp.issecondary,
+                                 ,
+                                 coalesce(tmp.issecondary, 'N')-- END REV : 001
+                                 ,
+                                 tmp.trpcode,
+                                 'N',
+                                 'N',
+                                 'N',
+                                 'N',
+                                 'N',
+                                 tmp.transit_days,
+                                 tmp.store_target_sales,
+                                 tmp.store_size,
+                                 tmp.store_startdt,
+                                 tmp.store_closedt,
+                                 tmp.store_loccode,
+                                 'Y'--tmp.PSITE_GROUP_CODE,
+                                 ,
+                                 2,
+                                 tmp.psite_admcmptax_code-- START REV : 001
+                                                         -- tmp.ext,
+                                 ,
+                                 coalesce(tmp.ext, 'N')-- END REV : 001
+                                 ,
+                                 tmp.psite_localpolicy_code,
+                                 tmp.psite_allocation_code,
+                                 'N',
+                                 coalesce(tmp.psite_stopsync, 'Y'),
+                                 tmp.pricetype,
+                                 tmp.pricefactor,
+                                 tmp.admou_code,
+                                 coalesce(tmp.iscentrallymanaged, 0),
+                                 coalesce(tmp.issalespersonmanaged, 0),
+                                 tmp.reportname,
+                                 tmp.psite_timezone-- START REV : 010
+                                 ,
+                                 CASE
+                                    WHEN tmp.SALETYPE = 'C'
+                                    THEN
+                                       tmp.admgstin_code
+                                    ELSE
+                                       NULL
+                                 END,
+                                 CASE
+                                    WHEN tmp.SALETYPE = 'C' THEN NULL
+                                    ELSE tmp.gst_identification_no
+                                 END,
+                                 CASE
+                                    WHEN tmp.SALETYPE = 'C' THEN NULL
+                                    ELSE tmp.gst_registration_date
+                                 END,
+                                 CASE
+                                    WHEN tmp.SALETYPE = 'C'
+                                    THEN
+                                       NULL
+                                    ELSE (SUBSTR(tmp.gst_identification_no,
+                                                1,
+                                                2))
+                                 END-- END REV : 010
+                                    -- START REV : 009
+                                 ,
+                                 tmp.shipping_same_as_billing,
+                                 tmp.shipping_company_name,
+                                 tmp.shipping_cinno,
+                                 tmp.shipping_address,
+                                 tmp.shipping_ctname,
+                                 tmp.shipping_pin,
+                                 tmp.shipping_oph1,
+                                 tmp.shipping_oph2,
+                                 tmp.shipping_oph3,
+                                 tmp.shipping_rph1,
+                                 tmp.shipping_mobile,
+                                 tmp.shipping_fax,
+                                 tmp.shipping_email1,
+                                 tmp.shipping_email2,
+                                 tmp.shipping_website,
+                                 tmp.shipping_contact_person,
+                                 tmp.shipping_gst_category,
+                                 tmp.shipping_gstin,
+                                 tmp.shipping_gst_reg_date-- END REV : 009
+                                                          -- START REV : 011
+                                 ,
+                                 CASE
+                                    WHEN UPPER(
+                                            coalesce(tmp.allow_any_store_return,
+                                                 'NO')) = 'YES'
+                                    THEN
+                                       1
+                                    ELSE
+                                       0
+                                 END-- END REV : 011
+                                 -- START REV : 019                                
+                                 ,CASE
+                                    when upper(tmp.installation_type_val) = 'GINESYSPOS' then 'DPOS'
+                                    when upper(tmp.installation_type_val) = 'ZWINGPOS' then 'ZPOS'
+                                 END,
+                                 -- END REV : 019
+                                    -- START REV : 018
+                                    tmp.udfstring01,
+                                    tmp.udfstring02,
+                                    tmp.udfstring03,
+                                    tmp.udfstring04,
+                                    tmp.udfstring05,
+                                    tmp.udfstring06,
+                                    tmp.udfstring07,
+                                    tmp.udfstring08,
+                                    tmp.udfstring09,
+                                    tmp.udfstring10,
+                                    tmp.udfstring11,
+                                    tmp.udfstring12,
+                                    tmp.udfstring13,
+                                    tmp.udfstring14,
+                                    tmp.udfstring15,
+                                    tmp.udfnum01,
+                                    tmp.udfnum02,
+                                    tmp.udfnum03,
+                                    tmp.udfnum04,
+                                    tmp.udfnum05,
+                                    tmp.udfdate01,
+                                    tmp.udfdate02,
+                                    tmp.udfdate03,
+                                    tmp.udfdate04,
+                                    tmp.udfdate05
+                                    -- END REV : 018
+                                 );
+                -- START REV : 017
+                begin
+                    v_sitetype := null;
+                    v_psite_initial := null;
+
+                    select sitetype, psite_initial, installation_type
+                    into STRICT   v_sitetype, v_psite_initial, v_installation_type
+                    from   admsite
+                    where  code = v_sitecode;
+
+                    if  substr(v_sitetype, 1, 2) = 'MS' then
+                        if  v_installation_type = 'ZPOS' then
+                            insert into psite_stockpoint(admsite_code, id, name, type, isextinct, createdon, createdby, lastmodifiedon, lastmodifiedby, code)
+                            values (v_sitecode, 1, 'Showroom1', 'S', 0, clock_timestamp(), p_userid, clock_timestamp(), p_userid, v_psite_initial||'-1');
+
+                            insert into psite_stockpoint(admsite_code, id, name, type, isextinct, createdon, createdby, lastmodifiedon, lastmodifiedby, code)
+                            values (v_sitecode, 2, 'Godown1', 'G', 0, clock_timestamp(), p_userid, clock_timestamp(), p_userid, v_psite_initial||'-2');
+
+                            insert into psite_stockpoint(admsite_code, id, name, type, isextinct, createdon, createdby, lastmodifiedon, lastmodifiedby, code)
+                            values (v_sitecode, 3, 'Logistic', 'L', 0, clock_timestamp(), p_userid, clock_timestamp(), p_userid, v_psite_initial||'-3');
+
+                            insert into psite_stockpoint(admsite_code, id, name, type, isextinct, createdon, createdby, lastmodifiedon, lastmodifiedby, code)
+                            values (v_sitecode, 4, 'Damage1', 'G', 0, clock_timestamp(), p_userid, clock_timestamp(), p_userid, v_psite_initial||'-4');
+                        else
+                            insert into psite_stockpoint(admsite_code, id, name, type, isextinct, createdon, createdby, lastmodifiedon, lastmodifiedby, code)
+                            values (v_sitecode, 1, 'Showroom1', 'S', 0, clock_timestamp(), p_userid, clock_timestamp(), p_userid, v_psite_initial||'-1');
+
+                            insert into psite_stockpoint(admsite_code, id, name, type, isextinct, createdon, createdby, lastmodifiedon, lastmodifiedby, code)
+                            values (v_sitecode, 2, 'Godown1', 'G', 0, clock_timestamp(), p_userid, clock_timestamp(), p_userid, v_psite_initial||'-2');
+
+                            insert into psite_stockpoint(admsite_code, id, name, type, isextinct, createdon, createdby, lastmodifiedon, lastmodifiedby, code)
+                            values (v_sitecode, 3, 'Logistic', 'L', 0, clock_timestamp(), p_userid, clock_timestamp(), p_userid, v_psite_initial||'-3');
+                        end if;
+                    end if;
+                exception
+                    when no_data_found then null;
+                end;
+                -- END REV : 017
+            END IF;
+         END LOOP;
+      END;
+
+      -- log to be added in history table
+      SELECT nextval('int$error_log_code') INTO STRICT vsession;
+
+      vdetailtbl :=
+            -- start rev : 002
+            --'create table mngstimport_'
+            'create table ginarchive.mngstimport_'
+         -- end rev : 002
+         || vsession::text
+         || ' as select distinct name,slid from int$stg_mngsiteimport where userid ='
+         || p_userid::text;
+
+      EXECUTE vdetailtbl;
+
+      -- start rev : 002
+      --vdetailrec := 'select count(1) from mngstimport_' || vsession::text;
+      vdetailrec :=
+         'select count(1) from ginarchive.mngstimport_' || vsession::text;
+
+      -- end rev : 002
+      EXECUTE vdetailrec INTO STRICT vcount;
+
+      INSERT INTO int$history(code,
+                               importedby,
+                               importedon,
+                               classname,
+                               summary,
+                               history_detail_tablename,
+                               history_detail_row_count)
+           VALUES (nextval('int$history_code'),
+                   p_userid,
+                   clock_timestamp(),
+                   'MNGSITEIMPORT',
+                   vcount::TEXT || ' Data updated successfully.',
+                   -- start rev : 002
+                   --'mngstimport_' || vsession, vcount
+                   'ginarchive.mngstimport_' || vsession::text,
+                   vcount-- end rev : 002
+                   );
+
+      --COMMIT;
+      RETURN('1');
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         -- error log for oracle internal error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'MNGSITEIMPORT',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+
+function "main"."int$pkg_mngsiteimport_int$pkg_mngsiteimport_process(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+ 
+DECLARE
+	 -- Change this to reflect the dblink connection string
+    --v_conn_str  text := format('port=%s dbname=%s user=%s', current_setting('port'), current_database(), current_user);
+    v_srvname       name;
+    v_connname      text;
+    v_connstr       text;
+    v_conn_result   text;
+    v_query         text;
+
+    v_ret    text;
+BEGIN
+	v_srvname := 'foreign_pgbase';
+    v_connname := replace(uuid_generate_v4()::text,'-','');
+    v_connstr  := v_srvname;
+    
+    --Open the connection  
+    SELECT dblink_connect(v_connname,v_connstr) 
+    INTO v_conn_result;
+	
+	v_query := 'SELECT * FROM int$pkg_mngsiteimport_int$pkg_mngsiteimport_process_atx ( ' || quote_nullable(p_userid::text) || '::bigint,' || quote_nullable(p_connect_site::text) || '::bigint,' || quote_nullable(p_logging_date::text) || '::timestamp without time zone,' || quote_nullable(p_connect_ou::text) || '::bigint )';
+	SELECT * INTO v_ret FROM dblink(v_connname, v_query) AS p (ret text);
+
+	
+	SELECT dblink_disconnect(v_connname) 
+    INTO v_conn_result;
+	
+	RETURN v_ret;
+EXCEPTION 
+   WHEN OTHERS THEN
+        SELECT dblink_disconnect(v_connname) 
+        INTO v_conn_result;
+
+END;
+"""
+  returnType = text
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

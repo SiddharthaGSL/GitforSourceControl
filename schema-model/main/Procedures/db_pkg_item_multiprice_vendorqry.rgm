@@ -1,0 +1,167 @@
+procedure "main"."db_pkg_item_multiprice_vendorqry(refcursor, character, bigint)" {
+  text = """
+
+BEGIN
+
+       IF  coalesce(selection_pcode,0) = 0 THEN
+           OPEN block_data FOR
+           -- START REV : 006
+       SELECT PCODE,SLNAME
+       FROM (
+           -- END REV : 006
+               SELECT DISTINCT s.slcode  pcode,
+                                   s.slname
+                                   || ' ('
+                                   || (
+                           SELECT  COUNT(*)
+                                       FROM    pur_price_chart
+                                       WHERE   pur_price_chart.pcode   = s.slcode
+                                       AND     pur_price_chart.icode   = selection_icode
+                                       AND     pur_price_chart.pcode IS NOT NULL
+                          )
+                                   || ')' slname
+               FROM   finsl s
+
+               WHERE s.glcode is not null
+               AND   s.clscode in (select clscode from admcls where clstype <> 'D' and coalesce(ext,'N') = 'N')
+               -- STERT REV : 006
+               AND   S.SLCODE IN (    SELECT PCODE
+                                 FROM   pur_price_chart P
+                                 WHERE  P.icode   = selection_icode
+                                 AND    P.pcode IS NOT NULL
+                                 )
+               
+UNION ALL
+
+               SELECT DISTINCT s.slcode  pcode,
+                                   s.slname
+                                   || ' ('
+                                   || (
+                           SELECT  COUNT(*)
+                                       FROM    pur_price_chart
+                                       WHERE   pur_price_chart.pcode   = s.slcode
+                                       AND     pur_price_chart.icode   = selection_icode
+                                       AND     pur_price_chart.pcode IS NOT NULL
+                          )
+                                   || ')' slname
+               FROM   finsl s
+               WHERE  coalesce(s.ext, 'N') = 'N'
+               AND s.glcode is not null
+               AND   s.clscode in (select clscode from admcls where clstype <> 'D' and coalesce(ext,'N') = 'N')
+               AND   S.SLCODE NOT IN (    SELECT PCODE
+                                 FROM   pur_price_chart P
+                                 WHERE  P.icode   = selection_icode
+                                 AND    P.pcode IS NOT NULL
+                                 )
+               -- END REV : 006
+                /*ORDER BY 2 ; --s.slname; */
+
+        -- START REV : 006
+        -- START REV : 007
+        -- )
+         ) Z
+         -- END REV : 007
+        -- END REV : 006
+        -- START REV : 007
+        ORDER BY(
+                   SELECT  COUNT(*)
+                   FROM    pur_price_chart
+                   WHERE   pur_price_chart.pcode   = Z.PCODE
+                   AND     pur_price_chart.icode   = selection_icode
+                   AND     pur_price_chart.pcode IS NOT NULL
+                  ) DESC,slname ASC;
+        -- END REV : 007
+       ELSE
+           OPEN block_data FOR
+           -- START REV : 006
+       SELECT PCODE,SLNAME
+       FROM (
+           -- END REV : 006
+               SELECT  s.slcode  pcode,
+                           s.slname
+                           || ' ('
+                           || (
+                       SELECT  COUNT(*)
+                               FROM    pur_price_chart
+                               WHERE   pur_price_chart.pcode = coalesce(selection_pcode,0)
+                               AND     pur_price_chart.icode = selection_icode
+                               AND     pur_price_chart.pcode IS NOT NULL
+
+                      )
+                           || ')' slname
+               FROM   finsl s
+
+               WHERE     s.slcode = coalesce(selection_pcode,0)
+               AND   S.SLCODE IN (    SELECT PCODE
+                                     FROM   pur_price_chart P
+                                     WHERE  P.icode   = selection_icode
+                                     AND    P.pcode IS NOT NULL
+                            )
+               AND s.glcode is not null
+               AND s.clscode in (select clscode from admcls where clstype <> 'D' and coalesce(ext,'N') = 'N')
+               
+UNION ALL
+
+               SELECT  s.slcode  pcode,
+                           s.slname
+                           || ' ('
+                           || (
+                       SELECT  COUNT(*)
+                               FROM    pur_price_chart
+                               WHERE   pur_price_chart.pcode = coalesce(selection_pcode,0)
+                               AND     pur_price_chart.icode = selection_icode
+                               AND     pur_price_chart.pcode IS NOT NULL
+
+                      )
+                           || ')' slname
+               FROM   finsl s
+               WHERE  coalesce(s.ext, 'N') = 'N'
+               AND     s.slcode = coalesce(selection_pcode,0)
+               AND       SLCODE NOT IN ( SELECT PCODE
+                                                FROM   pur_price_chart P
+                                                WHERE  P.icode   = selection_icode
+                                                AND    P.pcode IS NOT NULL
+                                               )
+               AND s.glcode is not null
+               AND s.clscode in (select clscode from admcls where clstype <> 'D' and coalesce(ext,'N') = 'N')
+               /*ORDER BY s.slname; --upper(s.slname); */
+
+        -- START REV : 006
+         )alias10
+        -- END REV : 006
+        -- START REV : 007
+        ORDER BY(
+                    SELECT  COUNT(*)
+                    FROM    pur_price_chart
+                    WHERE   pur_price_chart.pcode = coalesce(selection_pcode,0)
+                    AND     pur_price_chart.icode = selection_icode
+                    AND     pur_price_chart.pcode IS NOT NULL
+                  ) DESC,slname ASC;
+        -- END REV : 007
+       END IF;
+   END;
+
+"""
+  arguments = <
+    {
+      name = block_data
+      type = refcursor
+      mode = INOUT
+    }
+
+    {
+      name = selection_icode
+      type = character
+      mode = IN
+    }
+
+    {
+      name = selection_pcode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

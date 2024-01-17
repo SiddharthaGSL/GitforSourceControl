@@ -1,0 +1,133 @@
+function "main"."int$pkg_tdsexc_int$pkg_tdsexc_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      errmsg             varchar(500);
+      vsession           varchar(100);
+      vdetailtbl         varchar(1000);
+      vdetailrec         varchar(500);
+      errcode            bigint;
+      vcount             bigint;
+      v_ycode            bigint;
+BEGIN
+      DECLARE
+         C_EXCEPTIONS CURSOR FOR
+            SELECT *
+              FROM int$stg_TDSEXC a
+             WHERE  a.userid = p_userid;
+
+      BEGIN
+
+         FOR e IN C_EXCEPTIONS
+         LOOP
+            
+            IF e.DERIVED_TDSEXC_CODE IS NOT NULL
+             THEN
+                
+                UPDATE FINTDS_EXCEPTION tex
+                SET    tex.CERTIFICATENO = e.CERTIFICATE_NO,
+                       tex.MAX_LIMIT = e.MAX_LIMIT,
+                       tex.RATE = e.TDS_RATE
+                WHERE  tex.code = e.DERIVED_TDSEXC_CODE;
+
+             ELSE
+             
+                INSERT INTO FINTDS_EXCEPTION(CODE, SLCODE, TDSTYPECODE, ADMOU_CODE, 
+                                              CERTIFICATENO, DTFR, DTTO, RATE, MAX_LIMIT)
+                VALUES (nextval('fintds_exception_code'), e.DERIVED_FINSL_CODE, e.DERIVED_TDSTYPE_CODE, e.DERIVED_ADMOU_CODE,
+                        e.CERTIFICATE_NO, e.DATE_FROM, e.DATE_TO, e.TDS_RATE, e.MAX_LIMIT);
+
+            END IF;
+
+         END LOOP;
+      END;
+
+      -- log to be added in history table
+      SELECT nextval('int$error_log_code') INTO STRICT vsession;
+
+      vdetailtbl :=
+            'create table ginarchive.TDSEXC_'
+         || vsession
+         || ' as select DISTINCT SLID from int$stg_TDSEXC where userid ='
+         || p_userid::text;
+
+      EXECUTE vdetailtbl;
+
+      vdetailrec := 'select count(1) from ginarchive.TDSEXC_' || vsession::text;
+
+      EXECUTE vdetailrec INTO STRICT vcount;
+
+      INSERT INTO int$history(code,
+                               importedby,
+                               importedon,
+                               classname,
+                               summary,
+                               history_detail_tablename,
+                               history_detail_row_count)
+           VALUES (nextval('int$history_code'),
+                   p_userid,
+                   clock_timestamp(),
+                   'TDSEXC',
+                    'TDS exceptions updated for ' ||vcount::TEXT|| ' vendors successfully.',
+                   'ginarchive.TDSEXC_' || vsession,
+                   vcount);
+
+      RETURN('1');
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         -- error log for oracle internal error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'TDSEXC',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

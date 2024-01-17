@@ -1,0 +1,2352 @@
+function "main"."int$pkg_mngsiteimport_int$pkg_mngsiteimport_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status   char(1);
+      errmsg     varchar(200);
+      errcode    bigint;
+BEGIN
+      --CODE  VALIDATION
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid  Code ',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+		   LEFT OUTER JOIN admsite b ON (UPPER(a.code) = UPPER(b.code))
+		   WHERE b.code IS NULL AND (a.code IS NOT NULL OR B.ext = 'Y') AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Same SITECODE available more than one time.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a,
+                (  SELECT a.code, COUNT(1)
+                     FROM int$stg_mngsiteimport a
+                    WHERE a.code IS NOT NULL AND a.userid = p_userid
+                 GROUP BY a.code
+                   HAVING COUNT(1) > 1) b
+          WHERE     a.code = b.code
+                AND a.code IS NOT NULL
+                AND a.userid = p_userid;
+
+      --NAME VALIDATION
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Name already exists.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a, admsite b
+          WHERE     UPPER(a.NAME) = UPPER(b.NAME)
+                AND b.NAME IS NOT NULL
+                AND (   (a.code IS NOT NULL AND a.code <> b.code)
+                     OR a.code IS NULL)
+                --  AND a.code IS NULL
+                AND a.userid = p_userid;
+
+      -- START REV : 006
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Name is mandatory for Site creation.',
+                clock_timestamp()
+           FROM int$stg_MNGSITEIMPORT a
+          WHERE a.NAME IS NULL AND a.code IS NULL --  AND a.code IS NULL
+                AND a.userid = p_userid;
+
+      -- END REV : 006
+      --PSITE_INITIAL Validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Duplicate Site CUID (Updation for this field is restricted).',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a, admsite b
+          WHERE     UPPER(a.psite_initial) = UPPER(b.psite_initial)
+                AND a.psite_initial IS NOT NULL
+                AND a.code IS NULL
+                AND a.userid = p_userid;
+
+      --PSITE_INITIAL Validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Site CUID can not be null.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE     a.psite_initial IS NULL
+                AND a.code IS NULL
+                AND a.userid = p_userid;
+
+      --SLID VALIDATION
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid slid.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a LEFT OUTER JOIN (SELECT slid
+                   FROM finsl, admcls cs
+                  WHERE     finsl.clscode = cs.clscode
+                        AND cs.clstype = 'C'
+                        AND FINSL.EXT = 'N') b
+				   ON (UPPER(a.slid) = UPPER(b.slid))
+				  WHERE b.slid IS NULL AND a.code IS NULL AND a.slid IS NOT NULL AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Site does not belongs to given slid.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport A, ADMSITE B, FINSL SL
+          WHERE     UPPER(B.SLCODE) = UPPER(SL.SLCODE)
+                AND a.code IS NOT NULL
+                AND A.CODE = B.CODE
+                AND UPPER(A.slid) <> UPPER(SL.sliD)
+                AND a.userid = p_userid;
+
+      --SHRTNAME Validation
+      /* INSERT INTO int$error_log
+                   (code, lineno, classname, userid, errortype, errordesc,
+                    createdon)
+          SELECT int$error_log_code.NEXTVAL, lineno, 'MNGSITEIMPORT', userid,
+                 'Data Validation', 'Short Name already exists.', SYSDATE
+            FROM int$stg_mngsiteimport a, admsite b
+           WHERE UPPER (a.shrtname) = UPPER (b.shrtname)
+             AND b.shrtname IS NOT NULL
+             AND a.code IS NULL
+             AND a.userid = p_userid;*/
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Short Name already exists.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a, admsite b
+          WHERE     UPPER(a.shrtname) = UPPER(b.shrtname)
+                AND B.shrtname IS NOT NULL
+                AND (   (a.code IS NOT NULL AND a.code <> b.code)
+                     OR a.code IS NULL)
+                --  AND a.code IS NULL
+                AND a.userid = p_userid;
+
+      --SHRTNAME Validation
+      --CITY Validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid City name, not available in Ginesys City Master ',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+		   LEFT OUTER JOIN admcity b ON (UPPER(a.ctname) = UPPER(b.ctname))
+		   WHERE b.ctname IS NULL AND a.ctname IS NOT NULL AND a.userid = p_userid;
+
+      --EMAIL1 Validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Busines Email.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE (position('@' in email1) = 0 OR position('.' in email1) = 0)
+                AND a.email1 IS NOT NULL
+                AND a.userid = p_userid;
+
+      --EMAIL2 Validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Busines Email.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE (position('@' in email2) = 0 OR position('.' in email2) = 0)
+                AND a.email2 IS NOT NULL
+                AND a.userid = p_userid;
+
+      --PSITE_ADMCMPTAX_NAME Validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Admcmptax Name',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+		   LEFT OUTER JOIN admcmptax b ON (UPPER(a.psite_admcmptax_name) = UPPER(b.NAME))
+		   WHERE b.NAME IS NULL AND a.psite_admcmptax_name IS NOT NULL AND a.userid = p_userid;
+
+      --PSITE_ADMCMPTAX_NAME Validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Admcmptax Name can not be null.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE (   a.slid IS NULL
+                     OR (    a.slid IS NOT NULL
+                         AND EXISTS (SELECT NULL
+                                   FROM finsl b
+                                  WHERE b.slid = a.slid AND b.saletype <> 'O'))
+                     OR UPPER(a.issecondary) <> 'NO')
+                AND a.psite_admcmptax_name IS NULL
+                AND a.code IS NULL                                -- rev : 010
+                AND a.userid = p_userid;
+
+      -- START REV : 010
+      /*INSERT INTO int$error_log
+                  (code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT int$error_log_code.NEXTVAL, lineno, 'MNGSITEIMPORT', userid,
+                'Data Validation', 'Admcmptax Name can not be null.', SYSDATE
+           FROM int$stg_mngsiteimport a
+          WHERE (  (    a.slid IS NOT NULL
+                     AND EXISTS (SELECT NULL
+                                   FROM finsl b
+                                  WHERE b.slid = a.slid AND b.saletype <> 'O')
+                    )
+                -- OR UPPER (a.issecondary) <> 'NO'
+                )
+            AND a.psite_admcmptax_name IS NULL
+            AND a.code is not null
+            AND a.userid = p_userid;*/
+      -- END REV : 010
+      --ISSECONDARY  Validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Manage Secondary Stock  for own store',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE     a.slid IS NULL
+                AND UPPER(a.issecondary) = 'YES'
+                AND a.userid = p_userid;
+
+      --ISSECONDARY  Validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Manage Secondary Stock  for own store',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE     UPPER(issecondary) NOT IN ('NO', 'YES')
+                AND a.userid = p_userid;
+
+      --TRPID  Validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Transporter ID',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a LEFT OUTER JOIN(SELECT slid
+                   FROM finsl, admcls cs
+                  WHERE     finsl.clscode = cs.clscode
+                        AND cs.clstype = 'T'
+                        AND FINSL.EXT = 'N'
+                        AND CS.EXT = 'N') b
+		    ON (UPPER(a.trpid) = UPPER(b.slid))
+		   WHERE a.trpid IS NOT NULL AND b.slid IS NULL AND a.userid = p_userid;
+
+      --TRANSIT DAYS
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Transit days',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE (coalesce(TRANSIT_DAYS, 0) < 0 OR coalesce(TRANSIT_DAYS, 0) > 999)
+                AND coalesce(TRANSIT_DAYS, 0) <> 0
+                AND a.userid = p_userid;
+
+      --STORE_TARGET_SALES
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Target Sales',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE (   coalesce(STORE_TARGET_SALES, 0) < 0
+                     OR coalesce(STORE_TARGET_SALES, 0) > 9999999.99
+                     OR (LENGTH(RTRIM(LTRIM((STORE_TARGET_SALES - trunc(STORE_TARGET_SALES)- 1),0),0)::text) >
+                            3))
+                --WHERE (NVL (STORE_TARGET_SALES, 0) < 0 OR NVL (STORE_TARGET_SALES, 0) > 9999999.99  )
+                AND coalesce(STORE_TARGET_SALES, 0) <> 0
+                AND a.userid = p_userid;
+
+      --STORE_SIZE
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Store Size',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE (coalesce(STORE_SIZE, 0) < 0 OR coalesce(STORE_SIZE, 0) > 9999999)
+                AND coalesce(STORE_SIZE, 0) <> 0
+                AND a.userid = p_userid;
+
+      --EXT Validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Extinct.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE UPPER(ext) NOT IN ('NO', 'YES') AND a.userid = p_userid;
+
+      --EXT Validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'New Record can not be Extinct record.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE     UPPER(ext) = 'YES'
+                AND a.code IS NULL
+                AND a.userid = p_userid;
+
+      --EXT Validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Extinct.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a, ADMSITE B
+          WHERE     UPPER(A.ext) = 'NO'
+                AND A.CODE = B.CODE
+                AND B.EXT = 'Y'
+                AND a.code IS NOT NULL
+                AND a.userid = p_userid;
+
+      --PSITE_LOCALPOLICY_NAME Validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Site Policy.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a LEFT OUTER JOIN psite_localpolicy b
+		    ON (UPPER(a.psite_localpolicy_name) = UPPER(b.NAME))
+		   WHERE b.NAME IS NULL AND a.psite_localpolicy_name IS NOT NULL AND a.userid = p_userid;
+
+      --PSITE_ALLOCATION_NAME Validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Master Policy.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+		   LEFT OUTER JOIN psite_allocation b ON (UPPER(a.psite_allocation_name) = UPPER(b.NAME))
+		   WHERE b.NAME IS NULL AND a.psite_allocation_name IS NOT NULL AND a.userid = p_userid;
+
+      --PSITE_ALLOCATION_NAME Validation
+      /* INSERT INTO int$error_log
+                   (code, lineno, classname, userid, errortype, errordesc,
+                    createdon)
+          SELECT int$error_log_code.NEXTVAL, lineno, 'MNGSITEIMPORT', userid,
+                 'Data Validation', 'Master Policy should not be null.',
+                 SYSDATE
+            FROM int$stg_mngsiteimport a
+           WHERE a.psite_allocation_name IS NULL AND a.userid = p_userid;*/
+      --PSITE_STOPSYNC Validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Data Exchange.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE     UPPER(psite_stopsync) NOT IN ('NO', 'YES')
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Price Type',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE     UPPER(pricetype) NOT IN ('MRP', 'RSP')
+                AND pricetype IS NOT NULL                         -- REV : 009
+                AND a.userid = p_userid;
+
+      --Price Type
+      -- START REV : 010
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Price Type is mandatory.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE (A.CODE IS NULL AND pricetype IS NULL)
+                AND a.userid = p_userid;
+
+      -- END REV : 010
+      -- START REV : 010
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Short name is mandatory.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE (A.CODE IS NULL AND SHRTNAME IS NULL) AND a.userid = p_userid;
+
+      -- END REV : 010
+      --PRICEFACTOR
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Pricefactor',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE (coalesce(pricefactor, 0) < 0 OR coalesce(pricefactor, 0) > 100)
+                AND a.userid = p_userid;
+
+      --ISCENTRALLYMANAGED Validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Site Security HO Controlled.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE     UPPER(iscentrallymanaged) NOT IN ('NO', 'YES')
+                AND a.userid = p_userid;
+
+      --ISSALESPERSONMANAGED Validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Sales Person HO Controlled.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE     UPPER(issalespersonmanaged) NOT IN ('NO', 'YES')
+                AND a.userid = p_userid;
+
+      -- START REV : 003
+      -- OU_NAME related validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid OU name.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE     UPPER(ou_name) NOT IN (SELECT UPPER(b.name)
+                                              FROM admou b
+                                             WHERE coalesce(b.ext, 'N') = 'N')
+                AND a.ou_name IS NOT NULL
+                AND a.userid = p_userid;
+
+      -- END REV : 003
+      -- OU_NAME related validation
+      -- START REV : 008
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                CASE WHEN b.saletype='C' THEN  'OU Name is mandatory for Consignment Supplier' WHEN b.saletype='O' THEN  'OU Name should be blank for Outright supplier'  ELSE 'Invalid Mode of operation for the supplier.' END ,
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a, finsl b
+          WHERE     UPPER(a.slid) = UPPER(b.slid)
+                AND a.slid IS NOT NULL
+                AND (   (b.saletype = 'C' AND a.ou_name IS NULL)
+                     OR (b.saletype = 'O' AND a.ou_name IS NOT NULL)
+                     OR (B.saletype NOT IN ('C', 'O')))
+                AND a.userid = p_userid;
+
+      -- END REV : 008
+      --row level Validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Combination of Pos Site, Customer Sale Type  Secondary.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a LEFT OUTER JOIN(SELECT a1.slid, a1.lineno
+                   FROM int$stg_mngsiteimport a1, finsl b1
+                  WHERE     UPPER(a1.slid) = UPPER(b1.slid)
+                        AND a1.slid IS NOT NULL
+                        AND b1.saletype = 'O'
+                        AND UPPER(coalesce(a1.issecondary, 'NO')) = 'YES'
+                        AND a1.userid = p_userid) b
+						ON (UPPER(a.slid) = UPPER(b.slid))
+						WHERE UPPER(coalesce(a.issecondary, 'NO')) = 'YES' AND b.slid IS NULL AND a.slid IS NOT NULL AND a.userid = p_userid;
+
+      --row level Validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Combination of Pos Site, Customer Sale Type  Secondary.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a LEFT OUTER JOIN(SELECT a1.slid, a1.lineno
+                   FROM int$stg_mngsiteimport a1, finsl b1
+                  WHERE     UPPER(a1.slid) = UPPER(b1.slid)
+                        AND a1.slid IS NOT NULL
+                        AND b1.saletype = 'C'
+                        -- START REV : 008
+                        --AND UPPER (a1.issecondary) = 'NO'
+                        AND UPPER(coalesce(a1.issecondary, 'NO')) = 'NO'
+                        -- END REV : 008
+                        AND a1.userid = p_userid) b
+						ON (UPPER(a.slid) = UPPER(b.slid))
+						WHERE   -- START REV : 008
+						                --AND UPPER (a.issecondary) = 'NO'
+						   UPPER(coalesce(a.issecondary, 'NO')) = 'NO' -- END REV : 008
+						  AND b.slid IS NULL AND a.slid IS NOT NULL AND a.userid = p_userid;
+
+      -- start rev : 004
+      -- GST Identification No. validation for existing site(s)
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'GST Identification No. either doesn''t exist or is extinct.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+		   LEFT OUTER JOIN admgstin sg ON (UPPER(a.gst_identification_no) = UPPER(sg.gstin_no))
+		   INNER JOIN admsite s
+		   ON a.code = s.code AND s.sitetype = 'MS-OO-CM' AND s.admou_code = sg.admou_code  AND sg.extinct = 'N' AND sg.gstin_no IS NULL AND a.code IS NOT NULL AND a.gst_identification_no IS NOT NULL AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'GST Identification No. doesn''t belong to same OU',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+		   LEFT OUTER JOIN admgstin sg ON (UPPER(a.gst_identification_no) = UPPER(sg.gstin_no))
+		   INNER JOIN admsite s 
+		   ON a.code = s.code AND s.sitetype = 'MS-OO-CM'  AND s.admou_code <> sg.admou_code AND a.code IS NOT NULL AND a.gst_identification_no IS NOT NULL AND a.userid = p_userid;
+
+      -- GST Identification No. validation for new site(s)
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'GST Identification No. either doesn''t exist or is extinct.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+		   LEFT OUTER JOIN admgstin sg ON (UPPER(a.gst_identification_no) = UPPER(sg.gstin_no))
+		   INNER JOIN admou ou
+		   ON UPPER(a.ou_name) = UPPER(ou.name) AND ou.code = sg.admou_code AND sg.gstin_no IS NULL AND a.code IS NULL AND a.slid IS NULL AND a.gst_identification_no IS NOT NULL AND a.ou_name IS NOT NULL AND a.userid = p_userid;
+
+      -- GST registration date validation for existing site(s)
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'GST Registration Date is needed.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a, admsite s
+          WHERE     a.code = s.code
+                AND s.sitetype = 'MS-OO-CM'
+                AND a.code IS NOT NULL
+                AND a.gst_identification_no IS NOT NULL
+                AND a.gst_registration_date IS NULL
+                AND a.userid = p_userid;
+
+      -- GST registration date validation for new site(s)
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'GST Identification No.should not be null.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE a.code IS NULL -- START REV : 010
+                AND a.slid IS NULL
+                AND a.gst_identification_no IS NULL
+                -- END REV: 010
+                --AND a.gst_registration_date is not null
+                AND a.userid = p_userid;
+      -- GST Identification No. length validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'GST Identification No. should have exactly 15 characters.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE     a.gst_identification_no IS NOT NULL
+                AND LENGTH(a.gst_identification_no) <> 15
+                AND a.userid = p_userid;
+
+      -- GST Identification No. masking validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'GST Identification No. is invalid as per Government prescribed format.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE     a.gst_identification_no IS NOT NULL
+                AND db_fun_check_gstin_no(a.gst_identification_no) = 'F'
+                AND a.userid = p_userid;
+
+      -- GST Identification No. state code validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Unable to determine state as per inputed GST Identification No., State code is invalid.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+		   LEFT OUTER JOIN admgststate gs ON (SUBSTR(a.gst_identification_no, 1, 2) = gs.code)
+		   WHERE a.gst_identification_no IS NOT NULL  AND gs.code IS NULL AND a.userid = p_userid;
+
+      -- GST Identification date validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'GST Reg. date is not in valid format.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE     a.gst_registration_date IS NOT NULL
+                AND (   (TO_CHAR(a.gst_registration_date, 'yyyy'))::numeric  <
+                           4
+                     OR (TO_CHAR(a.gst_registration_date, 'yyyymmdd'))::numeric  < 8)
+                AND a.userid = p_userid;
+
+      -- GST Identification date validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'GST Reg. Date cannot be provided without providing GST Identification No.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE     a.gst_registration_date IS NOT NULL
+                AND a.gst_identification_no IS NULL
+                AND a.userid = p_userid;
+
+      -- end rev : 004
+      -- START REV : 009
+      --******************************************************************************
+      --TFS ID - 40128 VALIDATION OF MANAGE SITE IMPORT EXCEL
+      --******************************************************************************
+      -- SHIPPING_SAME_AS_BILLING
+      -- CASE 1
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Only Yes and No are allowed in SHIPPING_SAME_AS_BILLING.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE     a.shipping_same_as_billing IS NOT NULL
+                AND UPPER(a.shipping_same_as_billing) NOT IN ('YES', 'NO')
+                AND a.userid = p_userid;
+
+      -- CASE 2
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+                  SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Shipping information of the site can only be provided when SHIPPING_SAME_AS_BILLING is set to No.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE     coalesce(UPPER(a.shipping_same_as_billing), 'NO') = 'YES'
+                AND (a.shipping_company_name IS NOT NULL
+                OR a.shipping_cinno IS NOT NULL
+                OR a.shipping_address IS NOT NULL
+                OR a.shipping_ctname IS NOT NULL
+                OR a.shipping_pin IS NOT NULL
+                OR a.shipping_oph1 IS NOT NULL
+                OR a.shipping_oph2 IS NOT NULL
+                OR a.shipping_oph3 IS NOT NULL
+                OR a.shipping_rph1 IS NOT NULL
+                OR a.shipping_mobile IS NOT NULL
+                OR a.shipping_fax IS NOT NULL
+                OR a.shipping_email1 IS NOT NULL
+                OR a.shipping_email2 IS NOT NULL
+                OR a.shipping_website IS NOT NULL
+                OR a.shipping_contact_person IS NOT NULL
+                OR a.shipping_gst_category IS NOT NULL
+                OR a.shipping_gstin IS NOT NULL
+                OR a.shipping_gst_reg_date IS NOT NULL)
+                AND a.userid = p_userid;
+
+      -- CASE 3
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Only Yes and No are allowed in SHIPPING_SAME_AS_BILLING.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+		   LEFT OUTER JOIN admsite b ON (UPPER(a.code) = UPPER(b.code))
+		   WHERE UPPER(a.shipping_same_as_billing) = 'NO'  AND b.sitetype NOT LIKE '%OM%' AND b.code IS NULL AND a.code IS NOT NULL AND a.userid = p_userid;
+
+      -- SHIPPING_CTNAME
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Shipping City name as specified is unavailable.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+		   LEFT OUTER JOIN admcity b ON (UPPER(a.shipping_ctname) = UPPER(b.ctname))
+		   WHERE UPPER(a.shipping_same_as_billing) = 'NO'  AND b.ctname IS NULL AND a.userid = p_userid;
+
+      -- SHIPPING_EMAIL1 Validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Email Address',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE (   position('@' in shipping_email1) = 0
+                     OR position('.' in shipping_email1) = 0)
+                AND a.shipping_email1 IS NOT NULL
+                AND a.userid = p_userid;
+
+      -- SHIPPING_EMAIL2 Validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Email Address',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE (   position('@' in shipping_email2) = 0
+                     OR position('.' in shipping_email2) = 0)
+                AND a.shipping_email2 IS NOT NULL
+                AND a.userid = p_userid;
+
+      -- SHIPPING_GSTIN length validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Shipping GST Identification No. should have exactly 15 characters.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE     a.shipping_gstin IS NOT NULL
+                AND LENGTH(a.shipping_gstin) <> 15
+                AND a.userid = p_userid;
+
+      -- SHIPPING_GSTIN masking validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Shipping GST Identification No. is invalid as per Government prescribed format.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE     a.shipping_gstin IS NOT NULL
+                AND db_fun_check_gstin_no(a.shipping_gstin) = 'F'
+                AND a.userid = p_userid;
+
+      -- SHIPPING_GSTIN state code validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Unable to determine state as per inputted Shipping GST Identification No., State code is invalid.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+			LEFT OUTER JOIN admgststate gs ON ((SUBSTR(a.shipping_gstin, 1, 2)) = gs.code)
+			WHERE a.shipping_gstin IS NOT NULL  AND gs.code IS NULL AND a.userid = p_userid;
+
+      -- SHIPPING_GST_REG_DATE validation
+      -- CASE 1
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Shipping GST Reg. date is not in valid format.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE     a.shipping_gst_reg_date IS NOT NULL
+                AND (   (TO_CHAR(a.shipping_gst_reg_date, 'yyyy'))::numeric  <
+                           4
+                     OR (TO_CHAR(a.shipping_gst_reg_date, 'yyyymmdd'))::numeric  < 8)
+                AND a.userid = p_userid;
+
+      -- CASE 2
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Shipping GST Reg. Date cannot be provided without providing GST Identification No.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE     a.userid = p_userid
+                AND UPPER(a.shipping_same_as_billing) = 'NO'
+                AND (   (    a.shipping_gst_reg_date IS NOT NULL
+                         AND a.shipping_gstin IS NULL)
+                     OR (    a.shipping_gst_reg_date IS NULL
+                         AND a.shipping_gstin IS NOT NULL));
+
+      -- SHIPPING_GST_CATEGORY validation
+      --START REV : 012
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Shipping GST Category',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a LEFT OUTER JOIN(SELECT UPPER(NAME) NAME FROM admgstcategory) gc
+			ON (UPPER(a.shipping_gst_category) = UPPER(gc.name))
+			WHERE a.shipping_gst_category IS NOT NULL  AND gc.name IS NULL;
+      --END REV : 012
+      --START REV : 011
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Only Yes and No are allowed in Allow participating in any store return',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE     a.slid IS NULL
+                AND UPPER(coalesce(a.allow_any_store_return, 'No')) NOT IN ('YES', 'NO')
+                AND a.userid = p_userid;
+
+      --END REV : 011
+      --START REV: 012
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'GST Identification No.should not be null.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a, admsite s
+          WHERE (a.code IS NOT NULL AND a.code = s.code)
+                AND s.sitetype = 'MS-CO-CM'
+                AND a.gst_identification_no IS NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'GST Identification No.should not be null.',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE UPPER(issecondary) = 'NO'
+                AND a.gst_identification_no IS NULL
+                AND a.userid = p_userid;
+      --END REV: 012
+      --START REV: 013
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'OU_Name is mandatory for MS-OO-CM and MS-CO-CM site',
+                clock_timestamp()
+           FROM int$stg_mngsiteimport a
+          WHERE UPPER(issecondary) = 'NO'
+                AND a.ou_name IS NULL
+                AND a.userid = p_userid;
+      --END REV: 013
+      --START REV: 015
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+        SELECT nextval('int$error_log_code'),
+                lineno,
+                'MNGSITEIMPORT',
+                userid,
+                'Data Validation',
+                'Site is tagged as a PPOB in selected GSTIN, please change the mapping to allow saving',
+                clock_timestamp()
+          FROM int$stg_mngsiteimport a, (SELECT distinct PPOB, GSTIN_NO from admgstin) b, admsite s
+          WHERE a.code IS NOT NULL
+          AND a.code = s.code
+          AND s.sitetype ='MS-OO-CM'
+          AND UPPER(a.gst_identification_no) <> UPPER(b.gstin_no)
+          and  a.gst_identification_no is not null
+          AND a.code = b.PPOB
+          AND b.PPOB IS NOT NULL;
+      --END REV: 015
+      --******************************************************************************
+      -- END REV : 009
+      -- START REV : 016
+      -- INSTALLATION_TYPE
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+      SELECT nextval('int$error_log_code'), lineno, 'MNGSITEIMPORT', userid, 'Data Validation',
+             'Accepted values for INSTALLATION_TYPE is GinesysPOS, ZwingPOS.', clock_timestamp()
+      FROM   int$stg_mngsiteimport a
+      WHERE  a.installation_type IS NOT NULL
+      and    upper(a.installation_type) not in ('GINESYSPOS', 'ZWINGPOS')
+      and    a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+      SELECT nextval('int$error_log_code'), lineno, 'MNGSITEIMPORT', userid, 'Data Validation',
+             'INSTALLATION_TYPE cannot be changed/not allowed to be inputted in updation mode.', clock_timestamp()
+	  FROM   (select 	code,
+			  			userid,
+			  			lineno,
+			  			case when upper(installation_type) = 'GINESYSPOS' then 'DPOS'
+			  			else 'ZPOS'
+			  			end installation_type
+			  from	int$stg_mngsiteimport) a, admsite b
+      WHERE  a.code = b.code
+	  AND 	 a.installation_type <> b.installation_type
+      AND    a.installation_type is not null
+      AND    a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+      SELECT nextval('int$error_log_code'), lineno, 'MNGSITEIMPORT', userid, 'Data Validation',
+             'ISCENTRALLYMANAGED, ISSALESPERSONMANAGED, ALLOW_ANY_STORE_RETURN, PSITE_ALLOCATION_NAME should be blank in update mode for ZwingPOS type sites.', clock_timestamp()
+      FROM   int$stg_mngsiteimport a, admsite b
+      WHERE  a.code = b.code
+      and    upper(b.installation_type) = 'ZPOS'
+      and (
+                a.iscentrallymanaged is not null
+                or
+                b.issalespersonmanaged is not null
+                or
+                allow_any_store_return is not null
+                or
+                psite_allocation_name is not null
+             )
+      AND    a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+      SELECT nextval('int$error_log_code'), lineno, 'MNGSITEIMPORT', userid, 'Data Validation',
+             'ISCENTRALLYMANAGED, ISSALESPERSONMANAGED, ALLOW_ANY_STORE_RETURN should be No for ZwingPOS type sites.', clock_timestamp()
+      FROM   int$stg_mngsiteimport a
+      WHERE  upper(a.installation_type) = 'ZWINGPOS'
+      and (
+                upper(iscentrallymanaged) = 'YES'
+                or
+                upper(issalespersonmanaged) = 'YES'
+                or
+                upper(allow_any_store_return) = 'YES'
+             )
+      and    a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+      SELECT nextval('int$error_log_code'), lineno, 'MNGSITEIMPORT', userid, 'Data Validation',
+             'PSITE_ALLOCATION_NAME cannot be provided for ZwingPOS type sites.', clock_timestamp()
+      FROM   int$stg_mngsiteimport a
+      WHERE  upper(a.installation_type) = 'ZWINGPOS'
+      and    psite_allocation_name is not null
+      and    a.userid = p_userid;
+      -- END REV : 016
+      -- START REV : 018
+      -- udfstring01 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'UDF strin01 should be same for same ADMSITE - '
+                        || a.code ::text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfstring01)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(
+                                                    DISTINCT m.udfstring01) >
+                                                    1) x)) alias7;
+
+      -- udfstring02 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'UDF strin02 should be same for same ADMSITE - '
+                        || a.code :: text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfstring02)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(
+                                                    DISTINCT m.udfstring02) >
+                                                    1) x)) alias7;
+
+      -- udfstring03 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'UDF strin03 should be same for same ADMSITE - '
+                        || a.code :: text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfstring03)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(
+                                                    DISTINCT m.udfstring03) >
+                                                    1) x)) alias7;
+
+      -- udfstring04 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'UDF strin04 should be same for same ADMSITE - '
+                        || a.code :: text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfstring04)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(
+                                                    DISTINCT m.udfstring04) >
+                                                    1) x)) alias7;
+
+      -- udfstring05 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'UDF strin05 should be same for same ADMSITE - '
+                        || a.code :: text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfstring05)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(
+                                                    DISTINCT m.udfstring05) >
+                                                    1) x)) alias7;
+
+      -- udfstring06 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'UDF strin06 should be same for same ADMSITE - '
+                        || a.code :: text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfstring06)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(
+                                                    DISTINCT m.udfstring06) >
+                                                    1) x)) alias7;
+
+      -- udfstring07 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'UDF string07 should be same for same ADMSITE - '
+                        || a.code :: text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfstring07)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(
+                                                    DISTINCT m.udfstring07) >
+                                                    1) x)) alias7;
+
+      -- udfstring08 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'UDF string08 should be same for same ADMSITE - '
+                        || a.code :: text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfstring08)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(
+                                                    DISTINCT m.udfstring08) >
+                                                    1) x)) alias7;
+
+      -- udfstring09 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'UDF string09 should be same for same ADMSITE - '
+                        || a.code :: text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfstring09)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(
+                                                    DISTINCT m.udfstring09) >
+                                                    1) x)) alias7;
+
+      -- udfstring10 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'UDF string10 should be same for same ADMSITE - '
+                        || a.code :: text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfstring10)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(
+                                                    DISTINCT m.udfstring10) >
+                                                    1) x)) alias7;
+
+      -- udfstring11 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'UDF string11 should be same for same ADMSITE - '
+                        || a.code :: text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfstring11)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(
+                                                    DISTINCT m.udfstring11) >
+                                                    1) x)) alias7;
+
+      -- udfstring12 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'UDF string12 should be same for same ADMSITE - '
+                        || a.code :: text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfstring12)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(
+                                                    DISTINCT m.udfstring12) >
+                                                    1) x)) alias7;
+
+      -- udfstring13 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'UDF string13 should be same for same ADMSITE - '
+                        || a.code :: text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfstring13)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(
+                                                    DISTINCT m.udfstring13) >
+                                                    1) x)) alias7;
+
+      -- udfstring14 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'UDF string14 should be same for same ADMSITE - '
+                        || a.code :: text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfstring14)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(
+                                                    DISTINCT m.udfstring14) >
+                                                    1) x)) alias7;
+
+      -- udfstring15 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'UDF string15 should be same for same ADMSITE - '
+                        || a.code :: text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfstring15)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(
+                                                    DISTINCT m.udfstring15) >
+                                                    1) x)) alias7;
+
+      -- udfnum01 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                        'UDF num01 should be same for same ADMSITE - ' || a.code :: text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfnum01)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(DISTINCT m.udfnum01) >
+                                                    1) x)) alias7;
+
+      -- udfnum02 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                        'UDF num02 should be same for same ADMSITE - ' || a.code :: text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfnum02)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(DISTINCT m.udfnum02) >
+                                                    1) x)) alias7;
+
+      -- udfnum03 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                        'UDF num03 should be same for same ADMSITE - ' || a.code :: text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfnum03)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(DISTINCT m.udfnum03) >
+                                                    1) x)) alias7;
+
+      -- udfnum04 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                        'UDF num04 should be same for same ADMSITE - ' || a.code :: text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfnum04)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(DISTINCT m.udfnum04) >
+                                                    1) x)) alias7;
+
+      -- udfnum05 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                        'UDF num05 should be same for same ADMSITE - ' || a.code :: text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfnum05)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(DISTINCT m.udfnum05) >
+                                                    1) x)) alias7;
+
+      -- udfdate01 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                        'UDF date01 should be same for same ADMSITE - ' || a.code :: text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfdate01)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(DISTINCT m.udfdate01) >
+                                                    1) x)) alias7;
+      -- udfdate02 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                        'UDF date02 should be same for same ADMSITE - ' || a.code :: text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfdate02)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(DISTINCT m.udfdate02) >
+                                                    1) x)) alias7;
+
+      -- udfdate03 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                        'UDF date03 should be same for same ADMSITE - ' || a.code :: text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfdate03)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(DISTINCT m.udfdate03) >
+                                                    1) x)) alias7;
+
+      -- udfdate04 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                        'UDF date04 should be same for same ADMSITE - ' || a.code :: text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfdate04)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(DISTINCT m.udfdate04) >
+                                                    1) x)) alias7;
+
+      -- udfdate05 checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'MNGSITEIMPORT',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                        'UDF date05 should be same for same ADMSITE - ' || a.code :: text
+                           dup_fld
+                   FROM int$stg_mngsiteimport a
+                  WHERE     a.userid = p_userid
+                        AND a.code IN (SELECT x.code
+                                  FROM (  SELECT m.code,
+                                                 COUNT(DISTINCT m.udfdate05)
+                                            FROM int$stg_mngsiteimport m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY m.code
+                                          HAVING COUNT(DISTINCT m.udfdate05) >
+                                                    1) x)) alias7;
+													
+
+        -- END REV : 018
+      -- Check whether records are valid or not
+      BEGIN
+         SELECT 'S'
+           INTO STRICT v_status
+           
+          WHERE EXISTS (SELECT 'S'
+                      FROM int$error_log
+                     WHERE userid = p_userid);
+
+         RETURN('0');
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            RETURN('1');
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'MNGSITEIMPORT',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+
+function "main"."int$pkg_mngsiteimport_int$pkg_mngsiteimport_validate(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+ 
+DECLARE
+	 -- Change this to reflect the dblink connection string
+    --v_conn_str  text := format('port=%s dbname=%s user=%s', current_setting('port'), current_database(), current_user);
+    v_srvname       name;
+    v_connname      text;
+    v_connstr       text;
+    v_conn_result   text;
+    v_query         text;
+
+    v_ret    text;
+BEGIN
+	  v_srvname := 'foreign_pgbase';
+    v_connname := replace(uuid_generate_v4()::text,'-','');
+    v_connstr  := v_srvname;
+    
+    --Open the connection  
+    SELECT dblink_connect(v_connname,v_connstr) 
+    INTO v_conn_result;
+	
+	v_query := 'SELECT * FROM int$pkg_mngsiteimport_int$pkg_mngsiteimport_validate_atx ( ' || quote_nullable(p_userid::text) || '::bigint,' || quote_nullable(p_connect_site::text) || '::bigint,' || quote_nullable(p_logging_date::text) || '::timestamp without time zone,' || quote_nullable(p_connect_ou::text) || '::bigint )';
+	SELECT * INTO v_ret FROM dblink(v_connname, v_query) AS p (ret text);
+
+	
+	SELECT dblink_disconnect(v_connname) 
+    INTO v_conn_result;
+	
+	RETURN v_ret;
+EXCEPTION 
+   WHEN OTHERS THEN
+        SELECT dblink_disconnect(v_connname) 
+        INTO v_conn_result;
+
+END;
+"""
+  returnType = text
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

@@ -1,0 +1,484 @@
+function "main"."trigger_fct_t_purinvjrnmain()" {
+  text = """
+
+
+DECLARE
+   ora2pg_rowcount integer;
+V_TABNAME                      varchar(50);
+
+   V_ADMOUCODE                    ADMOU.CODE%TYPE;
+
+   V_ENTTYPE                      INVSTOCK.ENTTYPE%TYPE;
+   V_SITETYPE                     ADMSITE.SITETYPE%TYPE;
+   V_TS_SITECODE                  ADMSITE.CODE%TYPE;
+   V_POSTCODE                     FINPOST.POSTCODE%TYPE;
+   V_CCCODE                       FINCOSTTAG.CODE%TYPE;
+   V_OWNER_SITETYPE               ADMSITE.SITETYPE%TYPE;
+   -- V_ADMOU_CODE_OWNER ADMSITE.ADMOU_CODE%TYPE;
+   V_PGLCODE_GL_CC_APP            FINGL.COSTAPP%TYPE;
+
+   
+   v_scheme_docno_Length          bigint;
+
+   v_admgstin_code                admsite.admgstin_code%TYPE;
+   -- START REV : 013
+   
+   V_SID                          bigint;
+   V_PROGRAM                      varchar(50);
+-- END REV : 013
+/**************************************************************************************************
+REV : 010 MOUSUMI   01/11/2017 (BUG ID : 31941) SALES DEBIT NOTE AND CREDIT NOTE
+Rev : 011 manash    24/01/2018 (care iD : #3372) PI getting locked.
+Rev : 012 MOUSUMI   23/02/2018 (TFS ID: 37820)    Non-trading flow - Purchase/Sale/Transfer
+Rev : 013 MOUSUMI   10/06/2020 (TFS ID: MIGRATION)   MIGRATION Related Changes.
+Rev : 014 manash    27/05/2021 (MNTS : 846)  Purchase Debit /Credit Note no Chanching.
+Rev : 015 Sabyasachi28/05/2021 (MNTS :846 ) Finpost_check entry not getting deleted for detail entry
+**************************************************************************************************************/
+BEGIN
+  BEGIN
+   IF coalesce(NEW.JRNTYPE, OLD.JRNTYPE) = 'D'
+   THEN
+      V_TABNAME := 'PURINVJRNMAIN';
+   ELSE
+      V_TABNAME := 'PURINVJRNMAIN_C';
+   END IF;
+
+   SELECT admgstin_code
+     INTO STRICT v_admgstin_code
+     FROM admsite
+    WHERE code = coalesce(NEW.admsite_code_owner, OLD.admsite_code_owner);
+
+   IF TG_OP = 'UPDATE'
+   THEN
+
+      -- start rev : 011
+      --IF :NEW.GSTAPPL = 'Y' THEN
+      -- START REV : 013
+   	  --call erraudit(null,null,null,NEW.ENTRY_SOURCE);
+      IF coalesce(NEW.ENTRY_SOURCE, 'XX') <> 'WEB'
+      THEN                                                        -- REV : 013
+         IF     NEW.GSTAPPL <> 'N'
+            AND NEW.SCHEME_DOCNO IS NOT NULL
+            AND UPPER(NEW.SCHEME_DOCNO) <> 'AUTOMATIC'
+         THEN
+            -- end rev : 011
+            UPDATE GST_DOCNO_CHECK DC
+               SET SCHEME_DOCNO = NEW.SCHEME_DOCNO, DOCCODE = NEW.DOCCODE
+             WHERE     ENTTYPE = CASE WHEN NEW.JRNTYPE='D' THEN  'PDM'  ELSE 'PCM' END 
+                   AND ENTCODE = NEW.JRNCODE
+                   AND YCODE = NEW.YCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               INSERT INTO GST_DOCNO_CHECK(ENTTYPE,
+                                               ENTCODE,
+                                               DOCCODE,
+                                               SCHEME_DOCNO,
+                                               ENTDATE,
+                                               YCODE,
+                                               ADMSITE_CODE_OWNER,
+                                               ADMGSTIN_CODE)
+                    VALUES (CASE WHEN NEW.JRNTYPE='D' THEN  'PDM'  ELSE 'PCM' END ,
+                            NEW.JRNCODE,
+                            NEW.DOCCODE,
+                            NEW.SCHEME_DOCNO,
+                            NEW.JRNDT,
+                            NEW.YCODE,
+                            NEW.ADMSITE_CODE_OWNER,
+                            V_ADMGSTIN_CODE);
+            END IF;
+         END IF;
+      END IF;                                                     -- REV : 013
+      UPDATE FINPOST
+         SET ADMSITE_CODE_OWNER = NEW.ADMSITE_CODE_OWNER,
+             ECODE = NEW.ECODE,
+             TIME = NEW.TIME,
+             LAST_ACCESS_ECODE = NEW.LAST_MODIFIED_BY,
+             LAST_ACCESS_TIME = NEW.LAST_MODIFIED_ON,
+             REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE,
+             ADMOU_CODE = NEW.ADMOU_CODE                   -- START REV : 012
+                                         ,
+             scheme_docno = NEW.scheme_docno,
+             nartext = NEW.remARKS,
+             docdt = NEW.docdt,
+             docNO = NEW.docNO,
+             entno = NEW.JRNNO::varchar,
+             entdt = NEW.JRNDT
+       -- END REV : 012
+       WHERE     ENTCODE = NEW.JRNCODE::varchar
+             AND ENTTYPE IN ('PDM',
+                             'PDC',
+                             'PCC',
+                             'PCM',
+                             'PDD',
+                             'PCD');
+   END IF;
+
+   IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE'
+   THEN
+      UPDATE finpost
+         SET entno = NEW.JRNNO::varchar,
+             entdt = NEW.JRNDT,
+             docno = NEW.docno,
+             glcode = NEW.JRNglcode,
+             slcode = NEW.JRNslcode,
+             REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE,
+             camount =
+                CASE WHEN                    V_TABNAME='PURINVJRNMAIN' THEN  CASE                                       WHEN(  coalesce(damount, 0)                                             - coalesce(camount, 0) -- START REV : 012
+                                             --- NVL (:OLD.grsamt, 0)) > 0
+                                             - coalesce(OLD.MAIN_GL_AMT, 0)) > 0 -- END REV : 012
+                                       THEN (  coalesce(damount, 0)                                           - coalesce(camount, 0) -- START REV : 012
+                                           --- NVL (:OLD.grsamt, 0))
+                                           - coalesce(OLD.MAIN_GL_AMT, 0))                                       -- END REV : 012
+                                       ELSE                                          0                                    END  ELSE 0 END ,
+             damount =
+                CASE WHEN                    V_TABNAME='PURINVJRNMAIN' THEN  0  ELSE CASE                      WHEN(coalesce(damount, 0) - coalesce(camount, 0) -- START REV : 012
+                                                                --- NVL (:OLD.grsamt, 0)) > 0
+                            - coalesce(OLD.MAIN_GL_AMT, 0)) > 0  -- END REV : 012
+                      THEN (coalesce(damount, 0) - coalesce(camount, 0) -- START REV : 012
+                                                              --- NVL (:OLD.grsamt, 0))
+                          - coalesce(OLD.MAIN_GL_AMT, 0))        -- END REV : 012
+                      ELSE                         0                   END END ,
+             scheme_docno = NEW.scheme_docno,
+             nartext = NEW.remARKS,
+             docdt = NEW.docdt
+       WHERE     entcode = NEW.JRNCODE::varchar
+             AND enttype = CASE WHEN OLD.JRNTYPE='D' THEN  'PDM'  ELSE 'PCM' END
+             AND glcode = OLD.JRNglcode
+             AND coalesce(slcode, 0) = coalesce(OLD.JRNslcode, 0);
+
+      UPDATE finpost
+         SET entno = NEW.JRNNO::varchar,
+             entdt = NEW.JRNDT,
+             docno = NEW.docno,
+             glcode = NEW.JRNglcode,
+             slcode = NEW.JRNslcode,
+             REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE,
+             camount =
+                CASE WHEN                    V_TABNAME='PURINVJRNMAIN' THEN  CASE                                       WHEN(  coalesce(damount, 0)                                             - coalesce(camount, 0) -- START REV : 012
+                                                                --+ NVL (:NEW.grsamt, 0)) > 0
+                                             + coalesce(NEW.MAIN_GL_AMT, 0)) > 0 -- END REV : 012
+                                       THEN (coalesce(damount, 0) - coalesce(camount, 0) -- START REV : 012
+                                                                               --+ NVL (:NEW.grsamt, 0))
+                                            + coalesce(NEW.MAIN_GL_AMT, 0))                                       -- END REV : 012
+                                       ELSE                                          0                                    END  ELSE 0 END ,
+             damount =
+                CASE WHEN                    V_TABNAME='PURINVJRNMAIN' THEN  0  ELSE CASE                      WHEN(coalesce(damount, 0) - coalesce(camount, 0) -- START REV : 012
+                                                                --+ NVL (:NEW.grsamt, 0))  > 0
+                             + coalesce(NEW.MAIN_GL_AMT, 0)) > 0 -- END REV : 012
+                      THEN (coalesce(damount, 0) - coalesce(camount, 0) -- START REV : 012
+                                                              --+ NVL (:NEW.grsamt, 0))
+                           + coalesce(NEW.MAIN_GL_AMT, 0))       -- END REV : 012
+                      ELSE                         0                   END END ,
+             scheme_docno = NEW.scheme_docno,
+             nartext = NEW.remARKS,
+             docdt = NEW.docdt
+       WHERE     entcode = NEW.JRNCODE::varchar
+             AND enttype = CASE WHEN NEW.JRNTYPE='D' THEN  'PDM'  ELSE 'PCM' END
+             AND glcode = NEW.JRNglcode
+             AND coalesce(slcode, 0) = coalesce(NEW.JRNslcode, 0);
+
+      GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+      THEN
+         INSERT INTO FINPOST(postcode,
+                              entcode,
+                              entno,
+                              entdt,
+                              enttype,
+                              docno,
+                              glcode,
+                              slcode,
+                              camount,
+                              DAMOUNT,
+                              ycode,
+                              scheme_docno,
+                              docdt,
+                              nartext,
+                              ADMSITE_CODE_OWNER,
+                              ADMOU_CODE,
+                              REF_ADMSITE_CODE)
+                 VALUES (
+                           nextval('erp01'),
+                           NEW.JRNCODE::varchar,
+                           NEW.JRNNO::varchar,
+                           NEW.JRNDT,
+                           CASE WHEN NEW.JRNTYPE='D' THEN  'PDM'  ELSE 'PCM' END ,
+                           NEW.docno,
+                           NEW.JRNglcode,
+                           NEW.JRNslcode,
+                           -- start rev : 012
+                           /* DECODE ( V_TABNAME, 'PURINVJRNMAIN',NVL (:NEW.grsamt, 0),0),
+                            DECODE ( V_TABNAME, 'PURINVJRNMAIN',0,NVL (:NEW.grsamt, 0)),*/
+                           CASE WHEN                               V_TABNAME='PURINVJRNMAIN' THEN  coalesce(NEW.MAIN_GL_AMT, 0)  ELSE 0 END ,
+                           CASE WHEN V_TABNAME='PURINVJRNMAIN' THEN  0  ELSE coalesce(NEW.MAIN_GL_AMT, 0) END ,
+                           -- END REV : 012
+                           NEW.ycode,
+                           NEW.scheme_docno,
+                           NEW.docdt,
+                           NEW.remARKS,
+                           NEW.ADMSITE_CODE_OWNER,
+                           NEW.ADMOU_CODE,
+                           NEW.REF_ADMSITE_CODE);
+      END IF;
+
+      -- START REV : 002
+      BEGIN
+         SELECT DISTINCT POSTCODE
+           INTO STRICT V_POSTCODE
+           FROM FINPOST
+          WHERE     ENTCODE = NEW.JRNCODE::varchar
+                AND ENTTYPE = CASE WHEN NEW.JRNTYPE='C' THEN  'PCM'  ELSE 'PDM' END
+                AND GLCODE = NEW.JRNGLCODE
+                AND coalesce(SLCODE, 0) = coalesce(NEW.JRNSLCODE, 0)
+                AND (   (V_TABNAME = 'PURINVJRNMAIN' AND coalesce(CAMOUNT, 0) > 0)
+                     OR (    V_TABNAME = 'PURINVJRNMAIN_C'
+                         AND coalesce(DAMOUNT, 0) > 0))
+                AND YCODE = NEW.YCODE;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            NULL;
+      /*WHEN OTHERS
+      THEN
+         NULL;*/
+      END;
+
+         -- START REV : 013
+         DELETE FROM FINCOSTTAG
+          WHERE     ENTCODE = NEW.JRNCODE::varchar
+                AND ENTTYPE = CASE WHEN NEW.JRNTYPE='C' THEN  'PCM'  ELSE 'PDM' END
+      RETURNING CODE
+           INTO V_CCCODE;
+
+      -- END REV : 013
+      IF V_POSTCODE IS NOT NULL AND NEW.GL_CC_APPL = 'Y'
+      THEN
+         INSERT INTO FINCOSTTAG(ENTCODE,
+                                 ENTNO,
+                                 ENTDT,
+                                 ENTTYPE,
+                                 GLCODE,
+                                 SLCODE,
+                                 COSTCODE,
+                                 CAMOUNT,
+                                 DAMOUNT,
+                                 YCODE,
+                                 CODE,
+                                 POSTCODE,
+                                 ADMSITE_CODE,
+                                 REF_ADMSITE_CODE,
+                                 ADMOU_CODE)
+                 VALUES (
+                           NEW.JRNCODE::varchar,
+                           NEW.JRNNO::varchar,
+                           NEW.JRNDT,
+                           CASE WHEN NEW.JRNTYPE='C' THEN  'PCM'  ELSE 'PDM' END ,
+                           NEW.JRNGLCODE,
+                           NEW.JRNSLCODE,
+                           NULL,
+                           -- start rev : 012
+                           /* DECODE ( V_TABNAME, 'PURINVJRNMAIN',NVL (:NEW.grsamt, 0),0),
+                            DECODE ( V_TABNAME, 'PURINVJRNMAIN',0,NVL (:NEW.grsamt, 0)),*/
+                           CASE WHEN                               V_TABNAME='PURINVJRNMAIN' THEN  coalesce(NEW.MAIN_GL_AMT, 0)  ELSE 0 END ,
+                           CASE WHEN V_TABNAME='PURINVJRNMAIN' THEN  0  ELSE coalesce(NEW.MAIN_GL_AMT, 0) END ,
+                           -- END REV : 012
+                           NEW.YCODE,
+                           V_CCCODE,
+                           V_POSTCODE,
+                           NEW.ADMSITE_CODE_OWNER,
+                           NEW.REF_ADMSITE_CODE,
+                           NEW.ADMOU_CODE);
+      END IF;
+
+      UPDATE finpost
+         SET entno = NEW.JRNNO::varchar,
+             entdt = NEW.JRNDT,
+             docno = NEW.docno,
+             -- glcode = :OLD.pglcode,
+             glcode = NEW.pglcode,
+             REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE,
+             damount =
+                CASE WHEN                    V_TABNAME='PURINVJRNMAIN' THEN  CASE                                       WHEN(  coalesce(damount, 0)                                             - coalesce(camount, 0)                                             - coalesce(OLD.netamt, 0)) > 0                                       THEN (  coalesce(damount, 0)                                           - coalesce(camount, 0)                                           - coalesce(OLD.netamt, 0))                                       ELSE                                          0                                    END  ELSE 0 END ,
+             camount =
+                CASE WHEN                    V_TABNAME='PURINVJRNMAIN' THEN  0  ELSE CASE                      WHEN(  coalesce(damount, 0)                            - coalesce(camount, 0)                            - coalesce(OLD.netamt, 0)) > 0                      THEN (  coalesce(damount, 0)                          - coalesce(camount, 0)                          - coalesce(OLD.netamt, 0))                      ELSE                         0                   END END ,
+             scheme_docno = NEW.scheme_docno,
+             docdt = NEW.docdt
+       WHERE     entcode = NEW.JRNCODE::varchar
+             AND enttype = CASE WHEN OLD.JRNTYPE='C' THEN  'PCM'  ELSE 'PDM' END
+             AND glcode = OLD.pglcode
+             -- start rev : 014
+             --AND NVL (slcode, 0) = NVL (:NEW.PCODE, 0);
+             AND coalesce(slcode, 0) = coalesce(OLD.PCODE, 0);
+             -- end rev : 014
+      UPDATE finpost
+         SET entno = NEW.JRNNO::varchar,
+             entdt = NEW.JRNDT,
+             docno = NEW.docno,
+             glcode = NEW.pglcode,
+             REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE,
+             damount =
+                CASE WHEN                    V_TABNAME='PURINVJRNMAIN' THEN  CASE                                       WHEN(  coalesce(damount, 0)                                             - coalesce(camount, 0)                                             + coalesce(NEW.netamt, 0)) > 0                                       THEN (  coalesce(damount, 0)                                           - coalesce(camount, 0)                                           + coalesce(NEW.netamt, 0))                                       ELSE                                          0                                    END  ELSE 0 END ,
+             camount =
+                CASE WHEN                    V_TABNAME='PURINVJRNMAIN' THEN  0  ELSE CASE                      WHEN(  coalesce(damount, 0)                            - coalesce(camount, 0)                            + coalesce(NEW.netamt, 0)) > 0                      THEN (  coalesce(damount, 0)                          - coalesce(camount, 0)                          + coalesce(NEW.netamt, 0))                      ELSE                         0                   END END ,
+             scheme_docno = NEW.scheme_docno,
+             docdt = NEW.docdt
+       WHERE     entcode = NEW.JRNCODE::varchar
+             AND enttype = CASE WHEN NEW.JRNTYPE='C' THEN  'PCM'  ELSE 'PDM' END
+             AND glcode = NEW.pglcode
+             AND coalesce(slcode, 0) = coalesce(NEW.PCODE, 0); -- :NEW.pcode; REV : 002
+      GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+      THEN
+         INSERT INTO FINPOST(postcode,
+                              entcode,
+                              entno,
+                              entdt,
+                              enttype,
+                              docno,
+                              glcode,
+                              slcode,
+                              damount,
+                              CAMOUNT,
+                              ycode,
+                              scheme_docno,
+                              docdt,
+                              ADMSITE_CODE_OWNER,
+                              ADMOU_CODE,
+                              REF_ADMSITE_CODE)
+                 VALUES (
+                           nextval('erp01'),
+                           NEW.JRNCODE::varchar,
+                           NEW.JRNNO::varchar,
+                           NEW.JRNDT,
+                           CASE WHEN NEW.JRNTYPE='C' THEN  'PCM'  ELSE 'PDM' END ,
+                           NEW.docno,
+                           NEW.pglcode,
+                           NEW.PCODE,
+                           CASE WHEN V_TABNAME='PURINVJRNMAIN' THEN  coalesce(NEW.netamt, 0)  ELSE 0 END ,
+                           CASE WHEN V_TABNAME='PURINVJRNMAIN' THEN  NULL  ELSE coalesce(NEW.netamt, 0) END ,
+                           NEW.ycode,
+                           NEW.scheme_docno,
+                           NEW.docdt,
+                           NEW.ADMSITE_CODE_OWNER,
+                           NEW.ADMOU_CODE,
+                           NEW.ADMSITE_CODE_OWNER);
+      END IF;
+   END IF;
+
+   -- END IF;
+   V_POSTCODE := NULL;
+   V_CCCODE := NULL;
+
+   IF TG_OP = 'DELETE'
+   THEN
+      -- START REV : 013
+	 SELECT PG_BACKEND_PID() INTO STRICT V_SID;
+     SELECT APPLICATION_NAME INTO STRICT V_PROGRAM FROM PG_STAT_ACTIVITY WHERE PID=V_SID;
+
+--IF not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+      --THEN
+      --   RAISE EXCEPTION 'del_from_wrong_application' USING ERRCODE = '50002';
+      --END IF;
+
+      -- END REV : 013
+      DELETE FROM FINCOSTTAG
+       WHERE     ENTCODE = OLD.JRNCODE::varchar
+             AND ENTTYPE IN ('PDM',
+                             'PDC',
+                             'PCM',
+                             'PCC',
+                              -- start Rev : 015
+                             'PDD',
+                            'PCD'
+                           -- end Rev : 015   
+                             )
+             AND YCODE = OLD.YCODE;
+
+      DELETE FROM FINCOSTTAG
+       WHERE POSTCODE IN (SELECT POSTCODE
+                            FROM FINPOST
+                           WHERE     ENTCODE = OLD.JRNCODE::varchar
+                                 AND ENTTYPE IN ('PDM',
+                                                 'PDC',
+                                                 'PCM',
+                                                 'PCC',
+                                             -- start Rev : 015
+                                                 'PDD',
+                                                    'PCD'
+                                            -- end Rev : 015  
+                                                  ));
+
+      DELETE FROM FINPOST
+       WHERE     ENTCODE = OLD.JRNCODE::varchar
+             AND ENTTYPE IN ('PDM',
+                             'PDC',
+                             'PCM',
+                             'PCC',
+                             -- start Rev : 015
+                             'PDD',
+                            'PCD'
+                           -- end Rev : 015                            
+                            );
+   END IF;
+
+   DELETE FROM FINCOSTTAG
+    WHERE     ENTCODE = OLD.JRNCODE::varchar
+          AND ENTTYPE IN ('PDM',
+                          'PDC',
+                          'PCM',
+                          'PCC',
+                          'PDD',
+                          'PCD')
+          AND coalesce(DAMOUNT, 0) = 0
+          AND coalesce(CAMOUNT, 0) = 0;
+
+   DELETE FROM FINCOSTTAG
+    WHERE POSTCODE IN (SELECT POSTCODE
+                         FROM FINPOST
+                        WHERE     ENTCODE = OLD.JRNCODE::varchar
+                              AND ENTTYPE IN ('PDM',
+                                              'PDC',
+                                              'PCM',
+                                              'PCC',
+                                              'PDD',
+                                              'PCD')
+                              AND coalesce(DAMOUNT, 0) = 0
+                              AND coalesce(CAMOUNT, 0) = 0);
+
+   DELETE FROM finpost
+    WHERE     entcode = OLD.JRNCODE::varchar
+          AND enttype IN ('PDM',
+                          'PDC',
+                          'PCM',
+                          'PCC',
+                          'PDD',
+                          'PCD')
+          AND coalesce(damount, 0) = 0
+          AND coalesce(camount, 0) = 0;
+EXCEPTION
+   WHEN SQLSTATE '50001' THEN
+      RAISE EXCEPTION '%', 'More than 16 chatacter Document number not allowed.' USING ERRCODE = '45001';
+   WHEN OTHERS
+   THEN
+      CALL ERRAUDIT(USER,
+                'T_PURINVJRNMAIN',
+                SQLSTATE::varchar,
+                SQLERRM);
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED ' || SQLSTATE::varchar || ' ' || SQLERRM USING ERRCODE = '45001';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

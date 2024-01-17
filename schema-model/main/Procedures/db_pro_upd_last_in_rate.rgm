@@ -1,0 +1,324 @@
+procedure "main"."db_pro_upd_last_in_rate(bigint, text, bigint, text, timestamp without time zone, double, text, bigint, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+    v_entdt     timestamp;
+    vcerrcode   varchar(50);
+    vcerrmsg    varchar(2000);
+    v_key       varchar(100);
+    Cx CURSOR FOR
+         SELECT stockcode,
+                entcode,
+                entdt,
+                enttype,
+                subenttype,
+                admsite_code,
+                -- start rev : 004
+                invbatch_serial_code,
+                -- end rev : 004
+                icode,
+                rate,
+                admou_code
+           FROM (SELECT a.stockcode,
+                        a.entcode,
+                        a.entdt,
+                        a.enttype,
+                        a.subenttype,
+                        a.admsite_code,
+                        -- start rev : 004
+                        a.invbatch_serial_code,
+                        -- end rev : 004
+                        a.icode,
+                        a.rate,
+                        a.admou_code
+                   FROM invstock a, invinpool b
+                  WHERE     a.enttype = b.enttype
+                        AND (   (b.subenttype IS NULL AND a.subenttype
+IS NULL)
+                             OR (a.subenttype = b.subenttype))
+                        AND b.consideraslastinrate = 'Y'
+                        AND a.entcode = p_pkcode::varchar
+                        AND a.enttype = p_enttype
+                        AND (   p_detail_code IS NULL
+                             OR a.detail_code = p_detail_code::varchar)
+                        AND (p_icode IS NULL OR a.icode = p_icode)
+                        AND a.qty > 0
+UNION ALL
+                 -- START REV : 001
+                 SELECT NULL             stockcode,
+                        p_pkcode::varchar entcode,
+                        p_entdt,
+                        p_enttype        enttye,
+                        p_subenttype,
+                        p_admsite_code,
+                        -- start rev :  004
+                        p_batch_serial_code,
+                        -- end rev : 004
+                        p_icode,
+                        p_rate,
+                        p_admou_code
+                  WHERE p_enttype = 'SOP'
+                  -- START REV : 003
+                  AND   'Y' = (SELECT coalesce(NONINVENTORY ,'N') FROM INVITEM WHERE ICODE = P_ICODE)
+                  -- END REV : 003
+UNION ALL
+                 SELECT NULL             stockcode,
+                        p_pkcode::varchar entcode,
+                        p_entdt,
+                        p_enttype        enttype,
+                        p_subenttype,
+                        p_admsite_code,
+                        -- start rev : 004
+                        a.invbatch_serial_code,
+                        -- end rev : 004
+                        a.icode,
+                        a.acrate,
+                        p_admou_code
+                   FROM INVGRCDET a, invitem i
+                  WHERE     a.icode = i.icode
+                        AND coalesce(i.noninventory, 'N') = 'Y'
+                        AND a.GRCCODE = (p_pkcode)::numeric 
+                        AND p_enttype = 'GRC'
+UNION ALL
+                 SELECT NULL             stockcode,
+                        p_pkcode::varchar entcode,
+                        p_entdt,
+                        p_enttype        enttype,
+                        p_subenttype,
+                        p_admsite_code,
+                        -- start rev  : 004
+                        a.invbatch_serial_code,
+                        -- end rev : 004
+                        a.icode,
+                        a.rate,
+                        p_admou_code
+                   FROM INVMISCDET a, invitem i
+                  WHERE     a.icode = i.icode
+                        AND coalesce(i.noninventory, 'N') = 'Y'
+                        AND a.qty < 0
+                        AND a.MISCCODE = (p_pkcode)::numeric 
+                        AND p_enttype = 'MIS'
+UNION ALL
+                 SELECT NULL             stockcode,
+                        p_pkcode::varchar entcode,
+                        p_entdt,
+                        p_enttype        enttype,
+                        p_subenttype,
+                        p_admsite_code,
+                        -- start rev : 004
+                        a.invbatch_serial_code,
+                        -- end rev  : 004
+                        a.icode,
+                        a.rate,
+                        p_admou_code
+                   FROM PRDRC a, invitem i
+                  WHERE     a.icode = i.icode
+                        AND coalesce(i.noninventory, 'N') = 'Y'
+                        AND a.ordcode = (p_pkcode)::numeric 
+                        AND p_enttype = 'PRC'
+                 -- START REV : 002
+                 /*
+                 UNION ALL
+                 SELECT NULL             stockcode,
+                        TO_CHAR (p_pkcode) entcode,
+                        p_entdt,
+                        p_enttype        enttype,
+                        p_subenttype,
+                        p_admsite_code,
+                        a.assembly_icode,
+                        a.rate,
+                        p_admou_code
+                   FROM PRDJRCDET a, invitem i
+                  WHERE     a.assembly_icode = i.icode
+                        AND NVL (i.noninventory, 'N') = 'Y'
+                        AND a.jrccode = TO_NUMBER (p_pkcode)
+                        AND p_enttype = 'PRR'
+                        AND p_subenttype IS NULL
+                 UNION ALL
+                 SELECT NULL             stockcode,
+                        TO_CHAR (p_pkcode) entcode,
+                        p_entdt,
+                        p_enttype        enttype,
+                        p_subenttype,
+                        p_admsite_code,
+                        a.prc_assembly_icode,
+                        a.rate,
+                        p_admou_code
+                   FROM PRDWIPCLRDET a, invitem i
+                  WHERE     a.prc_assembly_icode = i.icode
+                        AND NVL (i.noninventory, 'N') = 'Y'
+                        AND a.code = TO_NUMBER (p_pkcode)
+                        AND p_enttype = 'PRR'
+                        AND p_subenttype = 'WCL'
+                 */
+                 -- END REV : 002
+             ) alias13
+       ORDER BY
+               stockcode ASC;
+-- END REV : 001
+/**********************************************************************************************************************************
+  REV NO       OWNER         DATE           DESCRIPTION
+  ---------    -----------   -----------
+----------------------------------------------------------------------------------------
+  REV : 000    DIPTIMAN      03-OCT-2017    (TFS ID : 32259) New
+procedure created.
+  REV : 001    ANINDYA       08-JAN-2019    (TFS ID : 6779 ) Non trading
+item costing related changes.
+  REV : 002    MANASH        20-FEB-2019    (TFS ID : 13135)   Work
+Stopper - Unable to Make JRC.
+  REV : 003    ANINDYA       24-APR-2020    (BUG ID : XXXX)   Some times for  inventory item stockcode  in
+                                                              invitemlastinward is getting popuated NULL for System  Opening (SOP) 
+  REV : 004    ANINDYA       07-MAR-2022    (TFS ID : BATCH SERIAL)   Introduction of Batch Id                                                              
+***********************************************************************************************************************************/
+BEGIN
+    --raise v_exp;
+    /*
+    IF  V_SHOW_PARAM_VAL = 'Y' THEN
+        ERRAUDIT (USER, 'DB_PRO_UPD_LAST_IN_RATE','1','P_PKCODE
+='||P_PKCODE||', P_ENTTYPE ='||P_ENTTYPE);
+        OWA_UTIL.WHO_CALLED_ME(V_OWNER,V_NAME,V_LINE,V_TYPE);
+
+        ERRAUDIT (USER, 'DB_PRO_UPD_LAST_IN_RATE','1',V_NAME);
+    END IF;
+    */
+    FOR I IN Cx
+    LOOP
+       IF i.invbatch_serial_code IS NULL
+       THEN
+         v_key := i.admsite_code::text || '-' || i.icode;
+       ELSE
+         v_key := i.admsite_code::text ||'-'||i.invbatch_serial_code::text|| '-' || i.icode;
+       END IF;
+       BEGIN
+          SELECT transaction_date
+            INTO STRICT v_entdt
+            FROM invitemlastinward
+           WHERE code = v_key;
+       EXCEPTION
+          WHEN no_data_found
+          THEN
+             v_entdt := NULL;
+       END;
+       IF v_entdt IS NULL
+       THEN
+          INSERT INTO invitemlastinward(admsite_code,
+                                         admou_code,
+                                         invbatch_serial_code,
+                                         icode,
+                                         rate,
+                                         enttype,
+                                         subenttype,
+                                         transaction_date,
+                                         last_accessed_time,
+                                         stockcode)
+               VALUES (i.admsite_code,
+                       i.admou_code,
+                       i.invbatch_serial_code,
+                       i.icode,
+                       i.rate,
+                       i.enttype,
+                       i.subenttype,
+                       i.entdt,
+                       clock_timestamp(),
+                       i.stockcode);
+       ELSE
+          IF i.entdt >= v_entdt
+          THEN
+             UPDATE invitemlastinward
+                SET rate = i.rate,
+                    enttype = i.enttype,
+                    subenttype = i.subenttype,
+                    transaction_date = i.entdt,
+                    last_accessed_time = clock_timestamp(),
+                    stockcode = i.stockcode
+              WHERE code = v_key;
+          END IF;
+       END IF;
+    END LOOP;
+EXCEPTION
+    WHEN OTHERS
+    THEN
+       vcerrcode := SQLSTATE;
+       vcerrmsg := SQLERRM;
+       call erraudit(
+          USER,
+          'DB_PRO_UPD_LAST_IN_RATE - Update Table INVITEMLASTINWARD (rate)',
+          vcerrcode,
+          vcerrmsg);
+       RAISE EXCEPTION '%', 'Update Table Error INVITEMLASTINWARD (rate) ' || vcerrmsg USING ERRCODE = '45200';
+END;
+"""
+  arguments = <
+    {
+      name = p_pkcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_enttype
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_detail_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_icode
+      type = text
+      mode = IN
+      default = NULL::text
+    }
+
+    {
+      name = p_entdt
+      type = timestamp without time zone
+      mode = IN
+      default = NULL::timestamp without time zone
+    }
+
+    {
+      name = p_rate
+      type = double precision
+      mode = IN
+      default = NULL::double precision
+    }
+
+    {
+      name = p_subenttype
+      type = text
+      mode = IN
+      default = NULL::bpchar
+    }
+
+    {
+      name = p_admsite_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_admou_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_batch_serial_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+  >
+  language = plpgsql
+}
+

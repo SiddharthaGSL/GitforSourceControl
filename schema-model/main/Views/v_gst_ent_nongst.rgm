@@ -1,0 +1,466 @@
+view "main"."v_gst_ent_nongst" {
+  text = """-
+SELECT rec.enttype,
+    rec.document_gstin,
+    rec.document_gst_state_code,
+    rec.cp_gstin,
+    rec.cp_gst_state_code,
+    rec.entcode,
+    rec.detcode,
+    rec.tradegroupcode,
+    rec.month_year,
+    rec.amt,
+    rec.cp_slcode,
+    rec.entno,
+    rec.entdt,
+    rec.qty,
+    i.invhsnsacmain_code,
+    i.unitname AS uom,
+    rec.originalinvno,
+    rec.originalinvdt,
+    rec.cdnreason
+   FROM ( SELECT 'SIM'::text AS enttype,
+            doc.gst_identification_no AS document_gstin,
+            doc.gst_state_code AS document_gst_state_code,
+            cp.gst_identification_no AS cp_gstin,
+            cp.gst_state_code AS cp_gst_state_code,
+            (m.invcode)::character varying AS entcode,
+            (d.code)::character varying AS detcode,
+            m.saltradegrp_code AS tradegroupcode,
+            to_char(m.invdt, 'MM-YYYY'::text) AS month_year,
+            ((COALESCE(d.invamt, (0)::numeric) + COALESCE(d.chgamt, (0)::numeric)) + COALESCE(d.taxamt, (0)::numeric)) AS amt,
+            m.pcode AS cp_slcode,
+            m.scheme_docno AS entno,
+            m.invdt AS entdt,
+            d.icode,
+            d.invqty AS qty,
+            NULL::character varying AS originalinvno,
+            NULL::timestamp without time zone AS originalinvdt,
+            NULL::text AS cdnreason
+           FROM main.salinvdet d,
+            main.salinvmain m,
+            main.v_gst_site doc,
+            main.v_gst_site cp
+          WHERE ((d.invcode = m.invcode) AND (m.admsite_code_owner = doc.sitecode) AND (COALESCE(m.release_status, 'U'::bpchar) = 'P'::bpchar) AND (m.admsite_code = cp.sitecode) AND ((m.saltradegrp_code)::numeric = ANY (ARRAY[(1)::numeric, (2)::numeric, (3)::numeric])) AND (COALESCE(m.gstappl, 'N'::bpchar) = 'N'::bpchar) AND (m.invdt > '2017-06-30 00:00:00'::timestamp without time zone))
+        UNION ALL
+         SELECT
+                CASE
+                    WHEN ((cp.site_type)::text ~~ '%CM%'::text) THEN 'CTM'::text
+                    ELSE 'SRT'::text
+                END AS enttype,
+            doc.gst_identification_no AS document_gstin,
+            doc.gst_state_code AS document_gst_state_code,
+            cp.gst_identification_no AS cp_gstin,
+            cp.gst_state_code AS cp_gst_state_code,
+            (m.rtcode)::character varying AS entcode,
+            (d.code)::character varying AS detcode,
+            m.saltradegrp_code AS tradegroupcode,
+            to_char(m.rtdt, 'MM-YYYY'::text) AS month_year,
+            ((d.qty * d.rate) + COALESCE(d.chgamt, (0)::numeric)) AS amt,
+            m.pcode AS cp_slcode,
+            m.scheme_docno AS entno,
+            m.rtdt AS entdt,
+            d.icode,
+            d.qty,
+            COALESCE(im.scheme_docno, m.docno) AS originalinvno,
+            COALESCE(im.invdt, m.docdt) AS originalinvdt,
+            'Sales Return'::text AS cdnreason
+           FROM main.v_gst_site doc,
+            main.v_gst_site cp,
+            (main.salrtdet d
+             LEFT JOIN main.salinvmain im ON ((d.invcode = im.invcode))),
+            (main.salrtmain m
+             LEFT JOIN ( SELECT salrtchg.rtcode,
+                    count(*) AS gstcount
+                   FROM main.salrtchg
+                  WHERE (salrtchg.source = 'G'::bpchar)
+                  GROUP BY salrtchg.rtcode) c ON ((m.rtcode = c.rtcode)))
+          WHERE ((d.rtcode = m.rtcode) AND (m.admsite_code_owner = doc.sitecode) AND (COALESCE(m.release_status, 'U'::bpchar) = 'P'::bpchar) AND (m.admsite_code = cp.sitecode) AND ((m.saltradegrp_code)::numeric = ANY (ARRAY[(1)::numeric, (2)::numeric, (3)::numeric])) AND (COALESCE(c.gstcount, (0)::bigint) = 0) AND (m.rtdt > '2017-06-30 00:00:00'::timestamp without time zone))
+        UNION ALL
+         SELECT
+                CASE
+                    WHEN (m.jrntype = 'D'::bpchar) THEN 'SDN'::text
+                    ELSE 'SCN'::text
+                END AS enttype,
+            doc.gst_identification_no AS document_gstin,
+            doc.gst_state_code AS document_gst_state_code,
+            cp.gst_identification_no AS cp_gstin,
+            cp.gst_state_code AS cp_gst_state_code,
+            (m.jrncode)::character varying AS entcode,
+            (d.code)::character varying AS detcode,
+            m.saltradegrp_code AS tradegroupcode,
+            to_char(m.jrndt, 'MM-YYYY'::text) AS month_year,
+            ((COALESCE(d.amount, (0)::numeric) + COALESCE(d.chgamt, (0)::numeric)) + COALESCE(d.taxamt, (0)::numeric)) AS amt,
+            m.pcode AS cp_slcode,
+            m.scheme_docno AS entno,
+            m.jrndt AS entdt,
+            d.icode,
+            d.qty,
+            im.scheme_docno AS originalinvno,
+            im.invdt AS originalinvdt,
+            r.reason AS cdnreason
+           FROM main.salinvjrndet d,
+            main.salinvjrnmain m,
+            main.v_gst_site doc,
+            main.v_gst_site cp,
+            main.salinvmain im,
+            main.admgstjrnreason r
+          WHERE ((d.jrncode = m.jrncode) AND (m.admsite_code_owner = doc.sitecode) AND (COALESCE(m.release_status, 'U'::bpchar) = 'P'::bpchar) AND (m.admsite_code = cp.sitecode) AND ((m.saltradegrp_code)::numeric = ANY (ARRAY[(1)::numeric, (2)::numeric, (3)::numeric])) AND (COALESCE(m.gstappl, 'N'::bpchar) = 'N'::bpchar) AND (m.jrndt > '2017-06-30 00:00:00'::timestamp without time zone) AND (m.salinvmain_code = im.invcode) AND (m.admgstjrnreason_code = r.code))
+        UNION ALL
+         SELECT 'PIM'::text AS enttype,
+            doc.gst_identification_no AS document_gstin,
+            doc.gst_state_code AS document_gst_state_code,
+            cp.cp_gstin_no AS cp_gstin,
+            cp.cp_gstin_state_code AS cp_gst_state_code,
+            (m.invcode)::character varying AS entcode,
+            (d.code)::character varying AS detcode,
+            m.fintradegrp_code AS tradegroupcode,
+            to_char(m.invdt, 'MM-YYYY'::text) AS month_year,
+            d.netamt AS amt,
+            m.pcode AS cp_slcode,
+            m.scheme_docno AS entno,
+            m.invdt AS entdt,
+            d.icode,
+            d.qty,
+            NULL::character varying AS originalinvno,
+            NULL::timestamp without time zone AS originalinvdt,
+            NULL::text AS cdnreason
+           FROM main.v_gst_site doc,
+            main.purinvdet d,
+            main.finsl cp,
+            (main.purinvmain m
+             LEFT JOIN ( SELECT purinvchg.invcode,
+                    count(*) AS gstcount
+                   FROM main.purinvchg
+                  WHERE (purinvchg.source = 'G'::bpchar)
+                  GROUP BY purinvchg.invcode) c ON ((m.invcode = c.invcode)))
+          WHERE ((d.invcode = m.invcode) AND (m.admsite_code = doc.sitecode) AND (COALESCE(m.release_status, 'U'::bpchar) = 'P'::bpchar) AND (m.pcode = cp.slcode) AND ((m.fintradegrp_code)::numeric = ANY (ARRAY[(1)::numeric, (2)::numeric])) AND (COALESCE(c.gstcount, (0)::bigint) = 0) AND (m.invdt > '2017-06-30 00:00:00'::timestamp without time zone))
+        UNION ALL
+         SELECT 'PRM'::text AS enttype,
+            doc.gst_identification_no AS document_gstin,
+            doc.gst_state_code AS document_gst_state_code,
+            cp.cp_gstin_no AS cp_gstin,
+            cp.cp_gstin_state_code AS cp_gst_state_code,
+            (m.rtcode)::character varying AS entcode,
+            (d.code)::character varying AS detcode,
+            m.fintradegrp_code AS tradegroupcode,
+            to_char(m.rtdt, 'MM-YYYY'::text) AS month_year,
+            d.netamt AS amt,
+            m.pcode AS cp_slcode,
+            m.scheme_docno AS entno,
+            m.rtdt AS entdt,
+            d.icode,
+            d.qty,
+                CASE
+                    WHEN (im.gstappl <> 'N'::bpchar) THEN im.scheme_docno
+                    ELSE im.docno
+                END AS originalinvno,
+                CASE
+                    WHEN (im.gstappl <> 'N'::bpchar) THEN im.invdt
+                    ELSE im.docdt
+                END AS originalinvdt,
+            'Sales Return'::text AS cdnreason
+           FROM main.v_gst_site doc,
+            main.purrtdet d,
+            main.finsl cp,
+            (main.purrtmain m
+             LEFT JOIN ( SELECT purrtchg.rtcode,
+                    count(*) AS gstcount
+                   FROM main.purrtchg
+                  WHERE (purrtchg.source = 'G'::bpchar)
+                  GROUP BY purrtchg.rtcode) c ON ((m.rtcode = c.rtcode))),
+            ((main.invgrtdet gd
+             LEFT JOIN main.purinvdet id ON ((gd.invgrcdet_code = id.invgrcdet_code)))
+             LEFT JOIN main.purinvmain im ON ((id.invcode = im.invcode)))
+          WHERE ((d.rtcode = m.rtcode) AND (m.admsite_code = doc.sitecode) AND (COALESCE(m.release_status, 'U'::bpchar) = 'P'::bpchar) AND (m.pcode = cp.slcode) AND ((m.fintradegrp_code)::numeric = ANY (ARRAY[(1)::numeric, (2)::numeric, (3)::numeric])) AND (COALESCE(c.gstcount, (0)::bigint) = 0) AND (d.invgrtdet_code = gd.code))
+        UNION ALL
+         SELECT
+                CASE
+                    WHEN (m.jrntype = 'D'::bpchar) THEN 'PDN'::text
+                    ELSE 'PCN'::text
+                END AS enttype,
+            doc.gst_identification_no AS document_gstin,
+            doc.gst_state_code AS document_gst_state_code,
+            cp.cp_gstin_no AS cp_gstin,
+            cp.cp_gstin_state_code AS cp_gst_state_code,
+            (m.jrncode)::character varying AS entcode,
+            (d.code)::character varying AS detcode,
+            m.fintradegrp_code AS tradegroupcode,
+            to_char(m.jrndt, 'MM-YYYY'::text) AS month_year,
+            ((COALESCE(d.amount, (0)::numeric) + COALESCE(d.chgamt, (0)::numeric)) + COALESCE(d.taxamt, (0)::numeric)) AS amt,
+            m.pcode AS cp_slcode,
+            m.scheme_docno AS entno,
+            m.jrndt AS entdt,
+            d.icode,
+            d.qty,
+                CASE
+                    WHEN (im.gstappl <> 'N'::bpchar) THEN im.scheme_docno
+                    ELSE im.docno
+                END AS originalinvno,
+                CASE
+                    WHEN (im.gstappl <> 'N'::bpchar) THEN im.invdt
+                    ELSE im.docdt
+                END AS originalinvdt,
+            r.reason AS cdnreason
+           FROM main.admgstjrnreason r,
+            main.purinvmain im,
+            main.v_gst_site doc,
+            main.purinvjrndet d,
+            main.finsl cp,
+            (main.purinvjrnmain m
+             LEFT JOIN ( SELECT purinvjrnchg.jrncode,
+                    count(*) AS gstcount
+                   FROM main.purinvjrnchg
+                  WHERE (purinvjrnchg.source = 'G'::bpchar)
+                  GROUP BY purinvjrnchg.jrncode) c ON ((m.jrncode = c.jrncode)))
+          WHERE ((d.jrncode = m.jrncode) AND (m.admsite_code_owner = doc.sitecode) AND (COALESCE(m.release_status, 'U'::bpchar) = 'P'::bpchar) AND (m.pcode = cp.slcode) AND ((m.fintradegrp_code)::numeric = ANY (ARRAY[(1)::numeric, (2)::numeric, (3)::numeric])) AND (COALESCE(c.gstcount, (0)::bigint) = 0) AND (m.purinvmain_code = im.invcode) AND (m.admgstjrnreason_code = r.code))
+        UNION ALL
+         SELECT 'SGO'::text AS enttype,
+            doc.gst_identification_no AS document_gstin,
+            doc.gst_state_code AS document_gst_state_code,
+            cp.gst_identification_no AS cp_gstin,
+            cp.gst_state_code AS cp_gst_state_code,
+            (m.code)::character varying AS entcode,
+            (d.code)::character varying AS detcode,
+            m.fintradegrp_code AS tradegroupcode,
+            to_char(m.docdt, 'MM-YYYY'::text) AS month_year,
+            d.grsamt AS amt,
+            cp.slcode AS cp_slcode,
+            m.docno AS entno,
+            m.docdt AS entdt,
+            d.icode,
+            d.rtqty AS qty,
+            NULL::character varying AS originalinvno,
+            NULL::timestamp without time zone AS originalinvdt,
+            NULL::text AS cdnreason
+           FROM main.psite_grtitem d,
+            main.psite_grt m,
+            main.v_gst_site doc,
+            main.lv_site cp,
+            ( SELECT psite_grtchgitem.psite_grt_code,
+                    count(*) AS gstcount
+                   FROM main.psite_grtchgitem
+                  WHERE (psite_grtchgitem.source = 'G'::bpchar)
+                  GROUP BY psite_grtchgitem.psite_grt_code) c
+          WHERE (((d.psite_grt_code)::text = (m.code)::text) AND (m.admsite_code = doc.sitecode) AND (m.repln_admsite_code = cp.sitecode) AND ((m.fintradegrp_code)::numeric = ANY (ARRAY[(1)::numeric, (2)::numeric])) AND ((c.psite_grt_code)::text = (m.code)::text) AND (COALESCE(c.gstcount, (0)::bigint) = 0) AND (m.docdt > '2017-06-30 00:00:00'::timestamp without time zone))
+        UNION ALL
+         SELECT 'SGI'::text AS enttype,
+            doc.gst_identification_no AS document_gstin,
+            doc.gst_state_code AS document_gst_state_code,
+            cp.gst_identification_no AS cp_gstin,
+            cp.gst_state_code AS cp_gst_state_code,
+            (m.code)::character varying AS entcode,
+            (d.code)::character varying AS detcode,
+                CASE
+                    WHEN (m.psite_grt_code IS NOT NULL) THEN (rg.fintradegrp_code)::numeric
+                    WHEN (m.invcode IS NOT NULL) THEN (ri.saltradegrp_code)::numeric
+                    ELSE NULL::numeric
+                END AS tradegroupcode,
+            to_char(m.docdt, 'MM-YYYY'::text) AS month_year,
+            d.receiveamt AS amt,
+            cp.slcode AS cp_slcode,
+            m.docno AS entno,
+            m.docdt AS entdt,
+            d.icode,
+            d.receiveqty AS qty,
+            NULL::character varying AS originalinvno,
+            NULL::timestamp without time zone AS originalinvdt,
+            NULL::text AS cdnreason
+           FROM main.v_gst_site doc,
+            main.psite_grcitem d,
+            main.lv_site cp,
+            (((main.psite_grc m
+             LEFT JOIN main.salinvmain ri ON ((m.invcode = ri.invcode)))
+             LEFT JOIN main.psite_grt rg ON (((m.psite_grt_code)::text = (rg.code)::text)))
+             LEFT JOIN ( SELECT psite_grcchgitem.psite_grc_code,
+                    count(*) AS gstcount
+                   FROM main.psite_grcchgitem
+                  WHERE (psite_grcchgitem.source = 'G'::bpchar)
+                  GROUP BY psite_grcchgitem.psite_grc_code) c ON (((m.code)::text = (c.psite_grc_code)::text)))
+          WHERE (((d.psite_grc_code)::text = (m.code)::text) AND (m.admsite_code = doc.sitecode) AND (m.repln_admsite_code = cp.sitecode) AND ((COALESCE(rg.fintradegrp_code, ri.saltradegrp_code))::numeric = ANY (ARRAY[(1)::numeric, (2)::numeric])) AND (COALESCE(c.gstcount, (0)::bigint) = 0) AND (m.docdt > '2017-06-30 00:00:00'::timestamp without time zone) AND ((doc.site_type)::text <> 'MS-CO-OM-TS'::text))
+        UNION ALL
+         SELECT 'SGI'::text AS enttype,
+            doc.gst_identification_no AS document_gstin,
+            doc.gst_state_code AS document_gst_state_code,
+            cp.gst_identification_no AS cp_gstin,
+            cp.gst_state_code AS cp_gst_state_code,
+            (m.code)::character varying AS entcode,
+            (d.code)::character varying AS detcode,
+            ri.saltradegrp_code AS tradegroupcode,
+            to_char(m.docdt, 'MM-YYYY'::text) AS month_year,
+            d.receiveamt AS amt,
+            cp.slcode AS cp_slcode,
+            m.docno AS entno,
+            m.docdt AS entdt,
+            d.icode,
+            d.receiveqty AS qty,
+            NULL::character varying AS originalinvno,
+            NULL::timestamp without time zone AS originalinvdt,
+            NULL::text AS cdnreason
+           FROM main.v_gst_site doc,
+            main.psite_grcitem d,
+            main.lv_site cp,
+            ( SELECT salinvchg_item.salinvdet_code,
+                    count(*) AS gstcount
+                   FROM main.salinvchg_item
+                  WHERE (salinvchg_item.source = 'G'::bpchar)
+                  GROUP BY salinvchg_item.salinvdet_code) c,
+            (main.psite_grc m
+             LEFT JOIN main.salinvmain ri ON ((m.invcode = ri.invcode)))
+          WHERE (((d.psite_grc_code)::text = (m.code)::text) AND (m.admsite_code = doc.sitecode) AND (m.repln_admsite_code = cp.sitecode) AND (COALESCE((ri.saltradegrp_code)::numeric, (1)::numeric) = ANY (ARRAY[(1)::numeric, (2)::numeric])) AND (COALESCE(c.gstcount, (0)::bigint) = 0) AND (m.docdt > '2017-06-30 00:00:00'::timestamp without time zone) AND ((doc.site_type)::text = 'MS-CO-OM-TS'::text))
+        UNION ALL
+         SELECT 'CSM'::text AS enttype,
+            doc.gst_identification_no AS document_gstin,
+            doc.gst_state_code AS document_gst_state_code,
+            cp.cp_gstin_no AS cp_gstin,
+            cp.cp_gstin_state_code AS cp_gst_state_code,
+            (d.cscode)::character varying AS entcode,
+            (d.code)::character varying AS detcode,
+            m.fintradegrp_code AS tradegroupcode,
+            to_char(m.csdate, 'MM-YYYY'::text) AS month_year,
+            d.netamt AS amt,
+            NULL::numeric AS cp_slcode,
+            m.scheme_docno AS entno,
+            m.csdate AS entdt,
+            d.icode,
+            d.qty,
+            NULL::character varying AS originalinvno,
+            NULL::timestamp without time zone AS originalinvdt,
+            NULL::text AS cdnreason
+           FROM main.v_gst_site doc,
+            main.salcsdet d,
+            (main.salcsmain m
+             LEFT JOIN main.psite_customer cp ON (((m.psite_customer_code)::text = (cp.code)::text)))
+          WHERE ((m.cscode = d.cscode) AND (m.admsite_code = doc.sitecode) AND ((doc.site_type)::text = 'OS-OO-CM'::text) AND (COALESCE(m.release_status, 'U'::bpchar) = 'P'::bpchar) AND (COALESCE(d.taxregime, 'V'::bpchar) = 'V'::bpchar) AND (m.csdate > '2017-06-30 00:00:00'::timestamp without time zone))
+        UNION ALL
+         SELECT 'POS'::text AS enttype,
+            pos.gst_identification_no AS document_gstin,
+            pos.gst_state_code AS document_gst_state_code,
+            cp.cp_gstin_no AS cp_gstin,
+            cp.cp_gstin_state_code AS cp_gst_state_code,
+            (pos.psite_posbill_code)::character varying AS entcode,
+            (pos.code)::character varying AS detcode,
+            pos.fintradegrp_code AS tradegroupcode,
+            to_char(pos.billdate, 'MM-YYYY'::text) AS month_year,
+            pos.netamt AS amt,
+            NULL::numeric AS cp_slcode,
+            pos.billno AS entno,
+            pos.billdate AS entdt,
+            pos.icode,
+            pos.qty,
+            NULL::character varying AS originalinvno,
+            NULL::timestamp without time zone AS originalinvdt,
+            NULL::text AS cdnreason
+           FROM (( SELECT m.admsite_code,
+                    m.psite_customer_code,
+                    m.fintradegrp_code,
+                    m.billno,
+                    date_trunc('day'::text, m.billdate) AS billdate,
+                    d.code,
+                    d.psite_posbill_code,
+                    d.icode,
+                    d.qty,
+                    d.netamt,
+                    doc.gst_identification_no,
+                    doc.gst_state_code
+                   FROM main.psite_posbill m,
+                    main.psite_posbillitem d,
+                    main.v_gst_site doc
+                  WHERE (((m.code)::text = (d.psite_posbill_code)::text) AND (m.admsite_code = doc.sitecode) AND (date_trunc('day'::text, m.billdate) > '2017-06-30 00:00:00'::timestamp without time zone) AND (COALESCE(d.taxregime, 'V'::bpchar) = 'V'::bpchar))) pos
+             LEFT JOIN main.psite_customer cp ON (((pos.psite_customer_code)::text = (cp.code)::text)))
+          WHERE ((pos.fintradegrp_code)::numeric = ANY (ARRAY[(1)::numeric, (2)::numeric]))) rec,
+    main.invitem i
+  WHERE ((rec.icode)::text = (i.icode)::text)
+UNION ALL
+ SELECT 'PSM'::text AS enttype,
+    doc.gst_identification_no AS document_gstin,
+    doc.gst_state_code AS document_gst_state_code,
+    cp.cp_gstin_no AS cp_gstin,
+    cp.cp_gstin_state_code AS cp_gst_state_code,
+    (m.srvcode)::character varying AS entcode,
+    (d.code)::character varying AS detcode,
+    m.fintradegrp_code AS tradegroupcode,
+    to_char(m.srvdt, 'MM-YYYY'::text) AS month_year,
+    d.srvamt AS amt,
+    m.pcode AS cp_slcode,
+    m.scheme_docno AS entno,
+    m.srvdt AS entdt,
+    NULL::numeric AS qty,
+    s.invhsnsacmain_code,
+    NULL::character varying AS uom,
+    NULL::character varying AS originalinvno,
+    NULL::timestamp without time zone AS originalinvdt,
+    NULL::text AS cdnreason
+   FROM main.purservice s,
+    main.v_gst_site doc,
+    main.pursrvdet d,
+    main.finsl cp,
+    (main.pursrvmain m
+     LEFT JOIN ( SELECT pursrvchg.srvcode,
+            count(*) AS gstcount
+           FROM main.pursrvchg
+          WHERE (pursrvchg.source = 'G'::bpchar)
+          GROUP BY pursrvchg.srvcode) c ON ((m.srvcode = c.srvcode)))
+  WHERE ((d.srvcode = m.srvcode) AND (d.servicecode = s.servicecode) AND (m.admsite_code_owner = doc.sitecode) AND (COALESCE(m.release_status, 'U'::bpchar) = 'P'::bpchar) AND (m.pcode = cp.slcode) AND ((cp.saltradegrp_code)::numeric = ANY (ARRAY[(1)::numeric, (2)::numeric])) AND (COALESCE(m.gstappl, 'N'::bpchar) = 'N'::bpchar) AND (COALESCE(c.gstcount, (0)::bigint) = 0) AND (m.srvdt > '2017-06-30 00:00:00'::timestamp without time zone));
+"""
+  columns = (
+    column "enttype" {
+      type = text
+    }
+    column "document_gstin" {
+      type = "character varying(15)"
+    }
+    column "document_gst_state_code" {
+      type = "character(2)"
+    }
+    column "cp_gstin" {
+      type = "character varying(15)"
+    }
+    column "cp_gst_state_code" {
+      type = "character(2)"
+    }
+    column "entcode" {
+      type = "character varying"
+    }
+    column "detcode" {
+      type = "character varying"
+    }
+    column "tradegroupcode" {
+      type = "numeric"
+    }
+    column "month_year" {
+      type = text
+    }
+    column "amt" {
+      type = "numeric"
+    }
+    column "cp_slcode" {
+      type = "numeric"
+    }
+    column "entno" {
+      type = "character varying(25)"
+    }
+    column "entdt" {
+      type = "timestamp without time zone"
+    }
+    column "qty" {
+      type = "numeric"
+    }
+    column "invhsnsacmain_code" {
+      type = "bigint"
+    }
+    column "uom" {
+      type = "character varying"
+    }
+    column "originalinvno" {
+      type = "character varying"
+    }
+    column "originalinvdt" {
+      type = "timestamp without time zone"
+    }
+    column "cdnreason" {
+      type = text
+    }
+  )
+}
+

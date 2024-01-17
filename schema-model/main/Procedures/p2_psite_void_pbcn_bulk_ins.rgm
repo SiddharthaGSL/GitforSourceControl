@@ -1,0 +1,77 @@
+procedure "main"."p2_psite_void_pbcn_bulk_ins(bigint, text)" {
+  text = """
+
+BEGIN
+   DELETE FROM psite_posbillcnadj
+         WHERE psite_posbillcn_code IN (SELECT concat(p_sitecuid,'-',posbillcnid)/*p_sitecuid || '-' || posbillcnid*/
+                     FROM staging2_void_posbillcn);
+   DELETE FROM psite_posbillcn
+         WHERE code IN (SELECT concat(p_sitecuid,'-',posbillcnid)/*p_sitecuid || '-' || posbillcnid*/
+                          FROM staging2_void_posbillcn);
+   INSERT INTO psite_posbillcn(code,
+                                admsite_code,
+                                cnno,
+                                cndate,
+                                psite_customer_code,
+                                customer,
+                                remarks,
+                                amount,
+                                cni_psite_posbill_code,
+                                cnibilltype,
+                                cnradjamount,
+                                psite_posorder_code,
+                                isglobalcn,
+                                globalposbillcnno,
+                                terminalid,
+                                psite_docscheme_code)
+      SELECT concat(p_sitecuid,'-',posbillcnid)/*p_sitecuid || '-' || posbillcnid*/,
+             p_admsite_code,
+             cnno,
+             cndate,
+             coalesce(m.new_psite_customer_code, s.customerid) customerid,
+             customername,
+             remarks,
+             amount,
+             CASE
+                WHEN cniposbillid IS NOT NULL
+                THEN
+                   concat(p_sitecuid,'-',cniposbillid)/*p_sitecuid || '-' || cniposbillid*/
+                ELSE
+                   NULL
+             END
+                cniposbillid,
+             cnibilltype,
+             cnradjamount,
+             CASE
+                WHEN posorderid IS NOT NULL
+                THEN
+                   concat(p_sitecuid,'-',posorderid)/*p_sitecuid || '-' || posorderid*/
+                ELSE
+                   NULL
+             END
+                posorderid,
+             isglobalcn,
+             globalposbillcnno,
+             terminalid,
+             docschemeid
+        FROM staging2_void_posbillcn s
+LEFT OUTER JOIN psite_customer_merge m ON (s.customerid = m.old_psite_customer_code);
+END;
+"""
+  arguments = <
+    {
+      name = p_admsite_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_sitecuid
+      type = text
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

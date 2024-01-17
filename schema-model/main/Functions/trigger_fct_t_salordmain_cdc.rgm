@@ -1,0 +1,38 @@
+function "main"."trigger_fct_t_salordmain_cdc()" {
+  text = """
+
+DECLARE
+   v_owner_sitetype   varchar(25);
+BEGIN
+   IF (OLD.authorcode IS NULL AND NEW.authorcode IS NOT NULL)
+      OR (OLD.authorizationtime IS NULL
+          AND NEW.authorizationtime IS NOT NULL
+         )
+   THEN
+      SELECT sitetype
+        INTO STRICT v_owner_sitetype
+        FROM admsite
+       WHERE code = NEW.admsite_code_owner;
+
+      IF v_owner_sitetype LIKE 'MS%'
+      THEN                                       -- For all Managed Sites only
+         INSERT INTO salord_authorize_trap(ordcode, author_ecode, author_time
+                     )
+              VALUES (NEW.ordcode, NEW.authorcode, NEW.authorizationtime
+                     );
+
+         CALL db_pkg_npos_event$track(NEW.admsite_code_owner,
+                                  'TRANSFERORDER',
+                                  NEW.ordcode
+                                 );
+      END IF;
+   END IF;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

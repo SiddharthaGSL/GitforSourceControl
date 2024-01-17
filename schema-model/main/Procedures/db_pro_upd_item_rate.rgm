@@ -1,0 +1,121 @@
+procedure "main"."db_pro_upd_item_rate(text, text, text, text, bigint, timestamp without time zone)" {
+  text = """
+
+DECLARE
+
+	V_SQL 		  varchar(4000);
+	vcErrcode	  varchar(50);
+	vcErrmsg	  varchar(2000);
+	v_calculation varchar(500);
+	v_date		  varchar(50);
+/******************************************************************************
+   NAME: Db_Pro_Upd_Item_Rate
+
+   PURPOSE:
+
+   REVISIONS:
+   No.		 Date        Author                   Description
+   --------- ----------  ----------------------   ---------------------------------------------------------------------
+   REV : 001 21/01/2008  DIPTIMAN                 (Bug ID : 474)Item rate updatation for misselenious issue, in stock.
+   REV : 002 17/04/2008  SOUMYADIP                (Bug ID : 580)Item Rate updation in case of Purchase Transfer(INVTFPDET)
+   REV : 003 08/12/2008  SUJOY					  (Bug ID : 841)add srccmpcode filter.
+   REV : 004 28/10/2010  MANASH					  (BUG ID : 842) Procurement Revamp.
+   REV : 005 28/08/2017  MOUSUMI				  (BUG ID : 31941) 0 QTY IN GRC ADHOC
+   NOTES:
+******************************************************************************/
+BEGIN
+	v_date := TO_CHAR(ARGENTDATE,'DD-MM-YYYY');
+	IF      UPPER(ARGTABLENAME) = 'INVGRCDET' THEN
+			-- START REV : 004
+			--v_calculation := 'MAX(ROUND(NVL(NETAMT,0)/NVL(ACQTY,1),3))';
+			v_calculation := 'MAX(ROUND(coalesce(EFFAMT, coalesce(NETAMT,0)) / coalesce(ACQTY,1),3))';
+			-- END REV ; 004
+	--START REV : 002
+	ELSE
+		v_calculation := 'MAX(a.'||ARGRATECOLNAME||')';
+	END IF;
+	-- START REV : 001
+	IF UPPER(ARGTABLENAME) = 'INVMISCDET' THEN
+		V_SQL := 	'UPDATE invitem mn '||
+					   'SET (rate, stockindate) = '||
+					          '(SELECT '||v_calculation||', TO_DATE('||CHR(39)||v_date||CHR(39)||','||CHR(39)||'DD-MM-YYYY'||CHR(39)||') '||
+					             'FROM '||ARGTABLENAME||' a '||
+					            'WHERE a.icode = mn.icode '||
+								  'AND a.'||ARGQTYCOLNAME||' < 0 '||
+								  'AND a.'||ARGPKCOLNAME||' = '||ARGENTCODE::TEXT||') '||
+					 'WHERE icode IN (SELECT icode '||
+					                   'FROM '||ARGTABLENAME||' '||
+									  'WHERE '||ARGPKCOLNAME||' = '||ARGENTCODE::TEXT||' '||
+									    'AND '||ARGQTYCOLNAME||' < 0)';
+	ELSE
+	-- END REV : 001
+		V_SQL := 	'UPDATE invitem mn '||
+					   'SET (rate, stockindate) = '||
+					          '(SELECT '||v_calculation||', TO_DATE('||CHR(39)||v_date||CHR(39)||','||CHR(39)||'DD-MM-YYYY'||CHR(39)||') '||
+					             'FROM '||ARGTABLENAME||' a '||
+					            'WHERE a.icode = mn.icode '||
+					            -- START REV : 005
+					            --'AND a.'||ARGQTYCOLNAME||' IS NOT NULL)';
+								  'AND coalesce(a.'||ARGQTYCOLNAME||' ,0) <> 0 '||
+								  -- END REV : 005
+								  'AND a.'||ARGPKCOLNAME||' = '||ARGENTCODE::TEXT||') '||
+					 'WHERE icode IN (SELECT icode '||
+					                   'FROM '||ARGTABLENAME||' '||
+									  'WHERE '||ARGPKCOLNAME||' = '||ARGENTCODE::TEXT||' '||
+									 -- START REV : 005
+									    --'AND '||ARGQTYCOLNAME||' IS NOT NULL)';
+									     'AND coalesce('||ARGQTYCOLNAME||' ,0) <> 0 )';
+									    -- END REV : 005
+	-- START REV : 001
+	END IF;
+	-- END REV : 001
+	EXECUTE V_SQL;
+EXCEPTION
+	WHEN OTHERS THEN
+		vcerrcode := SQLSTATE;
+		vcerrmsg := SQLERRM;
+		CALL Erraudit(USER,'DB_PRO_UPD_ITEM_RATE - Update_Table invitem (rate)', vcErrcode, vcErrmsg);
+		RAISE EXCEPTION '%', 'Update Table Error invitem (rate) '||vcErrmsg USING ERRCODE = '45200';
+END;
+"""
+  arguments = <
+    {
+      name = argtablename
+      type = text
+      mode = IN
+    }
+
+    {
+      name = argpkcolname
+      type = text
+      mode = IN
+    }
+
+    {
+      name = argratecolname
+      type = text
+      mode = IN
+    }
+
+    {
+      name = argqtycolname
+      type = text
+      mode = IN
+    }
+
+    {
+      name = argentcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = argentdate
+      type = timestamp without time zone
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

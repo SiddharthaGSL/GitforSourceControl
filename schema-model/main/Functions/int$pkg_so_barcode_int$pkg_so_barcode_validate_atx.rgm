@@ -1,0 +1,1521 @@
+function "main"."int$pkg_so_barcode_int$pkg_so_barcode_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        v_status                        char(1);
+        errmsg                          varchar(200);
+        errcode                         bigint;
+        v_icode                         varchar(9);
+        v_barcode                       varchar(50);
+        v_connected_ou                  bigint;
+        v_sitetype                      admsite.sitetype%type;
+        v_site_reserve_inv              char(1) := 'N';
+        v_allow_zerorate_salesorder     char(1) := 'N';
+        v_mark                          varchar(100);i RECORD;
+
+BEGIN
+        v_mark := 1;
+        -- Check for OU code is present is not
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), 0, 'SO_BARCODE', 0, 'Date Validation', 'No Organization Unit is available.', clock_timestamp()
+        from   admsite a
+        where  code = p_connect_site
+        and    admou_code is null;
+
+        v_mark := 4;
+        -- Check for site type
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), 0, 'SO_BARCODE', 0, 'Date Validation', p_connect_site :: text||': This module is only for Organizational site.', clock_timestamp()
+        from   admsite a
+        where  code = p_connect_site
+        and    sitetype not in ('OS-OO-CM','MS-OO-CM','MS-CO-OM-TS');
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), 0, 'SO_BARCODE', 0, 'Date Validation', p_connect_site :: text||': Document Identification No. is mandatory for the connected site.', clock_timestamp()
+        from   admsite a
+        where  code = p_connect_site
+        and    sitedocin is null;
+
+        v_mark := 5;
+        -- Check the DC date is valid or not
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'SO_BARCODE', userid, 'Date Validation', a.orddt||': Orddt, Please enter a valid date.', clock_timestamp()
+        from   int$stg_so_barcode a
+        where  db_func_is_date(to_char(a.orddt,'DD-MM-YYYY') ) <> 1
+        and    a.userid = p_userid;
+
+        v_mark := 6;
+        -- Future date transaction is not allowed
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'SO_BARCODE', userid, 'Date Validation', a.orddt||': Orddt, future date transaction not allowed.', clock_timestamp()
+        from   int$stg_so_barcode a
+        where  date_trunc('day', orddt) > date_trunc('day', clock_timestamp())
+        and    a.userid = p_userid;
+
+        v_mark := 7;
+        declare
+            v_dtfr          timestamp;
+            v_dtto          timestamp;
+            v_yr_ext        char(1);
+            v_day_status    char(1);
+            v_locdays       hrdemp.locdays%type;
+            v_last_dt_lock  char(1);
+
+            c1 CURSOR FOR
+                SELECT distinct date_trunc('day', orddt) orddt1
+                from   int$stg_SO_BARCODE
+                where  db_func_is_date(orddt :: text) = 1
+                and    userid = p_userid;
+        begin
+            for i in c1 loop
+                -- Ycode related checking, min trans date checking, lockday checking, Year exists or not, Day status related checking
+                begin
+                    select ext, dtfr, dtto
+                    into STRICT   v_yr_ext, v_dtfr, v_dtto
+                    from   admyear
+                    where  i.orddt1 between dtfr and dtto;
+
+                    if  coalesce(v_yr_ext,'N') = 'Y' then
+                        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                        SELECT  nextval('int$error_log_code'), lineno, 'SO_BARCODE', userid, 'Data Validation',
+                                i.orddt1||': Orddt, inventory period is not open.', clock_timestamp()
+                                --'Year of the Date is not open / extinct', sysdate
+                        from    int$stg_SO_BARCODE
+                        where   date_trunc('day', orddt) = i.orddt1
+                        and     userid = p_userid;
+                    else
+                        if  i.orddt1 < v_dtfr then
+                            insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                            SELECT  nextval('int$error_log_code'), lineno, 'SO_BARCODE', userid, 'Data Validation',
+                                    i.orddt1||': Orddt, Date can not be less than start date of current accounting year date '||TO_CHAR(v_dtfr,'DD/MM/YYYY'), clock_timestamp()
+                            from    int$stg_SO_BARCODE
+                            where   date_trunc('day', orddt) = i.orddt1
+                            and     userid = p_userid;
+                        else
+                            begin
+                                select locdays
+                                into STRICT   v_locdays
+                                from   hrdemp
+                                where  ecode = p_userid;
+
+                                if  v_locdays is not null then
+                                    if  date_trunc('day', i.orddt1) < (date_trunc('day', clock_timestamp()) - v_locdays) then
+                                        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                                        SELECT  nextval('int$error_log_code'), lineno, 'SO_BARCODE', userid, 'Data Validation',
+                                                i.orddt1||': Orddt, user lock days settings getting violated.', clock_timestamp()
+                                        from    int$stg_SO_BARCODE
+                                        where   date_trunc('day', orddt) = i.orddt1
+                                        and     userid = p_userid;
+                                    end if;
+                                end if;
+                            exception
+                                when no_data_found then
+                                    insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                                    SELECT  nextval('int$error_log_code'), lineno, 'SO_BARCODE', userid, 'Data Validation', 'User not exists', clock_timestamp()
+                                    from    int$stg_SO_BARCODE
+                                    where   date_trunc('day', orddt) = i.orddt1
+                                    and     userid = p_userid;
+                            end;
+                        end if;
+                    end if;
+                exception
+                    when no_data_found then
+                        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                        SELECT  nextval('int$error_log_code'), lineno, 'SO_BARCODE', userid, 'Data Validation', i.orddt1||': Orddt, Year not exists', clock_timestamp()
+                        from    int$stg_SO_BARCODE
+                        where   date_trunc('day', orddt) = i.orddt1
+                        and     userid = p_userid;
+                end;
+
+                -- day status related c77hecking
+                -- Day check
+            end loop;
+        end;
+
+        v_mark := 8;
+        -- DOCNAME valodation           
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', userid, 'Data Validation', a.scheme_doc_format||': Scheme_doc_format, should be valid and non-extinct.', clock_timestamp()
+        from   int$stg_SO_BARCODE a
+        where  upper(a.scheme_doc_format) not in
+               (    SELECT upper(d.docname)
+                    from   admdocscheme d, admmenu_docscheme m
+                    where  d.doccode = m.doccode
+                    --and    m.menucode = 892
+                     AND     m.mdmenushortcode = 'SalesOrder'
+                    and    coalesce(d.ext,'N') = 'N'
+                    and    ( 0 = (select count(*)
+                                  from   admdocscheme d, admou_docscheme m
+                                  where  d.doccode = m.doccode
+                                  and    m.admsite_code = p_connect_site
+                                  and    coalesce(d.ext,'N') = 'N')
+                             or
+                             d.doccode in (select d.doccode
+                                           from   admdocscheme d, admou_docscheme m 
+                                           where  d.doccode = m.doccode  
+                                           and    m.admsite_code = p_connect_site
+                                           and    coalesce(d.ext,'N') = 'N'))
+                ) 
+        and     a.userid = p_userid;
+            
+        v_mark := 9;
+        -- scheme_docno chking
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'SO_BARCODE', userid, 'Data Validation',
+                a.scheme_doc_format||': Scheme_docno, can not be blank if scheme_doc_format is manual.',clock_timestamp()
+        from    int$stg_SO_BARCODE a
+        where (upper(a.scheme_doc_format) in ('MANUAL (GENERAL)','MANUAL (EXCISE)') and a.scheme_docno is null)
+        and     a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'SO_BARCODE', userid, 'Data Validation', a.scheme_doc_format||': Scheme_docno, maximum length allowed is 25 characters.', clock_timestamp()
+        from   int$stg_SO_BARCODE a
+        where  length(a.scheme_doc_format) > 25
+        and    a.userid = p_userid;
+
+        v_mark := 10;
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'SO_BARCODE', userid, 'Data Validation',
+                a.scheme_doc_format||': Scheme_docno, Scheme Doc No should be null, as it would be auto generated',clock_timestamp()
+        from    int$stg_SO_BARCODE a
+        where (upper(a.scheme_doc_format) not in ('MANUAL (GENERAL)', 'MANUAL (EXCISE)') and a.scheme_docno is not null)
+        and     a.userid = p_userid;
+
+        v_mark := 11;
+        -- scheme_docno unique chking
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), 0, 'SO_BARCODE', p_userid, 'Data Validation', a.scheme_doc_format||': Scheme_docno, duplicate number not allowed.',clock_timestamp()
+        from    int$stg_SO_BARCODE a, salordmain b
+        where   upper(a.scheme_docno) = upper(b.scheme_docno)
+        and     b.ycode = (SELECT ycode from admyear where a.orddt between dtfr and dtto)
+        and     a.userid = p_userid;
+
+        declare
+            c1 CURSOR FOR 
+                SELECT  distinct a.scheme_docno, a.scheme_doc_format
+                from    int$stg_SO_BARCODE a
+                where   upper(a.scheme_doc_format) in ('MANUAL (GENERAL)','MANUAL (EXCISE)') 
+                and     a.scheme_docno is not null
+                and     a.userid = p_userid;
+        begin
+            for i in c1 loop
+                insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                --select  int$error_log_code.nextval, 0, 'SO_BARCODE', p_userid, 'Data Validation', 'Duplicate Scheme Doc No('||i.scheme_docno||') for Manual doc scheme',sysdate
+                SELECT  nextval('int$error_log_code'), 0, 'SO_BARCODE', p_userid, 'Data Validation', i.scheme_doc_format||': Scheme_docno, duplicate number not allowed.', clock_timestamp()
+
+                where   exists (
+                                    SELECT count(*) 
+                                    from (
+                                                select  distinct 
+                                                        upper(scheme_doc_format), 
+                                                        upper(scheme_docno), 
+                                                        orddt, 
+                                                        upper(ref_doc_no), 
+                                                        upper(dest_site_shrtname), 
+                                                        upper(transporter_slid), 
+                                                        upper(agent_slid), 
+                                                        upper(reserve_inventory), 
+                                                        upper(remarks)
+                                                from    int$stg_SO_BARCODE a
+                                                where   upper(a.scheme_docno) = upper(i.scheme_docno)
+                                                and     a.userid = p_userid
+                                            ) a
+                                    having count(*) > 1                               
+                               );
+            end loop;
+        EXCEPTION WHEN no_data_found THEN
+        NULL;
+        end;
+
+        begin
+            for i in (SELECT distinct a.doccode, b.scheme_doc_format
+                      from   admdocscheme a, int$stg_so_barcode b
+                      where  upper(a.docname) = upper(b.scheme_doc_format)
+                      and    b.userid = p_userid)
+            loop
+                update int$stg_so_barcode
+                set    doccode = i.doccode
+                where  userid = p_userid
+                and    upper(scheme_doc_format) = upper(i.scheme_doc_format);
+            end loop;
+        EXCEPTION WHEN no_data_found THEN
+        NULL;
+        end;
+
+        v_mark := 12;
+        -- REF_DOC_NO
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.ref_doc_no||': ref_doc_no, maximum length allowed is 25 characters.',clock_timestamp()
+        from    int$stg_so_barcode a
+        where   userid = p_userid
+        and     length(ref_doc_no) > 25;
+
+        -- dest_site_shrtname
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.dest_site_shrtname||': dest_site_shrtname, maximum length allowed is 25 characters.', clock_timestamp()
+        from    int$stg_so_barcode a
+        where   userid = p_userid
+        and     length(dest_site_shrtname) > 25;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.dest_site_shrtname||': dest_site_shrtname, either invalid or extinct.', clock_timestamp()
+        from    int$stg_so_barcode a, admsite b
+        where   upper(a.dest_site_shrtname) = upper(b.shrtname)
+        and (b.code is null or coalesce(b.ext,'N') = 'Y')
+        and     a.userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.dest_site_shrtname||': dest_site_shrtname, customer is extinct.', clock_timestamp()
+        from    int$stg_so_barcode a, admsite b, finsl c
+        where   upper(a.dest_site_shrtname) = upper(b.shrtname)
+        and     b.slcode = c.slcode
+        and     coalesce(c.ext,'N') = 'Y'
+        and     a.userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.dest_site_shrtname||': dest_site_shrtname, Document site and owner site could not be same.', clock_timestamp()
+        from    int$stg_so_barcode a, admsite b
+        where   upper(a.dest_site_shrtname) = upper(b.shrtname)
+        and     b.code = p_connect_site
+        and     a.userid = p_userid;
+
+        
+        -- Check for valid site
+        v_mark := 13;
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.dest_site_shrtname||': dest_site_shrtname, Please select a valid Destination Site.', clock_timestamp()
+        from    int$stg_so_barcode a, admsite b
+        where   upper(a.dest_site_shrtname) = upper(b.shrtname)
+        and     upper(a.dest_site_shrtname) not in
+                    (
+                        SELECT distinct upper(SHRTNAME) from (
+                        -- SO site
+                        SELECT 'SO'                                         ord_site,
+                               ADMSITE.CODE 								SITE_CODE,
+                               ADMSITE.NAME 								SITE_NAME,
+                               FINSL.SLCODE,
+                               (CASE WHEN FINSL.SLNAME IS NOT NULL THEN FINSL.SLNAME||' : '||FINSL.SLID ELSE NULL END) 		SLNAME,
+                               ADMSITE.SITETYPE,
+                               ADMSITE.SHRTNAME 							SHRTNAME,
+                               ADMSITE.PSITE_ADMCMPTAX_CODE
+                        FROM admsite_ou, admsite
+						LEFT OUTER JOIN finsl ON (ADMSITE.SLCODE = FINSL.SLCODE)
+						WHERE ADMSITE.CODE   = ADMSITE_OU.ADMSITE_CODE 
+							AND ADMSITE_OU.REPLN_ADMSITE_CODE = p_connect_site
+							AND ADMSITE.CODE <> p_connect_site
+							AND ADMSITE.SITETYPE ='MS-CO-OM-TS' 
+							AND ADMSITE.EXT = 'N' 
+							AND ADMSITE_OU.EXT = 'N' 
+							AND coalesce(FINSL.EXT,'N') = 'N'
+                         
+UNION ALL
+
+                        SELECT 'SO'                                         ord_site,
+                               ADMSITE.CODE 								SITE_CODE,
+                               ADMSITE.NAME 								SITE_NAME,
+                               FINSL.SLCODE,
+                               (CASE WHEN FINSL.SLNAME IS NOT NULL THEN FINSL.SLNAME||' : '||FINSL.SLID ELSE NULL END) 		SLNAME,
+                               ADMSITE.SITETYPE,
+                               ADMSITE.SHRTNAME 							SHRTNAME,
+                               ADMSITE.PSITE_ADMCMPTAX_CODE
+                        FROM   ADMSITE, FINSL_OU, FINSL
+                        WHERE  ADMSITE.SLCODE = FINSL_OU.SLCODE
+                        AND	   FINSL_OU.SLCODE = FINSL.SLCODE
+                        AND	   FINSL_OU.ADMSITE_CODE = p_connect_site
+                        AND	   ADMSITE.SITETYPE IN ('US-CO-OM-TS','US-CO-OM')
+                        AND	   ADMSITE.CODE <> p_connect_site
+                        AND    ADMSITE.EXT = 'N' 
+                        AND    FINSL.EXT   = 'N'
+                        
+UNION ALL
+
+                        SELECT 'SO'                                         ord_site,
+                               ADMSITE.CODE 								SITE_CODE,
+                               ADMSITE.NAME 								SITE_NAME,
+                               FINSL.SLCODE,
+                               (CASE WHEN FINSL.SLNAME IS NOT NULL THEN FINSL.SLNAME||' : '||FINSL.SLID ELSE NULL END) 		SLNAME,
+                               ADMSITE.SITETYPE,
+                               ADMSITE.SHRTNAME 							SHRTNAME,
+                               ADMSITE.PSITE_ADMCMPTAX_CODE
+                        FROM   ADMSITE, FINSL
+                        WHERE  ADMSITE.SLCODE = FINSL.SLCODE
+                        AND	   ADMSITE.SITETYPE IN ('US-CO-OM-TS','US-CO-OM')
+                        AND    ADMSITE.EXT = 'N' 
+                        AND    FINSL.EXT   = 'N'	
+                        AND	   ADMSITE.CODE <> p_connect_site
+                        AND	   ADMSITE.SLCODE NOT IN (SELECT SLCODE FROM FINSL_OU)
+                        
+union all
+
+                        SELECT 'TO'                                         ord_site,
+                               ADMSITE.CODE 								SITE_CODE,
+                               ADMSITE.NAME 								SITE_NAME,
+                               FINSL.SLCODE,
+                               (CASE WHEN FINSL.SLNAME IS NOT NULL THEN FINSL.SLNAME||' : '||FINSL.SLID ELSE NULL END) 		SLNAME,
+                               ADMSITE.SITETYPE,
+                               ADMSITE.SHRTNAME 							SHRTNAME,
+                               ADMSITE.PSITE_ADMCMPTAX_CODE
+                        FROM admsite
+							LEFT OUTER JOIN finsl ON (ADMSITE.SLCODE = FINSL.SLCODE)
+							LEFT OUTER JOIN admou ON (ADMSITE.ADMOU_CODE = ADMOU.CODE)
+					WHERE (
+                                    (ADMSITE.ADMOU_CODE = p_connect_ou AND ADMSITE.ADMOU_CODE IS NOT NULL)
+                                    OR
+                                    ADMSITE.ADMOU_CODE IS NULL
+                                ) 
+							AND ADMSITE.CODE <> p_connect_site 
+							AND ADMSITE.SITETYPE = 'OS-OO-CM' 
+							AND (select sitetype from admsite where code= p_connect_site) IN ('OS-OO-CM') 
+							AND ADMSITE.EXT = 'N' 
+                         
+UNION ALL
+
+                        SELECT 'TO'                                         ord_site,
+                               ADMSITE.CODE 								SITE_CODE,
+                               ADMSITE.NAME 								SITE_NAME,
+                               FINSL.SLCODE,
+                               (CASE WHEN FINSL.SLNAME IS NOT NULL THEN FINSL.SLNAME||' : '||FINSL.SLID ELSE NULL END) 		SLNAME,
+                               ADMSITE.SITETYPE,
+                               ADMSITE.SHRTNAME 							SHRTNAME,
+                               ADMSITE.PSITE_ADMCMPTAX_CODE
+                               --,ADMOU.NAME OU_NAME
+                        FROM admsite_ou, admsite
+							LEFT OUTER JOIN finsl ON (ADMSITE.SLCODE = FINSL.SLCODE)
+							LEFT OUTER JOIN admou ON (ADMSITE.ADMOU_CODE = ADMOU.CODE)
+							WHERE ADMSITE.CODE   = ADMSITE_OU.ADMSITE_CODE 
+							AND ADMSITE_OU.REPLN_ADMSITE_CODE = p_connect_site  
+							AND (
+                                    (ADMSITE.ADMOU_CODE = p_connect_ou AND ADMSITE.ADMOU_CODE IS NOT NULL)
+                                    OR
+                                    ADMSITE.ADMOU_CODE IS NULL
+                               ) AND ADMSITE.CODE <> p_connect_site 
+							AND ADMSITE.SITETYPE IN ('MS-OO-CM','MS-CO-CM') 
+							AND (select sitetype from admsite where code= p_connect_site) IN ('OS-OO-CM') 
+							AND ADMSITE.EXT = 'N' AND ADMSITE_OU.EXT = 'N' AND coalesce(FINSL.EXT,'N') = 'N'
+                         
+UNION ALL
+
+                        SELECT 'TO'                                         ord_site,
+                               ADMSITE.CODE 								SITE_CODE,
+                               ADMSITE.NAME 								SITE_NAME,
+                               FINSL.SLCODE,
+                               (CASE WHEN FINSL.SLNAME IS NOT NULL THEN FINSL.SLNAME||' : '||FINSL.SLID ELSE NULL END) 		SLNAME,
+                               ADMSITE.SITETYPE,
+                               ADMSITE.SHRTNAME 							SHRTNAME,
+                               ADMSITE.PSITE_ADMCMPTAX_CODE
+                               --,ADMOU.NAME OU_NAME
+                        FROM admsite_ou, admsite
+LEFT OUTER JOIN finsl ON (ADMSITE.SLCODE = FINSL.SLCODE)
+LEFT OUTER JOIN admou ON (ADMSITE.ADMOU_CODE = ADMOU.CODE)
+WHERE ADMSITE.CODE   = ADMSITE_OU.REPLN_ADMSITE_CODE 
+AND ADMSITE_OU.ADMSITE_CODE = (select code from admsite where code= p_connect_site)  AND (
+                                    (ADMSITE.ADMOU_CODE = p_connect_ou AND ADMSITE.ADMOU_CODE IS NOT NULL)
+                                    OR
+                                    ADMSITE.ADMOU_CODE IS NULL
+                               ) AND ADMSITE.CODE <> p_connect_site AND ADMSITE.SITETYPE IN ('OS-OO-CM','MS-OO-CM','MS-CO-CM','MS-CO-OM-TS') AND (select sitetype from admsite where code= p_connect_site) IN ('MS-OO-CM','MS-CO-CM') AND ADMSITE.EXT = 'N' AND ADMSITE_OU.EXT = 'N' AND coalesce(FINSL.EXT,'N') = 'N' /*  NVL ADDED REV : 009  */
+ 
+UNION ALL
+
+                        SELECT 'TO'                                         ord_site,
+                               ADMSITE.CODE 								SITE_CODE,
+                               ADMSITE.NAME 								SITE_NAME,
+                               FINSL.SLCODE,
+                               (CASE WHEN FINSL.SLNAME IS NOT NULL THEN FINSL.SLNAME||' : '||FINSL.SLID ELSE NULL END) 		SLNAME,
+                               ADMSITE.SITETYPE,
+                               ADMSITE.SHRTNAME 							SHRTNAME,
+                               ADMSITE.PSITE_ADMCMPTAX_CODE
+                               --,ADMOU.NAME OU_NAME
+                        FROM admsite_ou, admsite
+LEFT OUTER JOIN finsl ON (ADMSITE.SLCODE = FINSL.SLCODE)
+LEFT OUTER JOIN admou ON (ADMSITE.ADMOU_CODE = ADMOU.CODE)
+WHERE ADMSITE.CODE   = ADMSITE_OU.REPLN_ADMSITE_CODE AND ADMSITE_OU.ADMSITE_CODE = p_connect_site  AND ADMSITE.CODE <> p_connect_site AND ADMSITE.SITETYPE IN ('OS-OO-CM','MS-OO-CM','MS-CO-CM','MS-CO-OM-TS') AND (select sitetype from admsite where code= p_connect_site) IN ('MS-CO-OM-TS') AND ADMSITE.EXT = 'N' AND ADMSITE_OU.EXT = 'N' AND coalesce(FINSL.EXT,'N') = 'N' /*  NVL ADDED REV : 009  */
+ 
+UNION ALL
+
+                        SELECT 'TO'                                         ord_site,
+                               ADMSITE.CODE 								SITE_CODE,
+                               ADMSITE.NAME 								SITE_NAME,
+                               FINSL.SLCODE,
+                               (CASE WHEN FINSL.SLNAME IS NOT NULL THEN FINSL.SLNAME||' : '||FINSL.SLID ELSE NULL END) 		SLNAME,
+                               ADMSITE.SITETYPE,
+                               ADMSITE.SHRTNAME 							SHRTNAME,
+                               ADMSITE.PSITE_ADMCMPTAX_CODE
+                               --,ADMOU.NAME OU_NAME
+                        FROM finsl_ou, finsl, admsite
+LEFT OUTER JOIN admou ON (ADMSITE.ADMOU_CODE = ADMOU.CODE)
+WHERE ADMSITE.SLCODE = FINSL_OU.SLCODE AND FINSL_OU.SLCODE = FINSL.SLCODE AND FINSL_OU.ADMSITE_CODE = p_connect_site AND ADMSITE.SITETYPE ='US-CO-CM' AND (select sitetype from admsite where code= p_connect_site) IN ('OS-OO-CM') AND ADMSITE.EXT = 'N' AND FINSL.EXT   = 'N'  AND (
+                                    (ADMSITE.ADMOU_CODE = p_connect_ou AND ADMSITE.ADMOU_CODE IS NOT NULL)
+                                    OR
+                                    ADMSITE.ADMOU_CODE IS NULL
+                               )
+                         
+UNION ALL
+
+                        SELECT 'TO'                                         ord_site,
+                               ADMSITE.CODE 								SITE_CODE,
+                               ADMSITE.NAME 								SITE_NAME,
+                               FINSL.SLCODE,
+                               (CASE WHEN FINSL.SLNAME IS NOT NULL THEN FINSL.SLNAME||' : '||FINSL.SLID ELSE NULL END) 		SLNAME,
+                               ADMSITE.SITETYPE,
+                               ADMSITE.SHRTNAME 							SHRTNAME,
+                               ADMSITE.PSITE_ADMCMPTAX_CODE
+                               --,ADMOU.NAME OU_NAME
+                        FROM finsl, admsite
+LEFT OUTER JOIN admou ON (ADMSITE.ADMOU_CODE = ADMOU.CODE)
+WHERE ADMSITE.SLCODE = FINSL.SLCODE AND ADMSITE.SITETYPE ='US-CO-CM' AND ADMSITE.EXT = 'N' AND FINSL.EXT   = 'N'  AND (
+                                    (ADMSITE.ADMOU_CODE = p_connect_ou AND ADMSITE.ADMOU_CODE IS NOT NULL)
+                                    OR
+                                    ADMSITE.ADMOU_CODE IS NULL
+                               ) AND (select sitetype from admsite where code= p_connect_site) IN ('OS-OO-CM') AND ADMSITE.SLCODE NOT IN (SELECT SLCODE FROM FINSL_OU)
+                         ) alias50
+                    )
+        and     a.userid = p_userid;
+
+        -- Populate values from site (LOV)
+        v_mark := 14;
+        declare
+            c1 CURSOR FOR
+                SELECT distinct ord_site, site_code, site_name, b.slcode, b.slname, b.sitetype, b.shrtname, b.psite_admcmptax_code 
+                from   (
+                            -- SO site
+                            SELECT 'SO'                                         ord_site,
+                                   ADMSITE.CODE 								SITE_CODE,
+                                   ADMSITE.NAME 								SITE_NAME,
+                                   FINSL.SLCODE,
+                                   (CASE WHEN FINSL.SLNAME IS NOT NULL THEN FINSL.SLNAME||' : '||FINSL.SLID ELSE NULL END) 		SLNAME,
+                                   ADMSITE.SITETYPE,
+                                   ADMSITE.SHRTNAME 							SHRTNAME,
+                                   ADMSITE.PSITE_ADMCMPTAX_CODE
+                            FROM admsite_ou, admsite
+LEFT OUTER JOIN finsl ON (ADMSITE.SLCODE = FINSL.SLCODE)
+WHERE ADMSITE.CODE   = ADMSITE_OU.ADMSITE_CODE AND ADMSITE_OU.REPLN_ADMSITE_CODE = p_connect_site AND ADMSITE.CODE <> p_connect_site AND ADMSITE.SITETYPE ='MS-CO-OM-TS' AND ADMSITE.EXT = 'N' AND ADMSITE_OU.EXT = 'N' AND coalesce(FINSL.EXT,'N') = 'N'
+                             
+UNION ALL
+
+                            SELECT 'SO'                                         ord_site,
+                                   ADMSITE.CODE 								SITE_CODE,
+                                   ADMSITE.NAME 								SITE_NAME,
+                                   FINSL.SLCODE,
+                                   (CASE WHEN FINSL.SLNAME IS NOT NULL THEN FINSL.SLNAME||' : '||FINSL.SLID ELSE NULL END) 		SLNAME,
+                                   ADMSITE.SITETYPE,
+                                   ADMSITE.SHRTNAME 							SHRTNAME,
+                                   ADMSITE.PSITE_ADMCMPTAX_CODE
+                            FROM   ADMSITE, FINSL_OU, FINSL
+                            WHERE  ADMSITE.SLCODE = FINSL_OU.SLCODE
+                            AND	   FINSL_OU.SLCODE = FINSL.SLCODE
+                            AND	   FINSL_OU.ADMSITE_CODE = p_connect_site
+                            AND	   ADMSITE.SITETYPE IN ('US-CO-OM-TS','US-CO-OM')
+                            AND	   ADMSITE.CODE <> p_connect_site
+                            AND    ADMSITE.EXT = 'N' 
+                            AND    FINSL.EXT   = 'N'
+                            
+UNION ALL
+
+                            SELECT 'SO'                                         ord_site,
+                                   ADMSITE.CODE 								SITE_CODE,
+                                   ADMSITE.NAME 								SITE_NAME,
+                                   FINSL.SLCODE,
+                                   (CASE WHEN FINSL.SLNAME IS NOT NULL THEN FINSL.SLNAME||' : '||FINSL.SLID ELSE NULL END) 		SLNAME,
+                                   ADMSITE.SITETYPE,
+                                   ADMSITE.SHRTNAME 							SHRTNAME,
+                                   ADMSITE.PSITE_ADMCMPTAX_CODE
+                            FROM   ADMSITE, FINSL
+                            WHERE  ADMSITE.SLCODE = FINSL.SLCODE
+                            AND	   ADMSITE.SITETYPE IN ('US-CO-OM-TS','US-CO-OM')
+                            AND    ADMSITE.EXT = 'N' 
+                            AND    FINSL.EXT   = 'N'	
+                            AND	   ADMSITE.CODE <> p_connect_site
+                            AND	   ADMSITE.SLCODE NOT IN (SELECT SLCODE FROM FINSL_OU)
+                            
+union all
+
+                            SELECT 'TO'                                         ord_site,
+                                   ADMSITE.CODE 								SITE_CODE,
+                                   ADMSITE.NAME 								SITE_NAME,
+                                   FINSL.SLCODE,
+                                   (CASE WHEN FINSL.SLNAME IS NOT NULL THEN FINSL.SLNAME||' : '||FINSL.SLID ELSE NULL END) 		SLNAME,
+                                   ADMSITE.SITETYPE,
+                                   ADMSITE.SHRTNAME 							SHRTNAME,
+                                   ADMSITE.PSITE_ADMCMPTAX_CODE --,
+                                   --ADMOU.NAME OU_NAME
+                            FROM admsite
+LEFT OUTER JOIN finsl ON (ADMSITE.SLCODE = FINSL.SLCODE)
+LEFT OUTER JOIN admou ON (ADMSITE.ADMOU_CODE = ADMOU.CODE)
+WHERE (
+                                        (ADMSITE.ADMOU_CODE = p_connect_ou AND ADMSITE.ADMOU_CODE IS NOT NULL)
+                                        OR
+                                        ADMSITE.ADMOU_CODE IS NULL
+                                    ) AND ADMSITE.CODE <> p_connect_site AND ADMSITE.SITETYPE = 'OS-OO-CM' AND (select sitetype from admsite where code= p_connect_site) IN ('OS-OO-CM') AND ADMSITE.EXT = 'N' 
+                             
+UNION ALL
+
+                            SELECT 'TO'                                         ord_site,
+                                   ADMSITE.CODE 								SITE_CODE,
+                                   ADMSITE.NAME 								SITE_NAME,
+                                   FINSL.SLCODE,
+                                   (CASE WHEN FINSL.SLNAME IS NOT NULL THEN FINSL.SLNAME||' : '||FINSL.SLID ELSE NULL END) 		SLNAME,
+                                   ADMSITE.SITETYPE,
+                                   ADMSITE.SHRTNAME 							SHRTNAME,
+                                   ADMSITE.PSITE_ADMCMPTAX_CODE
+                                   --,ADMOU.NAME OU_NAME
+                            FROM admsite_ou, admsite
+LEFT OUTER JOIN finsl ON (ADMSITE.SLCODE = FINSL.SLCODE)
+LEFT OUTER JOIN admou ON (ADMSITE.ADMOU_CODE = ADMOU.CODE)
+WHERE ADMSITE.CODE   = ADMSITE_OU.ADMSITE_CODE AND ADMSITE_OU.REPLN_ADMSITE_CODE = p_connect_site  AND (
+                                        (ADMSITE.ADMOU_CODE = p_connect_ou AND ADMSITE.ADMOU_CODE IS NOT NULL)
+                                        OR
+                                        ADMSITE.ADMOU_CODE IS NULL
+                                   ) AND ADMSITE.CODE <> p_connect_site AND ADMSITE.SITETYPE IN ('MS-OO-CM','MS-CO-CM') AND (select sitetype from admsite where code= p_connect_site) IN ('OS-OO-CM') AND ADMSITE.EXT = 'N' AND ADMSITE_OU.EXT = 'N' AND coalesce(FINSL.EXT,'N') = 'N'
+                             
+UNION ALL
+
+                            SELECT 'TO'                                         ord_site,
+                                   ADMSITE.CODE 								SITE_CODE,
+                                   ADMSITE.NAME 								SITE_NAME,
+                                   FINSL.SLCODE,
+                                   (CASE WHEN FINSL.SLNAME IS NOT NULL THEN FINSL.SLNAME||' : '||FINSL.SLID ELSE NULL END) 		SLNAME,
+                                   ADMSITE.SITETYPE,
+                                   ADMSITE.SHRTNAME 							SHRTNAME,
+                                   ADMSITE.PSITE_ADMCMPTAX_CODE
+                                   --,ADMOU.NAME OU_NAME
+                            FROM admsite_ou, admsite
+LEFT OUTER JOIN finsl ON (ADMSITE.SLCODE = FINSL.SLCODE)
+LEFT OUTER JOIN admou ON (ADMSITE.ADMOU_CODE = ADMOU.CODE)
+WHERE ADMSITE.CODE   = ADMSITE_OU.REPLN_ADMSITE_CODE AND ADMSITE_OU.ADMSITE_CODE =
+					(select code from admsite where code= p_connect_site)  AND (
+                                        (ADMSITE.ADMOU_CODE = p_connect_ou AND ADMSITE.ADMOU_CODE IS NOT NULL)
+                                        OR
+                                        ADMSITE.ADMOU_CODE IS NULL
+                                   ) AND ADMSITE.CODE <> p_connect_site AND ADMSITE.SITETYPE IN ('OS-OO-CM','MS-OO-CM','MS-CO-CM','MS-CO-OM-TS') AND (select sitetype from admsite where code= p_connect_site) IN ('MS-OO-CM','MS-CO-CM') AND ADMSITE.EXT = 'N' AND ADMSITE_OU.EXT = 'N' AND coalesce(FINSL.EXT,'N') = 'N' /*  NVL ADDED REV : 009  */
+ 
+UNION ALL
+
+                            SELECT 'TO'                                         ord_site,
+                                   ADMSITE.CODE 								SITE_CODE,
+                                   ADMSITE.NAME 								SITE_NAME,
+                                   FINSL.SLCODE,
+                                   (CASE WHEN FINSL.SLNAME IS NOT NULL THEN FINSL.SLNAME||' : '||FINSL.SLID ELSE NULL END) 		SLNAME,
+                                   ADMSITE.SITETYPE,
+                                   ADMSITE.SHRTNAME 							SHRTNAME,
+                                   ADMSITE.PSITE_ADMCMPTAX_CODE
+                                   --,ADMOU.NAME OU_NAME
+                            FROM admsite_ou, admsite
+LEFT OUTER JOIN finsl ON (ADMSITE.SLCODE = FINSL.SLCODE)
+LEFT OUTER JOIN admou ON (ADMSITE.ADMOU_CODE = ADMOU.CODE)
+WHERE ADMSITE.CODE   = ADMSITE_OU.REPLN_ADMSITE_CODE AND ADMSITE_OU.ADMSITE_CODE = p_connect_site  AND ADMSITE.CODE <> p_connect_site AND ADMSITE.SITETYPE IN ('OS-OO-CM','MS-OO-CM','MS-CO-CM','MS-CO-OM-TS') AND (select sitetype from admsite where code= p_connect_site) IN ('MS-CO-OM-TS') AND ADMSITE.EXT = 'N' AND ADMSITE_OU.EXT = 'N' AND coalesce(FINSL.EXT,'N') = 'N' /*  NVL ADDED REV : 009  */
+ 
+UNION ALL
+
+                            SELECT 'TO'                                         ord_site,
+                                   ADMSITE.CODE 								SITE_CODE,
+                                   ADMSITE.NAME 								SITE_NAME,
+                                   FINSL.SLCODE,
+                                   (CASE WHEN FINSL.SLNAME IS NOT NULL THEN FINSL.SLNAME||' : '||FINSL.SLID ELSE NULL END) 		SLNAME,
+                                   ADMSITE.SITETYPE,
+                                   ADMSITE.SHRTNAME 							SHRTNAME,
+                                   ADMSITE.PSITE_ADMCMPTAX_CODE
+                                   --,ADMOU.NAME OU_NAME
+                            FROM finsl_ou, finsl, admsite
+LEFT OUTER JOIN admou ON (ADMSITE.ADMOU_CODE = ADMOU.CODE)
+WHERE ADMSITE.SLCODE = FINSL_OU.SLCODE AND FINSL_OU.SLCODE = FINSL.SLCODE AND FINSL_OU.ADMSITE_CODE = p_connect_site AND ADMSITE.SITETYPE ='US-CO-CM' AND (select sitetype from admsite where code= p_connect_site) IN ('OS-OO-CM') AND ADMSITE.EXT = 'N' AND FINSL.EXT   = 'N'  AND (
+                                        (ADMSITE.ADMOU_CODE = p_connect_ou AND ADMSITE.ADMOU_CODE IS NOT NULL)
+                                        OR
+                                        ADMSITE.ADMOU_CODE IS NULL
+                                   )
+                             
+UNION ALL
+
+                            SELECT 'TO'                                         ord_site,
+                                   ADMSITE.CODE 								SITE_CODE,
+                                   ADMSITE.NAME 								SITE_NAME,
+                                   FINSL.SLCODE,
+                                   (CASE WHEN FINSL.SLNAME IS NOT NULL THEN FINSL.SLNAME||' : '||FINSL.SLID ELSE NULL END) 		SLNAME,
+                                   ADMSITE.SITETYPE,
+                                   ADMSITE.SHRTNAME 							SHRTNAME,
+                                   ADMSITE.PSITE_ADMCMPTAX_CODE
+                                   --,ADMOU.NAME OU_NAME
+                            FROM finsl, admsite
+LEFT OUTER JOIN admou ON (ADMSITE.ADMOU_CODE = ADMOU.CODE)
+WHERE ADMSITE.SLCODE = FINSL.SLCODE AND ADMSITE.SITETYPE ='US-CO-CM' AND ADMSITE.EXT = 'N' AND FINSL.EXT   = 'N'  AND (
+                                        (ADMSITE.ADMOU_CODE = p_connect_ou AND ADMSITE.ADMOU_CODE IS NOT NULL)
+                                        OR
+                                        ADMSITE.ADMOU_CODE IS NULL
+                                   ) AND (select sitetype from admsite where code= p_connect_site) IN ('OS-OO-CM') AND ADMSITE.SLCODE NOT IN (SELECT SLCODE FROM FINSL_OU)
+                         ) b, int$stg_so_barcode a
+                where   upper(a.dest_site_shrtname) = upper(b.shrtname)
+                and     a.userid = p_userid;
+
+            c2 CURSOR FOR
+                SELECT distinct a.pcode, b.saletype
+                from   int$stg_so_barcode a, finsl b
+                where  pcode = b.slcode 
+                and    a.userid = p_userid;
+        begin
+            for i in c1 loop
+                update int$stg_so_barcode a
+                set    admsite_code = i.site_code,
+                       sitetype = i.sitetype,
+                       psite_admcmptax_code = i.psite_admcmptax_code,
+                       pcode = i.slcode
+                where  upper(a.dest_site_shrtname) = upper(i.shrtname)
+                and    a.userid = p_userid;
+            end loop;
+
+            for i in c2 loop
+                update int$stg_so_barcode a
+                set    saletype = i.saletype
+                where  pcode = i.pcode
+                and    a.userid = p_userid;
+            end loop;
+
+            update int$stg_so_barcode a
+            set    saletype = 'C'
+            where  pcode is null
+            and    a.userid = p_userid;
+        EXCEPTION WHEN no_data_found THEN
+        NULL;
+        end;
+
+        -- Populate values from site (WVI)
+        v_mark := 15;
+        declare
+            v_trpcode       bigint;
+
+            c1 CURSOR FOR 
+                SELECT distinct 
+                       a.admsite_code,
+                       p.slcode, 
+                       p.agcode,
+                       p.agrate,
+                       p.trpcode,
+                       p.pricetype,
+                       p.pricelistcode,
+                       coalesce(p.cramt, 0)                 cramt,
+                       p.saletype,
+                       p.markup_selling_price			discount_factor,
+                       p.markup_selling_round_off		price_roundoff,
+                       p.markup_selling_limit			roundoff_limit
+                from   finsl p, int$stg_so_barcode a, fingl g
+                where  p.slcode = a.pcode	
+                and	   p.glcode = g.glcode
+                and	   g.srctype = 'R'
+                and	   p.slcode in (SELECT s.slcode from admsite s)
+                and	   p.saletype is not null
+			    and	   p.ext 		= 'N'
+			    and    a.userid = p_userid;
+        begin
+            for i in c1 loop
+                update int$stg_so_barcode a
+                set    agcode = i.agcode,
+                       agrate = i.agrate,
+                       trpcode = i.trpcode,
+                       pricetype = i.pricetype,
+                       pricelistcode = i.pricelistcode,
+                       --nvl (p.cramt, 0)                 cramt,
+                       saletype = i.saletype,
+                       discount_factor = i.discount_factor,
+                       price_roundoff = i.price_roundoff,
+                       roundoff_limit = i.roundoff_limit
+                where  pcode = i.slcode
+                and    a.userid = p_userid;
+
+                -- populate trpcode from site>finsl (SO) 
+                begin
+                    v_trpcode := null;
+
+                    select t.trpcode
+                    into STRICT   v_trpcode 
+                    from   admsite t, finsl p
+                    where  t.trpcode = p.trpcode
+                    and    p.slcode = i.slcode
+                    and    t.code = i.admsite_code;
+                exception
+                    when no_data_found then
+                        begin
+                            select p.trpcode
+                            into STRICT   v_trpcode
+                            from   finsl p
+                            where  p.slcode = i.slcode;
+                        exception
+                            when no_data_found then null;
+                        end;
+                end;
+            end loop;
+        end;
+
+        -- LOC_PRO_FLOW_TERM_PRCLST
+        v_mark := 16;
+        declare
+            v_pricelistcode	        salpricelistmain.pricelistcode%type;
+            v_termcode              saltermmain.saltermcode%type;
+            v_tradegrp_code         fintradegrp.code%type;
+            v_glcode                fingl.glcode%type;
+            v_slcode                finsl.slcode%type;
+            v_chng_hdr              saltermmain.header_level_ischangeable%type;
+            v_chng_line             saltermmain.line_level_ischangeable%type;
+            v_formcode              finform.formcode%type;
+            v_flag                  record;
+
+            v_pricetype             salordmain.pricetype%type;
+            v_discount_factor       salordmain.discount_factor%type;
+            v_incl_vat_in_dist      salordmain.incl_vat_in_dist%type;
+            v_discount_mode         salordmain.discount_mode%type;
+            v_discount_basis        salordmain.discount_basis%type;
+            v_price_roundoff        salordmain.price_roundoff%type;
+            v_roundoff_limit        salordmain.roundoff_limit%type;
+            v_cmptax_code_basis     salordmain.cmptax_code_basis%type;
+
+            c1 CURSOR FOR
+                SELECT * 
+                from   int$stg_so_barcode 
+                where  admsite_code is not null
+                and    userid = p_userid;
+        begin
+            for i in c1 loop
+                --v_flag := 
+				call db_pkg_get_data_snd$get_tradegrp_term(
+                                    -- in parameters
+                                    p_connect_ou,
+                                    p_connect_site,
+                                    i.admsite_code,
+                                    i.sitetype,
+                                    i.pcode,
+                                    -- out parameters
+                                    v_termcode,
+                                    v_tradegrp_code,
+                                    v_formcode,
+                                    v_pricelistcode
+                                    );
+
+                if  v_pricelistcode is not null then
+					select  price_type,
+                            discount_factor,
+                            include_vat_in_discount,
+                            discount_mode,
+                            discount_basis,
+                            net_price_multiples_of,
+                            net_price_round_limit,
+                            cmptax_code_basis
+                    into STRICT    v_pricetype,
+                            v_discount_factor,
+                            v_incl_vat_in_dist,
+                            v_discount_mode,
+                            v_discount_basis,
+                            v_price_roundoff,
+                            v_roundoff_limit,
+                            v_cmptax_code_basis
+                    from    salpricelistmain
+                    where   pricelistcode = v_pricelistcode;
+                end if;
+
+                if  v_pricetype = 'F' then
+                    --DA('FIFO price type is not allowed for outright sale. Please select another Price list to proceed.');
+                    --:SALORDMAIN.SITENAME 				:= NULL;
+                    --:SALORDMAIN.ADMSITE_CODE 		:= NULL;
+                    --:SALORDMAIN.PNAME 					:= NULL;
+                    --:SALORDMAIN.PCODE 					:= NULL;
+                    --:SALORDMAIN.PRICE_LIST_NAME	:= NULL;
+                    v_discount_factor   := null;
+                    v_incl_vat_in_dist  := null;
+                    v_discount_mode     := null;
+                    v_discount_basis    := null;
+                    v_price_roundoff    := null;
+                    v_roundoff_limit    := null;
+                    v_cmptax_code_basis := null;
+                end if;
+
+                if 	v_termcode is null then
+                    --DA('No Sales Term is associated with Customer, Site, OU Combinations.');
+                    --if 	:global.allow_sales_term_change = 'N' then
+                        -- term change not allowed else allowed
+                    --end if;
+                    null;
+                else
+                    begin
+                        select s.header_level_ischangeable, s.line_level_ischangeable, s.sales_glcode, s.sales_slcode
+                        into STRICT   v_chng_hdr, v_chng_line, v_glcode, v_slcode
+                        from   saltermmain s
+                        where  s.saltermcode = v_termcode;
+                    exception
+                        when no_data_found then null;
+                    end;
+                end if;
+
+                update int$stg_so_barcode
+                set    pricetype = v_pricetype,
+                       pricelistcode = v_pricelistcode,
+                       discount_factor = v_discount_factor,
+                       incl_vat_in_dist = v_incl_vat_in_dist,
+                       discount_mode = v_discount_mode,
+                       discount_basis = v_discount_basis,
+                       price_roundoff = v_price_roundoff,
+                       roundoff_limit = v_roundoff_limit,
+                       cmptax_code_basis = v_cmptax_code_basis,
+                       saltermcode = v_termcode,
+                       chng_hdr = v_chng_hdr,
+                       chng_line = v_chng_line,
+                       glcode = v_glcode,
+                       slcode = v_slcode,
+                       saltradegrp_code = v_tradegrp_code,
+                       formcode = v_formcode
+                where  lineno = i.lineno;
+            end loop;
+        end;
+
+        v_mark := 17;
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', 'TAX Region not defined for the selected site.', clock_timestamp()
+        from    int$stg_so_barcode a
+        where   coalesce(a.incl_vat_in_dist,'N') = 'Y'
+        and     a.psite_admcmptax_code is null
+        and     a.userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', 'No Sales Term is associated with Customer, Site, OU Combinations.', clock_timestamp()
+        from    int$stg_so_barcode a
+        where   a.saltermcode is null
+        and     a.saletype = 'O'
+        and     a.userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.dest_site_shrtname||': dest_site_shrtname, Pricelist is not defined at any level for the Destination Site.', clock_timestamp()
+        from    int$stg_so_barcode a
+        where   pricelistcode is null
+        and     a.userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.dest_site_shrtname||': dest_site_shrtname, Trade Group is not defined at any level for the Destination Site.', clock_timestamp()
+        from    int$stg_so_barcode a
+        where   saltradegrp_code is null
+        and     a.saletype = 'O'
+        and     a.userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.dest_site_shrtname||': dest_site_shrtname, Sales Term is not defined at any level for the Destination Site.', clock_timestamp()
+        from    int$stg_so_barcode a
+        where   saltermcode is null
+        and     a.saletype = 'O'
+        and     a.userid = p_userid;
+
+        -- Transporter
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.transporter_slid||': transporter_slid, Transporter doesn''t exist or extinct.', clock_timestamp()
+        FROM int$stg_so_barcode a LEFT OUTER JOIN finsl p 
+		ON (upper(a.transporter_slid) = upper(p.slid ))
+WHERE (p.slcode is null or coalesce(p.ext,'N') = 'Y') and a.transporter_slid is not null and a.userid = p_userid;
+
+        -- Transporter SLID updation
+        v_mark := 18;
+        declare
+            c1 CURSOR FOR
+                SELECT b.slcode trpcode, upper(a.transporter_slid) transporter_slid1, a.lineno
+                from   int$stg_so_barcode a, finsl b
+                where  upper(a.transporter_slid) = upper(b.slid) 
+                and    userid = p_userid;
+        begin
+            for i in c1 loop
+                update int$stg_so_barcode
+                set    trpcode = i.trpcode
+                where  lineno = i.lineno
+                and    userid = p_userid;
+            end loop;
+        EXCEPTION WHEN no_data_found THEN
+        NULL;
+        end;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.transporter_slid||': transporter_slid, Invalid transporter.', clock_timestamp()
+        from    int$stg_so_barcode a, finsl p, admcls c
+        where   upper(a.transporter_slid) = upper(p.slid)
+        and     p.clscode = c.clscode 
+        and     c.clstype <> 'T'
+        and     a.userid = p_userid;
+
+        -- Agent
+        v_mark := 19;
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.agent_slid||': agent_slid, Agent doesn''t exist or extinct.', clock_timestamp()
+        FROM int$stg_so_barcode a LEFT OUTER JOIN finsl p 
+		ON (upper(a.agent_slid) = upper(p.slid ))
+WHERE (p.slcode is null or coalesce(p.ext,'N') = 'Y') and a.agent_slid is not null and a.userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.agent_slid||': agent_slid, Invalid agent.', clock_timestamp()
+        from    int$stg_so_barcode a, finsl p, admcls c
+        where   upper(a.agent_slid) = upper(p.slid)
+        and     p.clscode = c.clscode 
+        and     c.clstype <> 'A'
+        and     a.userid = p_userid;
+
+        -- Agent SLID updation
+        declare 
+            c1 CURSOR FOR
+                SELECT b.slcode agcode, b.agrate, upper(a.agent_slid) agent_slid1, a.lineno
+                from   int$stg_so_barcode a, finsl b
+                where  upper(a.agent_slid) = upper(b.slid) 
+                and    userid = p_userid;
+        begin
+            for i in c1 loop
+                update int$stg_so_barcode
+                set    agcode = i.agcode,
+                       agrate = i.agrate
+                where  lineno = i.lineno
+                and    userid = p_userid;
+            end loop;
+        EXCEPTION WHEN no_data_found THEN
+        NULL;
+        end;
+
+        -- reserve_inventory
+        v_mark := 20;
+        select reserve_inv
+        into STRICT   v_site_reserve_inv
+        from   admsite 
+        where  code = p_connect_site;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.reserve_inventory||': reserve_inventory, it is mandatory as per owner site settings. You can not set it as ''No''.', clock_timestamp()
+        from    int$stg_so_barcode a
+        where   coalesce(v_site_reserve_inv,'N') = 'M'
+        --and     upper(nvl(a.reserve_inventory,'NO')) <> 'YES'
+        AND       a.reserve_inventory  = 'NO'
+        and     a.userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.reserve_inventory||': reserve_inventory, it is not required as per owner site settings. You can not set it as ''Yes''.', clock_timestamp()
+        from    int$stg_so_barcode a
+        where   coalesce(v_site_reserve_inv,'N') = 'N'
+        and     upper(coalesce(a.reserve_inventory,'NO')) <> 'NO'
+        and     a.userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.reserve_inventory||': reserve_inventory, Invalid value.', clock_timestamp()
+        from    int$stg_so_barcode a
+        where   upper(a.reserve_inventory) not in ('YES', 'NO')
+        and     a.userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.reserve_inventory||': reserve_inventory ,do not match with Site master settings .', clock_timestamp()
+        from    int$stg_so_barcode a
+        where     a.userid = p_userid
+        and      a.reserve_inventory  is not null
+        and ( v_site_reserve_inv = 'M'
+                   AND
+                   UPPER(a.reserve_inventory) = 'NO'
+                 ) 
+                 OR ( v_site_reserve_inv = 'N'
+                   AND
+                   UPPER(a.reserve_inventory) = 'YES'
+                 );
+
+        declare 
+            c1 CURSOR FOR
+                SELECT a.reserve_inventory, a.lineno, S.reserve_inv reserve_inv
+                from   int$stg_so_barcode a ,ADMSITE S
+                where  userid = p_userid
+                AND    S.CODE = p_connect_site;
+        begin
+            for i in c1 loop
+                update int$stg_so_barcode
+                set    reserve_inv = 'N'--substr(upper(nvl(reserve_inventory,'NO')),1,1)
+                where  lineno = i.lineno
+                AND    coalesce(i.reserve_inv,'N') <> 'M'
+                AND    reserve_inventory IS NULL;
+
+                update int$stg_so_barcode
+                set    reserve_inv = 'Y'--substr(upper(nvl(reserve_inventory,'NO')),1,1)
+                where  lineno = i.lineno
+                AND    coalesce(i.reserve_inv,'N') = 'M'
+                AND    reserve_inventory IS NULL;
+
+                 update int$stg_so_barcode
+                set    reserve_inv = 'N'--substr(upper(nvl(reserve_inventory,'NO')),1,1)
+                where  lineno = i.lineno
+                AND    coalesce(i.reserve_inv,'N') = 'N'
+                AND    UPPER(reserve_inventory) = 'NO';
+
+                call ERRAUDIT(555,555,5555,i.reserve_inv);
+                --ADMERRAUDIT
+                update int$stg_so_barcode
+                set    reserve_inv = 'Y'--substr(upper(nvl(reserve_inventory,'NO')),1,1)
+                where  lineno = i.lineno
+                AND    coalesce(i.reserve_inv,'N') <> 'N'
+                AND    UPPER(reserve_inventory) = 'YES';
+
+                     
+                
+                update int$stg_so_barcode
+                set    reserve_inv = 'N'--substr(upper(nvl(reserve_inventory,'NO')),1,1)
+                where  lineno = i.lineno
+                AND    coalesce(i.reserve_inv,'N') <> 'M'
+                AND    UPPER(reserve_inventory) = 'NO';
+
+                
+            end loop;
+        EXCEPTION WHEN no_data_found THEN
+        NULL;
+        end;
+
+             
+        -- remarks
+        v_mark := 21;
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.remarks||': remarks, Order Remarks cannot be greater than 500 characters.', clock_timestamp()
+        from    int$stg_so_barcode a
+        where   length(remarks) > 500
+        and     a.userid = p_userid;
+
+        -- Detail section
+        -- Article code
+        v_mark := '21.1';
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.article_code::text||': article_code, Article doesn''t exist or extinct.', clock_timestamp()
+        FROM int$stg_so_barcode a
+LEFT OUTER JOIN invarticle p ON (a.article_code = p.code)
+WHERE (p.code is null or coalesce(p.ext,'N') = 'Y') and a.article_code is not null and a.userid = p_userid;
+
+        v_mark := '21.2';
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.article_name||': article_name, Article doesn''t exist or extinct.', clock_timestamp()
+        FROM int$stg_so_barcode a LEFT OUTER JOIN invarticle p 
+		ON (upper(a.article_name) = upper(p.name ))
+WHERE (p.code is null or coalesce(p.ext,'N') = 'Y') and a.article_name is not null and a.userid = p_userid;
+
+        -- Populate article code
+        v_mark := '21.3';
+        declare
+            c1 CURSOR FOR
+                SELECT distinct b.name, b.code
+                from   int$stg_so_barcode a, invarticle b
+                where  upper(a.article_name) = upper(b.name)
+                and    userid = p_userid;
+        begin
+            for i in c1 loop
+                update int$stg_so_barcode
+                set    article_code = i.code
+                where  upper(article_name) = upper(i.name);
+            end loop;
+        EXCEPTION WHEN no_data_found THEN
+        NULL;
+        end;
+
+        v_mark := '21.4';
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', ': Item information is missing.', clock_timestamp()
+        from    int$stg_so_barcode a
+        where   a.article_code is null
+        and     a.barcode is null
+        and     a.userid = p_userid;
+
+        -- Item derivation
+        v_mark := '21.5';
+        declare
+            c1 CURSOR FOR
+                SELECT distinct a.article_code, a.admsite_code
+                from   int$stg_so_barcode a
+                where  a.article_code is not null 
+                and    a.userid = p_userid;
+        begin
+            for i in c1 loop
+                begin
+                    select icode
+                    into STRICT   v_icode
+                    from   invdcdet d
+                    where  code = (
+                                    SELECT coalesce(max(code),0)
+                                    from   invdcmain t, invdcdet t1, invitem  i1
+                                    where  t.dccode             = t1.dccode
+                                    and    t1.icode             = i1.icode
+                                    and    i1.invarticle_code    = i.article_code
+                                    and    i1.ext                = 'N'
+                                    and    t.admsite_code       = i.admsite_code
+                                    and    t.admsite_code_owner = p_connect_site
+                                   );
+                exception
+                    when no_data_found then
+                        begin
+                            select icode
+                            into STRICT   v_icode
+                            from   invdcdet d
+                            where  code = (
+                                                SELECT coalesce(max(code),0)
+                                                from   invdcmain t, invdcdet t1, invitem i1
+                                                where  t.dccode             = t1.dccode
+                                                and    t1.icode             = i1.icode
+                                                and    i1.invarticle_code    = i.article_code
+                                                and    i1.ext                = 'N'
+                                                and    t.admsite_code_owner = p_connect_site
+                                            );
+                        exception
+                            when no_data_found then
+                                begin
+                                    select i1.icode
+                                    into STRICT   v_icode
+                                    from   invitem i1
+                                    where  i1.ctid = (
+                                                           SELECT max(ctid)
+                                                           from   invitem i2
+                                                           where  i2.invarticle_code = i.article_code
+                                                           and    i2.ext = 'N'
+                                                           and    i2.generated = (
+                                                                                     SELECT max(i3.generated)
+                                                                                     from   invitem i3
+                                                                                     where  i3.invarticle_code = i.article_code
+                                                                                     and    i3.ext             = 'N'
+                                                                                  )
+                                                         );
+                                exception
+                                    when no_data_found then
+                                        v_icode := null;
+                                    when others then
+                                        v_icode := null;
+                                end;
+                            when others then
+                                v_icode := null;
+                        end;
+                    when others then
+					errmsg := sqlerrm;
+                        v_icode := null;
+                end;
+
+                if  v_icode is not null then
+                    update int$stg_so_barcode
+                    set    det_icode = v_icode
+                    where  article_code = i.article_code 
+                    and    admsite_code = i.admsite_code
+                    and    userid = p_userid;
+                end if;
+            end loop;
+        end;
+
+        v_mark := '21.6';
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.article_code:: text||': article_code, No item is available under this Article.', clock_timestamp()
+        from    int$stg_so_barcode a
+        where   a.det_icode is null
+        and     a.article_code is not null
+        and     a.userid = p_userid;
+
+        -- barcode
+        v_mark := 22;
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.barcode||': barcode, Item doesn''t exist or is extinct.', clock_timestamp()
+        from    int$stg_so_barcode a
+        where   a.lineno not in 
+                    (
+                        SELECT  coalesce(a.lineno,0) lineno
+                        from    int$stg_so_barcode a, invitem b
+                        where   ((UPPER(a.barcode) = b.icode) or (UPPER(a.barcode) = b.barcode))
+                        and     coalesce(b.ext,'N') = 'N'
+                        and     a.userid = p_userid
+                    )
+        and     barcode IS NOT NULL
+        and     a.userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.barcode||': barcode, Item selection is required.', clock_timestamp()
+        from    int$stg_so_barcode a
+        where   a.barcode is null
+        and     a.article_code is null
+        and     a.userid = p_userid;
+		
+        declare 
+            c1 CURSOR FOR
+                SELECT a.barcode, a.lineno, b.icode, mrp rsp
+                from   int$stg_so_barcode a, invitem b
+                where (
+                            upper(a.barcode) = upper(b.barcode)
+                            or 
+                            upper(a.barcode) = upper(b.icode)
+                            or
+                            a.det_icode = b.icode
+                        )
+                and    a.userid = p_userid;
+        begin
+            for i in c1 loop
+                update int$stg_so_barcode
+                set    det_icode = i.icode,
+                       det_rsp = i.rsp
+                where  lineno = i.lineno;
+            end loop;
+        EXCEPTION WHEN no_data_found THEN
+        NULL;
+        end;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.so_mode||': so_mode, invalid SO mode. Valid modes are Article/Barcode.', clock_timestamp()
+        from    int$stg_so_barcode a
+        where   upper(coalesce(a.so_mode,'x')) not in ('ARTICLE', 'BARCODE')
+        and     a.userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.Barcode||': barcode, can not provide barcode in article mode.', clock_timestamp()
+        from    int$stg_so_barcode a
+        where   upper(a.so_mode) = 'ARTICLE'
+        and     a.barcode is not null
+        and     a.userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', coalesce(a.article_name,a.article_code::text)||': article, can not provide article in barcode mode.', clock_timestamp()
+        from    int$stg_so_barcode a
+        where   upper(a.so_mode) = 'BARCODE'
+        and (a.article_code is not null or a.article_name is not null)
+        and     a.userid = p_userid;
+
+        -- qty
+        v_mark := 23;
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.qty :: text||': qty, Quantity cannot be blank.', clock_timestamp()
+        from    int$stg_so_barcode a
+        where   a.qty is null
+        and     a.userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.qty::text||': qty, Quantity should be greater than 0.', clock_timestamp()
+        from    int$stg_so_barcode a
+        where   a.qty <= 0
+        and     a.userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.qty::text||': qty, Quantity must be a multiple of the item scan unit..', clock_timestamp()
+        from    int$stg_so_barcode a, invitem b
+        where (
+                    upper(a.barcode) = upper(b.barcode)
+                    or
+                    upper(a.barcode) = upper(b.icode)
+                )
+        and     mod(a.qty, b.barunit) <> 0
+        and     a.userid = p_userid;
+
+        -- item_remarks
+        v_mark := 24;
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.item_remarks||': item_remarks, Order Remarks cannot be greater than 500 characters.', clock_timestamp()
+        from    int$stg_so_barcode a
+        where   length(item_remarks) > 500
+        and     a.userid = p_userid;
+
+        -- derive values from item
+        declare
+            v_error                 varchar(2000);
+            v_rate                  bigint;
+            v_qty                   bigint;
+            v_del_recno             bigint;
+            v_find_recno            bigint;
+            v_newitem               char(1):='Y';
+            v_barunit               invitem.barunit%type;
+
+            v_taxrate               double precision; --fintaxdet.rate%type;
+            v_taxamt                double precision;
+            v_net_rate              double precision;
+            v_discount              double precision;
+            v_roundoff              double precision;
+            v_basic_rate            double precision;
+            v_discount_factor       double precision;
+
+            v_psite_admcmptax_code  bigint;
+            v_ou_admcmptax_code     bigint;
+
+            c1 CURSOR FOR 
+                SELECT * 
+                from   int$stg_so_barcode
+                where  userid = p_userid;
+        begin
+            for i in c1 loop
+                SELECT psite_admcmptax_code
+                INTO STRICT   v_psite_admcmptax_code
+                FROM   admsite
+                WHERE  code = i.admsite_code;
+
+                SELECT psite_admcmptax_code
+                INTO STRICT   v_ou_admcmptax_code
+                FROM   admsite
+                WHERE  code = p_connect_site;
+
+                select barunit into STRICT v_barunit
+                from   invitem 
+                where  icode = i.det_icode;
+
+                call db_pro_item_rate_disc_roff(
+                            i.det_icode,
+                            i.orddt,
+                            i.pricelistcode,
+                            v_psite_admcmptax_code,
+                            v_ou_admcmptax_code,
+                            'NEW',
+                            p_connect_ou,
+                            v_barunit,
+                            i.admsite_code,
+                            p_connect_site,
+                            i.pcode,
+                            'C',
+                            null,
+                            null,
+                            v_taxrate,
+                            v_taxamt,
+                            v_net_rate,
+                            v_discount,
+                            v_roundoff,
+                            v_basic_rate,
+                            v_discount_factor,
+                            i.saltradegrp_code,
+                            i.formcode
+                        );
+
+                update int$stg_so_barcode 
+                set    det_rate = round((v_net_rate)::numeric,2),
+                       det_taxrate = v_taxrate,
+                       det_discount = v_discount,
+                       det_roundoff = v_roundoff,
+                       det_basic_rate = v_basic_rate,
+                       det_factor = v_discount_factor
+                where   lineno = i.lineno;
+
+                update int$stg_so_barcode
+                set    det_net_rate = case 
+                                        when i.discount_mode = 'U' then (coalesce(i.det_basic_rate,0) + coalesce(i.det_discount,0))
+                                        else (coalesce(i.det_basic_rate,0) - coalesce(i.det_discount,0))
+                                      end
+                where   lineno = i.lineno;
+            end loop;
+        EXCEPTION WHEN no_data_found THEN
+        NULL;
+        end;
+
+          DECLARE
+         c0 CURSOR FOR
+                SELECT upper(scheme_doc_format) scheme_doc_format1 ,
+                           upper(scheme_docno) scheme_docno1 ,
+                           orddt,
+                           upper(dest_site_shrtname) dest_site_shrtname1 ,
+                           upper(ref_doc_no) ref_doc_no1 ,
+                           upper(transporter_slid) transporter_slid1, 
+                           upper(agent_slid) agent_slid1,
+                           upper(reserve_inv) ,
+                           upper(remarks) REMARKS1, 
+                           DET_ICODE,
+                          COUNT(DET_ICODE)
+                FROM int$stg_so_barcode
+               WHERE userid = 2448
+            GROUP BY upper(scheme_doc_format) ,
+                           upper(scheme_docno) ,
+                           orddt,
+                           upper(dest_site_shrtname) ,
+                           upper(ref_doc_no) ,
+                           upper(transporter_slid)  , 
+                           upper(agent_slid) ,
+                           upper(reserve_inv) ,
+                           upper(remarks) ,
+                           DET_ICODE 
+              HAVING COUNT(*) > 1
+            ORDER BY 1, 2;
+      BEGIN
+         FOR i IN c0
+         LOOP
+            INSERT INTO int$error_log(code,
+                                       lineno,
+                                       classname,
+                                       userid,
+                                       errortype,
+                                       errordesc,
+                                       createdon)
+               SELECT nextval('int$error_log_code'),
+                      lineno,
+                      'SO_BARCODE',
+                      userid,
+                      'Data Validation',
+                      'Duplicate item information (' || DET_ICODE || ')',
+                      clock_timestamp()
+                 FROM int$stg_so_barcode a
+                WHERE     userid = p_userid
+                 and     orddt = i.orddt
+                  and    upper(scheme_doc_format) = i.scheme_doc_format1
+                 and (i.scheme_docno1 is null or upper(a.scheme_docno) = i.scheme_docno1)
+                  and    upper(dest_site_shrtname) = i.dest_site_shrtname1
+                   and (i.ref_doc_no1 is null or upper(a.ref_doc_no) = upper(i.ref_doc_no1))
+                   and (i.transporter_slid1 is null or a.transporter_slid = i.transporter_slid1)
+                and (i.agent_slid1 is null or a.agent_slid = i.agent_slid1)
+                -- and    (i.reserve_inv1 is null or upper(a.reserve_inv) = upper(i.reserve_inv1))
+                 and (i.remarks1 is null or upper(a.remarks) = i.remarks1)
+                      AND DET_ICODE = i.DET_ICODE;
+         END LOOP;
+      END;
+
+        v_mark := 25;
+        -- V_ALLOW_ZERORATE_SALESORDER
+        select allow_zerorate_salesorder
+        into STRICT   v_allow_zerorate_salesorder
+        from   admprof 
+        where  profcode = (SELECT profcode 
+                           from   hrdemp 
+                           where  ecode = p_userid);
+
+        v_mark := 26;
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'SO_BARCODE', p_userid, 'Data Validation', a.barcode||': barcode, Rate cannot be zero. Please check Price List.', clock_timestamp()
+        from    int$stg_so_barcode a
+        where   coalesce(det_rate,0) = 0
+        and     coalesce(v_allow_zerorate_salesorder,'N') = 'N'
+        and     a.userid = p_userid;
+
+        --COMMIT;
+
+        -- check whether records are valid or not
+        begin
+            select  'S'
+            into STRICT    v_status
+
+            where   exists (
+                            SELECT  'S'
+                            from    int$error_log
+                            where   userid = p_userid
+                            );
+            return('0');
+        exception
+            when no_data_found then
+                return('1');
+        end;
+    exception
+        when others then
+            errcode := SQLSTATE;
+            errmsg := sqlerrm;
+
+            insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            values (nextval('int$error_log_code'), 0, 'SO_BARCODE', p_userid, errcode, errmsg||','||v_mark, clock_timestamp());
+            --COMMIT;
+
+            return('0');
+    END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

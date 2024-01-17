@@ -1,0 +1,546 @@
+procedure "main"."db_pro_auto_settle_unpost()" {
+  text = """
+
+DECLARE
+
+   --V_ERROR_MSG                     VARCHAR2(4000)  := NULL;
+   --V_FAIL_CNT                      NUMBER(12)      := NULL;
+   V_ENTTYPE        varchar(10);
+   V_QTY            double precision;
+   V_ADMSITE_CODE   bigint;
+BEGIN
+   /***************************************************************************************************************
+   --REVISION : 101       SIDDHARTHA SEN     TFS ID : 39093    DATE : 18-DECEMBER-2019    VALIDATION IMPLEMENTED ON AUTO SETTLEMENT JOB
+   ********************************************************************************************************************/
+   DELETE FROM staging_settlementdata;
+   DECLARE
+      C_OPEN_SITE CURSOR FOR
+           SELECT DISTINCT ADMSITE_CODE
+             FROM PSITE_POSSTLM
+            WHERE STATUS = 'O'
+         --and    ADMSITE_CODE IN (3,4)
+         ORDER BY 1 ASC;
+   BEGIN
+      FOR C1 IN C_OPEN_SITE
+      LOOP
+         DECLARE
+            C_OPEN CURSOR
+            FOR
+                 SELECT STLMFOR, --START REV : 102
+                                 CODE
+                   --END REV : 102
+                   FROM PSITE_POSSTLM
+                  WHERE STATUS = 'O' AND ADMSITE_CODE = C1.ADMSITE_CODE
+               ORDER BY 1 ASC;
+            V_STATUS                 CHAR(1) := NULL;
+            V_VALIDATION_ERROR_MSG   VARCHAR(4000) := NULL;
+            --VALIDATION_ERROR         EXCEPTION;
+            V_STLMFOR                DATE;
+            V_ADMSITE_CODE           NUMERIC(12) := NULL;
+            V_RECLC_CNT              NUMERIC(12) := NULL;
+         BEGIN
+            FOR C2 IN C_OPEN
+            LOOP
+               SELECT COUNT(*)
+                 INTO STRICT V_RECLC_CNT
+                 FROM TAX_RECALC_HISTORY
+                WHERE     date_trunc('day', RECALCDATE) = date_trunc('day', C2.STLMFOR)
+                      AND ADMSITE_CODE = C1.ADMSITE_CODE
+                      AND STATUS <> 'PH';
+               IF coalesce(V_RECLC_CNT, 0) > 0
+               THEN
+                  V_VALIDATION_ERROR_MSG := 'Recalculate tax process';
+                  V_STLMFOR := date_trunc('day', C2.STLMFOR);
+                  V_ADMSITE_CODE := C1.ADMSITE_CODE;
+                  RAISE USING ERRCODE = '20001';
+               END IF;
+               BEGIN
+                  SELECT STATUS
+                    INTO STRICT V_STATUS
+                    FROM PSITE_POSSTLM
+                   WHERE     date_trunc('day', STLMFOR) = date_trunc('day', C2.STLMFOR) - '1 days'::interval
+                         AND ADMSITE_CODE = C1.ADMSITE_CODE
+                         AND STATUS = 'R';
+                  UPDATE PSITE_POSSTLM
+                     SET STATUS = 'R', AUTO_STLM_ERROR  = NULL
+                   WHERE     ADMSITE_CODE = C1.ADMSITE_CODE
+                         AND date_trunc('day', STLMFOR) = date_trunc('day', C2.STLMFOR);
+                  DELETE FROM PSITE_POSSTLMAUDIT_HO
+                        WHERE PSITE_POSSTLM_CODE IN (SELECT CODE
+                                    FROM PSITE_POSSTLM
+                                   WHERE     ADMSITE_CODE = C1.ADMSITE_CODE
+                                         AND date_trunc('day', STLMFOR) >=
+                                                date_trunc('day', C2.STLMFOR));
+                  DELETE FROM PSITE_POSSTLMAUDIT_POS
+                        WHERE PSITE_POSSTLM_CODE IN (SELECT CODE
+                                    FROM PSITE_POSSTLM
+                                   WHERE     ADMSITE_CODE = C1.ADMSITE_CODE
+                                         AND date_trunc('day', STLMFOR) >=
+                                                date_trunc('day', C2.STLMFOR));
+                  CALL db_pkg_npos_event$track(C1.ADMSITE_CODE,
+                                           'STLMREMOVE',
+                                           date_trunc('day', C2.STLMFOR));
+                  EXIT;
+               EXCEPTION
+                  WHEN no_data_found
+                  THEN
+                     NULL;
+                  WHEN OTHERS
+                  THEN
+                     --ROLLBACK;
+                     CALL ERRAUDIT(USER,
+                               'DB_PRO_AUTO_SETTLE_UNPOST',
+                               NULL,
+                               SQLERRM);
+               END;
+               INSERT INTO staging_settlementdata(SITECODE,
+                                                   SITENAME,
+                                                   SETTLEMENTDATE,
+                                                   SALETYPE,
+                                                   STATUS,
+                                                   STATUSDISPLAY,
+                                                   COMMENTS,
+                                                   SITETYPE,
+                                                   VALIDATIONSTATE)
+                  SELECT S.CODE,
+                         S.NAME,
+                         STLMFOR,
+                         coalesce(F.saletype, 'C') saletype,
+                         NULL,
+                         NULL,
+                         NULL,
+                         SITETYPE,
+                         'P'
+                    FROM psite_posstlm p, admsite s
+LEFT OUTER JOIN finsl f ON (S.SLCODE = F.SLCODE)
+WHERE P.ADMSITE_CODE = S.CODE  AND ADMSITE_CODE = C1.ADMSITE_CODE AND date_trunc('day', STLMFOR) = date_trunc('day', C2.STLMFOR);
+            END LOOP;
+         EXCEPTION
+            WHEN SQLSTATE '20001'
+            THEN
+               --ROLLBACK;
+               CALL ERRAUDIT(USER,
+                         'DB_PRO_AUTO_SETTLE_UNPOST',
+                         NULL,
+                         V_VALIDATION_ERROR_MSG);
+               UPDATE PSITE_POSSTLM
+                  SET AUTO_STLM_ERROR =
+                         AUTO_STLM_ERROR || ',' || V_VALIDATION_ERROR_MSG::text
+                WHERE     ADMSITE_CODE = V_ADMSITE_CODE
+                      AND date_trunc('day', STLMFOR) = V_STLMFOR;
+            WHEN OTHERS
+            THEN
+               --ROLLBACK;
+               CALL ERRAUDIT(USER,
+                         'DB_PRO_AUTO_SETTLE_UNPOST',
+                         NULL,
+                         SQLERRM);
+               V_VALIDATION_ERROR_MSG := SQLERRM;
+               UPDATE PSITE_POSSTLM
+                  SET AUTO_STLM_ERROR =
+                         AUTO_STLM_ERROR || ',' || V_VALIDATION_ERROR_MSG::text
+                WHERE     ADMSITE_CODE = V_ADMSITE_CODE
+                      AND date_trunc('day', STLMFOR) = V_STLMFOR;
+         END;
+      END LOOP;                                                 -- END OF SITE
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         --ROLLBACK;
+         CALL ERRAUDIT(USER,
+                   'DB_PRO_AUTO_SETTLE_UNPOST',
+                   NULL,
+                   SQLERRM);
+   END;
+   BEGIN
+      CALL p_psite_validatesettlementdata();
+   END;
+   DECLARE
+      C_SUC CURSOR FOR
+           SELECT DISTINCT SITECODE
+             FROM staging_settlementdata
+         --  WHERE   SITECODE IN (3,4)
+         ORDER BY SITECODE ASC;
+   BEGIN
+      FOR C2 IN C_SUC
+      LOOP
+         DECLARE
+            C_DATE CURSOR
+            FOR
+                 SELECT *
+                   FROM staging_settlementdata
+                  WHERE SITECODE = C2.SITECODE
+               ORDER BY SETTLEMENTDATE ASC;
+            --PROCESS_ERROR        EXCEPTION;
+            V_STATUS             CHAR(1) := NULL;
+            V_FAIL_REASON        VARCHAR(4000) := NULL;
+            V_CNT_POSBILLITEM    NUMERIC(12) := 0;
+            CSCount              NUMERIC(12) := 0;
+            gvbillCount          NUMERIC(12) := 0;
+            GVISSUE_billCount    NUMERIC(12) := 0;
+            sSCount              NUMERIC(12) := 0;
+            deprefjv_billCount   NUMERIC(12) := 0;
+            deprefbillCount      NUMERIC(12) := 0;
+            ptcashbillCount      NUMERIC(12) := 0;
+            ptcashjv_billCount   NUMERIC(12) := 0;
+            V_SETTLEMENT_DATE    DATE;
+            V_SITE_CODE          NUMERIC(12) := 0;
+            V_ERROR              VARCHAR(4000) := NULL;
+            V_ERRMSG             VARCHAR(4000) := NULL;
+            V_OPSTARTDT          DATE := NULL;
+            V_SITETYPE           CHAR(25) := NULL;
+         BEGIN
+            FOR C3 IN C_DATE
+            LOOP
+               IF coalesce(C3.STATUS, 1) <> -1
+               THEN
+                  BEGIN
+                     CALL P_POS_CONSOLIDATION(C3.SETTLEMENTDATE,
+                                          C2.SITECODE,
+                                          1,
+                                          clock_timestamp(),
+                                          clock_timestamp());
+                  EXCEPTION
+                     WHEN no_data_found
+                     THEN
+                        NULL;
+                     WHEN OTHERS
+                     THEN
+                        V_FAIL_REASON := SQLERRM;
+                        V_SITE_CODE := C2.SITECODE;
+                        V_SETTLEMENT_DATE := date_trunc('day', C3.SETTLEMENTDATE);
+                        RAISE USING ERRCODE = '20002';
+                  END;
+                  BEGIN
+                     CALL P_POSGV_CONSOLIDATION(C3.SETTLEMENTDATE,
+                                            C2.SITECODE,
+                                            1);
+                  EXCEPTION
+                     WHEN no_data_found
+                     THEN
+                        NULL;
+                     WHEN OTHERS
+                     THEN
+                        V_FAIL_REASON := SQLERRM;
+                        V_SITE_CODE := C2.SITECODE;
+                        V_SETTLEMENT_DATE := date_trunc('day', C3.SETTLEMENTDATE);
+                        RAISE USING ERRCODE = '20002';
+                  END;
+                  BEGIN
+                     SELECT SITETYPE
+                       INTO STRICT V_SITETYPE
+                       FROM ADMSITE
+                      WHERE CODE = C3.SITECODE;
+                  EXCEPTION
+                     WHEN no_data_found
+                     THEN
+                        NULL;
+                  END;
+                  IF V_SITETYPE <> 'MS-CO-OM-TS'
+                  THEN
+                     BEGIN
+                        CALL P_POSDEPREF_CONSOLIDATION(C3.SETTLEMENTDATE,
+                                                   C2.SITECODE,
+                                                   1);
+                     EXCEPTION
+                        WHEN no_data_found
+                        THEN
+                           NULL;
+                        WHEN OTHERS
+                        THEN
+                           V_FAIL_REASON := SQLERRM;
+                           V_SITE_CODE := C2.SITECODE;
+                           V_SETTLEMENT_DATE := date_trunc('day', C3.SETTLEMENTDATE);
+                           RAISE USING ERRCODE = '20002';
+                     END;
+                     BEGIN
+                        CALL P_PTC_CONSOLIDATION(C3.SETTLEMENTDATE,
+                                             C2.SITECODE,
+                                             1);
+                     EXCEPTION
+                        WHEN no_data_found
+                        THEN
+                           NULL;
+                        WHEN OTHERS
+                        THEN
+                           V_FAIL_REASON := SQLERRM;
+                           V_SITE_CODE := C2.SITECODE;
+                           V_SETTLEMENT_DATE := date_trunc('day', C3.SETTLEMENTDATE);
+                           RAISE USING ERRCODE = '20002';
+                     END;
+                  END IF;
+                  SELECT COUNT(*)
+                    INTO STRICT V_CNT_POSBILLITEM
+                    FROM psite_POSBill
+                   WHERE     admsite_code = C2.SITECODE
+                         AND date_trunc('day', BillDate) = date_trunc('day', C3.SETTLEMENTDATE);
+                  IF coalesce(V_CNT_POSBILLITEM, 0) > 0
+                  THEN
+                     IF C3.SALETYPE = 'C'
+                     THEN
+                        SELECT COUNT(1)
+                          INTO STRICT CSCount
+                          FROM SalCSMain
+                         WHERE     date_trunc('day', CSDATE) = date_trunc('day', C3.SETTLEMENTDATE)
+                               AND admsite_code = C2.SITECODE;
+                        IF coalesce(CSCount, 0) = 0
+                        THEN
+                           V_SITE_CODE := C2.SITECODE;
+                           V_SETTLEMENT_DATE := date_trunc('day', C3.SETTLEMENTDATE);
+                           V_FAIL_REASON :=
+                              'Consignment Sales entry not found.';
+                           RAISE USING ERRCODE = '20002';
+                        END IF;
+                     ELSE
+                        SELECT COUNT(1)
+                          INTO STRICT SSCount
+                          FROM SalSSMain
+                         WHERE     date_trunc('day', SSDATE) = date_trunc('day', C3.SETTLEMENTDATE)
+                               AND admsite_code = C2.SITECODE;
+                        IF coalesce(SSCount, 0) = 0
+                        THEN
+                           V_SITE_CODE := C2.SITECODE;
+                           V_SETTLEMENT_DATE := date_trunc('day', C3.SETTLEMENTDATE);
+                           V_FAIL_REASON :=
+                              'Secondary sales entry not found.';
+                           RAISE USING ERRCODE = '20002';
+                        END IF;
+                     END IF;
+                  END IF;
+                  SELECT COUNT(1)
+                    INTO STRICT gvbillCount
+                    FROM psite_POSGVBill
+                   WHERE     date_trunc('day', BillDate) = date_trunc('day', C3.SETTLEMENTDATE)
+                         AND admsite_code = C2.SITECODE;
+                  IF coalesce(gvbillCount, 0) > 0
+                  THEN
+                     SELECT COUNT(1)
+                       INTO STRICT GVISSUE_billCount
+                       FROM gvissue_journal
+                      WHERE     date_trunc('day', DOCDate) = date_trunc('day', C3.SETTLEMENTDATE)
+                            AND admsite_code = C2.SITECODE;
+                     IF coalesce(GVISSUE_billCount, 0) = 0
+                     THEN
+                        V_SITE_CODE := C2.SITECODE;
+                        V_SETTLEMENT_DATE := date_trunc('day', C3.SETTLEMENTDATE);
+                        V_FAIL_REASON :=
+                           'GV Issue journal entry not found.';
+                        RAISE USING ERRCODE = '20002';
+                     END IF;
+                  END IF;
+                  IF V_SITETYPE <> 'MS-CO-OM-TS'
+                  THEN
+                     SELECT COUNT(1)
+                       INTO STRICT deprefbillCount
+                       FROM psite_posdeprefbill
+                      WHERE     date_trunc('day', BillDate) = date_trunc('day', C3.SETTLEMENTDATE)
+                            AND admsite_code = C2.SITECODE;
+                     IF coalesce(deprefbillCount, 0) > 0
+                     THEN
+                        SELECT COUNT(1)
+                          INTO STRICT deprefjv_billCount
+                          FROM posjournal
+                         WHERE     date_trunc('day', DOCDate) =
+                                      date_trunc('day', C3.SETTLEMENTDATE)
+                               AND admsite_code = C2.SITECODE
+                               AND DOCTYPE = 'DEPREF';
+                        IF coalesce(deprefjv_billCount, 0) = 0
+                        THEN
+                           V_SITE_CODE := C2.SITECODE;
+                           V_SETTLEMENT_DATE := date_trunc('day', C3.SETTLEMENTDATE);
+                           V_FAIL_REASON :=
+                              'POS Dep Ref. entry not found.';
+                           RAISE USING ERRCODE = '20002';
+                        END IF;
+                     END IF;
+                     SELECT COUNT(1)
+                       INTO STRICT ptcashbillCount
+                       FROM psite_ptcbill        pb,
+                            admsite              s,
+                            psite_ptchead_assign pa
+                      WHERE     date_trunc('day', PB.BillDate) =
+                                   date_trunc('day', C3.SETTLEMENTDATE)
+                            AND PB.admsite_code = C2.SITECODE
+                            AND pb.admsite_code = pa.admsite_code
+                            AND pb.psite_ptchead_code = pa.psite_ptchead_code
+                            AND pa.glcode IS NOT NULL;
+                     IF coalesce(ptcashbillCount, 0) > 0
+                     THEN
+                        SELECT COUNT(1)
+                          INTO STRICT ptcashjv_billCount
+                          FROM posjournal
+                         WHERE     date_trunc('day', DOCDate) =
+                                      date_trunc('day', C3.SETTLEMENTDATE)
+                               AND admsite_code = C2.SITECODE
+                               AND DOCTYPE = 'PTCASH';
+                        IF coalesce(ptcashjv_billCount, 0) = 0
+                        THEN
+                           V_SITE_CODE := C2.SITECODE;
+                           V_SETTLEMENT_DATE := date_trunc('day', C3.SETTLEMENTDATE);
+                           V_FAIL_REASON := 'Petty cash entry not found.';
+                           RAISE USING ERRCODE = '20002';
+                        END IF;
+                     END IF;
+                  END IF;
+                  V_OPSTARTDT := NULL;
+                  BEGIN
+                     SELECT OPERATIONSTARTDATE
+                       INTO STRICT V_OPSTARTDT
+                       FROM ADMSITE
+                      WHERE CODE = C2.SITECODE;
+                     IF date_trunc('day', V_OPSTARTDT) <> date_trunc('day', C3.SETTLEMENTDATE)
+                     THEN
+                        V_STATUS := NULL;
+                        BEGIN
+                           SELECT V_STATUS
+                             INTO STRICT V_STATUS
+                             FROM PSITE_POSSTLM
+                            WHERE     date_trunc('day', STLMFOR) =
+                                         date_trunc('day', C3.SETTLEMENTDATE) - '1 days'::interval
+                                  AND ADMSITE_CODE = C2.SITECODE
+                                  AND STATUS IN ('O', 'R');
+                           --ROLLBACK;
+                           IF V_STATUS = 'R'
+                           THEN
+                              UPDATE PSITE_POSSTLM
+                                 SET STATUS = 'R'
+                               -- ,AUTO_STLM_ERROR = AUTO_STLM_ERROR||' , Operation Start date checking,The previous date is in Revert State.'
+                               WHERE     ADMSITE_CODE = C2.SITECODE
+                                     AND date_trunc('day', STLMFOR) =
+                                            date_trunc('day', C3.SETTLEMENTDATE)
+                                     AND STATUS = 'O';
+                              DELETE FROM psite_posstlmaudit_ho
+                                    WHERE PSITE_POSSTLM_CODE IN (SELECT code
+                                                FROM psite_posstlm
+                                               WHERE     admsite_code =
+                                                            C2.SITECODE
+                                                     AND date_trunc('day', stlmfor) >=
+                                                            date_trunc('day', C3.SETTLEMENTDATE));
+                              DELETE FROM psite_posstlmaudit_pos
+                                    WHERE PSITE_POSSTLM_CODE IN (SELECT code
+                                                FROM psite_posstlm
+                                               WHERE     admsite_code =
+                                                            C2.SITECODE
+                                                     AND date_trunc('day', stlmfor) >=
+                                                            date_trunc('day', C3.SETTLEMENTDATE));
+                              CALL db_pkg_npos_event.track(
+                                 C2.SITECODE,
+                                 'STLMREMOVE',
+                                 date_trunc('day', C3.SETTLEMENTDATE));
+                              CALL ERRAUDIT(
+                                 USER,
+                                 'DB_PRO_AUTO_SETTLE_UNPOST',
+                                 'Autosettlement',
+                                 'The previous date is in Revert State.');
+                              /*RAISE_APPLICATION_ERROR (
+                                 -20105,
+                                 'ERROR ENCOUNTERED ' || 'Operation Start date checking'||'The previous date is in Revert State.');*/
+                              EXIT;
+                           END IF;
+                        EXCEPTION
+                           WHEN no_data_found
+                           THEN
+                              NULL;
+                        END;
+                     END IF;
+                  EXCEPTION
+                     WHEN no_data_found
+                     THEN
+                        NULL;
+                  END;
+                  DELETE FROM psite_posbillitem_park
+                        WHERE     ADMSITE_CODE = C2.SITECODE
+                              AND PSITE_POSBILL_CODE IN (SELECT CODE
+                                        FROM psite_posbill_PARK
+                                       WHERE     ADMSITE_CODE = C2.SITECODE
+                                             AND date_trunc('day', BILLDATE) =
+                                                    date_trunc('day', C3.SETTLEMENTDATE));
+                  DELETE FROM psite_posbillMOP_park
+                        WHERE     ADMSITE_CODE = C2.SITECODE
+                              AND PSITE_POSBILL_CODE IN (SELECT CODE
+                                        FROM psite_posbill_PARK
+                                       WHERE     ADMSITE_CODE = C2.SITECODE
+                                             AND date_trunc('day', BILLDATE) =
+                                                    date_trunc('day', C3.SETTLEMENTDATE));
+                  DELETE FROM psite_posbill_PARK
+                        WHERE     ADMSITE_CODE = C2.SITECODE
+                              AND date_trunc('day', BILLDATE) =
+                                     date_trunc('day', C3.SETTLEMENTDATE);
+                  UPDATE PSITE_POSSTLM
+                     SET STATUS = 'U'--,SETTLEDON                = SYSDATE
+                                     -- ,SETTLEDBY                = 1
+                         ,
+                         COMMENTS = 'Auto Settled.',
+                         AUTO_STLM_ERROR  = NULL,
+                         HO_SETTLEDON = clock_timestamp(),
+                         HO_SETTLEDBY = 1
+                   WHERE     ADMSITE_CODE = C2.SITECODE
+                         AND date_trunc('day', STLMFOR) = date_trunc('day', C3.SETTLEMENTDATE)
+                         AND STATUS = 'O';
+                  CALL ERRAUDIT(USER,
+                            'DB_PRO_AUTO_SETTLE_UNPOST',
+                            'Autosettlement',
+                            date_trunc('day', C3.SETTLEMENTDATE) || '~' || C2.SITECODE::text);
+               ELSE
+                  UPDATE PSITE_POSSTLM
+                     SET AUTO_STLM_ERROR = C3.COMMENTS
+                   WHERE     ADMSITE_CODE = C2.SITECODE
+                         AND date_trunc('day', STLMFOR) = date_trunc('day', C3.SETTLEMENTDATE);
+                  UPDATE PSITE_POSSTLM
+                     SET AUTO_STLM_ERROR = 'Previous date is not settled.'
+                   WHERE     ADMSITE_CODE = C2.SITECODE
+                         AND date_trunc('day', STLMFOR) > date_trunc('day', C3.SETTLEMENTDATE)
+                         AND STATUS = 'O';
+                  CALL ERRAUDIT(USER,
+                            'DB_PRO_AUTO_SETTLE_UNPOST',
+                            'Autosettlement',
+                            C3.COMMENTS || C2.SITECODE::text);
+                  EXIT;
+               END IF;
+            END LOOP;
+         EXCEPTION
+            WHEN SQLSTATE '20002'
+            THEN
+               --ROLLBACK;
+               UPDATE PSITE_POSSTLM
+                  SET AUTO_STLM_ERROR = V_FAIL_REASON --SUBSTR(AUTO_STLM_ERROR|| ',' ||V_FAIL_REASON,1,4000)
+                WHERE     ADMSITE_CODE = V_SITE_CODE
+                      AND STLMFOR = V_SETTLEMENT_DATE;
+               CALL ERRAUDIT(USER,
+                         'DB_PRO_AUTO_SETTLE_UNPOST',
+                         'Autosettlement',
+                         V_FAIL_REASON);
+            WHEN OTHERS
+            THEN
+               --ROLLBACK;
+               V_ERROR := SQLSTATE::varchar || SQLERRM;
+               UPDATE PSITE_POSSTLM
+                  SET AUTO_STLM_ERROR = V_ERROR --SUBSTR(AUTO_STLM_ERROR|| ',' ||V_ERROR,1,4000)
+                WHERE     ADMSITE_CODE = V_SITE_CODE
+                      AND STLMFOR = V_SETTLEMENT_DATE;
+               CALL ERRAUDIT(USER,
+                         'DB_PRO_AUTO_SETTLE_UNPOST',
+                         'Autosettlement',
+                         V_ERROR);
+         END;
+      END LOOP;                                                   -- SITE LOOP
+   END;
+EXCEPTION
+   WHEN no_data_found
+   THEN
+      NULL;
+   WHEN OTHERS
+   THEN
+      --ROLLBACK;
+      CALL ERRAUDIT(USER,
+                'DB_PRO_AUTO_SETTLE_UNPOST',
+                SQLSTATE::varchar,
+                SQLERRM);
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED ' || SQLSTATE::varchar || '  ' || SQLERRM USING ERRCODE = '45105';
+END;
+"""
+  arguments = [
+  ]
+  language = plpgsql
+}
+

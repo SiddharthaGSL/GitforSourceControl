@@ -1,0 +1,111 @@
+function "main"."trigger_fct_t_pursrv_schedule()" {
+  text = """
+
+/**************************************************************************************************************
+PURPOSE: TO UPDATE INVQTY,INVAMT IN SERVICE ORDER SCHEDULE TABLE
+
+REV NO     OWNER           DATE         DESCRIPTION
+---------  ----------      -----------  ---------------------------------------------------------------------
+REV : 001  MOUSUMI          29/05/2014  (BUG ID : 1047)  CREATED
+REV : 002  MOUSUMI          13/MAY/2020  (BUG ID : 1047)  CREATED
+***************************************************************************************************************/
+DECLARE
+   V_OLD_PURSRVMAIN_CODE   bigint;
+   V_NEW_PURSRVMAIN_CODE   bigint;
+   V_ENTRY_SOURCE          varchar(25) := NULL;
+BEGIN
+  BEGIN
+   BEGIN
+      SELECT ENTRY_SOURCE
+        INTO STRICT V_ENTRY_SOURCE
+        FROM PURSRVMAIN
+       WHERE SRVCODE = coalesce(NEW.PURSRVMAIN_CODE, OLD.PURSRVMAIN_CODE);
+   EXCEPTION
+      WHEN no_data_found
+      THEN
+         NULL;
+   END;
+
+   -- STRATR REV : 002
+   IF TG_OP = 'UPDATE'
+   THEN
+      IF coalesce(V_ENTRY_SOURCE, 'XX') <> 'WEB'
+      THEN
+         -- END REV : 002
+         IF OLD.PURSRVORDDET_CODE IS NOT NULL AND OLD.CODE IS NOT NULL
+         THEN
+            UPDATE PURSRVORD_SCHEDULE
+               SET INVQTY = coalesce(INVQTY, 0) - coalesce(OLD.QTY, 0),
+                   INVAMT = coalesce(INVAMT, 0) - coalesce(OLD.AMT, 0)
+             WHERE     PURSRVORDDET_CODE = OLD.PURSRVORDDET_CODE
+                   AND CODE = OLD.PURSRVORD_SCHEDULE_CODE;
+
+            SELECT DISTINCT PURSRVORDMAIN_CODE
+              INTO STRICT V_OLD_PURSRVMAIN_CODE
+              FROM PURSRVORDDET
+             WHERE CODE = OLD.PURSRVORDDET_CODE;
+
+            CALL UPDATE_PURSRVORDMAIN_STATUS(V_OLD_PURSRVMAIN_CODE);
+         END IF;
+
+         IF NEW.PURSRVORDDET_CODE IS NOT NULL AND NEW.CODE IS NOT NULL
+         THEN
+            UPDATE PURSRVORD_SCHEDULE
+               SET INVQTY = coalesce(INVQTY, 0) + coalesce(NEW.QTY, 0),
+                   INVAMT = coalesce(INVAMT, 0) + coalesce(NEW.AMT, 0)
+             WHERE     PURSRVORDDET_CODE = NEW.PURSRVORDDET_CODE
+                   AND CODE = NEW.PURSRVORD_SCHEDULE_CODE;
+
+            SELECT DISTINCT PURSRVORDMAIN_CODE
+              INTO STRICT V_NEW_PURSRVMAIN_CODE
+              FROM PURSRVORDDET
+             WHERE CODE = NEW.PURSRVORDDET_CODE;
+
+            CALL UPDATE_PURSRVORDMAIN_STATUS(V_NEW_PURSRVMAIN_CODE);
+         END IF;
+      END IF;
+   END IF;
+
+   -- STRATR REV : 002
+   IF TG_OP = 'INSERT'
+   THEN
+      IF coalesce(V_ENTRY_SOURCE, 'XX') <> 'WEB'
+      THEN
+         IF NEW.PURSRVORDDET_CODE IS NOT NULL AND NEW.CODE IS NOT NULL
+         THEN
+            UPDATE PURSRVORD_SCHEDULE
+               SET INVQTY = coalesce(INVQTY, 0) + coalesce(NEW.QTY, 0),
+                   INVAMT = coalesce(INVAMT, 0) + coalesce(NEW.AMT, 0)
+             WHERE     PURSRVORDDET_CODE = NEW.PURSRVORDDET_CODE
+                   AND CODE = NEW.PURSRVORD_SCHEDULE_CODE;
+
+            SELECT DISTINCT PURSRVORDMAIN_CODE
+              INTO STRICT V_NEW_PURSRVMAIN_CODE
+              FROM PURSRVORDDET
+             WHERE CODE = NEW.PURSRVORDDET_CODE;
+
+            CALL UPDATE_PURSRVORDMAIN_STATUS(V_NEW_PURSRVMAIN_CODE);
+         END IF;
+      END IF;
+   END IF;
+
+   IF TG_OP = 'DELETE'
+   THEN
+      NULL;
+   END IF;
+-- END REV : 002
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

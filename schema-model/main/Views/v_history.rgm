@@ -1,0 +1,128 @@
+view "main"."v_history" {
+  text = """-
+SELECT trans.slno AS seq,
+    trans.type AS type_display,
+    trans.entdt,
+    trans.entno,
+    invloc.locname AS location,
+    COALESCE(invitem.barcode, invitem.icode) AS barcode,
+    invitem.icode,
+    (((((((((((invitem.cname1)::text || ' '::text) || (invitem.cname2)::text) || ' '::text) || (invitem.cname3)::text) || ' '::text) || (invitem.cname4)::text) || ' '::text) || (invitem.cname5)::text) || ' '::text) || (invitem.cname6)::text) AS item,
+    invitem.noninventory,
+    invitem.partyname AS party,
+    COALESCE(fintaxmain.taxname, 'Non Taxable'::character varying) AS tax,
+    (((((invgrp.grpname)::text || ' - '::text) || (invgrp.lev2grpname)::text) || ' - '::text) || (invgrp.lev1grpname)::text) AS groupname,
+    invitem.rate AS cp,
+    invitem.mrp,
+    trans.other,
+    abs(trans.qty) AS qty,
+    trans.rate,
+    abs(trans.amt) AS amt
+   FROM ( SELECT 1 AS slno,
+            inventtype.entname AS type,
+            invstock.entdt,
+            invstock.entno,
+            invstock.loccode,
+                CASE invstock.enttype
+                    WHEN 'GRC'::text THEN finsl.slname
+                    WHEN 'GRT'::text THEN finsl.slname
+                    WHEN 'DPS'::text THEN hrddept.deptname
+                    WHEN 'STI'::text THEN invloc_1.locname
+                    WHEN 'PIS'::text THEN (((((finsl.slname)::text || ' ['::text) || (prdpr.prname)::text) || ']'::text))::character varying
+                    WHEN 'PRC'::text THEN (((((finsl.slname)::text || ' ['::text) || (prdpr.prname)::text) || ']'::text))::character varying
+                    ELSE NULL::character varying
+                END AS other,
+            invstock.icode,
+            invstock.qty,
+            invstock.rate,
+            invstock.amount AS amt
+           FROM main.inventtype,
+            ((((((main.invstock
+             LEFT JOIN main.finsl ON ((invstock.refpcode = finsl.slcode)))
+             LEFT JOIN main.admcmp ON ((invstock.refcmpcode = admcmp.cmpcode)))
+             LEFT JOIN main.fingl ON ((invstock.refglcode = fingl.glcode)))
+             LEFT JOIN main.hrddept ON ((invstock.refdeptcode = hrddept.deptcode)))
+             LEFT JOIN main.invloc invloc_1 ON ((invstock.refloccode = invloc_1.loccode)))
+             LEFT JOIN main.prdpr ON ((invstock.refprcode = prdpr.prcode)))
+          WHERE ((invstock.enttype)::text = (inventtype.enttype)::text)
+        UNION ALL
+         SELECT 2 AS slno,
+            'Stock Position'::character varying AS type,
+            CURRENT_DATE AS entdt,
+            NULL::bigint AS entno,
+            invstock.loccode,
+            NULL::character varying AS other,
+            invstock.icode,
+            sum(COALESCE(invstock.qty, (0)::numeric)) AS qty,
+            NULL::numeric AS rate,
+            NULL::numeric AS amt
+           FROM main.invstock invstock
+          WHERE ((invstock.entdt <= CURRENT_DATE) AND (invstock.ycode = ( SELECT admyear.ycode
+                   FROM main.admyear
+                  WHERE ((CURRENT_DATE >= admyear.dtfr) AND (CURRENT_DATE <= admyear.dtto)))))
+          GROUP BY invstock.loccode, invstock.icode) trans,
+    main.invloc,
+    main.invgrp,
+    (main.invitem
+     LEFT JOIN main.fintaxmain ON ((invitem.taxcode = fintaxmain.taxcode)))
+  WHERE (((trans.icode)::text = (invitem.icode)::text) AND (trans.loccode = invloc.loccode) AND (invitem.grpcode = invgrp.grpcode))
+  ORDER BY trans.slno, trans.type, trans.entdt;
+"""
+  columns = (
+    column "seq" {
+      type = "integer"
+    }
+    column "type_display" {
+      type = "character varying"
+    }
+    column "entdt" {
+      type = "timestamp without time zone"
+    }
+    column "entno" {
+      type = "bigint"
+    }
+    column "location" {
+      type = "character varying(100)"
+    }
+    column "barcode" {
+      type = "character varying"
+    }
+    column "icode" {
+      type = "character varying(9)"
+    }
+    column "item" {
+      type = text
+    }
+    column "noninventory" {
+      type = "character(1)"
+    }
+    column "party" {
+      type = "character varying(100)"
+    }
+    column "tax" {
+      type = "character varying"
+    }
+    column "groupname" {
+      type = text
+    }
+    column "cp" {
+      type = "numeric(20,3)"
+    }
+    column "mrp" {
+      type = "numeric(20,3)"
+    }
+    column "other" {
+      type = "character varying"
+    }
+    column "qty" {
+      type = "numeric"
+    }
+    column "rate" {
+      type = "numeric"
+    }
+    column "amt" {
+      type = "double precision"
+    }
+  )
+}
+

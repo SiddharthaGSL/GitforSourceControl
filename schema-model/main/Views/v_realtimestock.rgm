@@ -1,0 +1,90 @@
+view "main"."v_realtimestock" {
+  text = """-
+SELECT q.sitecode,
+    q.stockpointcode,
+    q.loccode,
+    q.icode,
+    q.invbatch_serial_code,
+    q.gds_refcode_stkpt AS uk,
+    sum(q.closingstockqty) AS closingstockqty,
+    sum(q.closingstockamount) AS closingstockamount,
+    sum(q.unsettlesaleqty) AS unsettlesaleqty,
+    max(q.laststkupdtime) AS laststkupdtime
+   FROM ( SELECT i.admsite_code AS sitecode,
+            i.stockpointcode,
+            i.loccode,
+            i.icode,
+            i.invbatch_serial_code,
+            i.gds_refcode_stkpt,
+            i.qty AS closingstockqty,
+            i.amount AS closingstockamount,
+            0 AS unsettlesaleqty,
+            i.laststkupdtime
+           FROM main.invstock_onhand_stockpoint i
+        UNION ALL
+         SELECT i.admsite_code AS sitecode,
+            i.stockpointcode,
+            i.loccode,
+            i.icode,
+            i.invbatch_serial_code,
+            i.gds_refcode_stkpt,
+            i.qty AS closingstockqty,
+            i.amount AS closingstockamount,
+            0 AS unsettlesaleqty,
+            i.laststkupdtime
+           FROM main.invstock_onhand_intra i
+        UNION ALL
+         SELECT pi.admsite_code AS sitecode,
+            p.psite_stockpoint_code AS stockpointcode,
+            ( SELECT invloc.loccode
+                   FROM main.invloc
+                  WHERE (invloc.loctype = 'S'::bpchar)) AS loccode,
+            pi.icode,
+            pi.invbatch_serial_code,
+            concat_ws(''::text, pi.icode, '~', pi.admsite_code, '~', ( SELECT invloc.loccode
+                   FROM main.invloc
+                  WHERE (invloc.loctype = 'S'::bpchar)), '~', COALESCE(p.psite_stockpoint_code, 'NA'::character varying)) AS gds_refcode_stkpt,
+            0 AS closingstockqty,
+            0 AS closingstockamount,
+            sum(pi.qty) AS unsettlesaleqty,
+            p.billdate AS laststkupdtime
+           FROM main.psite_posbillitem_park pi,
+            main.psite_posbill_park p
+          WHERE ((pi.psite_posbill_code)::text = (p.code)::text)
+          GROUP BY pi.admsite_code, p.psite_stockpoint_code, pi.icode, pi.invbatch_serial_code, p.billdate) q
+  GROUP BY q.sitecode, q.stockpointcode, q.loccode, q.icode, q.invbatch_serial_code, q.gds_refcode_stkpt;
+"""
+  columns = (
+    column "sitecode" {
+      type = "bigint"
+    }
+    column "stockpointcode" {
+      type = "character varying(50)"
+    }
+    column "loccode" {
+      type = "bigint"
+    }
+    column "icode" {
+      type = "character varying(9)"
+    }
+    column "invbatch_serial_code" {
+      type = "bigint"
+    }
+    column "uk" {
+      type = "character varying"
+    }
+    column "closingstockqty" {
+      type = "numeric"
+    }
+    column "closingstockamount" {
+      type = "numeric"
+    }
+    column "unsettlesaleqty" {
+      type = "numeric"
+    }
+    column "laststkupdtime" {
+      type = "timestamp without time zone"
+    }
+  )
+}
+

@@ -1,0 +1,779 @@
+procedure "main"."db_pro_recalculategst()" {
+  text = """
+
+DECLARE
+
+   v_errcode           varchar(50);
+   v_errmsg            varchar(2000);
+   v_sltype            char(1);
+   v_requsetid         bigint;
+   v_stlmstatus        char(1);
+   v_count             bigint;
+/***************************************************************************************************
+REVISION : 002      MOUSUMI     (TFS ID :  38829)     Auto Settlement of POS Sale in Finance and Inventory at HO.
+REVISION : 003      SIDDHARTHA  (TFS ID :  10907)     Changes in Re-calculation of tax charges for changes in tax calculation method.
+REVISION : 004      SIDDHARTHA  (TFS ID :  22670)     Kerala Cess Implementation
+REVISION : 005      ANINDYA     (TFS ID :  ZWING API) There will be different procedure for Tax Re-Calculation against those invoice 
+                                                      created through API. This procedure is applicable only for Ginesys Desktop POS
+REVISION : 006      ANINDYA     (MANTIS ID : XXXX)    Against Tax Recalculation request , Online sales are getting deleted permanently   
+REVISION : 007      SOUMYADEEP  (DEVOPS ID : 10293)       Against Tax Recalculation request , Channel Type getting Insert with Null value For Track Secondary Sites.   
+REVISION : 008      ANINDYA       					   If request for same date, same site but different request_id comes, in same transaction, we were facing issue for audit tracking
+														thus we have made the following changes.
+***************************************************************************************************/
+   recalcgst CURSOR FOR
+   -- START REV : 008
+      SELECT   admsite_code, recalcdate, MAX(requestid) requestid
+          FROM tax_recalc_history
+         WHERE status IN ('PS')
+         -- START REV : 004
+         AND  admsite_code IN (SELECT code
+                                FROM  ADMSITE
+                                WHERE installation_type = 'DPOS')
+		GROUP BY admsite_code, recalcdate						
+         -- END REV : 004                       
+      ORDER BY requestid;
+	  -- END REV : 008
+	  
+    posbill CURSOR(p_admsite_code  bigint, p_recalcdate timestamp)
+    FOR
+    SELECT  bill.posbillid,
+            bill.owner_gstin_no,
+            bill.owner_gstin_state_code,
+            bill.cp_gstin_no cp_gstin_no,
+            bill.cp_gstin_state_code,
+            case
+				when owner_gstin_state_code is not null and cp_gstin_state_code is not null and owner_gstin_state_code <> cp_gstin_state_code then 2
+            else 1
+			end fintradegrp_code
+    FROM (
+    SELECT  pb.code posbillid,
+            CASE
+             WHEN s.sitetype LIKE '%OM%'
+             THEN (CASE
+                    WHEN isbillingshippingsame = 'Y' THEN s.cp_gstin_no
+                    ELSE s.ship_cp_gstin_no
+                 END)
+             ELSE
+                gin.gstin_no
+            END owner_gstin_no,
+            CASE
+             WHEN s.sitetype LIKE '%OM%'
+             THEN (CASE
+                    WHEN isbillingshippingsame = 'Y'
+                    THEN
+                       s.cp_gstin_state_code
+                    ELSE
+                       s.ship_cp_gstin_state_code
+                 END)
+             ELSE
+                gin.admgststate_code
+            END owner_gstin_state_code,
+            --nvl(gin.gstin_no,s.cp_gstin_no) owner_gstin_no,
+            --nvl(gin.admgststate_code,s.cp_gstin_state_code) owner_gstin_state_code,
+            case when pb.psite_customer_code is not null then
+                case when c.cp_gstin_no is not null and pb.cp_gstin_no is null then pb.cp_gstin_no
+                     when c.cp_gstin_no is not null and pb.cp_gstin_no is not null then c.cp_gstin_no
+                     when c.cp_gstin_no is null and pb.cp_gstin_no is not null then pb.cp_gstin_no
+                     when c.cp_gstin_no is null and pb.cp_gstin_no is null then null
+                end
+            else null
+            end  cp_gstin_no,
+            case when pb.psite_customer_code is not null then
+            case when c.cp_gstin_no is not null and pb.cp_gstin_no is null then pb.cp_gstin_state_code
+                 when c.cp_gstin_no is not null and pb.cp_gstin_no is not null then c.cp_gstin_state_code
+                 when c.cp_gstin_no is null and pb.cp_gstin_no is not null then pb.cp_gstin_state_code
+                 when c.cp_gstin_no is null and pb.cp_gstin_no is null and pb.fintradegrp_code = 1 then
+                                     case when s.sitetype like '%OM%' then (case
+                             when isbillingshippingsame = 'Y' then s.cp_gstin_state_code
+                             else s.ship_cp_gstin_state_code
+                             end)
+                    else
+                    gin.admgststate_code
+                    end
+                 --nvl(gin.admgststate_code,s.cp_gstin_state_code)
+                 --nvl(gin.admgststate_code,s.cp_gstin_state_code)
+                 when c.cp_gstin_no is null and pb.cp_gstin_no is null and pb.fintradegrp_code = 2 then pb.cp_gstin_state_code
+            end
+            else null
+            end cp_gstin_state_code
+            FROM psite_posbill pb
+LEFT OUTER JOIN psite_customer c ON (pb.psite_customer_code = c.code)
+, admsite s
+LEFT OUTER JOIN admgstin gin ON (s.admgstin_code = gin.code)
+WHERE pb.admsite_code = s.code   AND date_trunc('day', billdate) =  p_recalcdate AND pb.admsite_code = p_admsite_code AND pb.gstdocno not in (select scheme_docno from invgst_einvoice where upper(transaction_table) = 'POSBILL') ) bill;
+    --END REV : 003
+    posbillItemVatRegime CURSOR(p_admsite_code  bigint, p_recalcdate timestamp)
+    FOR
+    SELECT  bill.posbillitemid,
+            bill.hsn_sac_code,
+            bill.govt_identifier,
+            CASE WHEN(
+                      bill.owner_gstin_no is null
+                      OR
+                      bill.invhsnsacmain_code = 1
+                      OR
+                      bill.hsn_code IS NULL
+                      )
+            THEN 'V' ELSE 'G' end VatRegime
+    FROM
+    (
+    SELECT  pb.OWNER_GSTIN_NO, PBI.CODE posbillitemid, i.invhsnsacmain_code, hsn.invhsnsacmain_code hsn_code,
+            hm.hsn_sac_code hsn_sac_code, hm.govt_identifier
+    FROM psite_posbillitem pbi, psite_posbill pb, (
+            select 	hsn.code invhsnsacmain_code,
+					max(effective_date) effective_date
+            FROM invhsnsacmain hsn
+LEFT OUTER JOIN invhsnsacdet hsnd ON (hsn.code = hsnd.invhsnsacmain_code)
+WHERE coalesce(hsnd.effective_date,p_recalcdate) <= p_recalcdate GROUP BY
+                    hsn.code
+            ) hsn LEFT OUTER JOIN invitem i ON coalesce(i.invhsnsacmain_code,-10) = hsn.invhsnsacmain_code
+LEFT OUTER JOIN invhsnsacmain hm ON (i.invhsnsacmain_code = hm.code)
+WHERE date_trunc('day', billdate) =  p_recalcdate 
+AND pb.code = pbi.psite_posbill_code 
+AND pb.admsite_code = p_admsite_code 
+AND pbi.icode = i.icode   
+AND pb.gstdocno not in (select scheme_docno from invgst_einvoice where upper(transaction_table) = 'POSBILL')
+     )  bill;
+   POSBillItemVat CURSOR(p_admsite_code bigint, p_recalcdate timestamp)
+   FOR
+      SELECT pbi.code posbillitemid, pbi.netamt,
+             round((ABS(pbi.netamt / pbi.qty))::numeric, 3) netprice, pbi.rsp,
+             i.icode, v.vatcode, v.description, v.rate, v.vatid,
+             coalesce(v.rangeappl, 0) rangeappl, v.rangebasis
+        FROM psite_posbill pb,
+             psite_posbillitem pbi,
+             invitem i,
+             (SELECT site_code, vatcode, description, rate, vatid, rangeappl,
+                     basis rangebasis
+                FROM v_npos_vat v1
+               WHERE (v1.vatcode, v1.effectivedate) IN (
+                        SELECT   v2.vatcode, MAX(v2.effectivedate) AS expr1
+                            FROM v_npos_vat v2
+                           WHERE date_trunc('day', effectivedate) <= p_recalcdate
+                             AND v2.isextinct = 0
+                             AND v2.site_code = p_admsite_code
+                        GROUP BY v2.vatcode)
+                 AND v1.isextinct = 0
+                 AND v1.site_code = p_admsite_code) v
+       WHERE pb.code = pbi.psite_posbill_code
+         AND pb.admsite_code = p_admsite_code
+         AND pbi.icode = i.icode
+         AND coalesce(pbi.taxregime,'V') = 'V'
+         AND i.taxcode = v.vatcode
+         --AND NVL (pbi.extaxamt, 0) = 0
+         AND date_trunc('day', pb.billdate) = p_recalcdate
+         AND     pb.gstdocno not in (select scheme_docno from invgst_einvoice where upper(transaction_table) = 'POSBILL')
+
+UNION ALL
+
+      SELECT pbi.code posbillitemid, pbi.netamt,
+             round((ABS(pbi.netamt / pbi.qty))::numeric, 3) netprice, pbi.rsp, i.icode,
+             v.vatcode, v.description, v.rate, v.vatid,
+             coalesce(v.rangeappl, 0) rangeappl, v.rangebasis
+        FROM psite_posbill pb,
+             psite_posbillitem pbi,
+             invitem i,
+             (SELECT site_code, vatcode, description, rate, vatid, rangeappl,
+                     basis rangebasis
+                FROM v_npos_vat v1
+               WHERE v1.vatcode = 0
+                 AND v1.isextinct = 0
+                 AND v1.site_code = p_admsite_code) v
+       WHERE pb.code = pbi.psite_posbill_code
+         AND pb.admsite_code = p_admsite_code
+         AND pbi.icode = i.icode
+         AND coalesce(pbi.taxregime,'V') = 'V'
+         AND i.taxcode NOT IN (SELECT v2.vatcode
+                                 FROM v_npos_vat v2
+                                WHERE v2.site_code = p_admsite_code)
+         --AND NVL (pbi.extaxamt, 0) = 0
+         AND date_trunc('day', pb.billdate) = p_recalcdate
+         AND     pb.gstdocno not in (select scheme_docno from invgst_einvoice where upper(transaction_table) = 'POSBILL');
+    POSBillItemGST CURSOR(p_admsite_code bigint, p_recalcdate timestamp)
+   FOR
+      SELECT  --START REV : 004
+             pb.code posbillid,
+             date_trunc('day', pb.billdate) posbilldate,
+             --END REV : 004
+             pbi.code posbillitemid,
+             --START REV : 004
+             pb.fintradegrp_code,
+             coalesce(pb.owner_gstin_state_code,pb.cp_gstin_state_code) gst_state_code,
+             pb.cp_gstin_no gstin_no,
+             --END REV : 004
+             pbi.netamt,
+             round((ABS(pbi.netamt / pbi.qty))::numeric, 3) netprice, pbi.rsp,
+             i.icode,
+             case when pb.fintradegrp_code = 2 then g.igstrate else 0 end igstrate,
+             case when pb.fintradegrp_code = 1 then g.cgstrate else 0 end cgstrate,
+             case when pb.fintradegrp_code = 1 then g.sgstrate else 0 end sgstrate,
+             g.invhsnsacdet_code,
+             g.taxname,
+             --START REV : 004
+             g.cessrate + get_gstadd_cessrate(
+                                    g.gstrate_code,
+                                    p_recalcdate,
+                                    coalesce(pb.owner_gstin_state_code,pb.cp_gstin_state_code),
+                                    pb.fintradegrp_code,
+                                    pb.cp_gstin_no
+                                ) cessrate,
+             --END REV : 004
+             g.slabappl slabappl,g.slabbasis slabbasis
+        FROM psite_posbill pb,
+             psite_posbillitem pbi,
+             invitem i,
+             (
+              SELECT hsn.code invhsnsacmain_code,
+                     gr.Tax_name  taxname,
+                     hsnd.code invhsnsacdet_code,
+                     gr.igst_rate igstrate,
+                     gr.cgst_rate cgstrate,
+                     gr.sgst_rate sgstrate,
+                     gr.cess_rate cessrate,
+                     hsnd.slab_appl slabappl,
+                     hsnd.slab_basis slabbasis,
+                     --START REV : 004
+                     gr.code gstrate_code
+                     --END REV : 004
+              FROM invhsnsacmain hsn, invhsnsacdet hsnd
+LEFT OUTER JOIN invgstrate gr ON (hsnd.invgstrate_code = gr.code)
+WHERE hsn.code = hsnd.invhsnsacmain_code  and coalesce(gr.extinct,'N') = 'N' and (hsnd.invhsnsacmain_code, hsnd.effective_date) IN (SELECT invhsnsacmain_code, max(effective_date)
+                                                                        from   invhsnsacdet
+                                                                        WHERE  effective_date <= p_recalcdate
+                                                                        GROUP BY
+                                                                                invhsnsacmain_code)
+               ) g
+       WHERE pb.code = pbi.psite_posbill_code
+         AND pb.admsite_code = p_admsite_code
+         AND pbi.icode = i.icode
+         AND coalesce(pbi.taxregime,'V') = 'G'
+         AND i.invhsnsacmain_code = g.invhsnsacmain_code
+         AND date_trunc('day', pb.billdate) = p_recalcdate
+         AND     pb.gstdocno not in (select scheme_docno from invgst_einvoice where upper(transaction_table) = 'POSBILL');
+   v_slab_range_desc   varchar(100);
+   v_slab_range_rate   double precision;
+   v_slab_igstrate     double precision;
+   v_slab_cgstrate     double precision;
+   v_slab_sgstrate     double precision;
+   v_slab_cessrate     double precision;
+   v_slab_taxname      varchar(50);
+   v_hosettledon       timestamp;
+   v_hosettledby       integer;
+   V_PARK_UPD          char(1) := NULL;
+BEGIN
+   FOR crecvat IN recalcgst
+   LOOP
+-- start rev : 002
+	<<end_loop>>
+    BEGIN
+	BEGIN
+        SELECT 'Y'
+        INTO STRICT   V_PARK_UPD
+        FROM   PSITE_POSSTLM
+        WHERE   admsite_code = crecvat.admsite_code
+        AND     date_trunc('day', stlmfor) = crecvat.recalcdate
+        AND     STATUS IN ('O','R');
+    EXCEPTION WHEN no_data_found THEN
+        V_PARK_UPD := NULL;
+    END;
+ -- END REV : 002
+      SELECT  coalesce(ho_settledon,clock_timestamp()) settledon, coalesce(ho_settledby,1) settledby
+      INTO STRICT    v_hosettledon, v_hosettledby
+      FROM    psite_posstlm
+      WHERE   admsite_code = crecvat.admsite_code
+      AND     stlmfor = crecvat.recalcdate;
+      BEGIN
+         /*
+               CHECK FOR SALETYPE
+         */
+         BEGIN
+            SELECT saletype
+              INTO STRICT v_sltype
+              FROM finsl
+             WHERE slcode IN (SELECT slcode
+                                FROM admsite
+                               WHERE code = crecvat.admsite_code);
+         EXCEPTION
+            WHEN no_data_found
+            THEN
+               v_sltype := 'C';
+         END;
+         IF v_sltype = 'C'
+         THEN
+            SELECT COUNT(1)
+              INTO STRICT v_count
+              FROM salcsmain
+             WHERE admsite_code = crecvat.admsite_code
+               --AND date_trunc('day', csdate) = date_trunc('day', crecvat.recalcdate)
+			   and csdate = crecvat.recalcdate
+               AND coalesce(adjamt, 0) <> 0;
+            IF v_count <> 0
+            THEN
+               UPDATE tax_recalc_history
+                  SET hoexecutiondate = clock_timestamp(),
+                      hoexecutionerror = 'Consignment Sale Already Adjusted',
+                      status = 'EH'
+                WHERE requestid = crecvat.requestid;
+			   EXIT end_loop;
+            END IF;
+         END IF;
+           for c1 IN posbill(crecvat.admsite_code, crecvat.recalcdate)
+           LOOP
+              UPDATE PSITE_POSBILL
+              SET FINTRADEGRP_CODE = C1.FINTRADEGRP_CODE,
+                  OWNER_GSTIN_NO = C1.OWNER_GSTIN_NO,
+                  OWNER_GSTIN_STATE_CODE = C1.OWNER_GSTIN_STATE_CODE,
+                  CP_GSTIN_NO = C1.CP_GSTIN_NO,
+                  CP_GSTIN_STATE_CODE = C1.CP_GSTIN_STATE_CODE
+               WHERE CODE = c1.posbillid;
+               -- START REV : 002
+                 IF coalesce(V_PARK_UPD,'@') = 'Y' THEN
+                  UPDATE PSITE_POSBILL_PARK
+                  SET FINTRADEGRP_CODE = C1.FINTRADEGRP_CODE,
+                      OWNER_GSTIN_NO = C1.OWNER_GSTIN_NO,
+                      OWNER_GSTIN_STATE_CODE = C1.OWNER_GSTIN_STATE_CODE,
+                      CP_GSTIN_NO = C1.CP_GSTIN_NO,
+                      CP_GSTIN_STATE_CODE = C1.CP_GSTIN_STATE_CODE
+                   WHERE CODE = c1.posbillid;
+                 END IF;
+               -- END REV : 002
+           END LOOP;
+           FOR C2 IN posbillItemVatRegime(crecvat.admsite_code, crecvat.recalcdate)
+           LOOP
+               UPDATE PSITE_POSBILLITEM
+               SET  taxREGIME = C2.VATREGIME,
+                    HSN_SAC_CODE = coalesce(C2.GOVT_IDENTIFIER,C2.HSN_SAC_CODE)
+               WHERE CODE = C2.POSBILLITEMID;
+               -- START REV : 002
+               IF coalesce(V_PARK_UPD,'@') = 'Y' THEN
+                   UPDATE PSITE_POSBILLITEM_PARK
+                   SET  taxREGIME = C2.VATREGIME,
+                        HSN_SAC_CODE = coalesce(C2.GOVT_IDENTIFIER,C2.HSN_SAC_CODE)
+                   WHERE CODE = C2.POSBILLITEMID;
+               END IF;
+               -- END REV : 002
+            END LOOP;
+            /*
+             UPDATE  psite_posbillitem
+         */
+         FOR c3 IN POSBillItemVat(crecvat.admsite_code, crecvat.recalcdate)
+         LOOP
+            IF c3.rangeappl = 0
+            THEN
+               UPDATE psite_posbillitem pbi
+                  SET taxdetcode = c3.vatid,
+                      taxdescription = c3.description,
+                      taxpercent = c3.rate,
+                      taxamt =
+                            ROUND (((c3.netamt / (100 + c3.rate)) * c3.rate)::numeric, 2),
+                      taxableamt =
+                                ROUND (((c3.netamt / (100 + c3.rate)) * 100)::numeric, 2),
+                      igstrate = 0,
+                      igstamt  = 0,
+                      cgstrate = 0,
+                      cgstamt  = 0,
+                      sgstrate = 0,
+                      sgstamt  = 0,
+                      cessrate = 0,
+                      cessamt  = 0
+                WHERE code = c3.posbillitemid;
+                -- START REV : 002
+              IF coalesce(V_PARK_UPD,'N') = 'Y'  THEN
+                   UPDATE psite_posbillitem_PARK pbi
+                      SET taxdetcode = c3.vatid,
+                          taxdescription = c3.description,
+                          taxpercent = c3.rate,
+                          taxamt =
+                                ROUND (((c3.netamt / (100 + c3.rate)) * c3.rate)::numeric, 2),
+                          taxableamt =
+                                    ROUND (((c3.netamt / (100 + c3.rate)) * 100)::numeric, 2),
+                          igstrate = 0,
+                          igstamt  = 0,
+                          cgstrate = 0,
+                          cgstamt  = 0,
+                          sgstrate = 0,
+                          sgstamt  = 0,
+                          cessrate = 0,
+                          cessamt  = 0
+                    WHERE code = c3.posbillitemid;
+                END IF;
+                -- END REV : 002
+            ELSIF c3.rangeappl = 1
+            THEN
+               BEGIN
+                  SELECT range_desc, rate
+                    INTO STRICT v_slab_range_desc, v_slab_range_rate
+                    FROM fintax_range
+                   WHERE taxdetcode = c3.vatid
+                     AND (   (    c3.rangebasis = 'N'
+                              AND c3.netprice BETWEEN rangefrom
+                                                  AND coalesce(rangeto, 99999999)
+                             )
+                          OR (    c3.rangebasis = 'R'
+                              AND c3.rsp BETWEEN rangefrom
+                                             AND coalesce(rangeto, 99999999)
+                             )
+                         );
+                  UPDATE psite_posbillitem pbi
+                     SET taxdetcode = c3.vatid,
+                         taxdescription = v_slab_range_desc,
+                         taxpercent = v_slab_range_rate,
+                         taxamt =
+                            ROUND (  ((c3.netamt / (100 + v_slab_range_rate))
+                                   * v_slab_range_rate)::numeric,
+                                   2
+                                  ),
+                         taxableamt =
+                            ROUND (  ((c3.netamt / (100 + v_slab_range_rate))
+                                   * 100)::numeric,
+                                   2
+                                  ),
+                          igstrate = 0,
+                          igstamt  = 0,
+                          cgstrate = 0,
+                          cgstamt  = 0,
+                          sgstrate = 0,
+                          sgstamt  = 0,
+                          cessrate = 0,
+                          cessamt  = 0
+                   WHERE code = c3.posbillitemid;
+                   -- START REV : 002
+                  IF coalesce(V_PARK_UPD,'N') = 'Y'  THEN
+                      UPDATE psite_posbillitem_PARK pbi
+                         SET taxdetcode = c3.vatid,
+                             taxdescription = v_slab_range_desc,
+                             taxpercent = v_slab_range_rate,
+                             taxamt =
+                                ROUND (  ((c3.netamt / (100 + v_slab_range_rate))
+                                       * v_slab_range_rate)::numeric,
+                                       2
+                                      ),
+                             taxableamt =
+                                ROUND (  ((c3.netamt / (100 + v_slab_range_rate))
+                                       * 100)::numeric,
+                                       2
+                                      ),
+                              igstrate = 0,
+                              igstamt  = 0,
+                              cgstrate = 0,
+                              cgstamt  = 0,
+                              sgstrate = 0,
+                              sgstamt  = 0,
+                              cessrate = 0,
+                              cessamt  = 0
+                       WHERE code = c3.posbillitemid;
+                    END IF;
+                   -- END REV : 002
+               EXCEPTION
+                  WHEN no_data_found
+                  THEN
+                     UPDATE psite_posbillitem pbi
+                        SET taxdetcode = c3.vatid,
+                            taxdescription = 'Slab Not Defined',
+                            taxpercent = 0,
+                            taxamt = 0,
+                            taxableamt = c3.netamt,
+                            igstrate = 0,
+                            igstamt  = 0,
+                            cgstrate = 0,
+                            cgstamt  = 0,
+                            sgstrate = 0,
+                            sgstamt  = 0,
+                            cessrate = 0,
+                            cessamt  = 0
+                      WHERE code = c3.posbillitemid;
+                      -- START REV : 002
+                    IF coalesce(V_PARK_UPD,'N') = 'Y'  THEN
+                     UPDATE psite_posbillitem_PARK pbi
+                        SET taxdetcode = c3.vatid,
+                            taxdescription = 'Slab Not Defined',
+                            taxpercent = 0,
+                            taxamt = 0,
+                            taxableamt = c3.netamt,
+                            igstrate = 0,
+                            igstamt  = 0,
+                            cgstrate = 0,
+                            cgstamt  = 0,
+                            sgstrate = 0,
+                            sgstamt  = 0,
+                            cessrate = 0,
+                            cessamt  = 0
+                      WHERE code = c3.posbillitemid;
+                   END IF;
+                      -- END REV : 002
+               END;
+            END IF;
+         END LOOP;
+         --===================================================
+         --GST
+         FOR c4 IN POSBillItemGST(crecvat.admsite_code, crecvat.recalcdate)
+         LOOP
+            IF c4.slabappl = 'N'
+            THEN
+               UPDATE psite_posbillitem pbi
+                  SET taxdescription = c4.taxname,
+                      taxdetcode  = NULL,
+                      igstrate = c4.igstrate,
+                      igstamt =
+                            ROUND (((c4.netamt / (100 + (c4.igstrate + c4.sgstrate + c4.cgstrate + c4.cessrate))) * c4.igstrate)::numeric, 2),
+                      cgstrate = c4.cgstrate,
+                      cgstamt =
+                            ROUND (((c4.netamt / (100 + (c4.igstrate + c4.sgstrate + c4.cgstrate + c4.cessrate))) * c4.cgstrate)::numeric, 2),
+                      sgstrate = c4.sgstrate,
+                      sgstamt =
+                            ROUND (((c4.netamt / (100 + (c4.igstrate + c4.sgstrate + c4.cgstrate + c4.cessrate))) * c4.sgstrate)::numeric, 2),
+                      cessrate = c4.cessrate,
+                      cessamt =
+                            ROUND (((c4.netamt / (100 + (c4.igstrate + c4.sgstrate + c4.cgstrate + c4.cessrate))) * c4.cessrate)::numeric, 2)
+                WHERE code = c4.posbillitemid;
+                UPDATE PSITE_POSBillItem
+			    SET  TaxAmt = (coalesce(igstamt,0) + coalesce(cgstamt,0) + coalesce(sgstamt,0) + coalesce(cessamt,0)),
+                        TaxPercent = IGSTRate + CGSTRate + SGSTRate + CESSRate,
+					 Taxableamt = netamt - (coalesce(igstamt,0) + coalesce(cgstamt,0) + coalesce(sgstamt,0) + coalesce(cessamt,0))
+				WHERE code = c4.posbillitemid;
+				-- START REV : 002
+               IF coalesce(V_PARK_UPD,'N') = 'Y'  THEN
+                   UPDATE psite_posbillitem_PARK pbi
+                      SET taxdescription = c4.taxname,
+                          taxdetcode  = NULL,
+                          igstrate = c4.igstrate,
+                          igstamt =
+                                ROUND (((c4.netamt / (100 + (c4.igstrate + c4.sgstrate + c4.cgstrate + c4.cessrate))) * c4.igstrate)::numeric, 2),
+                          cgstrate = c4.cgstrate,
+                          cgstamt =
+                                ROUND (((c4.netamt / (100 + (c4.igstrate + c4.sgstrate + c4.cgstrate + c4.cessrate))) * c4.cgstrate)::numeric, 2),
+                          sgstrate = c4.sgstrate,
+                          sgstamt =
+                                ROUND (((c4.netamt / (100 + (c4.igstrate + c4.sgstrate + c4.cgstrate + c4.cessrate))) * c4.sgstrate)::numeric, 2),
+                          cessrate = c4.cessrate,
+                          cessamt =
+                                ROUND (((c4.netamt / (100 + (c4.igstrate + c4.sgstrate + c4.cgstrate + c4.cessrate))) * c4.cessrate)::numeric, 2)
+                    WHERE code = c4.posbillitemid;
+                    UPDATE PSITE_POSBillItem_PARK
+                    SET  TaxAmt = (coalesce(igstamt,0) + coalesce(cgstamt,0) + coalesce(sgstamt,0) + coalesce(cessamt,0)),
+                            TaxPercent = IGSTRate + CGSTRate + SGSTRate + CESSRate,
+                         Taxableamt = netamt - (coalesce(igstamt,0) + coalesce(cgstamt,0) + coalesce(sgstamt,0) + coalesce(cessamt,0))
+                    WHERE code = c4.posbillitemid;
+                END IF;
+				-- END REV : 002
+            ELSIF c4.slabappl = 'Y'
+            THEN
+               BEGIN
+                  SELECT case when c4.fintradegrp_code = 2 then gr.igst_rate else 0 end igst_rate,
+                         case when c4.fintradegrp_code = 1 then gr.cgst_rate else 0 end cgst_rate,
+                         case when c4.fintradegrp_code = 1 then gr.cgst_rate else 0 end sgst_rate,
+                         --START REV : 004
+                         gr.cess_rate + coalesce(get_gstadd_cessrate(
+                                    gr.code,
+                                    c4.posbilldate,
+                                    c4.gst_state_code,
+                                    c4.fintradegrp_code,
+                                    c4.gstin_no
+                                ),0) cess_rate,
+                         --END REV : 004 
+                         gr.Tax_name
+                    INTO STRICT v_slab_igstrate,  v_slab_cgstrate,  v_slab_sgstrate, v_slab_cessrate, v_slab_taxname
+                    FROM V_RECALCGST_SLAB hslab, invgstrate gr
+                   WHERE  hslab.INVGSTRATE_CODE = GR.CODE
+                     AND  hslab.invhsnsacdet_code = c4.invhsnsacdet_code
+                     AND (   (    c4.slabbasis = 'N'
+                              AND c4.netprice BETWEEN hslab.amount_from
+                                                  AND coalesce(hslab.amount_to, 99999999)
+                             )
+                          OR (    c4.slabbasis = 'R'
+                              AND c4.rsp BETWEEN hslab.amount_from
+                                                  AND coalesce(hslab.amount_to, 99999999)
+                             )
+                         );
+--                  --START REV : 004
+--                  SELECT NVL(v_slab_cessrate,0)+ NVL(get_gstadd_cessrate
+--                                (
+--                                    v_gstratecode,
+--                                    c4.posbilldate,
+--                                    nvl(pb.owner_gstin_state_code,pb.cp_gstin_state_code),
+--                                    pb.fintradegrp_code,
+--                                    pb.cp_gstin_no
+--                                ),0) 
+--                 INTO v_slab_cessrate
+--                 FROM psite_posbill pb WHERE pb.code = c4.posbillid;
+                 --END REV : 004
+                  UPDATE psite_posbillitem pbi
+                  SET taxdescription = v_slab_taxname,
+                      taxdetcode  = NULL,
+                      igstrate = v_slab_igstrate,
+                      igstamt =
+                            ROUND (((c4.netamt / (100 + (v_slab_igstrate + v_slab_sgstrate + v_slab_cgstrate + v_slab_cessrate))) * v_slab_igstrate)::numeric, 2),
+                      cgstrate = v_slab_cgstrate,
+                      cgstamt =
+                            ROUND (((c4.netamt / (100 + (v_slab_igstrate + v_slab_sgstrate + v_slab_cgstrate + v_slab_cessrate))) * v_slab_cgstrate)::numeric, 2),
+                      sgstrate = v_slab_sgstrate,
+                      sgstamt =
+                            ROUND (((c4.netamt / (100 + (v_slab_igstrate + v_slab_sgstrate + v_slab_cgstrate + v_slab_cessrate))) * v_slab_sgstrate)::numeric, 2),
+                      cessrate = v_slab_cessrate,
+                      cessamt =
+                            ROUND (((c4.netamt / (100 + (v_slab_igstrate + v_slab_sgstrate + v_slab_cgstrate + v_slab_cessrate))) * v_slab_cessrate)::numeric, 2)
+                WHERE code = c4.posbillitemid;
+                UPDATE PSITE_POSBillItem
+			    SET  TaxAmt = (coalesce(igstamt,0) + coalesce(cgstamt,0) + coalesce(sgstamt,0) + coalesce(cessamt,0)),
+			    TaxPercent = IGSTRate + CGSTRate + SGSTRate + CESSRate,
+					 Taxableamt = netamt - (coalesce(igstamt,0) + coalesce(cgstamt,0) + coalesce(sgstamt,0) + coalesce(cessamt,0))
+				WHERE code = c4.posbillitemid;
+				-- START REV : 002
+				   IF coalesce(V_PARK_UPD,'N') = 'Y'  THEN
+                      UPDATE psite_posbillitem_PARK pbi
+                      SET taxdescription = v_slab_taxname,
+                          taxdetcode  = NULL,
+                          igstrate = v_slab_igstrate,
+                          igstamt =
+                                ROUND (((c4.netamt / (100 + (v_slab_igstrate + v_slab_sgstrate + v_slab_cgstrate + v_slab_cessrate))) * v_slab_igstrate)::numeric, 2),
+                          cgstrate = v_slab_cgstrate,
+                          cgstamt =
+                                ROUND (((c4.netamt / (100 + (v_slab_igstrate + v_slab_sgstrate + v_slab_cgstrate + v_slab_cessrate))) * v_slab_cgstrate)::numeric, 2),
+                          sgstrate = v_slab_sgstrate,
+                          sgstamt =
+                                ROUND (((c4.netamt / (100 + (v_slab_igstrate + v_slab_sgstrate + v_slab_cgstrate + v_slab_cessrate))) * v_slab_sgstrate)::numeric, 2),
+                          cessrate = v_slab_cessrate,
+                          cessamt =
+                                ROUND (((c4.netamt / (100 + (v_slab_igstrate + v_slab_sgstrate + v_slab_cgstrate + v_slab_cessrate))) * v_slab_cessrate)::numeric, 2)
+                    WHERE code = c4.posbillitemid;
+                    UPDATE PSITE_POSBillItem_PARK
+                    SET  TaxAmt = (coalesce(igstamt,0) + coalesce(cgstamt,0) + coalesce(sgstamt,0) + coalesce(cessamt,0)),
+                    TaxPercent = IGSTRate + CGSTRate + SGSTRate + CESSRate,
+                         Taxableamt = netamt - (coalesce(igstamt,0) + coalesce(cgstamt,0) + coalesce(sgstamt,0) + coalesce(cessamt,0))
+                    WHERE code = c4.posbillitemid;
+                END IF;
+				-- END REV : 002
+               EXCEPTION
+                  WHEN no_data_found
+                  THEN
+                     UPDATE psite_posbillitem pbi
+                        SET taxdescription = 'GST Slab Not Defined',
+                            taxpercent = 0,
+                            taxamt = 0,
+                            taxableamt = c4.netamt
+                      WHERE code = c4.posbillitemid;
+                    -- START REV : 002
+                    IF coalesce(V_PARK_UPD,'N') = 'Y'  THEN
+                         UPDATE psite_posbillitem_PARK pbi
+                            SET taxdescription = 'GST Slab Not Defined',
+                                taxpercent = 0,
+                                taxamt = 0,
+                                taxableamt = c4.netamt
+                          WHERE code = c4.posbillitemid;
+                    END IF;
+                    -- END REV : 002
+               END;
+            END IF;
+         END LOOP;
+         --====================================================
+         /*
+             CHECK FOR DAYS CLOSED ENTRIES
+         */
+         SELECT status
+           INTO STRICT v_stlmstatus
+           FROM psite_posstlm
+          WHERE admsite_code = crecvat.admsite_code
+            AND stlmfor = crecvat.recalcdate;
+-- START REV : 002
+         --IF v_stlmstatus = 'C'
+         IF v_stlmstatus IN ('C','U')
+-- END REV : 002
+         THEN
+            IF v_sltype = 'C'
+            THEN
+               /*
+                   DELETE  CONSIGMENT ENTRY
+               */
+               DELETE FROM salcsmop
+                     WHERE cscode IN (
+                              SELECT cscode
+                                FROM salcsmain
+                               WHERE csdate = crecvat.recalcdate
+                                 AND admsite_code = crecvat.admsite_code
+                                 -- START REV : 006
+                                 AND channeltype = 'RTL'
+                                 -- END REV : 006
+                                 );
+               DELETE FROM salcsdet
+                     WHERE cscode IN (
+                              SELECT cscode
+                                FROM salcsmain
+                               WHERE csdate = crecvat.recalcdate
+                                 AND admsite_code = crecvat.admsite_code
+                                 -- START REV : 006
+                                 AND channeltype = 'RTL'
+                                 -- END REV : 006
+                                 );
+               DELETE FROM salcsmain
+                     WHERE csdate = crecvat.recalcdate
+                       AND admsite_code = crecvat.admsite_code
+                       -- START REV : 006
+                        AND channeltype = 'RTL';
+                       -- END REV : 006
+                /*
+                   INSERT NEW  CONSIGMENT ENTRY
+               */
+               CALL p_pos_consolidation(crecvat.recalcdate :: timestamp without time zone, crecvat.admsite_code :: bigint,v_hosettledby::INTEGER, v_hosettledon::timestamp with time zone, clock_timestamp()::timestamp with time zone);
+            END IF;
+            IF v_sltype = 'O'
+            THEN
+               /*
+                   DELETE  CONSIGMENT ENTRY
+               */
+               DELETE FROM salssdet
+                     WHERE sscode IN (
+                              SELECT sscode
+                                FROM salssmain
+                               WHERE ssdate = crecvat.recalcdate
+                                 AND admsite_code = crecvat.admsite_code
+                                 -- START REV : 006
+                                 -- START REV : 007
+                                 AND coalesce(channeltype,'RTL') = 'RTL'
+                                 -- END REV : 006
+                                 -- END REV : 007
+                                 );
+               DELETE FROM salssmain
+                     WHERE ssdate = crecvat.recalcdate
+                       AND admsite_code = crecvat.admsite_code
+                       -- START REV : 006
+                       -- START REV : 007
+                       AND coalesce(channeltype,'RTL') = 'RTL';
+                       -- END REV : 006
+                       -- END REV : 007
+               /*
+                   INSERT NEW  CONSIGMENT ENTRY
+               */
+               CALL p_pos_consolidation(crecvat.recalcdate :: timestamp without time zone, crecvat.admsite_code :: bigint,v_hosettledby::INTEGER, v_hosettledon::timestamp with time zone, clock_timestamp()::timestamp with time zone);
+            END IF;
+         END IF;
+         /*
+               UPDATE TAX_RECALCULATE_HISTORY
+          */
+         UPDATE tax_recalc_history
+            SET hoexecutiondate = clock_timestamp(),
+                status = 'PH'
+          WHERE requestid = crecvat.requestid;
+      EXCEPTION
+         WHEN OTHERS
+         THEN
+            v_errcode := SQLSTATE;
+            v_errmsg := SQLERRM;
+            UPDATE tax_recalc_history
+               SET hoexecutiondate = clock_timestamp(),
+                   hoexecutionerror = v_errmsg,
+                   status = 'EH'
+             WHERE requestid = crecvat.requestid;
+      END;
+      --COMMIT;
+      --<<end_loop>>
+	  END;
+      NULL;
+   END LOOP;
+--COMMIT;
+END;
+"""
+  arguments = [
+  ]
+  language = plpgsql
+}
+

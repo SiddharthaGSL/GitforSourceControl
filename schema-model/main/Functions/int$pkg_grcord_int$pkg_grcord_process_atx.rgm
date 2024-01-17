@@ -1,0 +1,823 @@
+function "main"."int$pkg_grcord_int$pkg_grcord_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      --v_site_initial     VARCHAR2 (15);
+      errmsg                    varchar(500);
+      vsession                  varchar(100);
+      vdetailtbl                varchar(5000);
+      vdetailrec                varchar(500);
+      errcode                   bigint;
+      vcount                    bigint;
+      v_tempno                  bigint;
+      v_grccode                 bigint;
+      v_scheme_docno            varchar(25)   := NULL;
+
+      
+      return_string_batch       varchar(500);
+      v_cnt_batch               bigint;
+      v_classname               varchar(50) := 'GRCORD';-- START REV : 014
+      c_batch1 CURSOR FOR
+                SELECT lineno, b.code, b.mfg_date, b.exp_date, b.listed_mrp, b.wsp, b.mrp
+                from   int$stg_grcord a, invitem i, invbatch_serial b
+                where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+                and    i.icode = b.icode
+                and    upper(a.batch_serial_no) = upper(b.batch_serial_no)
+                and    a.batch_serial_no is not null
+                and    userid = p_userid
+                order by lineno;
+
+      c_batch2 CURSOR FOR
+            SELECT b.code, b.batch_serial_no, a.lineno
+                from int$stg_grcord a,
+                    invbatch_serial          b,
+                    invgrp                   g,
+                    invitem                  i
+            where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+                    and b.icode = i.icode
+                    and i.grpcode = g.grpcode
+                    and a.mfg_date = b.mfg_date
+                    and a.valid_upto = b.exp_date
+                    and a.mrp = b.listed_mrp
+                    and a.wsp = b.wsp
+                    and a.rsp = b.mrp
+                    and a.standardrate = b.costrate
+                    and a.batch_serial_no is null
+                    and g.iscreatebatchdocumentwise = 'N'
+                    and a.userid = p_userid;
+
+      c_batch3 CURSOR FOR
+                    SELECT a.item_barcode, i.icode, a.batch_serial_no, a.mfg_date, a.valid_upto, a.mrp, a.wsp, a.rsp, a.standardrate, a.item_qty, a.grcdt, i.item_management_mode, a.invbatch_serial_code, a.lineno
+                    from   int$stg_grcord a, invitem i, invgrp g
+                    where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+                    and    i.grpcode = g.grpcode
+                    and    a.item_barcode is not null
+                    and    i.item_management_mode in ('B','S')
+                    and    userid = p_userid
+                    and    a.invbatch_serial_code is null
+                    order by lineno;
+
+                    
+      c_batch4 CURSOR(p_grccode    bigint)
+      FOR
+                    SELECT invbatch_serial_code
+                    from   int$stg_grcadhoc_temp
+                    where  grccode = p_grccode
+                    and    userid = p_userid;
+    -- END REV : 014
+      -- Populate INVGRCMAIN Table
+      c_main CURSOR FOR
+         SELECT nextval('erp01') grccode, t1.grcdt grcdt, t2.doccode doccode,
+                'AUTOMATIC' scheme_docno, t1.pcode pcode,
+                -- START REV : 003
+                --1  admou_code,
+                p_connect_ou  admou_code,
+                -- END REV : 003
+                t1.document_no document_no, t1.remarks remarks, t1.ycode,
+                clock_timestamp() TIME, p_userid ecode, clock_timestamp() last_access_time,
+                p_userid last_access_ecode,
+                p_connect_site admsite_code_owner,
+                t1.fintradegrp_code fintradegrp_code, t1.formcode formcode,
+                termcode, l.loccode loccode, t1.agcode, t1.trpcode,
+                stock_point_name, coalesce(isexcise, 'N') excise_appl,
+                s.admcmptax_code, exrate, t1.admcurrency_code,
+                t1.whether_consignment, t1.ordcode, purchase_order_no,
+                CASE WHEN t1.whether_consignment='Y' THEN  1  ELSE cr.isbase END  isbase,
+                -- cr.isbase isbase,
+                reference_no, tot_item_qty
+           FROM admdocscheme t2, finsl s, admou o, invloc l, (SELECT   UPPER(document_scheme) document_scheme, grcdt,
+                          UPPER(purchase_order_no) purchase_order_no,
+                          a.document_no document_no,
+                          UPPER(a.stock_point_name) stock_point_name,
+                          p.pcode pcode, p.ordcode ordcode, a.remarks remarks,
+                          p.purtermcode termcode,
+                          p.fintradegrp_code fintradegrp_code,
+                          p.formcode formcode,
+                          SUM(coalesce(item_qty, 0)) tot_item_qty, exrate exrate,
+                          admcurrency_code admcurrency_code,
+                          whether_consignment, agcode, trpcode,
+                          (SELECT ycode
+                             FROM admyear
+                            WHERE grcdt BETWEEN dtfr AND dtto) ycode,
+                          reference_no
+                     FROM int$stg_grcord a, purordmain p
+                    WHERE UPPER(purchase_order_no) = UPPER(p.scheme_docno)
+                      --AND P.ycode = y.ycode
+                      --AND a.grcdt BETWEEN Y.dtfr AND Y.dtto
+                      AND p.admsite_code = p_connect_site
+                      AND coalesce(p.stat, 'N') <> 'T'
+                      AND a.userid = p_userid
+                 GROUP BY UPPER(document_scheme),
+                          grcdt,
+                          UPPER(purchase_order_no),
+                          a.document_no,
+                          UPPER(a.stock_point_name),
+                          p.pcode,
+                          p.ordcode,
+                          a.remarks,
+                          p.purtermcode,
+                          p.fintradegrp_code,
+                          p.formcode,
+                          agcode,
+                          trpcode,
+                          exrate,
+                          admcurrency_code,
+                          whether_consignment,
+                          reference_no) t1
+LEFT OUTER JOIN admcurrency cr ON (t1.admcurrency_code = cr.code)
+WHERE UPPER(t1.document_scheme) = UPPER(t2.docname) AND UPPER(t1.stock_point_name) = UPPER(l.locname) AND s.slcode = t1.pcode AND O.CODE = P_CONNECT_OU  -- REV : 002
+;
+
+      v_det_grsamt       double precision  := 0;
+      v_det_chgamt       double precision  := 0;
+      v_grcno            numeric(20)     := 0;
+      v_tot_qty          double precision  := 0;
+      -- START REV : 008
+      V_EXRATE         PURORDMAIN.EXRATE%TYPE := 1;
+      -- END REV : 008
+BEGIN
+   
+    DELETE FROM int$stg_grcadhoc_temp where userid = p_userid;
+
+     -- START REV : 014
+    
+    FOR b IN C_BATCH2
+          LOOP
+              update int$stg_grcord a
+                  set a.batch_serial_no = b.batch_serial_no,
+                      a.invbatch_serial_code = b.code
+              where  a.lineno = b.lineno
+              and    a.batch_serial_no is null
+              and    a.userid = p_userid;
+          END LOOP;
+
+    FOR d IN C_BATCH3
+          LOOP
+             select count(*) into STRICT v_cnt_batch from invbatch_serial
+             where batch_serial_no = d.batch_serial_no
+             and   icode = d.item_barcode
+             and   d.invbatch_serial_code is null;
+
+             IF coalesce(v_cnt_batch,0) = 0
+              THEN
+                return_string_batch := erpcreatebatch(d.item_barcode, d.batch_serial_no, d.mfg_date, d.valid_upto, d.mrp, d.wsp, d.rsp, d.standardrate, d.item_qty, v_classname, p_userid, v_grccode);
+                    IF return_string_batch IS NOT NULL
+                        THEN
+                            update int$stg_grcord a
+                                set a.invbatch_serial_code = substr(return_string_batch, instr(return_string_batch,'~', -1) + 1),
+                                    a.batch_serial_no = substr(return_string_batch, 1, position('~' in return_string_batch)-1)
+                            where  lineno = d.lineno
+                            and    userid = p_userid
+                            and    d.item_management_mode = 'B'
+                            and    a.batch_serial_no is null;
+
+                            update int$stg_grcord a
+                                set a.invbatch_serial_code = substr(return_string_batch, instr(return_string_batch,'~', -1) + 1)
+                            where  userid = p_userid
+                            and    d.item_management_mode = 'B'
+                            and    a.batch_serial_no is not null
+                            and    a.batch_serial_no = d.batch_serial_no;
+
+                            update int$stg_grcord a
+                                set a.invbatch_serial_code = substr(return_string_batch, instr(return_string_batch,'~', -1) + 1)
+                            where  lineno = d.lineno
+                            and    userid = p_userid
+                            and    d.item_management_mode = 'S'
+                            and    a.batch_serial_no is not null;
+
+                    ELSIF return_string_batch IS NULL
+                        THEN NULL;
+                    ELSE
+                        RAISE EXCEPTION 'e_usr_exp' USING ERRCODE = '50002';
+                    END IF;
+             END IF;
+          END LOOP;
+
+    FOR a IN C_BATCH1
+          LOOP
+             update int$stg_grcord
+             set invbatch_serial_code = a.code,
+                mfg_date = a.mfg_date,
+                valid_upto = a.exp_date,
+                mrp = a.listed_mrp,
+                wsp = a.wsp,
+                rsp = a.mrp
+             where  lineno = a.lineno
+             and    userid = p_userid;
+          END LOOP;
+
+-- END REV : 014
+    
+      FOR r IN c_main
+      LOOP
+
+         v_grccode := NULL;
+
+        -- SELECT erp01.NEXTVAL INTO v_grccode FROM DUAL;
+         v_grccode := r.grccode;
+         V_SCHEME_DOCNO :=
+            db_fun_document_number_web(NULL,
+                                        R.doccode,
+                                        R.ycode,
+                                        TO_CHAR(r.grcdt,'DD-MM-YYYY'),
+                                        NULL,
+                                        p_connect_site,
+                                        P_CONNECT_OU,
+                                        'ProcGRCAdhoc'
+                                        );
+
+        -- END REV : 011
+         v_tot_qty := coalesce(r.tot_item_qty, 0);
+
+         -- START REV : 008
+        BEGIN
+            SELECT	M.EXRATE
+            INTO STRICT	V_EXRATE
+            FROM	ADMCURRENCY_RATE M
+            WHERE	M.ADMCURRENCY_CODE 	= R.ADMCURRENCY_CODE
+            AND		M.EFFDATE =
+                                (
+                                    SELECT	MAX(D.EFFDATE)
+                                    FROM    ADMCURRENCY_RATE D
+                                    WHERE	D.ADMCURRENCY_CODE = R.ADMCURRENCY_CODE
+                                    AND		D.EFFDATE <= R.GRCDT
+                                );
+        EXCEPTION
+            WHEN OTHERS THEN
+            V_EXRATE:= 1;
+        END;
+         -- END REV : 008
+         INSERT INTO invgrcmain(grccode, grcno, grcdt, doccode,
+                      docno, pcode, ordcode, loccode,
+                      -- PSITE_STOCKPOINT_CODE,
+                      whether_consignment, REM, ycode, ecode,
+                      TIME, agcode, admou_code, scheme_docno,
+                      fintradegrp_code, formcode, admcurrency_code,
+                      exrate, invgatein_code, lgtcode, lgtrecqty,
+                      admsite_code_in, purtermcode, geno, last_access_time,
+                      last_access_ecode,
+                      --START REV : 009
+                      entry_source, entry_mode
+                      --END REV : 009
+                     )
+              VALUES (v_grccode, v_grccode, r.grcdt, r.doccode,
+                      r.document_no, r.pcode, r.ordcode, r.loccode,
+                      --R.PSITE_LOCCODE,
+                      r.whether_consignment, r.remarks, r.ycode, r.ecode,
+                      clock_timestamp(), r.agcode, r.admou_code, v_scheme_docno,
+                      r.fintradegrp_code, r.formcode, r.admcurrency_code,
+                      -- START REV : 008
+                      --r.exrate,
+                      V_EXRATE,
+                      -- END REV : 008
+                      NULL,                      --R.INVGATEIN_CODE,
+                      NULL,                        --R.LGTCODE,
+                      NULL,                 --V_LGTRECQTY,
+                      r.admsite_code_owner, NULL, r.reference_no, clock_timestamp(),
+                      r.ecode,
+                      --START REV : 009
+                      'EXCEL', 'O'
+                      --END REV : 009
+                     );
+
+DECLARE
+            c_det CURSOR FOR
+               SELECT DISTINCT i.icode, SUM(a.item_qty) item_qty,
+               -- START REV : 001
+                            /*   SUM (  NVL (d.ordqty, 0)
+                                    - NVL (d.cnlqty, 0)
+                                    - NVL (d.rcqty, 0)
+                                   ) ordqty,*/
+                           SUM (
+                                  -- START REV : 012
+                                  --NVL(d.oqty,NVL (d.ordqty, 0))
+                                 (CASE WHEN coalesce(d.OQTY,0) = 0 THEN
+                                 coalesce(d.ordqty,0)
+                                    ELSE
+                                      coalesce(d.OQTY,0)
+                               END)
+                               -- END REV : 012
+                                    - coalesce(d.cnlqty, 0)
+                                    - coalesce(d.rcqty, 0)
+                                   ) ordqty,
+               -- END REV : 001
+                               --d.rate  * r.exrate rate,
+                               -- START REV : 008
+                               --DECODE(NVL(R.ISBASE,1),0,d.rate  * NVL(r.exrate,1) , D.RATE) RATE,
+                               -- START REV : 013
+                               --DECODE(NVL(R.ISBASE,1),0,d.rate  * NVL(V_EXRATE,1) , D.RATE) RATE,
+                               CASE WHEN coalesce(R.ISBASE,1)=0 THEN coalesce(a.ITEM_RATE, d.rate)  * coalesce(V_EXRATE,1)   ELSE coalesce(a.ITEM_RATE, d.rate) END  RATE,
+                               -- END REV : 013
+                               -- END REV : 008
+                               d.dischgper dischgper,
+                               coalesce(d.discount, 0) discount,
+                               d.taxchgper taxchgper,
+                               coalesce(d.taxamt, 0) taxamt, d.code det_code
+                                                                        --,M.PCODE                                                            PCODE
+                               ,
+                               CASE WHEN r.excise_appl='Y' THEN  d.excisemain_code  ELSE NULL END  excisemain_code,
+                               CASE WHEN r.excise_appl='Y' THEN  d.ex_basis  ELSE NULL END  ex_basis,
+                               CASE WHEN r.excise_appl='Y' THEN  coalesce(d.ex_effrate, 0)  ELSE 0 END  ex_effrate,
+                               CASE WHEN r.excise_appl='Y' THEN  coalesce(d.ex_abtfactor, 0)  ELSE 0 END  ex_abtfactor,
+                               CASE WHEN r.excise_appl='Y' THEN  coalesce(d.ex_dutyfactor, 0)  ELSE 0 END  ex_dutyfactor,
+                               CASE WHEN r.excise_appl='Y' THEN  coalesce(d.ex_cessfactor, 0)  ELSE 0 END  ex_cessfactor,
+                               CASE WHEN r.excise_appl='Y' THEN  d.ex_roundoff  ELSE 0 END  ex_roundoff,
+                               SUM(CASE WHEN r.excise_appl='Y' THEN (  coalesce(d.ex_appamt, 0)                                                  * coalesce(d.ordqty, 0)                                                  / coalesce(d.ordqty, 0)                                             )  ELSE 0 END
+                                   ) ex_appamt,
+                               SUM(CASE WHEN r.excise_appl='Y' THEN (  coalesce(d.ex_dutyamt, 0)                                                  * coalesce(d.ordqty, 0)                                                  / coalesce(d.ordqty, 0)                                             )  ELSE 0 END 
+                                   ) ex_dutyamt,
+                               SUM(CASE WHEN r.excise_appl='Y' THEN (  coalesce(d.ex_cessamt, 0)                                                  * coalesce(d.ordqty, 0)                                                  / coalesce(d.ordqty, 0)                                             )  ELSE 0 END 
+                                   ) ex_cessamt,
+                               d.ex_applicable_from ex_applicable_from,
+                               d.REM item_remarks,
+                               CASE WHEN i.price_management = 'B' then b.mrp
+                               ELSE i.mrp END rsp, 
+                                --START REV : 009
+                               CASE WHEN i.price_management = 'B' then b.listed_mrp
+                               ELSE i.listed_mrp END mrp, 
+                               CASE WHEN i.price_management = 'B' then b.wsp
+                               ELSE I.WSP END WSP,
+                               i.GST_ITC_APPL,
+                               --END REV : 009
+                               a.invbatch_serial_code
+                          FROM int$stg_grcord a, purorddet d, invitem i, INVBATCH_SERIAL b
+                         WHERE a.grcdt = r.grcdt
+                           AND d.ordcode = r.ordcode
+                           AND i.icode = d.icode
+                           AND a.userid = p_userid
+                           AND UPPER(a.purchase_order_no) =
+                                                   UPPER(r.purchase_order_no)
+                           AND coalesce(a.reference_no, '@@') =
+                                                    coalesce(r.reference_no, '@@')
+                           AND coalesce(a.document_no, '@@') =
+                                                     coalesce(r.document_no, '@@')
+                           AND coalesce(a.remarks, '@@') = coalesce(r.remarks, '@@')
+                           AND UPPER(a.stock_point_name) =
+                                                    UPPER(r.stock_point_name)
+                           AND (   (UPPER(a.item_barcode) = UPPER(i.icode))
+                                OR (UPPER(a.item_barcode) = UPPER(i.barcode)
+                                   )
+                               )
+                           AND a.invbatch_serial_code IS NOT NULL
+                           AND a.invbatch_serial_code = b.code
+                      GROUP BY i.icode,
+                              -- START REV : 013 
+                               --d.rate,
+                               coalesce(a.ITEM_RATE, d.RATE),
+                              -- END REV : 013 
+                               d.dischgper,
+                               coalesce(d.discount, 0),
+                               d.taxchgper,
+                               coalesce(d.taxamt, 0),
+                               d.code,
+                               CASE WHEN r.excise_appl='Y' THEN  d.excisemain_code  ELSE NULL END ,
+                               CASE WHEN r.excise_appl='Y' THEN  d.ex_basis  ELSE NULL END ,
+                               CASE WHEN r.excise_appl='Y' THEN  coalesce(d.ex_effrate, 0)  ELSE 0 END ,
+                               CASE WHEN r.excise_appl='Y' THEN  coalesce(d.ex_abtfactor, 0)  ELSE 0 END ,
+                               CASE WHEN r.excise_appl='Y' THEN  coalesce(d.ex_dutyfactor, 0)  ELSE 0 END ,
+                               CASE WHEN r.excise_appl='Y' THEN  coalesce(d.ex_cessfactor, 0)  ELSE 0 END ,
+                               CASE WHEN r.excise_appl='Y' THEN  d.ex_roundoff  ELSE 0 END ,
+                               d.ex_applicable_from,
+                               d.REM,
+                               --START REV : 002
+                               CASE WHEN i.price_management = 'B' then b.mrp
+                               ELSE i.mrp END, 
+                                --START REV : 009
+                               CASE WHEN i.price_management = 'B' then b.listed_mrp
+                               ELSE i.listed_mrp END, 
+                               CASE WHEN i.price_management = 'B' then b.wsp
+                               ELSE I.WSP END,
+                               i.GST_ITC_APPL,
+                               a.invbatch_serial_code
+                               --END REV : 002
+                        
+UNION ALL
+
+                                       SELECT DISTINCT i.icode, SUM(a.item_qty) item_qty,
+               -- START REV : 001
+                            /*   SUM (  NVL (d.ordqty, 0)
+                                    - NVL (d.cnlqty, 0)
+                                    - NVL (d.rcqty, 0)
+                                   ) ordqty,*/
+                           coalesce(t.qty, SUM (
+                                  -- START REV : 012
+                                  --NVL(d.oqty,NVL (d.ordqty, 0))
+                                 (CASE WHEN coalesce(d.OQTY,0) = 0 THEN
+                                 coalesce(d.ordqty,0)
+                                    ELSE
+                                      coalesce(d.OQTY,0)
+                               END)
+                               -- END REV : 012
+                                    - coalesce(d.cnlqty, 0)
+                                    - coalesce(d.rcqty, 0)
+                                   ) )ordqty,
+               -- END REV : 001
+                               --d.rate  * r.exrate rate,
+                               -- START REV : 008
+                               --DECODE(NVL(R.ISBASE,1),0,d.rate  * NVL(r.exrate,1) , D.RATE) RATE,
+                               -- START REV : 013
+                               --DECODE(NVL(R.ISBASE,1),0,d.rate  * NVL(V_EXRATE,1) , D.RATE) RATE,
+                               CASE WHEN coalesce(R.ISBASE,1)=0 THEN coalesce(a.ITEM_RATE, d.rate)  * coalesce(V_EXRATE,1)   ELSE coalesce(a.ITEM_RATE, d.rate) END  RATE,
+                               -- END REV : 013
+                               -- END REV : 008
+                               d.dischgper dischgper,
+                               coalesce(d.discount, 0) discount,
+                               d.taxchgper taxchgper,
+                               coalesce(d.taxamt, 0) taxamt, d.code det_code
+                                                                        --,M.PCODE                                                            PCODE
+                               ,
+                               CASE WHEN r.excise_appl='Y' THEN  d.excisemain_code  ELSE NULL END  excisemain_code,
+                               CASE WHEN r.excise_appl='Y' THEN  d.ex_basis  ELSE NULL END  ex_basis,
+                               CASE WHEN r.excise_appl='Y' THEN  coalesce(d.ex_effrate, 0)  ELSE 0 END  ex_effrate,
+                               CASE WHEN r.excise_appl='Y' THEN  coalesce(d.ex_abtfactor, 0)  ELSE 0 END  ex_abtfactor,
+                               CASE WHEN r.excise_appl='Y' THEN  coalesce(d.ex_dutyfactor, 0)  ELSE 0 END  ex_dutyfactor,
+                               CASE WHEN r.excise_appl='Y' THEN  coalesce(d.ex_cessfactor, 0)  ELSE 0 END  ex_cessfactor,
+                               CASE WHEN r.excise_appl='Y' THEN  d.ex_roundoff  ELSE 0 END  ex_roundoff,
+                               SUM(CASE WHEN r.excise_appl='Y' THEN (  coalesce(d.ex_appamt, 0)                                                  * coalesce(d.ordqty, 0)                                                  / coalesce(d.ordqty, 0)                                             )  ELSE 0 END 
+                                   ) ex_appamt,
+                               SUM(CASE WHEN r.excise_appl='Y' THEN (  coalesce(d.ex_dutyamt, 0)                                                  * coalesce(d.ordqty, 0)                                                  / coalesce(d.ordqty, 0)                                             )  ELSE 0 END 
+                                   ) ex_dutyamt,
+                               SUM(CASE WHEN r.excise_appl='Y' THEN (  coalesce(d.ex_cessamt, 0)                                                  * coalesce(d.ordqty, 0)                                                  / coalesce(d.ordqty, 0)                                             )  ELSE 0 END 
+                                   ) ex_cessamt,
+                               d.ex_applicable_from ex_applicable_from,
+                               d.REM item_remarks,
+                               CASE WHEN i.price_management = 'B' then b.mrp
+                               ELSE i.mrp END rsp, 
+                                --START REV : 009
+                               CASE WHEN i.price_management = 'B' then b.listed_mrp
+                               ELSE i.listed_mrp END mrp, 
+                               CASE WHEN i.price_management = 'B' then b.wsp
+                               ELSE I.WSP END WSP,
+                               i.GST_ITC_APPL,
+                               --END REV : 009
+                               t.invbatch_serial_code
+                          FROM purorddet d, int$stg_grcord a, invitem i
+LEFT OUTER JOIN (select grccode, icode_barcode, invbatch_serial_code, userid, qty 
+                                from int$stg_grcadhoc_temp
+                                where userid = p_userid) t ON (i.icode = t.icode_barcode)
+LEFT OUTER JOIN invbatch_serial b ON (t.invbatch_serial_code = b.code)
+WHERE a.grcdt = r.grcdt AND d.ordcode = r.ordcode AND i.icode = d.icode AND a.userid = p_userid AND UPPER(a.purchase_order_no) =
+                                                   UPPER(r.purchase_order_no) AND coalesce(a.reference_no, '@@') =
+                                                    coalesce(r.reference_no, '@@') AND coalesce(a.document_no, '@@') =
+                                                     coalesce(r.document_no, '@@') AND coalesce(a.remarks, '@@') = coalesce(r.remarks, '@@') AND UPPER(a.stock_point_name) =
+                                                    UPPER(r.stock_point_name) AND (   (UPPER(a.item_barcode) = UPPER(i.icode))
+                                OR (UPPER(a.item_barcode) = UPPER(i.barcode)
+                                   )
+                               )  AND a.invbatch_serial_code IS NULL  GROUP BY i.icode,
+                              -- START REV : 013 
+                               --d.rate,
+                               coalesce(a.ITEM_RATE, d.RATE),
+                              -- END REV : 013 
+                               d.dischgper,
+                               coalesce(d.discount, 0),
+                               d.taxchgper,
+                               coalesce(d.taxamt, 0),
+                               d.code,
+                               CASE WHEN r.excise_appl='Y' THEN  d.excisemain_code  ELSE NULL END ,
+                               CASE WHEN r.excise_appl='Y' THEN  d.ex_basis  ELSE NULL END ,
+                               CASE WHEN r.excise_appl='Y' THEN  coalesce(d.ex_effrate, 0)  ELSE 0 END ,
+                               CASE WHEN r.excise_appl='Y' THEN  coalesce(d.ex_abtfactor, 0)  ELSE 0 END ,
+                               CASE WHEN r.excise_appl='Y' THEN  coalesce(d.ex_dutyfactor, 0)  ELSE 0 END ,
+                               CASE WHEN r.excise_appl='Y' THEN  coalesce(d.ex_cessfactor, 0)  ELSE 0 END ,
+                               CASE WHEN r.excise_appl='Y' THEN  d.ex_roundoff  ELSE 0 END ,
+                               d.ex_applicable_from,
+                               d.REM,
+                               --START REV : 002
+                               t.qty,
+                               CASE WHEN i.price_management = 'B' then b.mrp
+                               ELSE i.mrp END, 
+                                --START REV : 009
+                               CASE WHEN i.price_management = 'B' then b.listed_mrp
+                               ELSE i.listed_mrp END, 
+                               CASE WHEN i.price_management = 'B' then b.wsp
+                               ELSE I.WSP END,
+                               i.GST_ITC_APPL,
+                               t.invbatch_serial_code
+;
+
+            v_qty        double precision := 0;
+            curr_qty     double precision := 0;
+            v_rate       double precision := 0;
+            v_discount   double precision := 0;
+            v_taxamt     double precision := 0;
+         BEGIN
+            FOR c2 IN c_det
+            LOOP
+               IF coalesce(v_tot_qty, 0) > 0
+               THEN
+                  SELECT CASE WHEN SIGN(c2.ordqty - c2.item_qty)=1 THEN  c2.item_qty  ELSE c2.ordqty END
+                    INTO STRICT curr_qty
+;
+
+                  v_discount := round((curr_qty * c2.discount / c2.ordqty)::numeric, 2);
+
+                  IF c2.ordqty = v_discount
+                  THEN
+                     v_taxamt := 0;
+                  ELSE
+                     v_taxamt := round((curr_qty * c2.taxamt / c2.ordqty)::numeric, 2);
+                  END IF;
+
+                  IF r.excise_appl = 'N'
+                  THEN
+                     INSERT INTO invgrcdet(grccode, grcno, grcdt, ordcode,
+                                  loccode, icode, acqty, acrate,
+                                  ycode, dischgper, taxchgper,
+                                  grsamt, discount,
+                                  taxamt,
+                                  netamt,
+                                  po_code, REM, rsp,
+                                  --START REV : 009
+                                  orate,
+                                  mrp,
+                                  wsp,
+                                  GST_ITC_APPL,
+                                  --END REV : 009
+                                             /*, excisemain_code, ex_basis,
+                                 ex_effrate, ex_abtfactor, ex_dutyfactor, ex_cessfactor,
+                                 ex_roundoff, ex_appamt, ex_dutyamt, ex_cessamt*/
+                                  --START REV : 014
+                                 invbatch_serial_code
+                                 --END REV : 014
+                                 )
+                          VALUES (r.grccode, r.grccode, r.grcdt, r.ordcode,
+                                  r.loccode, c2.icode, curr_qty, c2.rate,
+                                  r.ycode, c2.dischgper, c2.taxchgper,
+                                  (curr_qty * c2.rate
+                                  ), v_discount,
+                                  v_taxamt,
+                                  (curr_qty * c2.rate) - v_discount + v_taxamt,
+                                  c2.det_code, c2.item_remarks, c2.rsp,
+                                  --START REV : 009
+                                  c2.rate,
+                                  c2.mrp,
+                                  c2.wsp,
+                                  c2.GST_ITC_APPL,
+                                  -- Start Rev : 014
+                                  c2.invbatch_serial_code
+                                  -- End Rev : 014
+                                  --END REV : 009
+                                 );
+                  ELSE
+                     INSERT INTO invgrcdet(grccode, grcno, grcdt, ordcode,
+                                  loccode, icode, acqty, acrate,
+                                  ycode, dischgper, taxchgper,
+                                  grsamt, discount,
+                                  taxamt,
+                                  netamt,
+                                  po_code, REM, rsp,
+                                  excisemain_code, ex_basis,
+                                  ex_effrate, ex_abtfactor,
+                                  ex_dutyfactor, ex_cessfactor,
+                                  ex_roundoff, ex_appamt,
+                                  ex_dutyamt, ex_cessamt,
+                                  ex_applicable_from,
+                                  --START REV : 009
+                                  orate,
+                                  mrp,
+                                  wsp,
+                                  GST_ITC_APPL,
+                                  --START REV : 014
+                                 invbatch_serial_code
+                                 --END REV : 014
+                                 --END REV : 009
+                                 )
+                          VALUES (r.grccode, r.grccode, r.grcdt, r.ordcode,
+                                  r.loccode, c2.icode, curr_qty, c2.rate,
+                                  r.ycode, c2.dischgper, c2.taxchgper,
+                                  (curr_qty * c2.rate
+                                  ), v_discount,
+                                  v_taxamt,
+                                  (curr_qty * c2.rate) - v_discount + v_taxamt,
+                                  c2.det_code, c2.item_remarks, c2.rsp,
+                                  c2.excisemain_code, c2.ex_basis,
+                                  c2.ex_effrate, c2.ex_abtfactor,
+                                  c2.ex_dutyfactor, c2.ex_cessfactor,
+                                  c2.ex_roundoff, c2.ex_appamt,
+                                  c2.ex_dutyamt, c2.ex_cessamt,
+                                  c2.ex_applicable_from,
+                                  --START REV : 009
+                                  c2.rate,
+                                  c2.mrp,
+                                  c2.wsp,
+                                  c2.GST_ITC_APPL,
+                                  -- Start Rev : 014
+                                  c2.invbatch_serial_code
+                                  -- End Rev : 014
+                                  --END REV : 009
+                                 );
+                  END IF;
+
+                  v_tot_qty := coalesce(v_tot_qty, 0) - coalesce(curr_qty, 0);
+               END IF;
+            END LOOP;
+         END;
+
+         IF r.excise_appl = 'Y'
+         THEN
+                        CALL int$pkg_grcord_grc_proc_insert_excise_data(r.grccode);
+         END IF;
+
+       --  erraudit(2,2,2,r.exrate||'*'||r.isbase);
+         CALL int$pkg_grcord_calculate_term_item(NULL::bigint,
+                              r.ordcode::bigint,
+                              r.grccode::bigint,
+                              r.fintradegrp_code::bigint,
+                              r.formcode::bigint,
+                              r.excise_appl::text,
+                              r.admcmptax_code::bigint,
+                              r.isbase::bigint,
+                              -- START REV : 008
+                              --r.exrate,
+                              V_EXRATE::bigint,
+                              -- END REV : 008
+                              r.grcdt
+                             );
+
+         SELECT round((coalesce(SUM(  coalesce(acrate, 0) * coalesce(acqty, 0)
+                                 - coalesce(discount, 0)
+                                 + coalesce(taxamt, 0)
+                                ),
+                            0
+                           ))::numeric,
+                       2
+                      )
+           INTO STRICT v_det_grsamt
+           FROM invgrcdet
+          WHERE grccode = r.grccode;
+
+         SELECT round((coalesce(SUM(coalesce(chgamt, 0)), 0))::numeric, 2)
+           INTO STRICT v_det_chgamt
+           FROM invgrcchg
+          WHERE grccode = r.grccode;
+
+         UPDATE invgrcmain
+            SET grsamt = v_det_grsamt,
+                chgamt = v_det_chgamt,
+                netamt = coalesce(v_det_chgamt, 0) + coalesce(v_det_grsamt, 0)
+          WHERE grccode = r.grccode;
+
+         CALL db_pro_upd_item_rate('INVGRCDET',
+                               'GRCCODE',
+                               'ACRATE',
+                               'ACQTY',
+                               r.grccode,
+                               r.grcdt
+                              );
+        CALL update_purordmain_status(r.ordcode);
+
+         --Db_Pkg_Genentryno.set_entcode(:PAGE4.GRCCODE);
+         UPDATE invgrcmain
+            SET grccode = grccode,
+                grcno = v_tempno
+          WHERE grccode = r.grccode;
+
+         SELECT grcno, scheme_docno
+           INTO STRICT v_grcno, v_scheme_docno
+           FROM invgrcmain
+          WHERE grccode = r.grccode;
+
+         UPDATE invgrcdet
+            SET grcno = v_grcno
+          WHERE grccode = r.grccode;
+
+         UPDATE invgrcmain
+            SET ordcode = r.ordcode
+          WHERE grccode = r.grccode;
+
+         IF coalesce(v_scheme_docno, 'AUTOMATIC') = 'AUTOMATIC'
+         THEN
+            RAISE EXCEPTION 'insert_violation' USING ERRCODE = '50001';
+         END IF;
+
+         FOR F IN C_BATCH4(v_grccode)
+            LOOP
+                update invbatch_serial
+                    set entcode = r.grccode,
+                        enttype = 'GRC',
+                        last_in_date = r.grcdt
+                where code = f.invbatch_serial_code;
+            END LOOP;
+      END LOOP;
+
+-- log to be added in History table
+      SELECT nextval('int$error_log_code')
+        INTO STRICT vsession
+;
+
+      vdetailtbl :=
+            -- start rev : 002
+            --'CREATE TABLE GRCORD_'
+            'CREATE TABLE ginarchive.GRCORD_'
+            -- end rev : 002
+         || vsession::text
+         || ' AS
+                            SELECT TRANSACTION_SITE,GRC_DATE, PURCHASE_ORDER_NO,DOCUMENT_NO,STOCK_POINT_NAME
+                            FROM
+                            (
+                            SELECT  b.name TRANSACTION_SITE,a.GRCDT GRC_DATE, a.PURCHASE_ORDER_NO PURCHASE_ORDER_NO,a.DOCUMENT_NO DOCUMENT_NO,a.STOCK_POINT_NAME STOCK_POINT_NAME
+                                    ,a.remarks ,COUNT(1)
+                            FROM int$stg_GRCORD a, ADMSITE b,PURORDMAIN P WHERE upper(a.PURCHASE_ORDER_NO) = upper(P.SCHEME_DOCNO)
+                            AND  P.ADMSITE_CODE = B.CODE
+                            AND userid ='
+         || p_userid::text
+         || ' GROUP BY b.name,a.GRCDT, a.PURCHASE_ORDER_NO,a.DOCUMENT_NO,a.reference_no, a.STOCK_POINT_NAME
+                                    ,a.remarks
+                            )b';
+
+      EXECUTE vdetailtbl;
+
+      -- start rev : 002
+      --vdetailrec := 'SELECT count(1) FROM GRCORD_' || vsession::text;
+      vdetailrec := 'SELECT count(1) FROM ginarchive.GRCORD_' || vsession::text;
+      -- end rev : 002
+      EXECUTE vdetailrec
+                   INTO STRICT vcount;
+
+      IF coalesce(vcount, 0) = 0
+      THEN
+         RAISE EXCEPTION 'insert_violation' USING ERRCODE = '50001';
+      END IF;
+
+      INSERT INTO int$history(code, importedby, importedon, classname,
+                   summary,
+                   history_detail_tablename, history_detail_row_count
+                  )
+           VALUES (nextval('int$history_code'), p_userid, clock_timestamp(), 'GRCORD',
+                   vcount::TEXT || ' Transaction(s) has been created.',
+                   -- start rev : 002
+                   --'GRCORD_' || vsession, vcount
+                   'ginarchive.GRCORD_' || vsession::text, vcount
+                   -- end rev : 002
+                  );
+
+      RETURN('1');
+   EXCEPTION
+   -- START REV : 005
+      WHEN SQLSTATE '50002' THEN
+         RETURN('0');
+      WHEN SQLSTATE '50001' THEN
+         errcode := -02222;
+         errmsg := 'Data inconsistency';
+         rollback;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code, lineno, classname, userid,
+                      errortype, errordesc, createdon
+                     )
+              VALUES (nextval('int$error_log_code'), 0, 'GRCORD', p_userid,
+                      errcode, errmsg, clock_timestamp()
+                     );
+
+         --COMMIT;
+         RETURN('0');
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+         rollback;
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code, lineno, classname, userid,
+                      errortype, errordesc, createdon
+                     )
+              VALUES (nextval('int$error_log_code'), 0, 'GRCORD', p_userid,
+                      errcode, errmsg, clock_timestamp()
+                     );
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+   -- Clear GRC against PO
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

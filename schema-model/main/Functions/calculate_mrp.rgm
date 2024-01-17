@@ -1,0 +1,103 @@
+function "main"."calculate_mrp(double, double, text, double, text)" {
+  text = """
+
+DECLARE
+
+   /************************************************************************************************************
+      NAME: CALCULATE_MRP
+
+      PURPOSE:
+
+      REVISIONS:
+      No     Date         Author                   Description
+      ----   ----------   ----------------------   -------------------------------------------------------------
+      001    20-FEB-09    DIPTIMAN                 (BUG ID : 1025) Make MRP, WSP in two decimal format.
+      002    09-FEB-10    RAJKUMAR                 (BUG ID : 1120) Make MRP, WSP in three decimal format.
+
+      NOTES:
+   *************************************************************************************************************/
+   REMAINDER_VALUE   double precision;
+   MID_VALUE         double precision;
+   RETURN_VALUE      double precision;
+   ERRCODE           varchar(50);
+   ERRMSG            varchar(2000);
+   V_SHOW_VAL        char(1) := 'N';
+
+BEGIN
+   IF V_SHOW_VAL = 'Y' THEN
+      CALL ERRAUDIT(USER, 'CALCULATE_MRP', '1', 'N_DEFAULT_MARKUP = '||N_DEFAULT_MARKUP||chr(10)||
+                                           'N_ROUND_OFF_MARKUP = '||N_ROUND_OFF_MARKUP||chr(10)||
+                                           'C_LIMIT = '||C_LIMIT||chr(10)||
+                                           'N_PURCHASE_RATE = '||N_PURCHASE_RATE||chr(10)||
+                                           'C_ADD_DEDUCT = '||C_ADD_DEDUCT);
+   END IF;
+   IF coalesce(C_ADD_DEDUCT, 'A') = 'A' THEN
+      RETURN_VALUE := coalesce((coalesce(N_PURCHASE_RATE, 0) + ((N_DEFAULT_MARKUP / 100) * N_PURCHASE_RATE)), 0);
+   ELSE
+      RETURN_VALUE := coalesce((coalesce(N_PURCHASE_RATE, 0) - ((N_DEFAULT_MARKUP / 100) * N_PURCHASE_RATE)), 0);
+   END IF;
+   IF N_ROUND_OFF_MARKUP != 0 THEN
+      SELECT MOD(RETURN_VALUE::numeric, N_ROUND_OFF_MARKUP::numeric)
+      INTO STRICT   REMAINDER_VALUE
+;
+      IF coalesce(REMAINDER_VALUE, 0) != 0 THEN
+         IF coalesce(C_LIMIT, 'R') = 'R' THEN
+            MID_VALUE := coalesce(((RETURN_VALUE - REMAINDER_VALUE) + (N_ROUND_OFF_MARKUP / 2)),0);
+            IF    RETURN_VALUE > MID_VALUE THEN
+                  RETURN_VALUE :=  RETURN_VALUE + (N_ROUND_OFF_MARKUP - REMAINDER_VALUE);
+            ELSIF RETURN_VALUE < MID_VALUE THEN
+                  RETURN_VALUE := RETURN_VALUE - REMAINDER_VALUE;
+            ELSIF RETURN_VALUE = MID_VALUE THEN
+                  RETURN_VALUE := RETURN_VALUE + (N_ROUND_OFF_MARKUP - REMAINDER_VALUE);
+            END IF;
+         ELSIF coalesce(C_LIMIT, 'R') = 'U' THEN
+               RETURN_VALUE :=  RETURN_VALUE + (N_ROUND_OFF_MARKUP - REMAINDER_VALUE);
+         ELSIF coalesce(C_LIMIT, 'R') = 'L' THEN
+               RETURN_VALUE := RETURN_VALUE - REMAINDER_VALUE;
+         END IF;
+      END IF;
+   END IF;
+   -- START REV : 002
+   RETURN_VALUE := round((RETURN_VALUE)::numeric, 3);
+   -- END REV : 002
+   RETURN(RETURN_VALUE);
+END;
+"""
+  returnType = double precision
+  arguments = <
+    {
+      name = n_default_markup
+      type = double precision
+      mode = IN
+    }
+
+    {
+      name = n_round_off_markup
+      type = double precision
+      mode = IN
+    }
+
+    {
+      name = c_limit
+      type = text
+      mode = IN
+    }
+
+    {
+      name = n_purchase_rate
+      type = double precision
+      mode = IN
+    }
+
+    {
+      name = c_add_deduct
+      type = text
+      mode = IN
+      default = 'A'::bpchar
+    }
+
+  >
+  language = plpgsql
+  volatility = STABLE
+}
+

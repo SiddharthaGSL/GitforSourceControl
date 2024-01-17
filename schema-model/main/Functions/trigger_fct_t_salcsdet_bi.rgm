@@ -1,0 +1,45 @@
+function "main"."trigger_fct_t_salcsdet_bi()" {
+  text = """
+
+DECLARE
+   vnCmpCode bigint;
+   -- START REV : 001
+   V_ADMSITE_CODE       ADMSITE.CODE%TYPE;
+   V_ENTDT              INVSTOCK.ENTDT%TYPE;
+   -- END REV : 001
+BEGIN
+   /*******************************************************************************************************************
+     REV NO      DATE           OWNER            DESCRIPTION
+     ---------   -----------    -----------      ---------------------------------------------------------------------
+     REV : 001   14-NOV-2017    DIPTIMAN         (TFS ID : 32259) COGS costrate related changes.
+     REV : 002   05-JAN-2022    Anindya          (TFS ID : Batch Serial) Batch Serial related changes.
+   *******************************************************************************************************************/
+   IF TG_OP = 'INSERT'
+   THEN
+      IF  NEW.CODE IS NULL THEN
+          SELECT  nextval('salcsdet_code')
+          INTO STRICT    NEW.CODE
+;
+      END IF;
+
+      -- START REV : 001
+      SELECT ADMSITE_CODE, CSDATE
+      INTO STRICT   V_ADMSITE_CODE, V_ENTDT
+      FROM   SALCSMAIN
+      WHERE  CSCODE = NEW.CSCODE;
+
+      -- START REV : 002
+      --:NEW.COSTRATE := NVL(db_pkg_cogs.GET_ITEM_LAST_IN_RATE(V_ADMSITE_CODE, :NEW.ICODE, V_ENTDT, NULL),0);
+      NEW.COSTRATE := coalesce(db_pkg_cogs$GET_ITEM_LAST_IN_RATE(V_ADMSITE_CODE, NEW.ICODE, V_ENTDT, NULL, NEW.INVBATCH_SERIAL_CODE),0);
+      -- END REV : 002
+      -- END REV : 001
+   END IF;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

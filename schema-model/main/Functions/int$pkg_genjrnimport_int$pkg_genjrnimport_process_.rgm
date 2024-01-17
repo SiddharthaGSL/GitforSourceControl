@@ -1,0 +1,554 @@
+function "main"."int$pkg_genjrnimport_int$pkg_genjrnimport_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      errmsg           varchar(500);
+      vsession         varchar(100);
+      vdetailtbl       varchar(1000);
+      vdetailrec       varchar(500);
+      errcode          text;
+      vmaxno           bigint;
+      vcount           bigint;
+
+      v_jrncode        finjrnmain.jrncode%TYPE;
+      v_jrnno          finjrnmain.jrnno%TYPE;
+      v_ycode          finjrnmain.ycode%TYPE;
+      v_jrndt          finjrnmain.jrndt%TYPE;
+      v_doccode        finjrnmain.doccode%TYPE;
+      v_scheme_docno   finjrnmain.scheme_docno%TYPE;
+
+      v_refno          finjrnmain.refno%TYPE;
+      v_glcode         bigint;
+      v_damount        double precision;
+      v_camount        double precision;
+      v_tot_damount    double precision;
+      v_tot_camount    double precision;
+      v_main_rem       finjrnmain.nartext%TYPE;
+      v_oucode         bigint;
+      v_tempno         bigint;
+      v_err            varchar(1000);
+      g_mark           varchar(100);-- START REV : 003
+      x1 CURSOR FOR
+         SELECT DISTINCT journal_ref
+           FROM int$stg_genjrnimport
+          WHERE userid = p_userid;
+
+      -- main fields
+      y1 CURSOR(
+         v_journal_ref    text)
+      FOR
+         SELECT DISTINCT jrndt,
+                         scheme_doc_format,
+                         scheme_docno,
+                         journal_ref,
+                         journal_remarks
+           FROM int$stg_genjrnimport
+          WHERE     userid = p_userid
+                -- START REV : 004
+                -- AND    journal_ref = v_journal_ref;
+                AND (   (v_journal_ref IS NULL AND journal_ref IS NULL)
+                     OR (    v_journal_ref IS NOT NULL
+                         AND journal_ref = v_journal_ref));
+
+      -- END REV : 004
+      -- detail fields
+      z1 CURSOR(
+         v_journal_ref    text)
+      FOR
+           SELECT journal_ref,
+                  gl_name,
+                  sl_slid,
+                  SUM(amount)
+             FROM int$stg_genjrnimport
+            WHERE     userid = p_userid
+                  -- START REV : 004
+                  -- AND    journal_ref = v_journal_ref;
+                  AND (   (v_journal_ref IS NULL AND journal_ref IS NULL)
+                       OR (    v_journal_ref IS NOT NULL
+                           AND journal_ref = v_journal_ref))
+         -- END REV : 004
+         GROUP BY journal_ref, gl_name, sl_slid;
+   -- END REV : 003
+BEGIN
+
+      v_oucode := p_connect_ou;
+
+      DELETE FROM admerraudit a
+       WHERE     a.usrname = USER
+             AND a.prcname = 'genjrnimport'
+             AND a.errcode = p_userid :: text;
+
+      FOR x IN x1
+      LOOP
+         FOR y IN y1(x.journal_ref)
+         LOOP
+            v_ycode := NULL;
+            v_jrndt := NULL;
+            v_doccode := NULL;
+            v_refno := NULL;
+            v_main_rem := NULL;
+            v_glcode := NULL;
+            v_scheme_docno := NULL;
+            v_tot_damount := NULL;
+            v_tot_camount := NULL;
+            v_damount := NULL;
+            v_camount := NULL;
+
+            v_jrndt := y.jrndt;
+            v_refno := y.journal_ref;
+            v_main_rem := y.journal_remarks;
+            v_scheme_docno := y.scheme_docno;
+
+            g_mark := 'P01';
+
+            BEGIN
+               SELECT ycode
+                 INTO STRICT v_ycode
+                 FROM admyear y
+                WHERE v_jrndt BETWEEN dtfr AND dtto AND ext = 'N';
+            EXCEPTION
+               WHEN no_data_found
+               THEN
+                  v_ycode := NULL;
+               WHEN too_many_rows
+               THEN
+                  v_ycode := NULL;
+            END;
+
+            g_mark := 'P02';
+
+            SELECT doccode
+              INTO STRICT v_doccode
+              FROM admdocscheme
+             WHERE UPPER(docname) =
+                      (SELECT DISTINCT UPPER(scheme_doc_format)
+                         FROM int$stg_genjrnimport
+                        WHERE     userid = p_userid
+                              -- START REV : 004
+                              -- AND    journal_ref = y.journal_ref);
+                              AND (   (    y.journal_ref IS NULL
+                                       AND journal_ref IS NULL)
+                                   OR (    y.journal_ref IS NOT NULL
+                                       AND journal_ref = y.journal_ref)));
+
+            -- END REV : 004
+            g_mark := 'P07';
+
+            SELECT coalesce(SUM(coalesce(amount, 0)), 0)
+              INTO STRICT v_tot_damount
+              FROM int$stg_genjrnimport
+             WHERE     userid = p_userid
+                   -- START REV : 004
+                   -- AND    journal_ref = y.journal_ref
+                   AND (   (y.journal_ref IS NULL AND journal_ref IS NULL)
+                        OR (    y.journal_ref IS NOT NULL
+                            AND journal_ref = y.journal_ref))
+                   -- END REV : 004
+                   AND coalesce(amount, 0) >= 0;
+
+            g_mark := 'P08';
+
+            SELECT coalesce(SUM(ABS(coalesce(amount, 0))), 0)
+              INTO STRICT v_tot_camount
+              FROM int$stg_genjrnimport
+             WHERE     userid = p_userid
+                   -- START REV : 004
+                   -- AND    journal_ref = y.journal_ref
+                   AND (   (y.journal_ref IS NULL AND journal_ref IS NULL)
+                        OR (    y.journal_ref IS NOT NULL
+                            AND journal_ref = y.journal_ref))
+                   -- END REV : 004
+                   AND coalesce(amount, 0) < 0;
+
+            IF v_tot_damount > v_tot_camount
+            THEN
+               v_damount := 0;
+               v_camount := coalesce(v_tot_damount, 0) - coalesce(v_tot_camount, 0);
+            ELSIF v_tot_damount < v_tot_camount
+            THEN
+               v_damount := coalesce(v_tot_camount, 0) - coalesce(v_tot_damount, 0);
+               v_camount := 0;
+            ELSIF v_tot_damount = v_tot_camount
+            THEN
+               NULL;
+            END IF;
+
+            IF v_doccode NOT IN (1, 169)
+            THEN
+               v_scheme_docno := 'Automatic';
+            END IF;
+
+            V_SCHEME_DOCNO :=
+               db_fun_document_number_web(NULL,
+                                           v_doccode,
+                                           v_ycode,
+                                           TO_CHAR(v_jrndt,'DD-MM-YYYY'),
+                                           NULL,
+                                           p_connect_site,
+                                           v_oucode,
+                                           'FinanceGenJournal');
+
+            -- END REV : 008
+            SELECT nextval('erp01') INTO STRICT v_jrncode;
+
+            INSERT INTO finjrnmain (jrncode,
+                                       jrnno,
+                                       jrndt,
+                                       jrntype,
+                                       refno,
+                                       ycode,
+                                       ecode,
+                                       time,
+                                       nartext,
+                                       doccode,
+                                       scheme_docno,
+                                       release_status,
+                                       admsite_code_owner   -- START REV : 002
+                                                         ,
+                                       admou_code,
+                                       -- END REV : 002
+                                       -- START REV : 007
+                                       entry_source           -- END REV : 007
+                                                   )
+                 VALUES (v_jrncode,
+                         v_tempno,
+                         date_trunc('day', v_jrndt),
+                         'J',
+                         v_refno,
+                         v_ycode,
+                         p_userid,
+                         clock_timestamp(),
+                         v_main_rem,
+                         v_doccode,
+                         v_scheme_docno,
+                         'U',
+                         p_connect_site                     -- START REV : 002
+                                       ,
+                         p_connect_ou                         -- END REV : 002
+                                     -- START REV : 007
+                         ,
+                         'EXCEL'                              -- END REV : 007
+                                );
+
+            -- START REV : 003
+            -- Detail entry
+            FOR z IN z1(x.journal_ref)
+            LOOP
+
+               INSERT INTO finjrndet (jrncode,
+                                        jrnno,
+                                        jrndt,
+                                        jrntype,
+                                        glcode,
+                                        slcode,
+                                        damount,
+                                        camount,
+                                        ycode,
+                                        nartext,
+                                        gl_cc_appl)
+                  SELECT v_jrncode,
+                         v_tempno,
+                         date_trunc('day', v_jrndt),
+                         'J',
+                         glcode,
+                         slcode,
+                         CASE WHEN amt >= 0 THEN amt ELSE 0 END,
+                         CASE WHEN amt < 0 THEN ABS(amt) ELSE 0 END,
+                         v_ycode,
+                         ledger_nartext,
+                         costapp
+                    FROM (  SELECT gl.glcode,
+                                   CASE WHEN coalesce(gl.slapp, 'N')='Y' THEN  sl.slcode  ELSE NULL END
+                                      slcode,
+                                   a.ledger_nartext,
+                                   gl.costapp,
+                                   SUM(amount) amt
+                              FROM (SELECT UPPER(g.glname) glname,
+                                           g.glcode,
+                                           g.slapp,
+                                           g.costapp
+                                      FROM fingl g
+                                     WHERE g.srctype = 'G' AND g.ext = 'N') gl, int$stg_genjrnimport a
+LEFT OUTER JOIN (SELECT UPPER(s.slname) slname,
+                                           UPPER(s.slid) slid,
+                                           s.slcode
+                                      FROM finsl s
+                                     WHERE s.ext = 'N') sl ON (UPPER(a.sl_slid) = sl.slid)
+WHERE UPPER(a.gl_name) = gl.glname  AND a.userid = p_userid -- START REV : 003
+                                   -- START REV : 004
+                                   -- and     a.journal_ref = z.journal_ref
+  AND (   (    z.journal_ref IS NULL
+                                            AND a.journal_ref IS NULL)
+                                        OR (    z.journal_ref IS NOT NULL
+                                            AND a.journal_ref = z.journal_ref)) -- END REV : 004
+  AND a.gl_name = z.gl_name AND coalesce(a.sl_slid, 'xxax') =
+                                          coalesce(z.sl_slid, 'xxax') -- END REV : 003
+ GROUP BY gl.glcode,
+                                   gl.slapp,
+                                   sl.slcode,
+                                   gl.costapp,
+                                   a.ledger_nartext) alias18;
+
+               -- Cost center insert
+               DECLARE
+                  v_finpost_row   finpost%ROWTYPE;
+
+                  c1 CURSOR FOR
+                     SELECT DISTINCT b.glname, c.slcode sl_slcode, a.*
+                       FROM fingl b, finjrndet a
+LEFT OUTER JOIN finsl c ON (a.slcode = c.slcode)
+WHERE a.jrncode = v_jrncode AND a.glcode = b.glcode  AND coalesce(a.gl_cc_appl, 'N') = 'Y';
+
+                  c2 CURSOR(
+                     p_glname         text,
+                     p_sl_slcode      bigint,
+                     p_journal_ref    text)
+                  FOR
+                     SELECT DISTINCT
+                            b.glcode,
+                            a.sl_slid,
+                            a.ref_admsite_shrtname,
+                            c.code       ref_admsite_code,
+                            -- START REV : 002
+                            c.admou_code admou_code,
+                            -- END REV : 002
+                            CASE WHEN a.amount >= 0 THEN amount ELSE 0 END
+                               damount,
+                            CASE
+                               WHEN a.amount < 0 THEN ABS(amount)
+                               ELSE 0
+                            END
+                               camount
+                       FROM admsite c, fingl b, int$stg_genjrnimport a
+LEFT OUTER JOIN (SELECT slcode,
+                                    UPPER(slname) slname,
+                                    UPPER(slid)   slid
+                               FROM finsl) d ON (UPPER(a.sl_slid) = d.slid)
+WHERE UPPER(a.gl_name) = UPPER(b.glname)  AND UPPER(c.shrtname) =
+                                   UPPER(a.ref_admsite_shrtname) AND UPPER(b.glname) = UPPER(p_glname) AND coalesce(d.slcode, 0) = coalesce(p_sl_slcode, 0) -- START REV : 004
+                            /*
+                            -- START REV : 003
+                            and    a.journal_ref = p_journal_ref
+                            --and    a.gl_name = z.gl_name
+                            --and    nvl(a.sl_slid,'xxx') = nvl(p_sl_slcode,'xxx')
+                            -- END REV : 003
+                            */
+  AND (   (    p_journal_ref IS NULL
+                                     AND a.journal_ref IS NULL)
+                                 OR (    p_journal_ref IS NOT NULL
+                                     AND a.journal_ref = p_journal_ref)) -- END REV : 004
+  AND userid = p_userid;
+               BEGIN
+                  FOR i IN c1
+                  LOOP
+                        -- START REV : 010
+                        UPDATE finpost
+                        set admsite_code_owner = p_connect_site
+                        where enttype          = 'JDJ'
+                        and   entcode          =  i.jrncode::varchar;
+                        -- END REV : 010
+                     SELECT *
+                       INTO STRICT v_finpost_row
+                       FROM finpost
+                      WHERE     entcode = i.jrncode::varchar
+                            AND enttype = 'JDJ'
+                            AND glcode = i.glcode
+                            AND coalesce(slcode, 0) = coalesce(i.slcode, 0)
+                            AND coalesce(damount, 0) = coalesce(i.damount, 0)
+                            AND coalesce(camount, 0) = coalesce(i.camount, 0);
+
+                     FOR j IN c2(i.glname, i.sl_slcode, x.journal_ref)
+                     LOOP
+
+                        UPDATE fincosttag
+                           SET admsite_code = j.ref_admsite_code,
+                               damount = coalesce(j.damount, 0),
+                               camount = coalesce(j.camount, 0),
+                               ref_admsite_code = j.ref_admsite_code,
+                               -- START REV : 002
+                               -- start rev : 005
+                               --admou_code       = j.admou_code
+                               admou_code =
+                                  coalesce(j.admou_code, p_connect_ou)
+                         -- end rev : 005
+                         -- END REV : 002
+                         WHERE     postcode = v_finpost_row.postcode
+                               AND glcode = v_finpost_row.glcode
+                               AND coalesce(slcode, 0) =
+                                      coalesce(v_finpost_row.slcode, 0)
+                               AND coalesce(damount, 0) =
+                                      coalesce(v_finpost_row.damount, 0)
+                               AND coalesce(camount, 0) =
+                                      coalesce(v_finpost_row.camount, 0);
+
+                        IF NOT FOUND
+                        THEN
+                           DECLARE
+                              v_cnt   bigint;
+                           BEGIN
+                              SELECT COUNT(*)
+                                INTO STRICT v_cnt
+                                FROM fincosttag
+                               WHERE     entcode = i.jrncode::varchar
+                                     AND glcode = v_finpost_row.glcode
+                                     AND coalesce(slcode, 0) =
+                                            coalesce(v_finpost_row.slcode, 0)
+                                     AND admsite_code = j.ref_admsite_code
+                                     AND postcode = v_finpost_row.postcode
+                                     AND ref_admsite_code =
+                                            j.ref_admsite_code;
+
+                              IF v_cnt = 0
+                              THEN
+                                 INSERT INTO fincosttag(entcode,
+                                                         entno,
+                                                         entdt,
+                                                         enttype,
+                                                         glcode,
+                                                         slcode,
+                                                         damount,
+                                                         camount,
+                                                         ycode,
+                                                         postcode,
+                                                         admsite_code,
+                                                         ref_admsite_code,
+                                                         -- START REV : 002
+                                                         admou_code -- END REV : 002
+                                                                   )
+                                         VALUES (
+                                                   v_finpost_row.entcode,
+                                                   v_finpost_row.entno,
+                                                   v_finpost_row.entdt,
+                                                   v_finpost_row.enttype,
+                                                   v_finpost_row.glcode,
+                                                   v_finpost_row.slcode,
+                                                   coalesce(j.damount, 0),
+                                                   coalesce(j.camount, 0),
+                                                   v_finpost_row.ycode,
+                                                   v_finpost_row.postcode,
+                                                   j.ref_admsite_code,
+                                                   j.ref_admsite_code,
+                                                   -- START REV : 002
+                                                   -- start rev : 005
+                                                   --j.admou_code
+                                                   coalesce(j.admou_code,
+                                                        p_connect_ou) -- end rev : 005
+                                                                     -- END REV : 002
+                                                   );
+                              END IF;
+                           EXCEPTION
+                              WHEN no_data_found
+                              THEN
+                                 NULL;
+                           END;
+                        END IF;
+                     END LOOP;
+                  END LOOP;
+               END;
+            --erraudit (user, 'genjrnimport', p_userid, '6.1 - Cost center inserting journal ref - '||x.journal_ref);
+            -- START REV : 003
+            END LOOP;                                          -- Detail entry
+         END LOOP;
+      END LOOP;
+
+      -- END REV : 003
+      -- log to be added in history table
+      SELECT nextval('int$error_log_code') INTO STRICT vsession;
+
+      vdetailtbl :=
+            'create table ginarchive.genjrnimport_'
+         || vsession
+         || ' as select distinct scheme_docno, jrndt, journal_ref from int$stg_genjrnimport where userid ='
+         || p_userid::text
+         || ' order by jrndt';
+
+      -- END REV : 006
+      -- END REV : 004
+      EXECUTE vdetailtbl;
+
+      -- start rev : 001
+      --vdetailrec := 'select count(1) from genjrnimport_'||vsession;
+      vdetailrec :=
+         'select count(1) from ginarchive.genjrnimport_' || vsession::text;
+
+      -- end rev : 001
+      EXECUTE vdetailrec INTO STRICT vcount;
+
+      INSERT INTO int$history(code,
+                               importedby,
+                               importedon,
+                               classname,
+                               summary,
+                               history_detail_tablename,
+                               history_detail_row_count)
+           -- start rev : 001
+           --values (int$history_code.nextval, p_userid, sysdate, 'GENJRNIMPORT', vcount::TEXT||' Journal imported successfully.', 'genjrnimport_'||vsession, vcount);
+           VALUES (nextval('int$history_code'),
+                   p_userid,
+                   clock_timestamp(),
+                   'GENJRNIMPORT',
+                   vcount::TEXT || ' Journal imported successfully.',
+                   'ginarchive.genjrnimport_' || vsession,
+                   vcount);
+
+      -- end rev : 001
+      RETURN('1');
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         -- error log for oracle internal error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'GENJRNIMPORT',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

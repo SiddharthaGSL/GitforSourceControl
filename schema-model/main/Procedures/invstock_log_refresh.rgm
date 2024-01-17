@@ -1,0 +1,163 @@
+procedure "main"."invstock_log_refresh()" {
+  text = """
+
+DECLARE
+
+/********************************************************************************************************************************
+     PURPOSE: Stock related aggregation based on INVSTOCK 
+
+     REV NO     OWNER           DATE         DESCRIPTION
+     ---------  ----------      ----------- ---------------------------------------------------------------------
+     REV : 001  ANINDYA         13/07/2022   (MV Revamp ISSUE ) Performance issue with Stock Onhand Article level
+                                                                aggregation.
+**********************************************************************************************************************************/
+    max_seq   numeric(20);
+  i RECORD;
+  j RECORD;
+
+BEGIN
+    UPDATE invstock_log
+    SET logseq = nextval('invstock_log_seq') where logseq is null;
+   /* FETCHING  CURRENT MAX SEQ FROM LOG */
+
+   SELECT MAX(coalesce(LOGSEQ, 0)) INTO STRICT max_seq FROM invstock_log;
+   /* Start Block- 1*/
+
+   /*Refreshing Invstock_Onhand MV table.*/
+
+   BEGIN
+      FOR i
+         IN (  SELECT SUM(coalesce(qty, 0))                           AS qty,
+                      SUM(coalesce(costamount, 0))                    AS costamount,
+                      SUM(coalesce(amount, 0))                        AS amount,
+                      loccode,
+                      invbatch_serial_code,
+                      icode,
+                      admsite_code,
+                      CASE WHEN  INVBATCH_SERIAL_CODE IS NOT NULL
+                      THEN
+                            invbatch_serial_code || '~'|| loccode || '~' || icode || '~' || admsite_code
+                      ELSE
+                            loccode || '~' || icode || '~' || admsite_code 
+                      END   onhand_key,
+                      MAX(TIME)  laststkupdtime
+                 FROM invstock_log
+                WHERE     coalesce(logseq, 0) >
+                             (SELECT coalesce(LOGSEQ, 0)
+                                FROM log_tag_agg
+                               WHERE     CONSUMER = 'INVSTOCK_ONHAND_AGG'
+                                     AND logname = 'INVSTOCK_LOG')
+                      AND coalesce(logseq, 0) <= coalesce(max_seq, 0)
+             GROUP BY invbatch_serial_code,LOCCODE, ICODE, admsite_code)
+      LOOP
+         UPDATE invstock_onhand_AGG
+            SET QTY = coalesce(qty, 0) + coalesce(i.qty, 0),
+                AMOUNT = coalesce(amount, 0) + coalesce(i.amount, 0),
+                COSTAMOUNT = coalesce(costamount, 0) + coalesce(i.costamount, 0),
+                laststkupdtime =i.laststkupdtime
+          WHERE KEY = i.onhand_key;
+         IF NOT FOUND
+         THEN
+            INSERT INTO invstock_onhand_AGG(KEY,
+                                             LOCCODE,
+                                             invbatch_serial_code,
+                                             ICODE,
+                                             admsite_code,
+                                             GDS_REFCODE_SITE,
+                                             QTY,
+                                             AMOUNT,
+                                             COSTAMOUNT,
+                                             laststkupdtime)
+                 VALUES (i.onhand_key,
+                         i.loccode,
+                         i.invbatch_serial_code,
+                         i.icode,
+                         i.ADMSITE_CODE,
+                         i.icode || '~' || i.ADMSITE_CODE,
+                         i.qty,
+                         i.amount,
+                         i.costamount,
+                         i.laststkupdtime);
+         END IF;
+      END LOOP;
+      IF coalesce(max_seq, 0) <> 0
+      THEN                                  -- Checking Log data exist or not.
+         UPDATE log_tag_agg
+            SET LOGSEQ = coalesce(max_seq, 0)
+          WHERE CONSUMER = 'INVSTOCK_ONHAND_AGG' AND logname = 'INVSTOCK_LOG';
+      END IF;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         NULL;
+   END;
+   /*END BLOCK -1*/
+
+   
+   
+ /* Start Block- 2*/
+
+  
+ /* Refreshing   invstock_onhand_stockpoint_agg table*/
+
+ Begin
+  FOR j IN(
+    SELECT CASE WHEN ST1.INVBATCH_SERIAL_CODE IS NOT NULL
+           THEN 
+                ST1.invbatch_serial_code||'~'||ST1.psite_stockpoint_code|| '~'||ST1.admsite_code|| '~'|| ST1.loccode|| '~'|| ST1.icode
+           ELSE
+                ST1.psite_stockpoint_code|| '~'||ST1.admsite_code|| '~'|| ST1.loccode|| '~'|| ST1.icode 
+           END stockpoint_key,
+           ST1.invbatch_serial_code AS batch_serial_code,
+          ST1.psite_stockpoint_code AS stockpointcode, ST1.loccode AS loccode, ST1.icode, ST1.admsite_code,
+          ST1.icode|| '~'|| ST1.admsite_code AS gds_refcode_site,
+         ST1.icode|| '~'|| ST1.admsite_code|| '~'|| ST1.loccode|| '~'|| coalesce(ST1.psite_stockpoint_code, 'NA') AS grs_refcode_stkpt, 
+         SUM(ST1.qty) AS qty, SUM(ST1.amount) AS amount, MAX(ST1.TIME) laststkupdtime
+        FROM invstock_log  ST1, invloc  l
+        WHERE ST1.loccode = l.loccode AND l.loctype <> 'T'
+		and coalesce(ST1.logseq,0) >(SELECT coalesce(LOGSEQ,0) from log_tag_agg  WHERE consumer = 'INVSTOCK_ONHAND_STOCKPOINT_AGG' and logname='INVSTOCK_LOG')
+		and coalesce(ST1.logseq,0) <= coalesce(max_seq,0)
+        GROUP BY ST1.invbatch_serial_code,ST1.psite_stockpoint_code, ST1.loccode, ST1.icode, ST1.admsite_code)
+    LOOP
+            UPDATE invstock_onhand_stockpoint_agg
+            SET gds_refcode_site = j.gds_refcode_site, gds_refcode_stkpt = j.grs_refcode_stkpt, 
+			qty = coalesce(qty,0)+ j.qty, amount =coalesce(amount,0)+ j.amount,
+			laststkupdtime=j.laststkupdtime
+                WHERE key=j.stockpoint_key;
+            IF NOT FOUND THEN
+                INSERT INTO invstock_onhand_stockpoint_agg(key,psite_stockpoint_code, loccode, invbatch_serial_code,icode,
+								          admsite_code, gds_refcode_site, gds_refcode_stkpt, qty, amount,laststkupdtime)
+                VALUES (j.stockpoint_key,j.stockpointcode, j.loccode, j.batch_serial_code,j.icode, j.admsite_code, j.gds_refcode_site, 
+						j.grs_refcode_stkpt, j.qty, j.amount,j.laststkupdtime);
+            END IF;
+            END LOOP;
+    /* Update seq no. at tagging table for invstock_onhand_stockpoint_agg table */
+
+    if coalesce(max_seq,0) <> 0 then -- Checking Log data exist or not.
+	UPDATE log_tag_agg
+    SET logseq = max_seq
+        WHERE consumer = 'INVSTOCK_ONHAND_STOCKPOINT_AGG' AND logname = 'INVSTOCK_LOG';
+   end if;			
+   Exception
+   When others then
+   CALL erraudit('INVSTOCK_ONHAND_STOCKPOINT_AGG','INVSTOCK_LOG',SQLSTATE,SQLERRM);
+   end;
+   /* End Block- 2*/
+
+ 
+
+   /* DELETE FROM LOG TABLE UPTO MIN SEQ */
+
+   DELETE FROM invstock_log
+         WHERE logSEQ <= (SELECT MIN(coalesce(LOGSEQ, 0))
+                            FROM log_tag_agg
+                           WHERE logname = 'INVSTOCK_LOG')
+                 and logseq is not null;
+   COMMIT;
+END;
+"""
+  arguments = [
+  ]
+  language = plpgsql
+}
+

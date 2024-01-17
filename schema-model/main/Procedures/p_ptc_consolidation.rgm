@@ -1,0 +1,303 @@
+procedure "main"."p_ptc_consolidation(timestamp without time zone, bigint, bigint)" {
+  text = """
+
+ /*==========================================================================================================
+ Rev 001 : (Anindya) : 06-JUN-2013 : ISSUE : 736 : POSJOURNAL_DETAIL MISSING AGAINST A PARTICULAR POSJOURNAL
+============================================================================================================*/
+DECLARE
+
+   v_pcode                    bigint;
+   v_debtors_glcode           bigint;
+   v_admou_code               bigint;
+   v_ycode                    bigint;
+   v_stlmfor                  timestamp;
+   v_posstlmcode              varchar(50);
+   v_posjournal_code          bigint;
+   v_posjournal_detail_code   bigint;
+   v_csh_mop_code             bigint;
+   v_cash_glcode              bigint;
+   v_cash_slcode              bigint;
+   v_cnt                      bigint;
+-- Rev : Temporary
+   v_pj_exist                 bigint;
+   v_sitename                 varchar(100);
+   v_sum_damt                 double precision;
+   v_sum_camt                 double precision;
+-- Rev : Temporary
+--PRAGMA AUTONOMOUS_TRANSACTION;
+  c1 RECORD;
+  c2 RECORD;
+
+BEGIN
+-- Rev : Temporary
+   SELECT COUNT(1)
+     INTO STRICT v_pj_exist
+     FROM posjournal
+    WHERE admsite_code = p_admsite_code
+      AND date_trunc('day', docdate) = date_trunc('day', p_stlmfor)
+      AND doctype = 'PTCASH'
+      AND REMARKS <> 'Against Retail Order';
+   SELECT NAME
+     INTO STRICT v_sitename
+     FROM admsite
+    WHERE code = p_admsite_code;
+   IF coalesce(v_pj_exist, 0) > 0
+   THEN
+      RAISE EXCEPTION '%', 'GINESYS Critical Exception:'
+          || CHR(10)
+          || 'POS Journal document already posted for '
+          || v_sitename
+          || 'for '
+          || date_trunc('day', p_stlmfor)
+          || CHR(10)
+          || 'This is a critical exception. Please contact GINESYS support immediately.'
+          || CHR(10)
+          || 'IMPORTANT: Do not make any further settlement postings for any site until GINESYS support engineer attends the issue.'
+          USING ERRCODE = '45000';
+   END IF;
+-- Rev : Temporary
+   --v_stlmfor := TO_DATE(TO_CHAR(p_stlmfor, 'DD-MON-YY'), 'DD-MON-RR');
+   v_stlmfor := p_stlmfor;
+   SELECT code
+     INTO STRICT v_posstlmcode
+     FROM psite_posstlm
+    WHERE date_trunc('day', stlmfor) = date_trunc('day', p_stlmfor)
+          AND admsite_code = p_admsite_code;
+   SELECT slcode, admou_code
+     INTO STRICT v_pcode, v_admou_code
+     FROM admsite
+    WHERE code = p_admsite_code;
+   SELECT pma.psite_mop_code, mop_glcode, mop_slcode
+     INTO STRICT v_csh_mop_code, v_cash_glcode, v_cash_slcode
+     FROM psite_mop_assign pma, psite_mop m, admcurrency c
+    WHERE pma.psite_mop_code = m.code
+      AND m.admcurrency_code = c.code
+      AND c.isbase = 1
+      AND m.TYPE = 'CSH'
+      AND pma.admsite_code = p_admsite_code;
+   IF v_pcode IS NOT NULL
+   THEN
+      SELECT glcode debtors_glcode
+        INTO STRICT v_debtors_glcode
+        FROM finsl
+       WHERE slcode = v_pcode;
+   END IF;
+   SELECT ycode
+     INTO STRICT v_ycode
+     FROM admyear
+    WHERE p_stlmfor BETWEEN dtfr AND dtto;
+   SELECT nextval('posjournal_seq')
+     INTO STRICT v_posjournal_code
+;
+   -- START REV : 001
+   /*
+   SELECT COUNT (1)
+     INTO v_cnt
+     FROM psite_posstlmdetail psd, psite_ptchead_assign pha
+    WHERE psd.psite_ptchead_code = pha.psite_ptchead_code
+      AND psd.admsite_code = pha.admsite_code
+      AND pha.glcode IS NOT NULL
+      AND psite_posstlm_code =
+             (SELECT code
+                FROM psite_posstlm
+               WHERE admsite_code = p_admsite_code
+                 AND TRUNC (stlmfor) = v_stlmfor)
+      AND SUBTYPE = 'PTC Head';
+    */
+   SELECT COUNT(1)
+     INTO STRICT v_cnt
+     FROM psite_ptcbill pb, psite_ptchead_assign pha
+    WHERE pb.psite_ptchead_code = pha.psite_ptchead_code
+      AND pb.admsite_code = pha.admsite_code
+      AND pha.glcode IS NOT NULL
+      AND date_trunc('day', pb.billdate) = v_stlmfor
+      AND pb.admsite_code = p_admsite_code;
+   -- END REV : 001
+   IF coalesce(v_cnt, 0) > 0
+   THEN
+      FOR c1 IN (SELECT pb.code ptcbillid,
+                        s.psite_initial || '-' || pb.billno scheme_docno,
+                        remarks
+                    --START REV : 001
+                    /*
+                    FROM psite_ptcbill pb, admsite s
+                   WHERE pb.admsite_code = s.code
+                     AND TRUNC (pb.billdate) = v_stlmfor
+                     AND pb.admsite_code = p_admsite_code
+                     */
+                 FROM   psite_ptcbill pb, admsite s, psite_ptchead_assign pa
+                  WHERE pb.admsite_code = s.code
+                    AND date_trunc('day', pb.billdate) = v_stlmfor
+                    AND pb.admsite_code = p_admsite_code
+                    AND pb.admsite_code = pa.admsite_code
+                    AND pb.psite_ptchead_code = pa.psite_ptchead_code
+                    AND pa.glcode IS NOT NULL
+                                             -- END REV : 001
+               )
+      LOOP
+         SELECT nextval('posjournal_seq')
+           INTO STRICT v_posjournal_code
+;
+         INSERT INTO posjournal(code, admsite_code, doccode, scheme_docno,
+                      docdate, doctype, admou_code, customer_slcode,
+                      debtor_glcode, ycode, status, psite_posstlm_code,
+                      remarks, createdby, createdon
+                     )
+              VALUES (v_posjournal_code, p_admsite_code, 1, c1.scheme_docno,
+                      v_stlmfor, 'PTCASH', v_admou_code, v_pcode,
+                      v_debtors_glcode, v_ycode, 'O', v_posstlmcode,
+                      c1.remarks, p_settledbyid, clock_timestamp()
+                     );
+         FOR c2 IN
+            (SELECT v_posjournal_code, psite_ptchead_code, glcode, gl_cc_appl,
+                    slcode,
+                    CASE
+                       WHEN amount > 0
+                          THEN 'R'
+                       WHEN amount < 0
+                          THEN 'P'
+                    END ptcheadmode,
+                    0 - amount amount
+               FROM (SELECT   --v_posjournal_code, 
+					 pb.psite_ptchead_code,
+                              pa.glcode, coalesce(g.costapp, 'N') gl_cc_appl,
+                              pa.slcode, SUM(coalesce(pb.amount, 0)) amount
+                         FROM psite_ptchead_assign pa,
+                              (SELECT code, admsite_code, psite_ptchead_code,
+                                      CASE
+                                         WHEN ptcheadmode = 'R'
+                                            THEN amount
+                                         WHEN ptcheadmode = 'P'
+                                            THEN -1 * amount
+                                      END amount
+                                 FROM psite_ptcbill) pb,
+                              fingl g
+                        WHERE pb.code = c1.ptcbillid
+                          AND pb.admsite_code = pa.admsite_code
+                          AND pb.psite_ptchead_code = pa.psite_ptchead_code
+                          AND pa.glcode = g.glcode
+                          AND pa.glcode IS NOT NULL
+                     GROUP BY pb.psite_ptchead_code,
+                              pa.glcode,
+                              coalesce(g.costapp, 'N'),
+                              pa.slcode
+                       HAVING SUM(coalesce(amount, 0)) <> 0) alias7)
+         LOOP
+            SELECT nextval('posjournal_detail_seq')
+              INTO STRICT v_posjournal_detail_code
+;
+            INSERT INTO posjournal_detail(code, posjournal_code, psite_mop_code,
+                         psite_ptchead_code, ptcheadmode, glcode,
+                         gl_cc_appl, slcode, amount
+                        )
+                 VALUES (v_posjournal_detail_code, v_posjournal_code, NULL,
+                         c2.psite_ptchead_code, c2.ptcheadmode, c2.glcode,
+                         c2.gl_cc_appl, c2.slcode, c2.amount
+                        );
+         END LOOP;
+         SELECT nextval('posjournal_detail_seq')
+           INTO STRICT v_posjournal_detail_code
+;
+         INSERT INTO posjournal_detail(code, posjournal_code, psite_mop_code, glcode,
+                      gl_cc_appl, slcode, ptcheadmode, amount)
+            SELECT   v_posjournal_detail_code, v_posjournal_code,
+                     v_csh_mop_code, v_cash_glcode glcode,
+                     (SELECT coalesce(g.costapp, 'N')
+                        FROM fingl g
+                       WHERE glcode = v_cash_glcode) gl_cc_appl,
+                     v_cash_slcode,
+                     CASE
+                        WHEN SUM(coalesce(amount, 0)) > 0
+                           THEN 'R'
+                        WHEN SUM(coalesce(amount, 0)) < 0
+                           THEN 'P'
+                     END ptcheadmode,
+                     SUM(coalesce(amount, 0)) amount
+                FROM psite_ptchead_assign pa,
+                     (SELECT code, admsite_code, psite_ptchead_code,
+                             CASE
+                                WHEN ptcheadmode = 'R'
+                                   THEN amount
+                                WHEN ptcheadmode = 'P'
+                                   THEN -1 * amount
+                             END amount
+                        FROM psite_ptcbill) pb,
+                     fingl g
+               WHERE pb.code = c1.ptcbillid
+                 AND pb.admsite_code = pa.admsite_code
+                 AND pb.psite_ptchead_code = pa.psite_ptchead_code
+                 AND pa.glcode = g.glcode
+                 AND pa.glcode IS NOT NULL
+            GROUP BY pb.psite_ptchead_code,
+                     pa.glcode,
+                     coalesce(g.costapp, 'N'),
+                     pa.slcode
+              HAVING SUM(coalesce(amount, 0)) <> 0;
+         SELECT SUM(coalesce(damount, 0)), SUM(coalesce(camount, 0))
+           INTO STRICT v_sum_damt, v_sum_camt
+           FROM finpost
+          WHERE enttype = 'PJN' AND entcode = v_posjournal_code::varchar;
+         IF v_sum_damt <> v_sum_camt
+         THEN
+            FOR c1 IN (SELECT glcode, coalesce(damount, 0) damt,
+                              coalesce(camount, 0) camt
+                         FROM finpost
+                        WHERE enttype = 'PJN'
+                          AND entcode = v_posjournal_code::varchar)
+            LOOP
+               CALL erraudit('stlm',
+                         'settlement-PTC',
+                         '2000001',
+                            v_stlmfor
+                         || '-'
+                         || p_admsite_code::TEXT
+                         || '-'
+                         || c1.glcode::TEXT
+                         || '-'
+                         || c1.damt::TEXT
+                         || '-'
+                         || c1.camt::TEXT
+                        );
+            END LOOP;
+            RAISE EXCEPTION '%', 'GINESYS Critical Exception:'
+                || CHR(10)
+                || 'PTC MOP Amount Mismatch in '
+                || v_sitename
+                || ' for '
+                || date_trunc('day', p_stlmfor)
+                || CHR(10)
+                || 'This is a critical exception. Please contact GINESYS support immediately.'
+                || CHR(10)
+                || 'IMPORTANT: Do not make any further settlement postings for any site until GINESYS support engineer attends the issue.'
+                USING ERRCODE = '45001';
+         END IF;
+         UPDATE posjournal
+            SET status = 'C'
+          WHERE code = v_posjournal_code;
+      END LOOP;
+   END IF;
+END;
+"""
+  arguments = <
+    {
+      name = p_stlmfor
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_admsite_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_settledbyid
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

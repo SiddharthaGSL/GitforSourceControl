@@ -1,0 +1,383 @@
+function "main"."trigger_fct_t_purinvjrnchg()" {
+  text = """
+
+DECLARE
+    ora2pg_rowcount integer;
+V_JRNNO                     PURINVJRNMAIN.JRNNO%TYPE;
+    V_JRNDT                     PURINVJRNMAIN.JRNDT%TYPE;
+    V_YCODE                     PURINVJRNMAIN.YCODE%TYPE;
+    V_DOCNO                     PURINVJRNMAIN.DOCNO%TYPE;
+    V_SCHEME_DOCNO              PURINVJRNMAIN.SCHEME_DOCNO%TYPE;
+    V_POSTCODE                  FINPOST.POSTCODE%TYPE;
+    V_CCCODE                    FINCOSTTAG.CODE%TYPE;
+    V_ADMSITE_CODE_OWNER        PURINVJRNMAIN.ADMSITE_CODE_OWNER%TYPE;
+    -- start REV : 100
+    V_ADMOU_CODE_OWNER          PURINVJRNMAIN.ADMOU_CODE%TYPE;
+    -- end rev : 100
+    V_CNT                       bigint;
+    V_JRNTYPE                  char(1) := NULL;
+BEGIN
+  BEGIN
+
+ BEGIN
+ SELECT JRNTYPE
+ INTO STRICT   V_JRNTYPE
+ FROM   PURINVJRNMAIN
+ WHERE  JRNCODE = coalesce(OLD.JRNCODE,NEW.JRNCODE);
+ EXCEPTION WHEN no_data_found THEN
+ NULL;
+ END;
+
+   IF OLD.JRNCODE IS NOT NULL THEN
+      --START REV : 001  NEW COLUMN ADDED REV : 002 v_scheme_docno IS ADDED
+      SELECT JRNNO
+            ,JRNDT
+            ,YCODE
+            ,DOCNO
+            ,SCHEME_DOCNO
+            ,ADMSITE_CODE_OWNER
+      INTO STRICT   V_JRNNO
+            ,V_JRNDT
+            ,V_YCODE
+            ,V_DOCNO
+            ,V_SCHEME_DOCNO
+            ,V_ADMSITE_CODE_OWNER
+      FROM   PURINVJRNMAIN
+      WHERE  JRNCODE = OLD.JRNCODE;
+
+      IF coalesce(OLD.CHGAMT, 0) < 0  THEN
+         UPDATE FINPOST
+         SET    ENTNO = V_JRNNO::varchar
+               ,ENTDT = V_JRNDT
+               ,DOCNO = V_DOCNO
+               ,SCHEME_DOCNO = V_SCHEME_DOCNO
+               ,DAMOUNT = CASE WHEN V_JRNTYPE='D' THEN coalesce(DAMOUNT, 0) + coalesce(OLD.CHGAMT, 0)  ELSE 0 END
+               ,CAMOUNT = CASE WHEN V_JRNTYPE='D' THEN 0  ELSE coalesce(CAMOUNT, 0) + coalesce(OLD.CHGAMT, 0) END 
+         WHERE  ENTCODE = OLD.JRNCODE::varchar
+         AND    ENTTYPE IN ('PCC', 'PDC')
+         AND    GLCODE = OLD.GLCODE
+         AND    CHGCODE = OLD.CHGCODE
+         AND    coalesce(CHGRATE, 0) = coalesce(OLD.RATE, 0)
+         AND    coalesce(SLCODE, 0) = coalesce(OLD.SLCODE, 0)
+         AND  (
+                ( V_JRNTYPE = 'D'
+                    AND
+                 coalesce(DAMOUNT, 0) > 0
+                )
+                OR ( V_JRNTYPE = 'C'
+                    AND
+                 coalesce(CAMOUNT, 0) > 0
+                )
+              )
+;
+      ELSIF  coalesce(OLD.CHGAMT, 0) > 0  THEN
+         UPDATE FINPOST
+         SET    ENTNO = V_JRNNO::varchar
+               ,ENTDT = V_JRNDT
+               ,DOCNO = V_DOCNO
+               ,SCHEME_DOCNO = V_SCHEME_DOCNO
+               ,DAMOUNT = CASE WHEN V_JRNTYPE='D' THEN 0  ELSE coalesce(DAMOUNT, 0) - coalesce(OLD.CHGAMT, 0) END
+               ,CAMOUNT = CASE WHEN V_JRNTYPE='D' THEN coalesce(CAMOUNT, 0) - coalesce(OLD.CHGAMT, 0)  ELSE 0 END 
+         WHERE  ENTCODE = OLD.JRNCODE::varchar
+         -- START REV : 104
+         --AND    ENTTYPE = 'SIC'
+         AND    ENTTYPE IN ('PDC', 'PCC')
+         -- END REV : 104
+         AND    GLCODE = OLD.GLCODE
+         AND    CHGCODE = OLD.CHGCODE
+         AND    coalesce(CHGRATE, 0) = coalesce(OLD.RATE, 0)
+         AND    coalesce(SLCODE, 0) = coalesce(OLD.SLCODE, 0)
+         AND    (
+                    ( V_JRNTYPE = 'D'
+                        AND
+                        coalesce(CAMOUNT, 0) > 0
+                     )
+                     OR ( V_JRNTYPE = 'C'
+                        AND
+                        coalesce(DAMOUNT, 0) > 0
+                     )
+                );
+      END IF;
+   END IF;
+
+   IF NEW.JRNCODE IS NOT NULL THEN
+      SELECT JRNNO
+            ,JRNDT
+            ,YCODE
+            ,DOCNO
+            ,SCHEME_DOCNO
+            ,ADMSITE_CODE_OWNER
+      INTO STRICT   V_JRNNO
+            ,V_JRNDT
+            ,V_YCODE
+            ,V_DOCNO
+            ,V_SCHEME_DOCNO
+            ,V_ADMSITE_CODE_OWNER
+      FROM   PURINVJRNMAIN
+      WHERE  JRNCODE = NEW.JRNCODE;
+
+    -- START REV : 100
+    BEGIN
+           SELECT ADMOU_CODE
+           INTO STRICT   V_ADMOU_CODE_OWNER
+           FROM   ADMSITE
+           WHERE  CODE = V_ADMSITE_CODE_OWNER;
+    EXCEPTION WHEN no_data_found THEN
+     NULL;
+    END;
+    -- END REV : 100
+      IF  coalesce(NEW.CHGAMT, 0) < 0   THEN
+         UPDATE FINPOST
+         SET    ENTNO = V_JRNNO::varchar
+               ,ENTDT = V_JRNDT
+               ,DOCNO = V_DOCNO
+               ,SCHEME_DOCNO = V_SCHEME_DOCNO
+               ,DAMOUNT =  CASE WHEN V_JRNTYPE='D' THEN coalesce(DAMOUNT, 0) - coalesce(NEW.CHGAMT, 0)  ELSE 0 END
+               ,CAMOUNT =  CASE WHEN V_JRNTYPE='D' THEN 0  ELSE coalesce(CAMOUNT, 0) - coalesce(NEW.CHGAMT, 0) END 
+         WHERE  ENTCODE = NEW.JRNCODE::varchar
+         AND    ENTTYPE IN ('PCC', 'PDC')
+         AND    GLCODE = NEW.GLCODE
+         AND    CHGCODE = NEW.CHGCODE
+         AND    coalesce(CHGRATE, 0) = coalesce(NEW.RATE, 0)
+         AND    coalesce(SLCODE, 0) = coalesce(NEW.SLCODE, 0)
+         AND    (
+                    ( V_JRNTYPE = 'D'
+                        AND
+                      coalesce(DAMOUNT, 0) > 0
+                    )
+                     OR ( V_JRNTYPE = 'C'
+                        AND
+                      coalesce(CAMOUNT, 0) > 0
+                     )
+                );
+
+         GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0 THEN
+            INSERT INTO FINPOST(POSTCODE, ENTCODE, ENTNO, ENTDT, DOCNO, ENTTYPE
+                        ,GLCODE, SLCODE, DAMOUNT, CAMOUNT, YCODE
+                        ,SCHEME_DOCNO, CHGCODE, CHGRATE
+                        ,ADMSITE_CODE_OWNER,
+                        ADMOU_CODE,REF_ADMSITE_CODE
+                        )
+            VALUES (nextval('erp01'), NEW.JRNCODE::varchar, V_JRNNO::varchar, V_JRNDT, V_DOCNO,
+                        CASE WHEN V_JRNTYPE='C' THEN 'PCC'  ELSE 'PDC' END
+                        ,NEW.GLCODE, NEW.SLCODE, CASE WHEN V_JRNTYPE='D' THEN -coalesce(NEW.CHGAMT, 0)  ELSE 0 END , CASE WHEN V_JRNTYPE='D' THEN 0  ELSE -coalesce(NEW.CHGAMT, 0) END , V_YCODE
+                        ,V_SCHEME_DOCNO, NEW.CHGCODE, NEW.RATE
+                        ,V_ADMSITE_CODE_OWNER,
+                        V_ADMOU_CODE_OWNER,V_ADMSITE_CODE_OWNER
+                        );
+         END IF;
+
+         V_POSTCODE := NULL;
+         V_CCCODE   := NULL;
+
+         BEGIN
+            SELECT POSTCODE
+            INTO STRICT   V_POSTCODE
+            FROM   FINPOST
+            WHERE  ENTCODE = coalesce(NEW.JRNCODE,OLD.JRNCODE)::varchar
+             AND    ENTTYPE IN ('PCC', 'PDC')
+            AND    GLCODE = coalesce(NEW.GLCODE,OLD.GLCODE)
+            AND    CHGCODE = coalesce(NEW.CHGCODE,OLD.CHGCODE)
+            AND    coalesce(CHGRATE, 0) = coalesce(coalesce(NEW.RATE,OLD.RATE), 0)
+            AND    coalesce(SLCODE, 0) = coalesce(coalesce(NEW.SLCODE,OLD.SLCODE), 0)
+            AND    (
+                    ( V_JRNTYPE = 'D'
+                        AND
+                        coalesce(DAMOUNT, 0) = ABS(coalesce(NEW.CHGAMT,OLD.CHGAMT))
+                     )
+                     OR ( V_JRNTYPE = 'C'
+                        AND
+                        coalesce(CAMOUNT, 0) = ABS(coalesce(NEW.CHGAMT,OLD.CHGAMT))
+                     )
+                    )
+            AND    YCODE = V_YCODE;
+         EXCEPTION
+            WHEN no_data_found THEN NULL;
+         END;
+
+         DELETE    FROM FINCOSTTAG
+         WHERE     ENTCODE = OLD.JRNCODE::varchar
+         AND       ENTTYPE IN ('PCC', 'PDC')
+         AND       (
+                    ( V_JRNTYPE = 'D'
+                        AND
+                      coalesce(DAMOUNT, 0) = ABS(OLD.CHGAMT)
+                    )
+                    OR ( V_JRNTYPE = 'C'
+                        AND
+                      coalesce(CAMOUNT, 0) = ABS(OLD.CHGAMT)
+                    )
+                   )
+         AND       YCODE = V_YCODE
+         AND        POSTCODE = V_POSTCODE
+         RETURNING CODE
+         INTO      V_CCCODE;
+
+         IF V_POSTCODE IS NOT NULL AND NEW.GL_CC_APPL = 'Y' THEN
+            INSERT INTO FINCOSTTAG(ENTCODE, ENTNO, ENTDT, ENTTYPE
+                        ,GLCODE, SLCODE, COSTCODE, DAMOUNT, CAMOUNT, YCODE
+                        ,CODE, POSTCODE, ADMSITE_CODE
+                        ,REF_ADMSITE_CODE
+                        ,ADMOU_CODE
+                        )
+            VALUES (NEW.JRNCODE::varchar, V_JRNNO::varchar, V_JRNDT
+                        ,CASE WHEN V_JRNTYPE='C' THEN 'PCC'  ELSE 'PDC' END
+                        ,NEW.GLCODE, NEW.SLCODE, NULL, CASE WHEN V_JRNTYPE='D' THEN ABS(coalesce(NEW.CHGAMT, 0))  ELSE 0 END , CASE WHEN V_JRNTYPE='D' THEN 0  ELSE ABS(coalesce(NEW.CHGAMT, 0)) END , V_YCODE
+                        ,V_CCCODE, V_POSTCODE, V_ADMSITE_CODE_OWNER
+                        ,V_ADMSITE_CODE_OWNER
+                        -- start rev : 100
+                        ,V_ADMOU_CODE_OWNER
+                        -- end rev : 100
+                        );
+         END IF;
+
+      ELSIF   coalesce(NEW.CHGAMT, 0) > 0    THEN
+         UPDATE FINPOST
+         SET    ENTNO = V_JRNNO::varchar
+               ,ENTDT = V_JRNDT
+               ,DOCNO = V_DOCNO
+               ,SCHEME_DOCNO = V_SCHEME_DOCNO
+               ,DAMOUNT = CASE WHEN V_JRNTYPE='D' THEN 0  ELSE coalesce(DAMOUNT, 0) + coalesce(NEW.CHGAMT, 0) END
+               ,CAMOUNT = CASE WHEN V_JRNTYPE='D' THEN coalesce(CAMOUNT, 0) + coalesce(NEW.CHGAMT, 0) END 
+         WHERE  ENTCODE = NEW.JRNCODE::varchar
+         AND    ENTTYPE IN ('PCC', 'PDC')
+         AND    GLCODE = NEW.GLCODE
+         AND    CHGCODE = NEW.CHGCODE
+         AND    coalesce(CHGRATE, 0) = coalesce(NEW.RATE, 0)
+         AND    coalesce(SLCODE, 0) = coalesce(NEW.SLCODE, 0)
+         AND    (
+                    ( V_JRNTYPE = 'D'
+                        AND
+                        coalesce(CAMOUNT, 0) > 0
+                     )
+                     OR ( V_JRNTYPE = 'C'
+                        AND
+                        coalesce(DAMOUNT, 0) > 0
+                     )
+                );
+
+         GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0 THEN
+            INSERT INTO FINPOST(POSTCODE, ENTCODE, ENTNO, ENTDT, DOCNO,  ENTTYPE
+                        ,GLCODE, SLCODE, DAMOUNT, CAMOUNT, YCODE
+                        ,SCHEME_DOCNO, CHGCODE, CHGRATE
+                        ,ADMSITE_CODE_OWNER,
+                        ADMOU_CODE
+                        )
+
+            VALUES (nextval('erp01'), NEW.JRNCODE::varchar, V_JRNNO::varchar, V_JRNDT, V_DOCNO
+                        ,CASE WHEN V_JRNTYPE='C' THEN 'PCC'  ELSE 'PDC' END
+                        ,NEW.GLCODE, NEW.SLCODE, CASE WHEN V_JRNTYPE='D' THEN 0  ELSE coalesce(NEW.CHGAMT, 0) END , CASE WHEN V_JRNTYPE='D' THEN coalesce(NEW.CHGAMT, 0)  ELSE 0 END , V_YCODE
+                        ,V_SCHEME_DOCNO, NEW.CHGCODE, NEW.RATE
+                        ,V_ADMSITE_CODE_OWNER,
+                        V_ADMOU_CODE_OWNER
+                        );
+         END IF;
+
+         V_POSTCODE := NULL;
+         V_CCCODE   := NULL;
+
+         BEGIN
+            SELECT POSTCODE
+            INTO STRICT   V_POSTCODE
+            FROM   FINPOST
+            WHERE  ENTCODE = coalesce(NEW.JRNCODE,OLD.JRNCODE)::varchar
+            AND    ENTTYPE IN ('PCC', 'PDC')
+            AND    GLCODE = coalesce(NEW.GLCODE,OLD.GLCODE)
+            AND    CHGCODE = coalesce(NEW.CHGCODE,OLD.CHGCODE)
+            AND    coalesce(CHGRATE, 0) = coalesce(coalesce(NEW.RATE,OLD.RATE), 0)
+            AND    coalesce(SLCODE, 0) = coalesce(coalesce(NEW.SLCODE,OLD.SLCODE), 0)
+            AND    (
+                    ( V_JRNTYPE = 'D'
+                        AND
+                        coalesce(CAMOUNT, 0) = coalesce(NEW.CHGAMT,OLD.CHGAMT)
+                     )
+                     OR ( V_JRNTYPE = 'C'
+                        AND
+                        coalesce(DAMOUNT, 0) = coalesce(NEW.CHGAMT,OLD.CHGAMT)
+                     )
+                    )
+            AND    YCODE = V_YCODE;
+         EXCEPTION
+            WHEN no_data_found THEN NULL;
+         END;
+
+         DELETE    FROM FINCOSTTAG
+         WHERE     ENTCODE = OLD.JRNCODE::varchar
+         AND       ENTTYPE IN ('PCC', 'PDC')
+         AND       coalesce(CAMOUNT, 0) > 0
+         AND       GLCODE = OLD.GLCODE
+         AND       coalesce(SLCODE, 0) = coalesce(OLD.SLCODE, 0)
+         AND       (
+                    ( V_JRNTYPE = 'D'
+                        AND
+                        coalesce(CAMOUNT, 0) = OLD.CHGAMT
+                     )
+                     OR ( V_JRNTYPE = 'C'
+                        AND
+                        coalesce(DAMOUNT, 0) = OLD.CHGAMT
+                     )
+                    )
+         AND       YCODE = V_YCODE
+         AND       POSTCODE = V_POSTCODE
+         RETURNING CODE
+         INTO      V_CCCODE;
+
+         IF V_POSTCODE IS NOT NULL AND NEW.GL_CC_APPL = 'Y' THEN
+            INSERT INTO FINCOSTTAG(ENTCODE, ENTNO, ENTDT, ENTTYPE
+                        ,GLCODE, SLCODE, COSTCODE, DAMOUNT, CAMOUNT, YCODE
+                        ,CODE, POSTCODE, ADMSITE_CODE
+                        ,REF_ADMSITE_CODE
+                        ,ADMOU_CODE
+                        )
+            VALUES (NEW.JRNCODE::varchar, V_JRNNO::varchar, V_JRNDT
+                        ,CASE WHEN V_JRNTYPE='C' THEN 'PCC'  ELSE 'PDC' END
+                        ,NEW.GLCODE, NEW.SLCODE, NULL, CASE WHEN V_JRNTYPE='D' THEN 0  ELSE coalesce(NEW.CHGAMT, 0) END , CASE WHEN V_JRNTYPE='D' THEN coalesce(NEW.CHGAMT, 0)  ELSE 0 END , V_YCODE
+                        ,V_CCCODE, V_POSTCODE, V_ADMSITE_CODE_OWNER
+                        ,V_ADMSITE_CODE_OWNER
+                        ,V_ADMOU_CODE_OWNER
+                        );
+         END IF;
+      END IF;
+   END IF;
+
+   IF  TG_OP = 'DELETE' THEN
+       DELETE FROM FINCOSTTAG
+       WHERE  POSTCODE IN (
+                           SELECT POSTCODE
+                           FROM   FINPOST
+                           WHERE  ENTCODE = OLD.JRNCODE::varchar
+                         AND    ENTTYPE IN ('PCC', 'PDC')
+                         );
+   END IF;
+
+   DELETE FROM FINCOSTTAG
+   WHERE  POSTCODE IN (
+                       SELECT POSTCODE
+                       FROM   FINPOST
+                       WHERE  ENTCODE = OLD.JRNCODE::varchar
+                     AND    ENTTYPE IN ('PCC', 'PDC')
+                       AND    coalesce(DAMOUNT, 0) = 0
+                       AND    coalesce(CAMOUNT, 0) = 0);
+
+   DELETE FROM FINPOST
+   WHERE  ENTCODE = OLD.JRNCODE::varchar
+   AND    ENTTYPE IN ('PCC','PDC')
+   AND    coalesce(DAMOUNT, 0) = 0
+   AND    coalesce(CAMOUNT, 0) = 0;
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

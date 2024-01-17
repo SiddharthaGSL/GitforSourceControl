@@ -1,0 +1,92 @@
+procedure "main"."db_pro_pop_upd_stk_audit(bigint, bigint, timestamp without time zone, character)" {
+  text = """
+
+ /*******************************************************************************************************************
+   NO.        DATE        AUTHOR        DESCRIPTION
+   ---------  ----------  ---------     ------------------------------------------------------------------
+   REV : 001  03/05/2016  MOUSUMI       (BUG ID : 16695) Plan refresh option is not working properly.
+   REV : 002  24/02/2017  DIPTIMAN      (TFS ID : 26039) Updation process altered.
+ *********************************************************************************************************************/
+DECLARE
+	i				record;
+	v_table_rec		type_rec_db_pro_populate_item[];
+	v_code			bigint;
+BEGIN
+    -- First update all qty with zero, as it may possible that every item have no stock
+    -- then update the qty from stock whose stock is available
+    UPDATE INVSTKPLANITEM I
+    SET    LOCK_INVSTOCK_QTY = 0
+    WHERE  I.STKPLANCODE = P_STKPLANCODE
+    AND    I.LOCCODE = P_LOCCODE;
+	
+	v_code := 0;
+	LOOP 
+		SELECT ARRAY_REMOVE(v_table_rec);
+			SELECT ARRAY_AGG(t)
+			STRICT INTO v_table_rec
+			FROM
+			(
+				SELECT I1.CODE CODE, coalesce(Q.QTY,0) QTY
+						FROM (
+								SELECT I.ICODE ICODE,SUM(coalesce(QTY,0)) QTY
+								FROM   INVSTKPLANITEM I, INVSTOCK M
+								WHERE  M.ICODE       = I.ICODE
+								AND    I.STKPLANCODE = P_STKPLANCODE
+								AND    I.LOCCODE     = P_LOCCODE
+								AND    M.LOCCODE     = P_LOCCODE
+								AND    ENTDT        <=  P_ACTUAL_STARTDT
+								AND (P_STATUS IS NULL
+								OR (P_STATUS = 'R' AND I.ICODE IN ( SELECT DERIVED_ICODE FROM TEMP_STK_PLAN_ITEM )))
+						GROUP BY I.ICODE
+						HAVING SUM(coalesce(QTY,0)) <> 0) Q,
+						INVSTKPLANITEM I1
+        		WHERE I1.ICODE = Q.ICODE
+        		AND   I1.STKPLANCODE = P_STKPLANCODE
+        		AND (P_STATUS IS NULL OR (P_STATUS = 'R' AND I1.ICODE IN ( SELECT DERIVED_ICODE FROM TEMP_STK_PLAN_ITEM )))
+        		AND    I1.LOCCODE     = P_LOCCODE
+				ORDER BY I1.CODE
+				LIMIT 100
+			) t;
+			
+		EXIT WHEN COALESCE(ARRAY_LENGTH(v_table_rec),0) = 0;
+
+		FOR var IN ARRAY_LOWER(v_table_rec, 1)..ARRAY_UPPER(v_table_rec, 1)
+		LOOP
+            UPDATE INVSTKPLANITEM I
+            SET    LOCK_INVSTOCK_QTY = coalesce(v_table_rec[var].QTY,0)
+            WHERE  CODE = v_table_rec[var].CODE;
+			v_code := v_table_rec[var].CODE;
+    	END LOOP;
+    END LOOP;
+END;
+"""
+  arguments = <
+    {
+      name = p_stkplancode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_loccode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_actual_startdt
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_status
+      type = character
+      mode = IN
+      default = NULL::bpchar
+    }
+
+  >
+  language = plpgsql
+}
+

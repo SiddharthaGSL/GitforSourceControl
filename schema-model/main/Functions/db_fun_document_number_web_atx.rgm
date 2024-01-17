@@ -1,0 +1,691 @@
+function "main"."db_fun_document_number_web_atx(bigint, bigint, bigint, text, text, bigint, bigint, text)" {
+  text = """
+
+DECLARE
+
+ora2pg_rowcount int;
+
+   lv_docdtl                      lv_docdtlrec;
+   lv_mcode                       bigint;
+   lv_entdt                       timestamp(0) without time zone;
+   lv_entdt1					  varchar(25);
+   lv_lastdocno                   bigint;
+   lv_return_value                varchar(100);
+   lv_rows_processed              bigint;
+   lv_errcode                     varchar(50);
+   lv_errmsg                      varchar(2000);
+   lv_doc_cnt                     bigint;
+   lv_start_from                  bigint;
+   lv_admou_code                  bigint;
+   lv_admsite_code                bigint;
+   lv_cmpcode                     bigint;
+   lv_admoucode                   bigint;
+   lv_admsitecode                 bigint;
+   lv_sitetype                    varchar(15);
+   lv_v1                          varchar(10);
+   lv_v2                          varchar(10);
+   --START REV : 004
+   lv_main_prefix                 varchar(300);
+   lv_main_suffix                 varchar(300);
+   v_scheme_docno_Length          bigint;
+   -- START REV : 003
+   lv_gstappl                     salinvmain.gstappl%TYPE;
+   lv_gen_basis                   admdocscheme.generation_basis%TYPE;
+   lv_sitedocin                   admsite.sitedocin%TYPE;
+
+   -- END REV : 003
+   -- START REV : 012
+   lv_prefixsuffix   varchar(100);
+   -- END REV : 012
+   v_SQLERRM						VARCHAR(500);
+BEGIN
+   /********************************************************************************************************************************************************************
+         REVISIONS:
+         No.          Date          Author             Description
+         ---------    ----------    ----------------   -----------------------------------------------------------------------------------------------------------------
+         REV : 001    24/05/2017    ANINDYA           (TFS ID : 28501) CREATED. No generation would be site basis for "OM" type sites.
+         REV : 002    30/06/2017    ANINDYA           (TFS ID: 29634) 16 CHARACTER Restriction in scheme_docno.
+         REV : 003    13/07/2017    MANASH            (TFS ID: 30869) [GST] Document numbering scheme related changes.
+		 REV : 004    11/08/2017    Suprava           (TFS ID: 28260) New Logic Applied for Document Number Scheme.
+		 REV : 005    24/08/2017    Suprava           (TFS ID: 32255) Error message displayed while generating doc scheme, where padding char is blank.
+		 REV : 006    01/09/2017    Suprava           (BBT-393-73961) Change from Sysdate to EntDate
+		 REV : 007    11/09/2017    SIDDHARTH         (TFS ID: 32662) New GST Applicability Type Introduction
+		 REV : 008    15/09/2017    MOUSUMI           (WIR-820-92101) Revert of No generation would be site basis for "OM" type sites.
+		 REV : 009    04/10/2017    SABYASACHI        (TFS ID: 33907)  Error getting generated at the time of importing excel for secondary sales when schem_docno length greater than 16 character .
+		 REV : 010    13/10/2017    Suprava           (BUG ID : 34350) When set dd-MM-yy format set to system then excute our function wrong number using system date.
+		 REV : 011    26/03/2018    Suprava           (TFS ID : 38799) Generating new number schemes with [SDI] placeholder TO ADMSITE.SITEDOCIN
+		 REV : 012    04/06/2018    MOUSUMI           (TFS ID : 41079) Rev. 16 work not handled for unmanaged sites.
+		 REV : 013    19/04/2019    MANASH            (TFS ID : 15056) Though 'Start From' is given for a Document Scheme, for next Accounting Period, it will start from 1.
+		 REV : 014    05/03/2021    PRASANTA          (TICKET ID : 115970) Unable to generate GRC Scheme document number as Month Code not found from ADMMONTH table w.r.t GRC date
+       ******************************************************************************************************************************************************************/
+
+   lv_admou_code := pv_oucode;
+   lv_admsite_code := pv_sitecode;
+   SELECT SITETYPE
+     INTO STRICT lv_sitetype
+     FROM ADMSITE
+    WHERE CODE = lv_admsite_code;
+   -- START REV : 003
+   BEGIN
+      SELECT coalesce(d.gstappl, 'N'), d.generation_basis
+            -- START REV : 012
+            , coalesce(d.PREFIX,'')||coalesce(d.SUFFIX,'')
+            -- END REV : 012
+        INTO STRICT lv_gstappl, lv_gen_basis
+            -- START REV : 012
+            , lv_prefixsuffix
+            -- END REV : 012
+        FROM admdocscheme d
+       WHERE d.doccode = pv_doccode;
+    -- START REV : 012
+	
+    IF position('[SDI]' in UPPER(COALESCE(lv_prefixsuffix,''))) > 0 THEN
+    -- END REV : 012
+         SELECT s.sitedocin
+           INTO STRICT lv_sitedocin
+           FROM admsite s
+          WHERE s.code = lv_admsite_code;
+         IF lv_sitedocin IS NULL
+         THEN
+            RAISE EXCEPTION 'e_sitedocin' USING ERRCODE = '50002';
+         END IF;
+    -- START REV : 011
+      --END IF;
+    -- End REV : 011
+    -- START REV : 017
+    END IF;
+    -- END REV : 017
+   EXCEPTION
+      WHEN no_data_found
+      THEN
+         RAISE EXCEPTION 'e_sitedocin' USING ERRCODE = '50002';
+   END;
+   -- END REV : 003
+   --EXECUTE
+     --    'SELECT MCODE '
+     -- || 'FROM   ADMMONTH '
+      -- START REV : 014
+    --  || 'WHERE  TO_DATE(:1,''DD/MM/YYYY'') BETWEEN MONSTDT AND LAST_DAY(MONSTDT) '
+     -- || 'WHERE  TO_DATE(:1,''DD/MM/YYYY'') BETWEEN DTFR AND DTTO '
+      -- END REV : 014
+      --|| 'AND    YCODE = '
+     -- || PV_YCODE
+     -- INTO STRICT lv_mcode
+     -- USING pv_entdt;
+	  
+	  SELECT mcode 
+	  INTO STRICT lv_mcode
+	  FROM admmonth 
+	  WHERE TO_DATE(pv_entdt, 'DD/MM/YYYY') BETWEEN DTFR AND DTTO;
+	 --BETWEEN monstdt AND (date_trunc('MONTH', monstdt) + INTERVAL '1 MONTH - 1 day')::date  AND ycode = pv_ycode ;
+	 
+   IF pv_doccode IS NOT NULL
+   THEN
+    --START REV : 004
+        EXECUTE
+            'SELECT  MANUAL, WIDTH,COALESCE(STARTING,0) STARTING, '
+         || 'PREFILL,PREFIX, '
+         || 'SUFFIX,GENERATION_INTERVAL,DOCCODE_WISE, '
+         || 'BASEDON, GENERATION_BASIS '
+         || 'FROM ADMDOCSCHEME '
+         || 'WHERE DOCCODE = $1 '
+         INTO STRICT lv_docdtl
+         USING pv_doccode;
+   -- END REV : 004
+      IF coalesce(lv_docdtl.lv_manual, 'N') = 'Y'
+      THEN
+         RETURN(pv_scheme_docno);
+      END IF;
+-- START REV : 004
+-- END REV : 004
+      IF lv_docdtl.lv_generation_interval = 'D'
+      THEN
+         --lv_entdt := TO_DATE (pv_entdt, 'DD/MM/RRRR');
+         -- START REV : 010
+          lv_entdt := TO_DATE(pv_entdt, 'DD/MM/YYYY');
+		 lv_entdt1 := to_char(TO_DATE(pv_entdt, 'DD/MM/YYYY'),'DD/MM/YYYY');
+		 -- END REV : 010
+      ELSIF lv_docdtl.lv_generation_interval = 'M'
+      THEN
+         lv_entdt := NULL;
+          -- START REV : 010
+		 lv_entdt1 := to_char(TO_DATE(pv_entdt, 'DD/MM/YYYY'),'DD/MM/YYYY');
+		 -- END REV : 010
+      ELSIF lv_docdtl.lv_generation_interval = 'Y'
+      THEN
+         lv_mcode := NULL;
+         lv_entdt := NULL;
+         -- START REV : 010
+		 lv_entdt1 := to_char(TO_DATE(pv_entdt, 'DD/MM/YYYY'),'DD/MM/YYYY');
+		 -- END REV : 010
+      END IF;
+   END IF;
+   IF coalesce(lv_docdtl.lv_generation_basis, 'C') = 'C'
+   THEN
+      lv_cmpcode := 1;
+      lv_admoucode := NULL;
+      lv_admsitecode := NULL;
+   ELSIF coalesce(lv_docdtl.lv_generation_basis, 'C') = 'O'
+   THEN
+      lv_cmpcode := NULL;
+      lv_admoucode := lv_admou_code;
+      lv_admsitecode := NULL;
+   ELSIF coalesce(lv_docdtl.lv_generation_basis, 'C') = 'S'
+   THEN
+      lv_cmpcode := NULL;
+      lv_admoucode := NULL;
+      lv_admsitecode := lv_admsite_code;
+   END IF;
+   -- START REV : 007
+   --IF lv_sitetype = 'MS-CO-OM-TS'
+   IF lv_sitetype LIKE '%OM%'
+   -- END REV : 007
+   THEN
+   -- START REV : 007
+   /*
+      lv_docdtl.lv_generation_basis := 'S';
+      lv_cmpcode := NULL;
+      lv_admoucode := NULL;
+      lv_admsitecode := lv_admsite_code;*/
+      lv_admoucode := NULL;
+      lv_admou_code := NULL;
+   -- END REV : 007
+   END IF;
+   IF lv_docdtl.lv_doccode_wise = 'N'
+   THEN
+      EXECUTE
+            'UPDATE ADMLASTDOC '
+         || 'SET    LASTNO = COALESCE(LASTNO,0) + 1 '
+         || 'WHERE  DOCCODE = $1 '
+         || 'AND    YCODE = $2 '
+         || 'AND    (($3 IS NULL AND MCODE IS NULL) OR MCODE = $4::BIGINT) '
+         || 'AND    (($5 IS NULL AND ENTDT IS NULL) OR ENTDT = $6) '
+         || 'AND    MDMENUSHORTCODE  = $7 '
+         -- START REV : 007
+         || 'AND    (
+                                     (
+                                       COALESCE($8,''C'') = ''C''
+                                       AND CMPCODE IS NOT NULL
+                                       AND ADMOU_CODE IS NULL
+                                       AND ADMSITE_CODE IS NULL
+                                     )
+                                     OR
+                                     (
+                                       COALESCE($9,''C'') = ''O''
+                                       AND CMPCODE IS NULL
+                                       AND (($10 IS NULL AND ADMOU_CODE IS NULL) OR ADMOU_CODE = $11::BIGINT)
+                                       AND ADMSITE_CODE IS NULL
+                                     )
+                                     OR
+                                     (
+                                       COALESCE($12,''C'') = ''S''
+                                       AND CMPCODE IS NULL
+                                       AND ADMOU_CODE IS NULL
+                                       AND ADMSITE_CODE = $13
+                                     )
+                                   ) '
+         -- END REV : 007
+         USING pv_doccode,
+               pv_ycode,
+               lv_mcode,
+               lv_mcode,
+               lv_entdt,
+               lv_entdt,
+               pv_menushcode,
+               lv_docdtl.lv_generation_basis,
+               lv_docdtl.lv_generation_basis,
+               lv_admou_code,
+               -- START REV : 007
+               lv_admou_code,
+               -- END REV : 007
+               lv_docdtl.lv_generation_basis,
+               lv_admsite_code;
+   ELSE
+      EXECUTE
+            'UPDATE ADMLASTDOC '
+         || 'SET    LASTNO = COALESCE(LASTNO,0) + 1 '
+         || 'WHERE  DOCCODE = $1 '
+         || 'AND    YCODE = $2 '
+         || 'AND    (($3 IS NULL AND MCODE IS NULL) OR MCODE = $4::BIGINT) '
+         --|| 'AND    (($5 IS NULL AND ENTDT IS NULL) OR ENTDT = $6) '
+         || 'AND    (
+                                     (
+                                       COALESCE($7,''C'') = ''C''
+                                       AND CMPCODE IS NOT NULL
+                                       AND ADMOU_CODE IS NULL
+                                       AND ADMSITE_CODE IS NULL
+                                     )
+                                     OR
+                                     (
+                                       COALESCE($8,''C'') = ''O''
+                                       AND CMPCODE IS NULL
+                                       AND (($9 IS NULL AND ADMOU_CODE IS NULL) OR ADMOU_CODE = $10)
+                                       AND ADMSITE_CODE IS NULL
+                                     )
+                                     OR
+                                     (
+                                       COALESCE($11,''C'') = ''S''
+                                       AND CMPCODE IS NULL
+                                       AND ADMOU_CODE IS NULL
+                                       AND ADMSITE_CODE = $12
+                                     )
+                                   ) '
+         USING pv_doccode,
+               pv_ycode,
+               lv_mcode,
+               lv_mcode,
+               lv_entdt,
+               lv_entdt,
+               lv_docdtl.lv_generation_basis,
+               lv_docdtl.lv_generation_basis,
+               lv_admou_code,
+               -- START REV : 007
+               lv_admou_code,
+               -- END REV : 007
+               lv_docdtl.lv_generation_basis,
+               lv_admsite_code;
+   END IF;
+   GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+   THEN
+      BEGIN
+         -- START REV : 013
+            SELECT  COUNT(DOCCODE)
+            INTO STRICT    LV_DOC_CNT
+            FROM    ADMLASTDOC
+            WHERE   (
+                        (
+                            LV_DOCDTL.LV_DOCCODE_WISE = 'N'
+                            AND
+                            coalesce(MDMENUSHORTCODE, 0) = coalesce(PV_MENUSHCODE, 0)
+                        )
+                        OR (
+                            LV_DOCDTL.LV_DOCCODE_WISE = 'Y'
+                            AND
+                            coalesce(MDMENUSHORTCODE, 0) = 0
+                        )
+                    )
+            AND     coalesce(DOCCODE, 0) = coalesce(PV_DOCCODE, 0)
+            AND     (
+                        (
+                            coalesce(LV_DOCDTL.LV_GENERATION_BASIS, 'C') = 'C'
+                            AND
+                            CMPCODE IS NOT NULL
+                            AND
+                            ADMOU_CODE IS NULL
+                            AND
+                            ADMSITE_CODE IS NULL
+                        )
+                        OR
+                        (
+                            coalesce(LV_DOCDTL.LV_GENERATION_BASIS, 'C') = 'O'
+                            AND
+                            CMPCODE IS NULL
+                            AND
+                            (
+                                (
+                                    LV_ADMOU_CODE IS NULL
+                                    AND
+                                    ADMOU_CODE IS NULL
+                                )
+                                OR
+                                ADMOU_CODE = LV_ADMOU_CODE
+                            )
+                            AND ADMSITE_CODE IS NULL
+                        )
+                        OR (
+                            coalesce(LV_DOCDTL.LV_GENERATION_BASIS, 'C') = 'S'
+                            AND
+                            CMPCODE IS NULL
+                            AND
+                            ADMOU_CODE IS NULL
+                            AND
+                            ADMSITE_CODE = LV_ADMSITE_CODE
+                        )
+                    );
+            -- END REV : 013
+      EXCEPTION
+         WHEN OTHERS
+         THEN
+            lv_doc_cnt := 0;
+      END;
+      SELECT CASE WHEN lv_doc_cnt=0 THEN  coalesce(lv_docdtl.lv_starting, 1)  ELSE 1 END
+        INTO STRICT lv_start_from
+;
+      IF lv_docdtl.lv_doccode_wise = 'N'
+      THEN
+         EXECUTE
+               'INSERT INTO ADMLASTDOC '
+            || '(DOCCODE,YCODE,MCODE,ENTDT,LASTNO,MENUCODE,ADMOU_CODE,ADMSITE_CODE,CMPCODE,MDMENUSHORTCODE ) '
+            || 'VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) '
+            USING pv_doccode,
+                  pv_ycode,
+                  lv_mcode,
+                  lv_entdt,
+                  lv_start_from,
+                  pv_menucode,
+                  lv_admoucode,
+                  lv_admsitecode,
+                  lv_cmpcode,
+                  pv_menushcode;
+      ELSE
+         EXECUTE
+               'INSERT INTO ADMLASTDOC '
+            || '(DOCCODE,YCODE,MCODE,ENTDT,LASTNO,ADMOU_CODE,ADMSITE_CODE,CMPCODE) '
+            || 'VALUES ($1,$2,$3,$4,$5,$6,$7,$8) '
+            USING pv_doccode,
+                  pv_ycode,
+                  lv_mcode,
+                  lv_entdt,
+                  lv_start_from,
+                  lv_admoucode,
+                  lv_admsitecode,
+                  lv_cmpcode;
+      END IF;
+   END IF;
+   IF lv_docdtl.lv_doccode_wise = 'N'
+   THEN 
+      EXECUTE
+            'SELECT LASTNO '
+         || 'FROM   ADMLASTDOC '
+         || 'WHERE  DOCCODE = $1 '
+         || 'AND    YCODE = $2 '
+         || 'AND    (($3 IS NULL AND MCODE IS NULL) OR MCODE = $4::BIGINT) '
+         || 'AND    (($5 IS NULL AND ENTDT IS NULL) OR ENTDT = $6) '
+         || 'AND    MDMENUSHORTCODE  = $7'
+         || 'AND    (
+                                     (
+                                       COALESCE($8,''C'') = ''C''
+                                       AND CMPCODE IS NOT NULL
+                                       AND ADMOU_CODE IS NULL
+                                       AND ADMSITE_CODE IS NULL
+                                     )
+                                     OR
+                                     (
+                                       COALESCE($9,''C'') = ''O''
+                                       AND CMPCODE IS NULL
+                                       AND (($10 IS NULL AND ADMOU_CODE IS NULL) OR ADMOU_CODE = $11)
+                                       AND ADMSITE_CODE IS NULL
+                                     )
+                                     OR
+                                     (
+                                       COALESCE($12,''C'') = ''S''
+                                       AND CMPCODE IS NULL
+                                       AND ADMOU_CODE IS NULL
+                                       AND ADMSITE_CODE = $13
+                                     )
+                                   ) '
+         INTO STRICT lv_lastdocno
+         USING pv_doccode,
+               pv_ycode,
+               lv_mcode,
+               lv_mcode,
+               lv_entdt,
+               lv_entdt,
+               pv_menushcode,
+               lv_docdtl.lv_generation_basis,
+               lv_docdtl.lv_generation_basis,
+               lv_admou_code,
+               -- START REV : 007
+               lv_admou_code,
+               -- END REV : 007
+               lv_docdtl.lv_generation_basis,
+               lv_admsite_code;
+   ELSE
+      EXECUTE
+            'SELECT LASTNO '
+         || 'FROM   ADMLASTDOC '
+         || 'WHERE  DOCCODE = $1 '
+         || 'AND    YCODE = $2 '
+         || 'AND    (($3 IS NULL AND MCODE IS NULL) OR MCODE = $4::BIGINT) '
+         || 'AND    (($5 IS NULL AND ENTDT IS NULL) OR ENTDT = $6)'
+         || 'AND    (
+                                     (
+                                       COALESCE($7,''C'') = ''C''
+                                       AND CMPCODE IS NOT NULL
+                                       AND ADMOU_CODE IS NULL
+                                       AND ADMSITE_CODE IS NULL
+                                     )
+                                     OR
+                                     (
+                                       COALESCE($8,''C'') = ''O''
+                                       AND CMPCODE IS NULL
+                                       AND (($9 IS NULL AND ADMOU_CODE IS NULL ) OR ADMOU_CODE = $10)
+                                       AND ADMSITE_CODE IS NULL
+                                     )
+                                     OR
+                                     (
+                                       COALESCE($11,''C'') = ''S''
+                                       AND CMPCODE IS NULL
+                                       AND ADMOU_CODE IS NULL
+                                       AND ADMSITE_CODE = $12
+                                     )
+                                   ) '
+         INTO STRICT lv_lastdocno
+         USING pv_doccode,
+               pv_ycode,
+               lv_mcode,
+               lv_mcode,
+               lv_entdt,
+               lv_entdt,
+               lv_docdtl.lv_generation_basis,
+               lv_docdtl.lv_generation_basis,
+               lv_admou_code,
+               -- START REV : 013
+               lv_admou_code,
+               -- END REV : 013
+               lv_docdtl.lv_generation_basis,
+               lv_admsite_code;
+   END IF;
+    -- START REV : 004
+  -- FOR PREFIX PORTIONS
+      --===========================
+   IF lv_docdtl.lv_prefix IS NOT NULL
+      THEN
+            EXECUTE
+                    ' SELECT
+            REPLACE (
+                REPLACE (
+                    REPLACE (
+                        REPLACE (
+                            REPLACE (
+                                REPLACE (
+                                    REPLACE (
+                                        REPLACE (
+                                            REPLACE (
+                                                REPLACE (
+                                                    REPLACE (
+                                                        REPLACE (
+                                                            REPLACE ( $1, ''[DD]'', TO_CHAR(TO_DATE($2,''DD/MM/YYYY''),''DD''))
+                                                        , ''[MM]''    ,TO_CHAR(TO_DATE($3,''DD/MM/YYYY''),''MM'') )
+                                                    , ''[YY]''    ,TO_CHAR(TO_DATE($4,''DD/MM/YYYY''),''YY'') )
+                                                , ''[YYYY]''  ,TO_CHAR(TO_DATE($5,''DD/MM/YYYY''),''YYYY''))
+                                                , ''[MON]''   , TO_CHAR(TO_DATE($6,''DD/MM/YYYY''),''MON''))
+                                        , ''[DAY]''   , TO_CHAR(TO_DATE($7,''DD/MM/YYYY''),''DY''))
+                                        , ''[FYYYY]'' ,(EXTRACT ( YEAR FROM DTFR)::TEXT || ''-'' || EXTRACT ( YEAR FROM DTTO )::TEXT))
+                                    , ''[FYY1]''  ,(substring(EXTRACT ( YEAR FROM DTFR) ,3)) || (substring(EXTRACT ( YEAR FROM DTTO) ,3)))
+                                , ''[FYY]''   ,(substring(EXTRACT ( YEAR FROM DTFR) ,3))::TEXT || ''-'' || (substring(EXTRACT ( YEAR FROM DTTO) ,3)::TEXT))
+                            , ''[FMMYY]''   ,(TO_CHAR(DTFR,''MMYY'')|| ''-'' || TO_CHAR(DTTO,''MMYY'')))
+                        , ''[FMMYYYY]''   ,(TO_CHAR(DTFR,''MMYYYY'')|| ''-'' || TO_CHAR(DTTO,''MMYYYY'')))
+                    , ''[FDDMMYY]''   ,(TO_CHAR(DTFR,''DDMMYY'')|| ''-'' || TO_CHAR(DTTO,''DDMMYY'')))
+                , ''[FDDMMYYYY]''   ,(TO_CHAR(DTFR,''DDMMYYYY'')|| ''-'' || TO_CHAR(DTTO,''DDMMYYYY'')))
+            FROM ADMYEAR
+            WHERE YCODE = $8 '
+            INTO STRICT lv_main_prefix
+            -- START REV : 010
+            --USING lv_docdtl.lv_prefix , pv_entdt, pv_entdt, pv_entdt, pv_entdt, pv_entdt, pv_entdt, PV_YCODE ;
+            USING lv_docdtl.lv_prefix , lv_entdt1, lv_entdt1, lv_entdt1, lv_entdt1, lv_entdt1, lv_entdt1, PV_YCODE;
+			-- END REV : 010
+    END IF;
+      -- FOR SUFFIX PORTIONS
+      --===========================
+      IF lv_docdtl.lv_suffix IS NOT NULL
+      THEN	
+	  		EXECUTE
+			' SELECT
+						REPLACE (
+							REPLACE (
+								REPLACE (
+									REPLACE (
+										REPLACE (
+											REPLACE (
+												REPLACE (
+													REPLACE (
+														REPLACE (
+															REPLACE (
+																REPLACE (
+																	REPLACE (
+																		REPLACE ( $1, ''[DD]'', TO_CHAR(TO_DATE($2,''DD/MM/YYYY''),''DD''))
+																	, ''[MM]''    ,TO_CHAR(TO_DATE($3,''DD/MM/YYYY''),''MM'') )
+																, ''[YY]''    ,TO_CHAR(TO_DATE($4,''DD/MM/YYYY''),''YY'') )
+															, ''[YYYY]''  ,TO_CHAR(TO_DATE($5,''DD/MM/YYYY''),''YYYY''))
+															, ''[MON]''   , TO_CHAR(TO_DATE($6,''DD/MM/YYYY''),''MON''))
+													, ''[DAY]''   , TO_CHAR(TO_DATE($7,''DD/MM/YYYY''),''DY''))
+													, ''[FYYYY]'' ,(EXTRACT ( YEAR FROM DTFR)::TEXT || ''-'' || EXTRACT ( YEAR FROM DTTO )::TEXT))
+												, ''[FYY1]''  ,(substring(EXTRACT ( YEAR FROM DTFR) ,3))::TEXT || (substring(EXTRACT ( YEAR FROM DTTO) ,3)::TEXT))
+											, ''[FYY]''   ,(substring(EXTRACT ( YEAR FROM DTFR) ,3))::TEXT || ''-'' || (substring(EXTRACT ( YEAR FROM DTTO) ,3)::TEXT))
+										, ''[FMMYY]''   ,(TO_CHAR(DTFR,''MMYY'')|| ''-'' || TO_CHAR(DTTO,''MMYY'')))
+									, ''[FMMYYYY]''   ,(TO_CHAR(DTFR,''MMYYYY'')|| ''-'' || TO_CHAR(DTTO,''MMYYYY'')))
+								, ''[FDDMMYY]''   ,(TO_CHAR(DTFR,''DDMMYY'')|| ''-'' || TO_CHAR(DTTO,''DDMMYY'')))
+							, ''[FDDMMYYYY]''   ,(TO_CHAR(DTFR,''DDMMYYYY'')|| ''-'' || TO_CHAR(DTTO,''DDMMYYYY'')))
+						FROM ADMYEAR
+						WHERE YCODE = $8 '
+            INTO STRICT lv_main_suffix
+            USING lv_docdtl.lv_suffix ,  lv_entdt1,  lv_entdt1,  lv_entdt1,  lv_entdt1,  lv_entdt1,  lv_entdt1, PV_YCODE;
+    END IF;
+-- END REV : 006
+-- Create Whole String With Padding...
+   IF lv_docdtl.lv_prefill IS NOT NULL
+   THEN
+        lv_return_value :=
+               coalesce(lv_main_prefix,'')
+            || LPAD(lv_lastdocno::TEXT, TRUNC(lv_docdtl.lv_width::NUMERIC)::INTEGER, lv_docdtl.lv_prefill)
+            || coalesce(lv_main_suffix,'');
+	 -- START REV : 005
+    ELSE
+        lv_return_value :=
+               coalesce(lv_main_prefix,'')
+            || lv_lastdocno
+            || coalesce(lv_main_suffix,'');
+    -- END REV : 005
+    END IF;
+    -- END REV : 004
+   IF LENGTH(lv_lastdocno::varchar) > lv_docdtl.lv_width
+   THEN
+      RAISE EXCEPTION 'e_widthexception' USING ERRCODE = '50001';
+   END IF;
+
+    -- START REV : 011
+   lv_return_value := Replace(lv_return_value,'[SDI]',COALESCE(lv_sitedocin,''));
+    -- END REV : 011
+   RETURN lv_return_value;
+EXCEPTION
+   -- start rev: 003
+   WHEN SQLSTATE '50002' THEN
+      --ROLLBACK;
+      CALL ERRAUDIT(USER,
+                'Db_Fun_Document_Number',
+                SQLSTATE::varchar,
+                SQLERRM);
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED -  Site Document Identification Number is mandatory for the selected document numbering scheme.'
+         || ' : '
+         || lv_admsite_code::TEXT USING ERRCODE = '45001';
+   -- end rev : 003
+   WHEN SQLSTATE '50001' THEN
+      --ROLLBACK;
+      CALL ERRAUDIT(USER,
+                'Db_Fun_Document_Number',
+                SQLSTATE::varchar,
+                SQLERRM);
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED -  Document no width becomes greater than the width specified in master '
+         || ' : '
+         || NULLIF(pv_menushcode,'')
+         || ','
+         || pv_doccode::TEXT
+         || ','
+         || pv_ycode::TEXT
+         || ','
+         || pv_entdt::text
+         || ','
+         || NULLIF(pv_scheme_docno::TEXT,'') USING ERRCODE = '45001';
+   -- START REV : 009
+   -- END REV : 009
+   WHEN OTHERS
+   THEN
+      --ROLLBACK;
+      CALL ERRAUDIT(USER,
+                'Db_Fun_Document_Number',
+                SQLSTATE::varchar,
+                SQLERRM);
+
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED '
+         || SQLSTATE::TEXT
+         || '-'
+         || SQLERRM
+         || ' : '
+         || pv_menushcode
+         || ','
+         || pv_doccode::TEXT
+         || ','
+         || pv_ycode::TEXT
+         || ','
+         || pv_entdt
+         || ','
+         || COALESCE(pv_scheme_docno::TEXT,'')
+		 USING ERRCODE = '45002';
+END;
+"""
+  returnType = text
+  arguments = <
+    {
+      name = pv_menucode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = pv_doccode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = pv_ycode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = pv_entdt
+      type = text
+      mode = IN
+    }
+
+    {
+      name = pv_scheme_docno
+      type = text
+      mode = IN
+    }
+
+    {
+      name = pv_sitecode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = pv_oucode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = pv_menushcode
+      type = text
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

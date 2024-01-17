@@ -1,0 +1,106 @@
+function "main"."db_pkg_cost_calculation_get_item_stock_batch(character varying, timestamp without time zone, bigint, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+        V_PREV_QTY double precision;
+        V_TODAY_QTY double precision;
+
+BEGIN
+        /* Collects stock of a particular item on a particular date */
+
+        BEGIN
+            SELECT  QTY
+            INTO STRICT    V_PREV_QTY
+            FROM    TEMP_ITEM_DT_STOCK
+            WHERE   ICODE=P_ICODE
+            -- start rev : 012
+            --AND     ADMOU_CODE=P_ADMOU_CODE
+            AND     coalesce(ADMOU_CODE,P_ADMOU_CODE)=P_ADMOU_CODE
+            -- end rev : 012
+            AND     ADMSITE_CODE=P_ADMSITE_CODE
+            AND     DT=P_ASON;
+        EXCEPTION WHEN no_data_found THEN
+            V_PREV_QTY := 0;
+        END;
+
+
+        -- Collects total OUT volume of a particular item on a particular date,
+        -- occured after this current transaction[Record which is calculating currently].
+        -- Because to identify the exact situation when this transaction is occured.
+        SELECT  SUM(coalesce(QTY,0))
+        INTO STRICT    V_TODAY_QTY
+        FROM    TEMP_INVSTOCK
+
+        WHERE   coalesce(ADMOU_CODE,P_ADMOU_CODE) = P_ADMOU_CODE
+        -- END REV : 012
+        AND     ADMSITE_CODE = P_ADMSITE_CODE
+        AND     ICODE = P_ICODE
+        AND     ENTDT = P_ASON
+        AND     STOCKCODE >= P_STOCKCODE;
+
+
+        /*
+        SELECT  SUM(NVL(I.QTY,0))
+        INTO    V_TODAY_QTY
+        FROM    INVSTOCK I, INVCOSTPOOL_MIX P
+        WHERE   I.ENTTYPE=P.ENTTYPE
+        AND     (
+                    (P.SUBENTTYPE IS NULL AND I.SUBENTTYPE IS NULL)
+                    OR
+                    (P.SUBENTTYPE=I.SUBENTTYPE)
+                )
+        AND     I.ADMOU_CODE=P_ADMOU_CODE
+        AND     ADMSITE_CODE=P_ADMSITE_CODE
+        AND     I.ICODE=P_ICODE
+        AND     I.ENTDT=P_ASON
+        AND     P.POOL='OUT'
+        AND    (
+                    (P.CONSIDER_QTY_SIGN = '+' AND NVL(I.QTY,0)>0)
+                    OR
+                    (P.CONSIDER_QTY_SIGN = '-' AND NVL(I.QTY,0)<0)
+                )
+        AND    I.STOCKCODE>=P_STOCKCODE;
+        */
+        /* Return stock */
+
+        RETURN(coalesce(V_PREV_QTY,0)-coalesce(V_TODAY_QTY,0));
+    END;
+
+"""
+  returnType = bigint
+  arguments = <
+    {
+      name = p_icode
+      type = character varying
+      mode = IN
+    }
+
+    {
+      name = p_ason
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_stockcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_admsite_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_admou_code
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

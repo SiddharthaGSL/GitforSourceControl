@@ -1,0 +1,157 @@
+function "main"."trigger_fct_t_prdord_gds2()" {
+  text = """
+
+DECLARE
+   SUB_COUNT   smallint;
+   SITE_TYPE   varchar(15);
+
+   -- Start logic for GDS3 (Webhook)
+   SUB_COUNT_PRODUCTION_ADD     smallint;
+   SUB_COUNT_PRODUCTION_UPD     smallint;
+   SUB_COUNT_PRODUCTION_REL     smallint;
+   SUB_COUNT_SPLIT_ADD          smallint;
+   SUB_COUNT_SPLIT_UPD          smallint;
+   SUB_COUNT_SPLIT_REL          smallint;
+   SUB_COUNT_BUNDLE_ADD         smallint;
+   SUB_COUNT_BUNDLE_UPD         smallint;
+   SUB_COUNT_BUNDLE_REL         smallint;
+   V_PRTYPE                     char(1);
+   -- end logic for GDS3 (Webhook)
+BEGIN
+   -- Start Logic for GDS2 
+   SELECT COUNT(1)
+     INTO STRICT SUB_COUNT
+     FROM GDS2_SUBSCR_EVENT
+    WHERE EVENT_ID = 'PRDORD';
+
+    SELECT SITETYPE INTO STRICT SITE_TYPE
+        FROM ADMSITE
+    WHERE CODE = NEW.ADMSITE_CODE;
+
+    IF coalesce(SUB_COUNT, 0) > 0 AND SITE_TYPE NOT LIKE '%MS%'
+            THEN
+                CALL DB_PKG_GDS2_EVENT$TRACK('PRDORD', NEW.ORDCODE);
+
+    ELSIF coalesce(SUB_COUNT, 0) > 0 AND SITE_TYPE LIKE '%MS%' AND NEW.AUTH_ECODE IS NOT NULL
+                THEN
+                CALL DB_PKG_GDS2_EVENT$TRACK('PRDORD', NEW.ORDCODE);
+    END IF;
+    -- end Logic for GDS2 
+    
+    -- Start logic for GDS3 (Webhook)
+    SELECT PRTYPE
+    INTO STRICT   V_PRTYPE
+    FROM   PRDPR
+    WHERE  PRCODE = NEW.PRCODE;
+
+    IF TG_OP = 'INSERT' 
+    THEN
+        SELECT COUNT(1)
+         INTO STRICT  SUB_COUNT_PRODUCTION_ADD
+         FROM  GDS2_SUBSCR_EVENT
+        WHERE  EVENT_ID = 'inventory.conversion.production.added';
+
+        SELECT COUNT(1)
+         INTO STRICT SUB_COUNT_SPLIT_ADD
+         FROM GDS2_SUBSCR_EVENT
+        WHERE EVENT_ID = 'inventory.conversion.split.added';
+
+        SELECT COUNT(1)
+         INTO STRICT SUB_COUNT_BUNDLE_ADD
+         FROM GDS2_SUBSCR_EVENT
+        WHERE EVENT_ID = 'inventory.conversion.bundle.added';
+
+        IF coalesce(SUB_COUNT_PRODUCTION_ADD,0) > 0 AND V_PRTYPE = 'P'
+        THEN
+           CALL DB_PKG_GDS2_EVENT$TRACK('inventory.conversion.production.added', NEW.ORDCODE);
+        END IF;
+
+        IF coalesce(SUB_COUNT_SPLIT_ADD,0) > 0 AND V_PRTYPE = 'H'
+        THEN
+           CALL DB_PKG_GDS2_EVENT$TRACK('inventory.conversion.split.added', NEW.ORDCODE);
+        END IF;
+
+        IF coalesce(SUB_COUNT_BUNDLE_ADD,0) > 0 AND V_PRTYPE = 'C'
+        THEN
+           CALL DB_PKG_GDS2_EVENT$TRACK('inventory.conversion.bundle.added', NEW.ORDCODE);
+        END IF;
+    END IF;
+
+    IF TG_OP = 'UPDATE'
+    THEN
+        IF coalesce(OLD.AUTH_ECODE,0)  = coalesce(NEW.AUTH_ECODE,0)
+        THEN 
+            SELECT COUNT(1)
+             INTO STRICT  SUB_COUNT_PRODUCTION_UPD
+             FROM  GDS2_SUBSCR_EVENT
+            WHERE  EVENT_ID = 'inventory.conversion.production.updated';
+
+            SELECT COUNT(1)
+             INTO STRICT SUB_COUNT_SPLIT_UPD
+             FROM GDS2_SUBSCR_EVENT
+            WHERE EVENT_ID = 'inventory.conversion.split.updated';
+
+            SELECT COUNT(1)
+             INTO STRICT SUB_COUNT_BUNDLE_UPD
+             FROM GDS2_SUBSCR_EVENT
+            WHERE EVENT_ID = 'inventory.conversion.bundle.updated';
+
+            IF coalesce(SUB_COUNT_PRODUCTION_UPD,0) > 0 AND V_PRTYPE = 'P'
+            THEN
+               CALL DB_PKG_GDS2_EVENT$TRACK('inventory.conversion.production.updated', NEW.ORDCODE);
+            END IF;
+
+            IF coalesce(SUB_COUNT_PRODUCTION_UPD,0) > 0 AND V_PRTYPE = 'H'
+            THEN
+               CALL DB_PKG_GDS2_EVENT$TRACK('inventory.conversion.split.updated', NEW.ORDCODE);
+            END IF;
+
+            IF coalesce(SUB_COUNT_PRODUCTION_UPD,0) > 0 AND V_PRTYPE = 'C'
+            THEN
+               CALL DB_PKG_GDS2_EVENT$TRACK('inventory.conversion.bundle.updated', NEW.ORDCODE);
+            END IF;
+        END IF;
+
+        IF  OLD.AUTH_ECODE IS NULL AND NEW.AUTH_ECODE IS NOT NULL
+        THEN
+            SELECT COUNT(1)
+             INTO STRICT  SUB_COUNT_PRODUCTION_REL
+             FROM  GDS2_SUBSCR_EVENT
+            WHERE  EVENT_ID = 'inventory.conversion.production.released';
+
+            SELECT COUNT(1)
+             INTO STRICT SUB_COUNT_SPLIT_REL
+             FROM GDS2_SUBSCR_EVENT
+            WHERE EVENT_ID = 'inventory.conversion.split.released';
+
+            SELECT COUNT(1)
+             INTO STRICT SUB_COUNT_BUNDLE_REL
+             FROM GDS2_SUBSCR_EVENT
+            WHERE EVENT_ID = 'inventory.conversion.bundle.released';
+
+            IF coalesce(SUB_COUNT_PRODUCTION_REL,0) > 0 AND V_PRTYPE = 'P'
+            THEN
+               CALL DB_PKG_GDS2_EVENT$TRACK('inventory.conversion.production.released', NEW.ORDCODE);
+            END IF;
+
+            IF coalesce(SUB_COUNT_SPLIT_REL,0) > 0 AND V_PRTYPE = 'H'
+            THEN
+               CALL DB_PKG_GDS2_EVENT$TRACK('inventory.conversion.split.released', NEW.ORDCODE);
+            END IF;
+
+            IF coalesce(SUB_COUNT_BUNDLE_REL,0) > 0 AND V_PRTYPE = 'C'
+            THEN
+               CALL DB_PKG_GDS2_EVENT$TRACK('inventory.conversion.bundle.released', NEW.ORDCODE);
+            END IF;
+        END IF;
+    END IF;
+    -- end logic for GDS3 (Webhook)
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

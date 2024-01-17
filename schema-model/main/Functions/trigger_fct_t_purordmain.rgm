@@ -1,0 +1,57 @@
+function "main"."trigger_fct_t_purordmain()" {
+  text = """
+
+/******************************************************************************
+   NO.       DATE        AUTHOR                   DESCRIPTION
+   --------- ----------  ----------------------   ------------------------------------------------------------------
+   REV : 001 19/03/2010  RAJKUMAR                 (BUG ID : 1778) SCHEME DOC NO
+   REV : 002 16/MAR/2020  MOUSUMI                 (BUG ID : MIGRATION) SEPERATE TRIGGER FOR DATAVERSION
+******************************************************************************/
+DECLARE
+   tmpvar                       bigint;
+   -- START REV : 002
+   
+   V_SID                        bigint;
+   V_PROGRAM                    varchar(50);
+-- END REV : 002
+BEGIN
+  BEGIN
+   -- START REV : 002
+   /*IF INSERTING
+     THEN
+        SELECT psite_dataversion.NEXTVAL INTO tmpvar FROM DUAL;
+
+        :NEW.dataversion := tmpvar;
+     END IF;*/
+   -- END IF;
+   -- START REV : 002
+   IF TG_OP = 'DELETE'
+   THEN
+   	SELECT PG_BACKEND_PID() INTO STRICT V_SID;
+	SELECT APPLICATION_NAME INTO STRICT V_PROGRAM FROM PG_STAT_ACTIVITY WHERE PID=V_SID;
+
+
+IF not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+      THEN
+         RAISE EXCEPTION 'del_from_wrong_application' USING ERRCODE = '50001';
+      END IF;
+   END IF;
+EXCEPTION
+   WHEN SQLSTATE '50001' THEN
+      RAISE EXCEPTION '%', 'T_PURORDMAIN == >> Deletion from other application except GINESYS WEB not allowed.' USING ERRCODE = '45112';
+-- START REV : 002
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

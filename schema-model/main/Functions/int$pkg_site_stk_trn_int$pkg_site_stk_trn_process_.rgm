@@ -1,0 +1,581 @@
+function "main"."int$pkg_site_stk_trn_int$pkg_site_stk_trn_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_site_initial     varchar(15);
+      errmsg             varchar(500);
+      vsession           varchar(100);
+      vdetailtbl         varchar(5000);
+      vdetailrec         varchar(500);
+      errcode            TEXT;
+      vcount             bigint;
+      v_scheme_docno     varchar(25) := NULL;v_cnt_det          double precision := 0;
+
+      c_main CURSOR FOR
+         SELECT nextval('erp01')  JRNCODE,
+                P_CONNECT_SITE ADMSITE_CODE_OWNER,
+                p_connect_ou   ADMOU_CODE,
+                T1.YCODE       YCODE,
+                T1.STFQTY      tot_item_qty,
+                document_scheme,
+                STFDT,
+                SOURCE_SITE_SHORTNAME,
+                DST_SITE_SHORTNAME,
+                DOCUMENT_NO,
+                DOCUMENT_DATE,
+                SOURCE_ADMSITE_CODE,
+                SLCODE,
+                SLID,
+                DST_ADMSITE_CODE,
+                DOC_REMARKS,
+                ISSECONDARY_OUT,
+                LOCCODE_OUT,
+                ISSECONDARY_IN,
+                LOCCODE_IN,
+                T2.DOCCODE     DOCCODE,
+                'EXCEL'        ENTRY_SOURCE,
+                UDFSTRING01,
+                UDFSTRING02,
+                UDFSTRING03,
+                UDFSTRING04,
+                UDFSTRING05,
+                UDFSTRING06,
+                UDFSTRING07,
+                UDFSTRING08,
+                UDFSTRING09,
+                UDFSTRING10,
+                UDFNUM01,
+                UDFNUM02,
+                UDFNUM03,
+                UDFNUM04,
+                UDFNUM05,
+                UDFDATE01,
+                UDFDATE02,
+                UDFDATE03,
+                UDFDATE04,
+                UDFDATE05
+           FROM (  SELECT UPPER(A.document_scheme)     document_scheme,
+                          A.STFDT                       STFDT,
+                          UPPER(A.SOURCE_SITE_SHORTNAME) SOURCE_SITE_SHORTNAME,
+                          UPPER(A.DST_SITE_SHORTNAME)  DST_SITE_SHORTNAME,
+                          A.DOCUMENT_NO                 DOCUMENT_NO,
+                          A.DOCUMENT_DATE               DOCUMENT_DATE,
+                          SS.CODE                       SOURCE_ADMSITE_CODE,
+                          SL.SLCODE                     SLCODE,
+                          SL.SLID,
+                          DS.CODE                       DST_ADMSITE_CODE,
+                          DOC_REMARKS,
+                          SUM(STFQTY)                  STFQTY,
+                          (SELECT Y.YCODE YCODE
+                             FROM admyear Y
+                            WHERE A.STFDT BETWEEN dtfr AND dtto)
+                             ycode,
+                          SS.ISSECONDARY                ISSECONDARY_OUT,
+                          SS.STORE_LOCCODE              LOCCODE_OUT,
+                          DS.ISSECONDARY                ISSECONDARY_IN,
+                          DS.STORE_LOCCODE              LOCCODE_IN,
+                          A.UDFSTRING01,
+                          A.UDFSTRING02,
+                          A.UDFSTRING03,
+                          A.UDFSTRING04,
+                          A.UDFSTRING05,
+                          A.UDFSTRING06,
+                          A.UDFSTRING07,
+                          A.UDFSTRING08,
+                          A.UDFSTRING09,
+                          A.UDFSTRING10,
+                          A.UDFNUM01,
+                          A.UDFNUM02,
+                          A.UDFNUM03,
+                          A.UDFNUM04,
+                          A.UDFNUM05,
+                          A.UDFDATE01,
+                          A.UDFDATE02,
+                          A.UDFDATE03,
+                          A.UDFDATE04,
+                          A.UDFDATE05
+                     FROM int$STG_SITE_STK_TRN A,
+                          FINSL              SL,
+                          ADMSITE            SS,
+                          ADMSITE            DS
+                    WHERE     UPPER(A.SOURCE_SITE_SHORTNAME) =
+                                 UPPER(SS.SHRTNAME)
+                          AND UPPER(A.DST_SITE_SHORTNAME) =
+                                 UPPER(DS.SHRTNAME)
+                          AND UPPER(A.CUSTOMER_ID) = UPPER(SL.SLID)
+                          -- AND M.admsite_code_OWNER = p_connect_site
+                          AND A.userid = p_userid
+                 GROUP BY UPPER(A.document_scheme),
+                          A.STFDT,
+                          UPPER(A.SOURCE_SITE_SHORTNAME),
+                          UPPER(A.DST_SITE_SHORTNAME),
+                          A.DOCUMENT_NO,
+                          A.DOCUMENT_DATE,
+                          SS.CODE,
+                          SL.SLCODE,
+                          SL.SLID,
+                          DS.CODE,
+                          DOC_REMARKS,
+                          SS.ISSECONDARY,
+                          SS.STORE_LOCCODE,
+                          DS.ISSECONDARY,
+                          DS.STORE_LOCCODE,
+                          A.UDFSTRING01,
+                          A.UDFSTRING02,
+                          A.UDFSTRING03,
+                          A.UDFSTRING04,
+                          A.UDFSTRING05,
+                          A.UDFSTRING06,
+                          A.UDFSTRING07,
+                          A.UDFSTRING08,
+                          A.UDFSTRING09,
+                          A.UDFSTRING10,
+                          A.UDFNUM01,
+                          A.UDFNUM02,
+                          A.UDFNUM03,
+                          A.UDFNUM04,
+                          A.UDFNUM05,
+                          A.UDFDATE01,
+                          A.UDFDATE02,
+                          A.UDFDATE03,
+                          A.UDFDATE04,
+                          A.UDFDATE05) T1,
+                admdocscheme t2
+          WHERE UPPER(t1.document_scheme) = UPPER(T2.docname);
+
+      v_det_grsamt       double precision := 0;
+      v_det_chgamt       double precision := 0;
+      v_JRNNO            numeric(20) := 0;
+      v_tot_qty          double precision := 0;
+      V_MAIN_GL_AMT      double precision := 0;
+      V_TOTNETAMT        double precision := 0;
+      v_JRNCODE          bigint := NULL;
+            V_CNTDET     double precision := 0;
+
+BEGIN
+      FOR I IN c_main
+      LOOP
+
+         v_JRNCODE := I.JRNCODE;
+         v_scheme_docno := 'AUTOMATIC';
+         v_tot_qty := coalesce(I.tot_item_qty, 0);
+
+         INSERT INTO INVSITESTFMAIN(
+                                        STFCODE,
+                                        STFNO,
+                                        STFDT,
+                                        DOCNO,
+                                        DOCDT,
+                                        SCHEME_DOCNO,
+                                        DOCCODE,
+                                        SLCODE,
+                                        ADMSITE_CODE_OUT,
+                                        ISSECONDARY_OUT,
+                                        STORE_LOCCODE_OUT,
+                                        ADMSITE_CODE_IN,
+                                        ISSECONDARY_IN,
+                                        STORE_LOCCODE_IN,
+                                        REMARKS,
+                                        YCODE,
+                                        ECODE,
+                                        TIME,
+                                        LAST_ACCESS_ECODE,
+                                        LAST_ACCESS_TIME,
+                                        ADMOU_CODE,
+                                        ADMOU_CODE_IN,
+                                        UDFSTRING01,
+                                        UDFSTRING02,
+                                        UDFSTRING03,
+                                        UDFSTRING04,
+                                        UDFSTRING05,
+                                        UDFSTRING06,
+                                        UDFSTRING07,
+                                        UDFSTRING08,
+                                        UDFSTRING09,
+                                        UDFSTRING10,
+                                        UDFNUM01,
+                                        UDFNUM02,
+                                        UDFNUM03,
+                                        UDFNUM04,
+                                        UDFNUM05,
+                                        UDFDATE01,
+                                        UDFDATE02,
+                                        UDFDATE03,
+                                        UDFDATE04,
+                                        UDFDATE05,
+                                        ENTRY_SOURCE
+                                    )
+                                VALUES (
+                                        v_JRNCODE,
+                                        NULL,
+                                        I.STFDT,
+                                        I.DOCUMENT_NO,
+                                        I.DOCUMENT_DATE,
+                                        v_scheme_docno,
+                                        I.DOCCODE,
+                                        I.SLCODE,
+                                        I.SOURCE_ADMSITE_CODE,
+                                        I.ISSECONDARY_OUT,
+                                        I.LOCCODE_OUT,
+                                        I.DST_ADMSITE_CODE,
+                                        I.ISSECONDARY_IN,
+                                        I.LOCCODE_IN,
+                                        I.DOC_REMARKS,
+                                        I.YCODE,
+                                        P_USERID,
+                                        clock_timestamp(),
+                                        NULL,
+                                        NULL,
+                                        NULL,
+                                        NULL,
+                                        I.UDFSTRING01,
+                                        I.UDFSTRING02,
+                                        I.UDFSTRING03,
+                                        I.UDFSTRING04,
+                                        I.UDFSTRING05,
+                                        I.UDFSTRING06,
+                                        I.UDFSTRING07,
+                                        I.UDFSTRING08,
+                                        I.UDFSTRING09,
+                                        I.UDFSTRING10,
+                                        I.UDFNUM01,
+                                        I.UDFNUM02,
+                                        I.UDFNUM03,
+                                        I.UDFNUM04,
+                                        I.UDFNUM05,
+                                        I.UDFDATE01,
+                                        I.UDFDATE02,
+                                        I.UDFDATE03,
+                                        I.UDFDATE04,
+                                        I.UDFDATE05,
+                                        'EXCEL'
+                      );
+
+         DECLARE
+            c_det CURSOR FOR
+                 /*SELECT DISTINCT
+                        im.icode,
+                        SUM(a.STFqty) STFqty,
+                        a.item_REMARKS item_REMARKS,
+                        DB_PKG_COGS$GET_ITEM_LAST_IN_RATE(
+                                                               I.SOURCE_ADMSITE_CODE,
+                                                               Im.ICODE,
+                                                               I.STFDT,
+                                                               NULL,
+                                                               BS.CODE
+                                                          )
+                        STFRATE,
+                        BS.CODE INVBATCH_SERIAL_CODE
+                   FROM int$stg_site_stk_trn a
+	LEFT OUTER JOIN invbatch_serial bs ON (A.BATCH_SERIAL_NO = BS.BATCH_SERIAL_NO)
+	LEFT OUTER JOIN invitem im ON (IM.ICODE = BS.ICODE)
+	INNER JOIN INVITEM im1 ON (   (UPPER(A.ICODE_BARCODE) = UPPER(im1.ICODE))
+                             OR (UPPER(A.ICODE_BARCODE) = UPPER(im1.BARCODE)))
+	WHERE A.STFDT = I.STFDT AND a.userid = p_userid AND UPPER(A.SOURCE_SITE_SHORTNAME) =
+                               UPPER(I.SOURCE_SITE_SHORTNAME) AND UPPER(A.DST_SITE_SHORTNAME) =
+                               UPPER(I.DST_SITE_SHORTNAME) 
+							   --AND 
+							   --coalesce(UPPER(A.DOCUMENT_NO), '@@') =
+                               --coalesce(UPPER(I.DOCUMENT_NO), '@@') 
+							   AND coalesce(TO_CHAR(A.DOCUMENT_DATE,'DD-MM-YYYY'), '@@') =
+                               coalesce(TO_CHAR(I.DOCUMENT_DATE,'DD-MM-YYYY'), '@@') AND coalesce(A.DOC_REMARKS, '@@') =
+                               coalesce(I.DOC_REMARKS, '@@') AND 
+							   coalesce(A.CUSTOMER_ID, '@@') = coalesce(I.SLID, '@@') 
+							   AND coalesce(A.UDFSTRING01, '@@') = coalesce(I.UDFSTRING01, '@@') 
+							   AND coalesce(A.UDFSTRING02, '@@') = coalesce(I.UDFSTRING02, '@@') 
+							   AND coalesce(A.UDFSTRING03, '@@') = coalesce(I.UDFSTRING03, '@@') 
+							   AND coalesce(A.UDFSTRING04, '@@') = coalesce(I.UDFSTRING04, '@@') 
+							   AND coalesce(A.UDFSTRING05, '@@') = coalesce(I.UDFSTRING05, '@@') 
+							   AND coalesce(A.UDFSTRING06, '@@') = coalesce(I.UDFSTRING06, '@@') 
+							   AND coalesce(A.UDFSTRING07, '@@') = coalesce(I.UDFSTRING07, '@@')
+							   AND coalesce(A.UDFSTRING08, '@@') = coalesce(I.UDFSTRING08, '@@')
+							   AND coalesce(A.UDFSTRING09, '@@') = coalesce(I.UDFSTRING09, '@@') 
+							   AND coalesce(A.UDFSTRING10, '@@') = coalesce(I.UDFSTRING10, '@@') 
+							   AND coalesce(A.UDFNUM01, 0) = coalesce(I.UDFNUM01,0)
+							   AND coalesce(A.UDFNUM02, 0) = coalesce(I.UDFNUM02,0) 
+							   AND coalesce(A.UDFNUM03, 0) = coalesce(I.UDFNUM03,0) 
+							   AND coalesce(A.UDFNUM04, 0) = coalesce(I.UDFNUM04,0) 
+							   AND coalesce(A.UDFNUM05, 0) = coalesce(I.UDFNUM05,0) 
+							   AND coalesce(A.UDFDATE01, A.STFDT) = coalesce(I.UDFDATE01, A.STFDT) 
+							   AND coalesce(A.UDFDATE02, A.STFDT) = coalesce(I.UDFDATE02, A.STFDT)
+							   AND coalesce(A.UDFDATE03, A.STFDT) = coalesce(I.UDFDATE03, A.STFDT) 
+							   AND coalesce(A.UDFDATE04, A.STFDT) = coalesce(I.UDFDATE04, A.STFDT) 
+							   AND coalesce(A.UDFDATE05, A.STFDT) = coalesce(I.UDFDATE05, A.STFDT)
+							   --AND (   (UPPER(A.ICODE_BARCODE) = UPPER(IM.ICODE))
+                             --OR (UPPER(A.ICODE_BARCODE) = UPPER(IM.BARCODE)))
+						GROUP BY im.icode,
+                        a.item_REMARKS,
+                        DB_PKG_COGS$GET_ITEM_LAST_IN_RATE(
+                           I.SOURCE_ADMSITE_CODE,
+                           Im.ICODE,
+                           I.STFDT,
+                           NULL,
+                           BS.CODE),
+                        BS.CODE;*/
+						SELECT DISTINCT
+                        im1.icode,
+                        SUM(a.STFqty) STFqty,
+                        a.item_REMARKS item_REMARKS,
+                        DB_PKG_COGS$GET_ITEM_LAST_IN_RATE(
+                                                               I.SOURCE_ADMSITE_CODE,
+                                                               Im1.ICODE,
+                                                               I.STFDT,
+                                                               NULL,
+                                                               BS.CODE
+                                                          )
+                        STFRATE,
+                        BS.CODE INVBATCH_SERIAL_CODE
+                   FROM int$stg_site_stk_trn a
+				   INNER JOIN INVITEM im1 ON (   (UPPER(A.ICODE_BARCODE) = UPPER(im1.ICODE))
+                             OR (UPPER(A.ICODE_BARCODE) = UPPER(im1.BARCODE)))
+					LEFT OUTER JOIN invbatch_serial bs ON (A.BATCH_SERIAL_NO = BS.BATCH_SERIAL_NO)
+					LEFT OUTER JOIN invitem im ON (IM.ICODE = BS.ICODE)
+	--LEFT OUTER JOIN invbatch_serial bs ON (A.BATCH_SERIAL_NO = BS.BATCH_SERIAL_NO)
+	--LEFT OUTER JOIN invitem im ON (IM.ICODE = BS.ICODE)
+	--INNER JOIN INVITEM im1 ON (   (UPPER(A.ICODE_BARCODE) = UPPER(im1.ICODE))
+                             --OR (UPPER(A.ICODE_BARCODE) = UPPER(im1.BARCODE)))
+	WHERE A.STFDT = I.STFDT AND a.userid = p_userid AND UPPER(A.SOURCE_SITE_SHORTNAME) =
+                               UPPER(I.SOURCE_SITE_SHORTNAME) AND UPPER(A.DST_SITE_SHORTNAME) =
+                               UPPER(I.DST_SITE_SHORTNAME) 
+							   --AND 
+							   --coalesce(UPPER(A.DOCUMENT_NO), '@@') =
+                               --coalesce(UPPER(I.DOCUMENT_NO), '@@') 
+							   --AND coalesce(TO_CHAR(A.DOCUMENT_DATE,'DD-MM-YYYY'), '@@') =
+                             -- coalesce(null, '@@') 
+							 	--AND coalesce(A.DOC_REMARKS, '@@') =
+                               --coalesce('', '@@') 
+							   AND coalesce(A.CUSTOMER_ID, '@@') = coalesce(I.SLID, '@@') 
+							   AND coalesce(A.UDFSTRING01, '@@') = coalesce(I.UDFSTRING01, '@@') 
+							   AND coalesce(A.UDFSTRING02, '@@') = coalesce(I.UDFSTRING02, '@@') 
+							   AND coalesce(A.UDFSTRING03, '@@') = coalesce(I.UDFSTRING03, '@@') 
+							   AND coalesce(A.UDFSTRING04, '@@') = coalesce(I.UDFSTRING04, '@@') 
+							   AND coalesce(A.UDFSTRING05, '@@') = coalesce(I.UDFSTRING05, '@@') 
+							   AND coalesce(A.UDFSTRING06, '@@') = coalesce(I.UDFSTRING06, '@@') 
+							   AND coalesce(A.UDFSTRING07, '@@') = coalesce(I.UDFSTRING07, '@@')
+							   AND coalesce(A.UDFSTRING08, '@@') = coalesce(I.UDFSTRING08, '@@')
+							   AND coalesce(A.UDFSTRING09, '@@') = coalesce(I.UDFSTRING09, '@@') 
+							   AND coalesce(A.UDFSTRING10, '@@') = coalesce(I.UDFSTRING10, '@@') 
+							   AND coalesce(A.UDFNUM01, 0) = coalesce(I.UDFNUM01,0)
+							   AND coalesce(A.UDFNUM02, 0) = coalesce(I.UDFNUM02,0) 
+							   AND coalesce(A.UDFNUM03, 0) = coalesce(I.UDFNUM03,0) 
+							   AND coalesce(A.UDFNUM04, 0) = coalesce(I.UDFNUM04,0) 
+							   AND coalesce(A.UDFNUM05, 0) = coalesce(I.UDFNUM05,0) 
+							   AND coalesce(A.UDFDATE01, A.STFDT) = coalesce(I.UDFDATE01, A.STFDT) 
+							   AND coalesce(A.UDFDATE02, A.STFDT) = coalesce(I.UDFDATE02, A.STFDT)
+							   AND coalesce(A.UDFDATE03, A.STFDT) = coalesce(I.UDFDATE03, A.STFDT) 
+							   AND coalesce(A.UDFDATE04, A.STFDT) = coalesce(I.UDFDATE04, A.STFDT) 
+							   AND coalesce(A.UDFDATE05, A.STFDT) = coalesce(I.UDFDATE05, A.STFDT)
+							   --AND (   (UPPER(A.ICODE_BARCODE) = UPPER(IM.ICODE))*/
+                             --OR (UPPER(A.ICODE_BARCODE) = UPPER(IM.BARCODE)))
+						GROUP BY im1.icode,
+                        a.item_REMARKS,
+                        DB_PKG_COGS$GET_ITEM_LAST_IN_RATE(
+                            I.SOURCE_ADMSITE_CODE,
+                           Im1.ICODE,
+                           I.STFDT,
+                           NULL,
+                           BS.CODE),
+                        BS.CODE;
+
+            v_qty        double precision := 0;
+            curr_qty     double precision := 0;
+            v_rate       double precision := 0;
+            v_discount   double precision := 0;
+            v_taxamt     double precision := 0;
+
+         BEGIN
+            FOR J IN c_det
+            LOOP
+               INSERT INTO INVSITESTFDET(STFCODE,
+                                          ICODE,
+                                          STFQTY,
+                                          STFRATE,
+                                          STFAMT,
+                                          REMARKS,
+                                          INVBATCH_SERIAL_CODE)
+                       VALUES (
+                                 V_JRNCODE,
+                                 J.ICODE,
+                                 J.STFQTY,
+                                 J.STFRATE,
+                                 round((
+                                    coalesce(J.STFQTY, 0) * coalesce(J.STFRATE, 0))::numeric,
+                                    2),
+                                 J.ITEM_REMARKS,
+                                 J.INVBATCH_SERIAL_CODE);
+            END LOOP;
+         END;
+
+                  v_scheme_docno :=    db_fun_document_number_web(NULL,
+                                I.doccode,
+                                I.YCODE,
+                                TO_CHAR(I.STFDT,'DD-MM-YYYY'),
+                                NULL,
+                                p_connect_site,
+                                P_CONNECT_OU,
+                                'SitStkTrns'
+                               );
+                    update INVSITESTFMAIN
+                    set    scheme_docno = v_scheme_docno
+                    where  STFCODE = v_JRNCODE;
+
+         SELECT scheme_docno
+           INTO STRICT v_scheme_docno
+           FROM INVSITESTFMAIN
+          WHERE STFCODE = v_JRNCODE;
+
+         UPDATE INVSITESTFMAIN
+            SET STFCODE = v_JRNCODE
+          WHERE STFCODE = v_JRNCODE;
+
+         IF coalesce(v_scheme_docno, 'AUTOMATIC') = 'AUTOMATIC'
+         THEN
+            RAISE EXCEPTION 'insert_violation' USING ERRCODE = '50001';
+         END IF;
+
+         SELECT COUNT(*)
+         INTO STRICT V_CNTDET
+         FROM INVSITESTFDET
+         WHERE STFCODE = V_JRNCODE;
+
+         IF coalesce(V_CNTDET,0) = 0 THEN
+            RAISE EXCEPTION 'insert_violation' USING ERRCODE = '50001';
+         END IF;
+
+      END LOOP;
+
+      -- log to be added in History table
+      SELECT nextval('int$error_log_code') INTO STRICT vsession;
+
+      vdetailtbl :=
+            -- start rev : 002
+            --'CREATE TABLE GRCORD_'
+            'CREATE TABLE ginarchive.SITE_STK_TRN_'
+         -- end rev : 002
+         || vsession
+         || ' AS
+                            SELECT STFDT,DOCUMENT_SCHEME,SOURCE_SITE_SHORTNAME,DST_SITE_SHORTNAME,CUSTOMER_ID,DOCUMENT_NO,DOCUMENT_DATE,DOC_REMARKS
+                            FROM
+                            (
+                            SELECT  STFDT,DOCUMENT_SCHEME,SOURCE_SITE_SHORTNAME,DST_SITE_SHORTNAME,CUSTOMER_ID,DOCUMENT_NO,DOCUMENT_DATE,DOC_REMARKS
+                            FROM int$stg_SITE_STK_TRN a
+                            WHERE userid ='
+         || p_userid::text
+         || ' GROUP BY STFDT,DOCUMENT_SCHEME,SOURCE_SITE_SHORTNAME,DST_SITE_SHORTNAME,CUSTOMER_ID,DOCUMENT_NO,DOCUMENT_DATE,DOC_REMARKS
+                            )A';
+
+      EXECUTE vdetailtbl;
+
+      -- start rev : 002
+      --vdetailrec := 'SELECT count(1) FROM GRCORD_' || vsession::text;
+      vdetailrec :=
+         'SELECT count(1) FROM ginarchive.SITE_STK_TRN_' || vsession::text;
+
+      -- end rev : 002
+      EXECUTE vdetailrec INTO STRICT vcount;
+
+      IF coalesce(vcount, 0) = 0
+      THEN
+         RAISE EXCEPTION 'insert_violation' USING ERRCODE = '50001';
+      END IF;
+
+      INSERT INTO int$history(code,
+                               importedby,
+                               importedon,
+                               classname,
+                               summary,
+                               history_detail_tablename,
+                               history_detail_row_count)
+           VALUES (nextval('int$history_code'),
+                   p_userid,
+                   clock_timestamp(),
+                   'SITE_STK_TRN',
+                   vcount::TEXT || ' Transaction(s) has been created.',
+                   -- start rev : 002
+                   --'GRCORD_' || vsession, vcount
+                   'ginarchive.SITE_STK_TRN_' || vsession,
+                   vcount-- end rev : 002
+                   );
+
+      RETURN('1');
+   EXCEPTION
+      WHEN SQLSTATE '50001' THEN
+         errcode := -02222;
+         errmsg := 'Data inconsistency';
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'SITE_STK_TRN',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'SITE_STK_TRN',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+   -- Clear GRC against PO
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

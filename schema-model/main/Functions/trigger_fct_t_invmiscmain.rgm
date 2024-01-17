@@ -1,0 +1,356 @@
+function "main"."trigger_fct_t_invmiscmain()" {
+  text = """
+
+DECLARE
+   ora2pg_rowcount integer;
+-- START REV : 003
+   V_TYPE                    varchar(100);
+   V_DETAIL_CODE             INVSTOCK.DETAIL_CODE%TYPE;
+   V_ENTCODE                 INVSTOCK.ENTCODE%TYPE;
+   V_ENTNO                   INVSTOCK.ENTNO%TYPE;
+   V_ENTDT                   INVSTOCK.ENTDT%TYPE;
+   V_ENTTYPE                 INVSTOCK.ENTTYPE%TYPE;
+   V_LOCCODE                 INVSTOCK.LOCCODE%TYPE;
+   V_YCODE                   INVSTOCK.YCODE%TYPE;
+   V_NEW_ICODE               INVSTOCK.ICODE%TYPE;
+   V_OLD_ICODE               INVSTOCK.ICODE%TYPE;
+   V_NEW_QTY                 INVSTOCK.QTY%TYPE;
+   V_OLD_QTY                 INVSTOCK.QTY%TYPE;
+   V_NEW_RATE                INVSTOCK.RATE%TYPE;
+   V_OLD_RATE                INVSTOCK.RATE%TYPE;
+   V_REFPCODE                INVSTOCK.REFPCODE%TYPE;
+   V_REFLOCCODE              INVSTOCK.REFLOCCODE%TYPE;
+   V_REFCMPCODE              INVSTOCK.REFCMPCODE%TYPE;
+   V_REFGLCODE               INVSTOCK.REFGLCODE%TYPE;
+   V_REFDEPTCODE             INVSTOCK.REFDEPTCODE%TYPE;
+   V_REFPRCODE               INVSTOCK.REFPRCODE%TYPE;
+   V_REFDOCNO                INVSTOCK.REFDOCNO%TYPE;
+   V_REFPKGCODE              INVSTOCK.REFPKGCODE%TYPE;
+   V_REFDCCODE               INVSTOCK.REFDCCODE%TYPE;
+   V_OTHER_RATE              INVSTOCK.RATE%TYPE;
+   V_ADMSITE_CODE            INVSTOCK.ADMSITE_CODE%TYPE;
+   V_PSITE_STOCKPOINT_CODE   varchar(100);
+   V_SITETYPE                ADMSITE.SITETYPE%TYPE;
+   V_SCHEME_DOCNO            INVSTOCK.SCHEME_DOCNO%TYPE;
+   -- END REV : 003
+   -- start rev : 006
+   v_admgstin_code           admsite.admgstin_code%TYPE;
+   -- end rev : 006
+   -- START REV : 008
+   V_COSTRATE                INVSTOCK.COSTRATE%TYPE;
+-- END REV : 008
+BEGIN
+   /***********************************************************************************************************************************************************
+      NAME: T_INVMISCMAIN
+      PURPOSE:
+      REVISIONS:
+     REV : NO. DATE        AUTHOR                   DESCRIPTION
+     --------- ----------  ----------------------   -----------------------------------------------------------------------------------------------------------
+     REV : 001 21/01/2008  DIPTIMAN                 (BUG ID : 474)     ITEM RATE UPDATATION.
+     REV : 002 06/12/2012  DIPTIMAN                 (BUG ID : 216)     Site related changes.
+     REV : 003 17/09/2014  PRASANTA                 (BUG ID : 580)     Misc Issue and Receive to open from MS-OO-CM site.
+     REV : 004 23/09/2014  PRASANTA                 (BUG ID : 1523)    Miscellaneous receiving of items should get enabled
+                                                                       from [MS-CO-CM] and [MS-CO-OM-TS] sites
+     REV : 005 31/07/2017  MANASH                   (BUG ID : 31461)   Scheme Doc No. required in Miscellaneous Issue.
+     REV : 006 08/08/2017  MOUSUMI                  (TFS ID: 31842)    [GST] Document numbering scheme related changes.
+     REV : 007 20/09/2017  DIPTIMAN                 (TFS ID : 32259) Last inward rate update.
+     REV : 008 04/07/2018  DIPTIMAN                 (TFS ID : 41385) Last inward rate update for Manage site.
+     REV : 009 08/01/2019  ANINDYA                  (TFS ID : 6779 ) Non trading item costing related changes.
+     REV : 010 13/09/2022  ANINDYA                  (TFS ID : BATCH SERIAL ) Introduce batch serial code in stock posting.
+     REV : 011 31/01/2023  PRASANTA                 (Devops id: 12357) Rate of the INVITEM table is not being updated by the Rate of the INVITEMLASTINWARD table.
+	 NOTES:
+   ************************************************************************************************************************************************************/
+   -- START REV : 003
+   SELECT SITETYPE
+     INTO STRICT V_SITETYPE
+     FROM ADMSITE
+    WHERE CODE = coalesce(NEW.ADMSITE_CODE, OLD.ADMSITE_CODE);
+
+   -- END REV : 003
+   -- start rev : 013
+   SELECT admgstin_code
+     INTO STRICT v_admgstin_code
+     FROM admsite
+    WHERE code = coalesce(NEW.admsite_code, OLD.admsite_code);
+
+   -- end rev : 013
+   IF TG_OP = 'UPDATE'
+   THEN
+      -- START REV : 001
+	  -- START REV : 010
+         /*CALL DB_PRO_UPD_LAST_IN_RATE(NEW.MISCCODE,
+                                  'MIS',
+                                  NULL,
+                                  NULL,
+                                  NEW.MISCDT,
+                                  NULL,
+                                  NULL,
+                                  NEW.ADMSITE_CODE,
+                                  NEW.ADMOU_CODE);*/
+      CALL DB_PRO_UPD_ITEM_RATE ('INVMISCDET',
+                               'MISCCODE',
+                               'RATE',
+                               'QTY',
+                                NEW.MISCCODE,
+                                NEW.MISCDT);
+		--END REV : 011
+      -- end rev : 010
+      -- END REV : 007
+      -- END REV : 009
+      -- END REV : 001
+      -- GENERATE MISCNO
+      -- START REV : 006
+      IF NEW.GSTAPPL = 'Y'
+      THEN
+         UPDATE GST_DOCNO_CHECK DC
+            SET SCHEME_DOCNO = NEW.SCHEME_DOCNO, DOCCODE = NEW.DOCCODE
+          WHERE     ENTTYPE = 'MIS'
+                AND ENTCODE = NEW.MISCCODE
+                AND YCODE = NEW.YCODE;
+
+         GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+         THEN
+            INSERT INTO GST_DOCNO_CHECK (ENTTYPE,
+                                            ENTCODE,
+                                            DOCCODE,
+                                            SCHEME_DOCNO,
+                                            ENTDATE,
+                                            YCODE,
+                                            ADMSITE_CODE_OWNER,
+                                            ADMGSTIN_CODE)
+                 VALUES ('MIS',
+                         NEW.MISCCODE,
+                         NEW.DOCCODE,
+                         NEW.SCHEME_DOCNO,
+                         NEW.MISCDT,
+                         NEW.YCODE,
+                         NEW.ADMSITE_CODE,
+                         V_ADMGSTIN_CODE);
+         END IF;
+      END IF;
+
+      -- END REV : 006
+      -- START REV : 004
+      -- START REV : 003
+      -- END REV : 003
+      -- END REV : 004
+      /* STOCK AND COSTING REFLECTION */
+	  <<END_UPD>>
+	  BEGIN
+      IF V_SITETYPE LIKE 'MS%' AND NEW.AUTH_ECODE IS NULL
+      THEN
+         EXIT  END_UPD;
+	END IF;
+      CALL DB_PKG_STOCK$REFLECT(NEW.MISCCODE,
+                            NEW.MISCNO,
+                            NEW.MISCDT,
+                            'MIS',
+                            NEW.LOCCODE,
+                            NEW.YCODE,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NEW.DEPTCODE,
+                            NULL,
+                            NEW.REFNO,
+                            NULL-- START REV : 002
+                                -- START REV : 005
+                                --,NULL
+                            ,
+                            NEW.SCHEME_DOCNO-- END REV : 005
+                            ,
+                            NULL,
+                            NEW.ADMOU_CODE,
+                            NEW.ADMSITE_CODE-- END REV : 002
+                                             -- START REV : 003
+                            ,
+                            NULL,
+                            NEW.PSITE_STOCKPOINT_CODE-- END REV : 003
+                            );
+
+      -- START REV : 004
+      -- IF SQL%ROWCOUNT = 0 AND V_SITETYPE  = 'MS-OO-CM' THEN
+      -- START REV : 003
+      --GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF OLD.AUTH_ECODE IS NULL AND NEW.AUTH_ECODE IS NOT NULL AND V_SITETYPE LIKE 'MS%'
+      THEN
+         -- END REV : 004
+         DECLARE
+            C_MISCDET CURSOR FOR
+               SELECT MISCCODE,
+                      MISCDETCODE,
+                      REQDETCODE,
+                      ICODE,
+                      QTY,
+                      RATE,
+                      COSTRATE,
+                      SITE_COSTRATE,
+                      -- start rev : 010
+                      INVBATCH_SERIAL_CODE
+                      -- end rev : 010
+                 FROM INVMISCDET
+                WHERE MISCCODE = coalesce(NEW.MISCCODE, OLD.MISCCODE);
+         BEGIN
+            FOR C1 IN C_MISCDET
+            LOOP
+               V_DETAIL_CODE := C1.MISCDETCODE;
+               V_TYPE := 'INSERTING';
+               V_ENTCODE := coalesce(NEW.MISCCODE, OLD.MISCCODE);
+               V_ENTNO := coalesce(NEW.MISCNO, OLD.MISCNO);
+               V_ENTDT := coalesce(NEW.MISCDT, OLD.MISCDT);
+               V_ENTTYPE := 'MIS';
+               V_LOCCODE := coalesce(NEW.LOCCODE, OLD.LOCCODE);
+               V_YCODE := coalesce(NEW.YCODE, OLD.YCODE);
+               V_NEW_ICODE := C1.ICODE;
+               V_OLD_ICODE := C1.ICODE;
+               V_NEW_QTY := coalesce(C1.QTY, 0);
+               V_OLD_QTY := coalesce(C1.QTY, 0);
+               V_NEW_RATE := coalesce(C1.RATE, 0);
+               V_OLD_RATE := coalesce(C1.RATE, 0);
+               V_REFPCODE := NULL;
+               V_REFLOCCODE := NULL;
+               V_REFCMPCODE := NULL;
+               V_REFGLCODE := NULL;
+               V_REFDEPTCODE := NULL;
+               V_REFPRCODE := NULL;
+               V_REFDOCNO := coalesce(NEW.REFNO, OLD.REFNO);
+               V_REFPKGCODE := NULL;
+               V_REFDCCODE := NULL;
+               V_OTHER_RATE := NULL;
+               V_ADMSITE_CODE := coalesce(NEW.ADMSITE_CODE, OLD.ADMSITE_CODE);
+               V_PSITE_STOCKPOINT_CODE :=
+                  coalesce(NEW.PSITE_STOCKPOINT_CODE,
+                       OLD.PSITE_STOCKPOINT_CODE);
+               -- START REV : 005
+               --V_SCHEME_DOCNO            := NULL;
+               V_SCHEME_DOCNO :=
+                  coalesce(NEW.SCHEME_DOCNO, OLD.SCHEME_DOCNO);
+               -- END REV : 005
+               -- START REV : 008
+               V_COSTRATE := coalesce(C1.COSTRATE, 0);
+               -- END REV : 008
+               CALL DB_PKG_STOCK$REFLECT(V_DETAIL_CODE,
+                                     V_TYPE,
+                                     V_ENTCODE,
+                                     V_ENTNO,
+                                     V_ENTDT,
+                                     V_ENTTYPE,
+                                     V_LOCCODE,
+                                     V_YCODE,
+                                     V_NEW_ICODE,
+                                     V_OLD_ICODE,
+                                     V_NEW_QTY,
+                                     V_OLD_QTY,
+                                     V_NEW_RATE,
+                                     V_OLD_RATE,
+                                     V_REFPCODE,
+                                     V_REFLOCCODE,
+                                     V_REFCMPCODE,
+                                     V_REFGLCODE,
+                                     V_REFDEPTCODE,
+                                     V_REFPRCODE,
+                                     V_REFDOCNO,
+                                     V_REFPKGCODE,
+                                     V_REFDCCODE,
+                                     V_OTHER_RATE,
+                                     V_SCHEME_DOCNO,
+                                     NULL,
+                                     NULL,
+                                     NEW.REMARKS,
+                                     V_ADMSITE_CODE,
+                                     NULL,
+                                     NULL,
+                                     NULL,
+                                     NULL,
+                                     V_PSITE_STOCKPOINT_CODE,
+                                     NULL,
+                                     NULL,
+                                     NULL,
+                                     NULL-- START REV : 008
+                                     ,
+                                     NULL,
+                                     NULL,
+                                     NULL,
+                                     NULL,
+                                     NULL,
+                                     NULL,
+                                     NULL,
+                                     V_COSTRATE-- END REV : 008
+                                     -- START REV : 010
+                                     ,NULL
+                                     ,NULL
+                                     ,NULL
+                                     ,NULL
+                                     ,NULL
+                                     ,C1.INVBATCH_SERIAL_CODE
+                                     -- END REV : 010
+                                     );
+            END LOOP;
+
+            V_DETAIL_CODE := NULL;
+            V_TYPE := NULL;
+            V_ENTCODE := NULL;
+            V_ENTNO := NULL;
+            V_ENTDT := NULL;
+            V_ENTTYPE := NULL;
+            V_LOCCODE := NULL;
+            V_YCODE := NULL;
+            V_NEW_ICODE := NULL;
+            V_OLD_ICODE := NULL;
+            V_NEW_QTY := NULL;
+            V_OLD_QTY := NULL;
+            V_NEW_RATE := NULL;
+            V_OLD_RATE := NULL;
+            V_REFPCODE := NULL;
+            V_REFLOCCODE := NULL;
+            V_REFCMPCODE := NULL;
+            V_REFGLCODE := NULL;
+            V_REFDEPTCODE := NULL;
+            V_REFPRCODE := NULL;
+            V_REFDOCNO := NULL;
+            V_REFPKGCODE := NULL;
+            V_REFDCCODE := NULL;
+            V_OTHER_RATE := NULL;
+            V_ADMSITE_CODE := NULL;
+            V_PSITE_STOCKPOINT_CODE := NULL;
+            -- START REV : 005
+            V_SCHEME_DOCNO := NULL;
+            -- END REV : 005
+            -- START REV : 008
+            V_COSTRATE := NULL;
+         -- END REV : 008
+         END;
+      END IF;
+
+      -- END REV : 003
+      -- START REV : 008
+         -- START REV : 009
+         --DB_PRO_UPD_LAST_IN_RATE (:NEW.MISCCODE, 'MIS');
+         CALL DB_PRO_UPD_LAST_IN_RATE(NEW.MISCCODE,
+                                  'MIS',
+                                  NULL,
+                                  NULL,
+                                  NEW.MISCDT,
+                                  NULL,
+                                  NULL,
+                                  NEW.ADMSITE_CODE,
+                                  NEW.ADMOU_CODE);
+
+END;
+END IF;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

@@ -1,0 +1,174 @@
+function "main"."trigger_fct_t_finvchmain()" {
+  text = """
+
+DECLARE
+   ora2pg_rowcount integer;
+L_TABLE_NAME   varchar(50);
+   -- START REV : 002
+   V_VCHTYPE      char(1);
+   -- END REV : 002
+   vnVchCode      bigint;
+BEGIN
+  
+   IF TG_OP = 'INSERT'
+   THEN
+      IF NEW.VCHCODE IS NULL
+      THEN
+         SELECT nextval('erp01') INTO STRICT NEW.VCHCODE;
+      END IF;
+   END IF;
+
+   -- START REV : 002
+   IF coalesce(NEW.VCHTYPE, OLD.VCHTYPE) IN ('P', 'R', 'B')
+   THEN
+      V_VCHTYPE := 'P';
+   ELSE
+      V_VCHTYPE := coalesce(NEW.VCHTYPE, OLD.VCHTYPE);
+   END IF;
+
+   -- END REV : 002
+   --Rev 9.3.4.0018 Z
+   IF TG_OP = 'UPDATE'
+   THEN
+      CASE
+         WHEN NEW.VCHTYPE = 'G'
+         THEN
+            L_TABLE_NAME := 'FINVCHMAIN_G';
+         WHEN NEW.VCHTYPE = 'P'
+         THEN
+            L_TABLE_NAME := 'FINVCHMAIN_P';
+         -- START REV : 002
+         WHEN NEW.VCHTYPE = 'R'
+         THEN
+            L_TABLE_NAME := 'FINVCHMAIN_R';
+         -- END REV : 002
+         WHEN NEW.VCHTYPE = 'C'
+         THEN
+            L_TABLE_NAME := 'FINVCHMAIN_C';
+         ELSE
+            NULL;
+      END CASE;
+   END IF;
+
+   --End of Rev 9.3.4.0018
+   IF OLD.VCHCODE IS NOT NULL
+   THEN
+      UPDATE FINPOST
+         SET ENTNO = OLD.VCHNO::varchar                   -- START REV : 001
+                                         ,
+             SCHEME_DOCNO = OLD.SCHEME_DOCNO                 -- END REV : 001
+                                             -- START REV : 003
+             ,
+             ADMOU_CODE = OLD.ADMOU_CODE                     -- END REV : 003
+                                         ,
+             ENTDT = OLD.VCHDT,
+             GLCODE = OLD.GLCODE,
+             DOCNO = OLD.REFNO,
+             NARTEXT = OLD.NARTEXT,
+             DAMOUNT = coalesce(DAMOUNT, 0) - coalesce(OLD.DAMOUNT, 0),
+             CAMOUNT = coalesce(CAMOUNT, 0) - coalesce(OLD.CAMOUNT, 0)
+       WHERE ENTCODE = OLD.VCHCODE::varchar               -- START REV : 002
+                                              -- AND    ENTTYPE       = 'VM' || :OLD.VCHTYPE;
+             AND ENTTYPE = 'VM' || V_VCHTYPE;
+   -- START REV : 002
+   END IF;
+
+   IF NEW.VCHCODE IS NOT NULL
+   THEN
+      UPDATE FINPOST
+         SET ENTNO = NEW.VCHNO::varchar                   -- START REV : 001
+                                         ,
+             SCHEME_DOCNO = NEW.SCHEME_DOCNO                 -- END REV : 001
+                                             -- START REV : 003
+             ,
+             ADMOU_CODE = NEW.ADMOU_CODE                     -- END REV : 003
+                                         ,
+             ENTDT = NEW.VCHDT,
+             GLCODE = NEW.GLCODE,
+             DOCNO = NEW.REFNO,
+             NARTEXT = NEW.NARTEXT,
+             DAMOUNT = coalesce(DAMOUNT, 0) + coalesce(NEW.DAMOUNT, 0),
+             CAMOUNT = coalesce(CAMOUNT, 0) + coalesce(NEW.CAMOUNT, 0)
+       WHERE ENTCODE = NEW.VCHCODE::varchar               -- START REV : 002
+                                              -- AND    ENTTYPE       = 'VM' || :NEW.VCHTYPE;
+             AND ENTTYPE = 'VM' || V_VCHTYPE;
+
+      -- END REV : 002
+      GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+      THEN
+         INSERT INTO FINPOST(POSTCODE,
+                              ENTCODE,
+                              ENTNO,
+                              ENTDT,
+                              ENTTYPE,
+                              DOCNO,
+                              NARTEXT,
+                              GLCODE,
+                              DAMOUNT,
+                              CAMOUNT,
+                              YCODE,
+                              -- START REV : 001
+                              SCHEME_DOCNO                    -- END REV : 001
+                                          -- START REV : 003
+                              ,
+                              ADMOU_CODE                      -- END REV : 003
+                                        )
+              VALUES (nextval('erp01'),
+                      NEW.VCHCODE::varchar,
+                      NEW.VCHNO::varchar,
+                      NEW.VCHDT                            -- START REV : 002
+                                -- , 'VM' || :NEW.VCHTYPE
+                      ,
+                      'VM' || V_VCHTYPE                       -- END REV : 002
+                                       ,
+                      NEW.REFNO,
+                      NEW.NARTEXT,
+                      NEW.GLCODE,
+                      coalesce(NEW.DAMOUNT, 0),
+                      coalesce(NEW.CAMOUNT, 0),
+                      NEW.YCODE,
+                      -- START REV : 001
+                      NEW.SCHEME_DOCNO                       -- END REV : 001
+                                       -- START REV : 003
+                      ,
+                      NEW.ADMOU_CODE                         -- END REV : 003
+                                     );
+      END IF;
+
+      -- START REV : 002
+      UPDATE FINPOST
+         SET ADMSITE_CODE_OWNER = NEW.ADMSITE_CODE_OWNER,
+             ECODE = NEW.ECODE,
+             TIME = NEW.TIME,
+             LAST_ACCESS_ECODE = NEW.LAST_ACCESS_ECODE,
+             LAST_ACCESS_TIME = NEW.LAST_ACCESS_TIME       -- START REV : 003
+                                                     ,
+             ADMOU_CODE = NEW.ADMOU_CODE
+       -- END REV : 003
+       WHERE     ENTCODE = NEW.VCHCODE::varchar
+             AND ENTTYPE IN ('VM' || V_VCHTYPE, 'VD' || V_VCHTYPE);
+   -- END REV : 002
+   END IF;
+
+   DELETE FROM FINPOST
+    WHERE     ENTCODE = OLD.VCHCODE::varchar
+          AND GLCODE = OLD.GLCODE                          -- START REV : 002
+          -- AND    ENTTYPE         = 'VM' || :OLD.VCHTYPE
+          AND ENTTYPE = 'VM' || V_VCHTYPE                     -- END REV : 002
+          AND coalesce(DAMOUNT, 0) = 0
+          AND coalesce(CAMOUNT, 0) = 0;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

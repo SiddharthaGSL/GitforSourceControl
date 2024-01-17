@@ -1,0 +1,268 @@
+procedure "main"."db_pro_ledger_bal_transfer(bigint, bigint, numeric)" {
+  text = """
+
+DECLARE
+
+/***************************************************************************************************************************************************************
+   No.                Date                Author                    Description
+   ---------        ----------           ----------------------     --------------------------------------------------------------------------------------------
+   REV : 001        05/05/2015           DIPTIMAN                   (TFS ID : 17025)    Only posted entries would be transfer.
+   REV : 002	    19/04/2017	         MANASH                     (TFS ID : 21200)    Inventory Valuation Revamp.
+   REV : 003        23/02/2018           MANASH                     (TFS ID : 38389)    Unable to close Financial Year.
+   REV : 003        06/04/2018           MANASH                     (TFS ID : 40152)    Unable to transfer balance to the next account Year.
+   REV : 004        06/08/2021           ANINDYA                    (TFS ID : 1111)     If PLGL Opening = Rs.100, during the year transaction = Rs.0
+                                                                                        and Loss = Rs.100 then Rs.100 is getting transferred into next year.
+****************************************************************************************************************************************************************/
+   errcode            varchar(50);
+   errmsg             varchar(2000);
+   -- start rev : 003
+   --v_current_ycode    NUMBER := p_ycode + 1;
+   v_current_ycode    bigint;
+   -- end rev : 003
+   v_last_ycode       bigint := p_ycode;
+   v_profit_loss      double precision;
+   v_gl_op_diff       double precision;
+   v_gl_net_balance   double precision;
+
+BEGIN
+    -- START REV : 003
+    /*
+    DELETE
+    FROM    finglop
+    WHERE   ycode = v_current_ycode
+    -- START REV : 002
+    and     admou_code = p_admou_code;
+    -- END REV : 002
+    */
+    -- END REV : 003
+    -- start rev : 003
+    select  y.admyear_code
+    into STRICT    v_current_ycode
+    from    admou_year y
+    where   y.admou_code = p_admou_code
+    and     y.admyear_code =
+                            (
+                                SELECT  min(y1.admyear_code)
+                                from    admou_year y1
+                                where   y1.admyear_code > p_ycode
+                                and     y1.admou_code = p_admou_code
+                            );
+    -- end rev : 003
+    DELETE
+    FROM    finglop
+    WHERE   ycode = v_current_ycode
+    and     admou_code = p_admou_code;
+    -- END REV : 003
+    --STEP 1
+    INSERT
+    INTO finglop(
+        glcode, ycode, opdamt, opcamt,
+        -- START REV : 002
+        admou_code
+        -- END REV : 002
+    )
+    SELECT  glcode, v_current_ycode,
+             CASE
+                WHEN coalesce(balance, 0) > 0
+                   THEN coalesce(balance, 0)
+                ELSE 0
+             END, CASE
+                WHEN coalesce(balance, 0) < 0
+                   THEN 0 - coalesce(balance, 0)
+                ELSE 0
+             END,
+             -- START REV : 002
+             p_admou_code
+             -- END REV : 002
+        FROM (SELECT   v_yearend_gl.glcode glcode,
+                       SUM(  coalesce(v_yearend_gl.damount, 0)
+                            - coalesce(v_yearend_gl.camount, 0)
+                           ) balance
+                  FROM v_yearend_gl, fingl
+                 WHERE v_yearend_gl.glcode = fingl.glcode
+                   AND v_yearend_gl.ycode = v_last_ycode
+                   AND fingl.TYPE IN ('L', 'A')
+                   AND fingl.SLAPP = 'N'
+                   -- START REV : 001
+                   AND v_yearend_gl.release_status = 'P'
+                   -- END REV : 001
+                   -- START REV : 002
+                   and  v_yearend_gl.admou_code = p_admou_code
+                   -- END REV : 002
+              GROUP BY v_yearend_gl.glcode) alias9
+       WHERE coalesce(balance, 0) <> 0;
+   --STEP 2
+   DELETE
+   FROM finslop
+   WHERE ycode = v_current_ycode
+   -- START REV : 002
+   and   admou_code = p_admou_code;
+   -- END REV : 002
+   INSERT INTO finslop(
+                glcode, slcode, ycode, opdamt, opcamt,
+                -- START REV : 002
+                admou_code
+                -- END REV : 002
+               )
+      SELECT glcode, slcode, v_current_ycode,
+             CASE
+                WHEN coalesce(balance, 0) > 0
+                   THEN coalesce(balance, 0)
+                ELSE 0
+             END, CASE
+                WHEN coalesce(balance, 0) < 0
+                   THEN 0 - coalesce(balance, 0)
+                ELSE 0
+             END,
+             -- START REV : 002
+             p_admou_code
+             -- END REV : 002
+        FROM (SELECT   v_yearend_sl.glcode glcode, v_yearend_sl.slcode slcode,
+                       SUM(  coalesce(v_yearend_sl.damount, 0)
+                            - coalesce(v_yearend_sl.camount, 0)
+                           ) balance
+                  FROM v_yearend_sl, fingl
+                 WHERE v_yearend_sl.glcode = fingl.glcode
+                   AND v_yearend_sl.ycode = v_last_ycode
+                   AND fingl.TYPE IN ('L', 'A')
+                   AND fingl.SLAPP = 'Y'
+                   -- START REV : 001
+                   AND v_yearend_sl.release_status = 'P'
+                   -- END REV : 001
+                   -- START REV : 002
+                   and  v_yearend_sl.admou_code = p_admou_code
+                   -- END REV : 002
+              GROUP BY v_yearend_sl.glcode, v_yearend_sl.slcode) alias9
+       WHERE coalesce(balance, 0) <> 0;
+   --STEP 4
+   SELECT SUM(coalesce(amount, 0)) amount
+     INTO STRICT v_profit_loss
+     FROM (SELECT   SUM(coalesce(a.damount, 0) - coalesce(a.camount, 0)) amount
+               FROM finpost a, fingl b
+              WHERE a.glcode = b.glcode
+                AND b.TYPE IN ('I', 'E')
+                AND a.ycode = v_last_ycode
+                -- START REV : 001
+                AND a.release_status = 'P'
+                -- END REV : 001
+                -- START REV : 002
+               and  a.admou_code = p_admou_code
+               -- END REV : 002
+           GROUP BY a.glcode, a.slcode
+             HAVING SUM(coalesce(a.damount, 0) - coalesce(a.camount, 0)) <> 0
+
+UNION ALL
+
+           SELECT coalesce(a.opdamt, 0) - coalesce(a.opcamt, 0)
+             FROM finglop a, fingl b
+            WHERE a.glcode = b.glcode
+              AND b.TYPE IN ('I', 'E')
+              AND a.ycode = v_last_ycode
+              -- START REV : 002
+               and  a.admou_code = p_admou_code
+               -- END REV : 002
+              AND coalesce(a.opdamt, 0) - coalesce(a.opcamt, 0) <> 0) alias14;
+   BEGIN
+        SELECT coalesce(opdamt, 0) - coalesce(opcamt, 0)
+        INTO STRICT v_gl_op_diff
+        FROM finglop
+        WHERE glcode = p_plglcode
+        AND ycode = v_current_ycode
+        -- START REV : 002
+       and  admou_code = p_admou_code;
+       -- END REV : 002
+      v_gl_net_balance := coalesce(v_profit_loss, 0) + coalesce(v_gl_op_diff, 0);
+      IF coalesce(v_gl_net_balance, 0) > 0
+      THEN
+         UPDATE finglop
+            SET opdamt = coalesce(v_gl_net_balance, 0),
+                opcamt = 0
+          WHERE glcode = p_plglcode
+          AND ycode = v_current_ycode
+          -- START REV : 002
+          and  admou_code = p_admou_code;
+          -- END REV : 002
+      ELSIF coalesce(v_gl_net_balance, 0) < 0 THEN
+         UPDATE finglop
+            SET opcamt = -1 * coalesce(v_gl_net_balance, 0),
+                opdamt = 0
+          WHERE glcode = p_plglcode
+          AND ycode = v_current_ycode
+          -- START REV : 002
+          and  admou_code = p_admou_code;
+          -- END REV : 002
+      -- START REV : 004    
+      ELSIF coalesce(v_gl_net_balance, 0) = 0 THEN
+         UPDATE finglop
+            SET opcamt = 0,
+                opdamt = 0
+          WHERE glcode = p_plglcode
+          AND ycode = v_current_ycode
+          and  admou_code = p_admou_code;
+      -- END REV : 004    
+      END IF;
+   EXCEPTION
+      WHEN no_data_found
+      THEN
+         IF coalesce(v_profit_loss, 0) > 0
+         THEN
+            INSERT INTO finglop(
+                            glcode, ycode,opdamt,
+                            -- START REV : 002
+                            admou_code
+                            -- END REV : 002
+                        )
+                 VALUES (
+                            p_plglcode, v_current_ycode, coalesce(v_profit_loss, 0),
+                            -- START REV : 002
+                            p_admou_code
+                            -- END REV : 002
+                        );
+         ELSIF  coalesce(v_profit_loss, 0) < 0 THEN
+                INSERT
+                INTO finglop(
+                        glcode, ycode, opcamt,
+                        -- START REV : 002
+                        admou_code
+                        -- END REV : 002
+                    )
+                VALUES (
+                            p_plglcode, v_current_ycode, -1 * coalesce(v_profit_loss, 0),
+                            -- START REV : 002
+                            p_admou_code
+                            -- END REV : 002
+                        );
+         END IF;
+   END;
+EXCEPTION
+   WHEN OTHERS
+   THEN
+      errcode := SQLSTATE;
+      errmsg := SQLERRM;
+      CALL erraudit(USER, 'Db_Pro_ledger_bal_transfer', errcode, errmsg);
+      RAISE EXCEPTION '%', 'Unable to ledger balance : ' || errmsg USING ERRCODE = '45200';
+END;
+"""
+  arguments = <
+    {
+      name = p_ycode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_plglcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_admou_code
+      type = numeric
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

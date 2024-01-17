@@ -1,0 +1,334 @@
+function "main"."int$pkg_batchserial_int$pkg_batchserial_validate_atx(bigint, bigint, timestamp without time zone, bigint, text)" {
+  text = """
+
+DECLARE
+
+        v_status    char(1);
+        errmsg      varchar(200);
+        errcode     bigint;
+BEGIN
+
+        -- COMMON Update
+        
+        update int$stg_batchserial
+               set update_master = 'Y'
+        where LTRIM(RTRIM(UPPER(update_master))) = 'YES'
+        and   userid = p_userid;
+
+        update int$stg_batchserial
+               set update_master = 'N'
+        where LTRIM(RTRIM(UPPER(update_master))) = 'NO'
+        and   userid = p_userid;
+
+        update int$stg_batchserial
+               set update_master = 'X'
+        where UPPER(update_master) not in ('Y','N')
+        and   update_master is not null
+        and   userid = p_userid;
+
+        update int$stg_batchserial a
+        set icode_barcode = (SELECT icode
+                   from invitem b
+                   where ( (upper(b.icode) = upper(a.icode_barcode))
+                   or (upper(b.barcode) = upper(a.icode_barcode))))
+        where a.icode_barcode is not null
+        and   a.userid = p_userid;
+
+        -- COMMON Validations
+		
+		insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, p_classname, userid, 'Mandatory Validation',
+        COALESCE(a.icode_barcode,'')||'-Item is Invalid.', clock_timestamp()
+        from    int$stg_batchserial a
+        where   a.icode_barcode is null
+        and     userid = p_userid;
+        
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, p_classname, userid, 'Mandatory Validation',
+        a.icode_barcode||'-Update Master should be Yes or No or cannot be blank', clock_timestamp()
+        from    int$stg_batchserial a
+        where   update_master = 'X' or update_master is null
+        and     userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, p_classname, userid, 'Mandatory Validation',
+        a.icode_barcode||'-Qty. should be equal to scan unit of the item. Please rectify.', clock_timestamp()
+        from    int$stg_batchserial a, invitem i
+        where   ((a.icode_barcode = i.icode) OR (a.icode_barcode = i.barcode))
+        --and     a.batch_serial_no IS NOT NULL
+        and     coalesce(i.item_management_mode,'I') = 'S'
+        and (a.transaction_qty IS NOT NULL AND (coalesce(a.transaction_qty,0) <> coalesce(i.barunit,1)))
+        --and     p_classname = 'BATCHSERIAL_TRANS'
+        and     userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, p_classname, userid, 'Mandatory Validation',
+        a.icode_barcode||'-Pricing details incomplete, please add.', clock_timestamp()
+        FROM int$stg_batchserial a
+LEFT OUTER JOIN invbatch_serial b ON (a.batch_serial_no = b.batch_serial_no)
+WHERE ((a.standard_rate IS NOT NULL) OR (a.WSP IS NOT NULL) OR (a.RSP IS NOT NULL) OR (a.MRP IS NOT NULL)) and (a.standard_rate + a.WSP + a.RSP + a.MRP) IS NULL and b.batch_serial_no IS NULL and userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, p_classname, userid, 'Mandatory Validation',
+        a.icode_barcode||'-Batch/Serial no. is mandatory or Scheme Doc no is not defined.', clock_timestamp()
+        from    int$stg_batchserial a
+        WHERE (a.batch_serial_no IS NULL and a.transaction_qty IS NULL)
+        and     p_classname = 'BATCHSERIAL_TRANS'
+        and     userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, p_classname, userid, 'Mandatory Validation',
+        a.icode_barcode||'-Item and batch/serial no. can’t get repeated, please rectify.', clock_timestamp()
+        from    int$stg_batchserial a
+        where   a.icode_barcode in (SELECT icode_barcode
+            from int$stg_batchserial GROUP BY icode_barcode, batch_serial_no, userid HAVING count(*) > 1
+         )
+        and     icode_barcode is not null
+        and     batch_serial_no is not null
+        and     userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, p_classname, userid, 'Mandatory Validation',
+        a.icode_barcode||'-RSP for this item should be within the RSP range ('
+                || ar.mrprangefrom :: text
+                || ' and '
+                || ar.mrprangeto :: text
+                || ') defined in the Article.', clock_timestamp()
+        from    int$stg_batchserial a, invitem i, invarticle ar
+        where   ((a.icode_barcode = i.icode) OR (a.icode_barcode = i.barcode))
+        and     i.invarticle_code = ar.code
+        and     a.rsp is not null
+        and     coalesce(a.rsp,0) not between ar.mrprangefrom and ar.mrprangeto
+        and     userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, p_classname, userid, 'Mandatory Validation',
+        '''System Batch Serial'' cannot be used as Batch Serial No, as it is a reserved Batch Serial No', clock_timestamp()
+        from    int$stg_batchserial a
+        WHERE   a.batch_serial_no IS NOT NULL
+        and     LTRIM(RTRIM(UPPER(a.batch_serial_no))) = 'SYSTEM BATCH SERIAL'
+        and     userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, p_classname, userid, 'Data Validation', 
+        'You can’t define Batch/Serial no. for this item manually.', clock_timestamp()
+        from    int$stg_batchserial a, invitem i, invgrp g
+        where (UPPER(a.icode_barcode) = i.icode OR UPPER(a.icode_barcode) = i.barcode)
+        and    i.grpcode = g.grpcode
+        and    g.iscreatebatchdocumentwise = 'Y'
+        and    i.item_management_mode = 'B'
+        and    a.icode_barcode is not null
+        and    a.batch_serial_no is not null
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, p_classname, userid, 'Data Validation', 
+        'Duplicate serial number is not allowed for an item.', clock_timestamp()
+        from    int$stg_batchserial a, invitem i
+        where (UPPER(a.icode_barcode) = i.icode OR UPPER(a.icode_barcode) = i.barcode)
+        and    a.batch_serial_no is not null
+        and    i.item_management_mode = 'S'
+        and    i.icode in (SELECT i.icode
+                                from int$stg_batchserial a, invitem i
+                           where (upper(a.icode_barcode) = i.icode or upper(a.icode_barcode) = i.barcode)
+                           and batch_serial_no is not null
+                           and i.item_management_mode = 'S'
+                           and a.userid = p_userid
+                           GROUP BY i.icode, a.batch_serial_no HAVING count(i.icode) > 1
+                           )
+        and    a.userid = p_userid;
+
+        -- ICODE_BARCODE Validation.
+        
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, p_classname, userid, 'Mandatory Validation','Invalid Barcode.', clock_timestamp()
+        FROM int$stg_batchserial a 
+		LEFT OUTER JOIN (SELECT icode, ext from invitem          
+		union
+		select barcode, ext from invitem) b ON (upper(a.icode_barcode) = upper(b.icode))
+		WHERE (b.icode IS NULL OR coalesce(b.ext, 'N') = 'Y') and a.userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, p_classname, userid, 'Mandatory Validation',
+        a.icode_barcode||'-Item is not managed batch/serial wise, cannot proceed.', clock_timestamp()
+        from    int$stg_batchserial a, invitem i
+        where   a.icode_barcode is not null
+        and     ((a.icode_barcode = i.icode) OR (a.icode_barcode = i.barcode))
+        and     coalesce(i.item_management_mode,'I') NOT IN ('B','S')
+        and     userid = p_userid;
+
+        -- BATCH_SERIAL_NO Validation
+        
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, p_classname, userid, 'Mandatory Validation',
+        a.icode_barcode||'-Batch/Serial no. is mandatory.', clock_timestamp()
+        from    int$stg_batchserial a, invitem i, invgrp g
+        where   ((a.icode_barcode = i.icode) OR (a.icode_barcode = i.barcode))
+        and     i.grpcode = g.grpcode
+        and     a.batch_serial_no IS NULL
+        and     g.doccode IS NULL
+        and     userid = p_userid;
+        
+        -- STANDARD_RATE, WSP, RSP, MRP Validations.
+        
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, p_classname, userid, 'Mandatory Validation',
+        a.icode_barcode||'-Amt. cannot be negative.', clock_timestamp()
+        from    int$stg_batchserial a
+        where   ((a.standard_rate < 0) OR (WSP < 0) OR (RSP < 0) OR (MRP < 0))
+        and     userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, p_classname, userid, 'Mandatory Validation',
+        a.icode_barcode||'-Pricing details not applicable if price management of item is item wise, please delete pricing details.', clock_timestamp()
+        from    int$stg_batchserial a, invitem i
+        where   ((a.icode_barcode = i.icode) OR (a.icode_barcode = i.barcode))
+        and     ((a.standard_rate IS NOT NULL) OR (a.WSP IS NOT NULL) OR (a.RSP IS NOT NULL) OR (a.MRP IS NOT NULL))
+        and     i.price_management = 'I'
+        and     userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, p_classname, userid, 'Mandatory Validation',
+        a.icode_barcode||'-Pricing details mandatory if price management of item is batch/serial wise. Please add pricing details.', clock_timestamp()
+        FROM int$stg_batchserial a 
+		LEFT OUTER JOIN invbatch_serial b ON (a.batch_serial_no = b.batch_serial_no)
+		INNER JOIN invitem i
+		ON ((a.icode_barcode = i.icode) OR (a.icode_barcode = i.barcode))
+WHERE ((a.icode_barcode = i.icode) OR (a.icode_barcode = i.barcode))  and ((a.standard_rate IS NULL) OR (a.WSP IS NULL) OR (a.RSP IS NULL) OR (a.MRP IS NULL)) and i.price_management IN ('B','S') and b.batch_serial_no IS NULL and userid = p_userid;
+
+        -- MFG_DATE Validations.
+        
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, p_classname, userid, 'Mandatory Validation',
+        a.icode_barcode||'-Mfg. date can’t be greater than Valid Upto.', clock_timestamp()
+        from    int$stg_batchserial a
+        where   a.mfg_date is not null
+        and     ((a.mfg_date > a.valid_upto) OR (a.mfg_date > clock_timestamp()))
+		and		a.icode_barcode is not null
+        and     userid = p_userid;
+
+        -- VALID_UPTO Validations.
+        
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, p_classname, userid, 'Mandatory Validation',
+        a.icode_barcode||'-Valid Upto is not applicable for items whose expiry is not managed. Please rectify.', clock_timestamp()
+        from    int$stg_batchserial a, invitem i
+        where   ((a.icode_barcode = i.icode) OR (a.icode_barcode = i.barcode))
+        and     i.manage_expiry = 'N'
+        and     a.valid_upto IS NOT NULL
+        and     userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, p_classname, userid, 'Mandatory Validation',
+        a.icode_barcode||'-Valid Upto is mandatory. Please add.', clock_timestamp()
+        FROM int$stg_batchserial a LEFT OUTER JOIN invbatch_serial b
+		 ON (a.batch_serial_no = b.batch_serial_no)
+		INNER JOIN invitem i
+		ON ((a.icode_barcode = i.icode) OR (a.icode_barcode = i.barcode))
+      WHERE ((a.icode_barcode = i.icode) OR (a.icode_barcode = i.barcode))  and i.manage_expiry = 'Y' and a.valid_upto IS NULL and b.batch_serial_no IS NULL and userid = p_userid;
+
+        -- TRANSACTION_QTY Validations.
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, p_classname, userid, 'Mandatory Validation',
+        a.icode_barcode||'-Invalid Qty. Please rectify.', clock_timestamp()
+        from    int$stg_batchserial a, invitem i
+        where   ((a.icode_barcode = i.icode) OR (a.icode_barcode = i.barcode))
+        and     MOD(coalesce(a.transaction_qty,0) , coalesce(i.barunit,1)) <> 0
+        and     p_classname = 'BATCHSERIAL_TRANS'
+        and     userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, p_classname, userid, 'Mandatory Validation',
+        a.icode_barcode||'-Quantity should be greater than 0 or cannot be blank.', clock_timestamp()
+        from    int$stg_batchserial a
+        where   a.transaction_qty IS NOT NULL
+        and     a.transaction_qty <= 0 or a.transaction_qty is null
+        and     p_classname = 'BATCHSERIAL_TRANS'
+        and     userid = p_userid;
+
+        -- TRANSACTION_RATE Validations.
+        
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, p_classname, userid, 'Mandatory Validation',
+        a.icode_barcode||'-Transaction rate can’t be negative. Please rectify.', clock_timestamp()
+        from    int$stg_batchserial a
+        where   a.transaction_rate < 0
+        and     p_classname = 'BATCHSERIAL_TRANS'
+        and     userid = p_userid;
+
+        /*insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, p_classname, userid, 'Mandatory Validation',
+        a.icode_barcode||'-Upto 3 decimals are allowed. Please rectify.', clock_timestamp()
+        from    int$stg_batchserial a
+        where   length(substr(a.transaction_rate,instr(a.transaction_rate,'.',1,1)+1)) > 3
+        and     p_classname = 'BATCHSERIAL_TRANS'
+        and     userid = p_userid;*/
+
+        --COMMIT;
+		
+
+        -- check whether records are valid or not
+        begin
+            select  'S'
+            into STRICT    v_status
+
+            where   exists (
+                            SELECT  'S'
+                            from    int$error_log
+                            where   userid = p_userid
+                            );
+            return('0');
+        exception
+            when no_data_found then
+            return('1');
+        end;
+    exception
+        when others then
+            errcode := SQLSTATE;
+            errmsg := sqlerrm;
+
+            insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            values (nextval('int$error_log_code'), 0, p_classname, p_userid, errcode, errmsg, clock_timestamp());
+            --COMMIT;
+
+            return('0');
+    end;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_classname
+      type = text
+      mode = IN
+      default = 'BATCHSERIAL'::text
+    }
+
+  >
+  language = plpgsql
+}
+

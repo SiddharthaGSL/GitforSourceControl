@@ -1,0 +1,197 @@
+function "main"."int$pkg_gvallocation_int$pkg_gvallocation_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        v_status    char(1);
+        errmsg      varchar(200);
+
+        errcode bigint;
+BEGIN
+        --Clear error log table before start validation process
+        DELETE FROM int$error_log where userid = p_userid;
+
+        -- GV No should exist and GV Leaves Status has to be 'N'
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GVALLOCATION', userid, 'GV Validation',
+                                                CASE WHEN b.gvno IS NULL THEN 'GV No <'||a.gvno||'> not Found'
+                                                     WHEN b.status <> 'N' THEN 'GV No <'||a.gvno||'> already Allocated' ELSE NULL END, clock_timestamp()
+        FROM int$stg_gvallocation a
+LEFT OUTER JOIN (
+                    SELECT  coalesce(gvno_udf, gvno) gvno, status, gvbooklet_code
+                    FROM    gvleaves
+                    -- START REV : 002
+                    --WHERE   createdby = p_userid
+                    -- END REV : 002
+                  ) b ON (a.gvno = b.gvno)
+WHERE a.userid = p_userid AND (b.gvno IS NULL OR b.status <> 'N');
+
+        --GVNO cannot be NULL
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GVALLOCATION', userid, 'Mandatory Validation', 'GV No is Mandatory', clock_timestamp()
+        FROM    int$stg_gvallocation
+        WHERE   gvno IS NULL
+        AND     userid = p_userid;
+
+        -- Restrict Duplicate GV no in File
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'GVALLOCATION', a.userid, 'GV Validation', 'GV No <'||a.gvno||'> found multiple times in File', clock_timestamp()
+        FROM    int$stg_gvallocation a,(
+                                            SELECT  gvno, count(1)
+                                            FROM    int$stg_gvallocation
+                                            WHERE   userid = p_userid
+                                            GROUP BY
+                                                    gvno
+                                            HAVING count(1) > 1
+                                        ) b
+        WHERE   a.gvno = b.gvno
+        AND     a.userid = p_userid;
+
+        --Allocated Site cannot be NULL
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GVALLOCATION', userid, 'Mandatory Validation', 'Allocated Site is Mandatory', clock_timestamp()
+        FROM    int$stg_gvallocation
+        WHERE   allocated_site IS NULL
+        AND     userid = p_userid;
+
+        -- errorlog for invalid Site
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GVALLOCATION', userid, 'Site Validation',
+                                                CASE WHEN b.code IS NULL  THEN 'Allocated Site <'||a.allocated_site||'> not found'
+                                                     WHEN b.ext = 'Y' THEN 'Sites is extinct.'
+                                                     WHEN b.sitetype not like 'MS-%' THEN 'Allocated Site <'||a.allocated_site||'> is not a Managed Site' ELSE NULL END, clock_timestamp()
+        FROM int$stg_gvallocation a
+LEFT OUTER JOIN admsite b ON (a.allocated_site = b.shrtname)
+WHERE a.userid = p_userid AND (b.code IS NULL OR b.ext = 'Y' OR b.sitetype not like 'MS-%');
+
+        --COMMIT;
+
+        -- Check whether records are valid or not
+        BEGIN
+            SELECT  'S'
+            INTO STRICT    v_status
+
+            WHERE   EXISTS (
+                            SELECT  'S'
+                            FROM    int$error_log
+                            WHERE   userid = p_userid
+                            );
+            RETURN('0');
+        EXCEPTION
+            WHEN no_data_found THEN
+                RETURN('1');
+        END;
+
+    EXCEPTION
+        WHEN OTHERS THEN
+            errcode := SQLSTATE;
+            errmsg := SQLERRM;
+
+            --Error log for Oracle Internal Error
+            INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            VALUES (nextval('int$error_log_code'), 0, 'GVALLOCATION', p_userid, errcode, errmsg, clock_timestamp());
+            --COMMIT;
+
+            RETURN('0');
+    END;
+
+    -- allocate gv after validation
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+
+function "main"."int$pkg_gvallocation_int$pkg_gvallocation_validate(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+ 
+DECLARE
+  -- Change this to reflect the dblink connection string
+    --v_conn_str  text := format('port=%s dbname=%s user=%s', current_setting('port'), current_database(), current_user);
+    v_srvname       name;
+    v_connname      text;
+    v_connstr       text;
+    v_conn_result   text;
+    v_query         text;
+    v_ret    text;
+BEGIN
+
+	v_srvname := 'foreign_pgbase';
+    v_connname := replace(uuid_generate_v4()::text,'-','');
+    v_connstr  := v_srvname;
+    
+    --Open the connection  
+    SELECT dblink_connect(v_connname,v_connstr) 
+    INTO v_conn_result;
+	
+	v_query := 'SELECT * FROM int$pkg_gvallocation_int$pkg_gvallocation_validate_atx ( ' || quote_nullable(p_userid::text) || '::bigint,' || quote_nullable(p_connect_site::text) || '::bigint,' || quote_nullable(p_logging_date::text) || '::timestamp without time zone,' || quote_nullable(p_connect_ou::text) || '::bigint )';
+	SELECT * INTO v_ret FROM dblink(v_connname, v_query) AS p (ret text);
+
+	
+	SELECT dblink_disconnect(v_connname) 
+    INTO v_conn_result;
+	
+	RETURN v_ret;
+EXCEPTION 
+   WHEN OTHERS THEN
+        SELECT dblink_disconnect(v_connname) 
+        INTO v_conn_result;
+
+END;
+"""
+  returnType = text
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

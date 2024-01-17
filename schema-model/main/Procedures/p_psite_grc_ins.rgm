@@ -1,0 +1,335 @@
+procedure "main"."p_psite_grc_ins(text, bigint, bigint, text, timestamp without time zone, text, bigint, bigint, text, double, double, double, double, bigint, bigint, bigint, timestamp without time zone, text, timestamp without time zone, text, timestamp without time zone, text)" {
+  text = """
+
+DECLARE
+
+   /********************************************************************************************************************************
+       REV NO         OWNER         DATE           DESCRIPTION
+       ---------     -----------    -----------    ---------------------------------------------------------------------
+       REV : 001     ANINDYA        28-APR-2017    (TFS ID : 26844) Change ADMOU_CODE Reference change from INVLOC to ADMSITE.
+       REV : 002     ANINDYA        13-JUN-2017    (              ) GST Related changes.
+       REV : 003     SIDDHARTHA     16-MAY-2019    (TFS ID : 15950) Changes in Store GRT & GRC at HO
+       REV : 004     SIDDHARTHA     17-JUN-2019    (TFS ID : 19635) Receive Quantity Is Not Showing In Site To Site Franchise Bi Report_HO
+     *********************************************************************************************************************************/
+   v_slcode                  bigint;        -- (Customer) (SLCODE OF ADMSITE )
+   v_admou_code              bigint;
+   -- OU LOCAL VALUE ( OU CODE AGAINST STORE_LOCCODE OF ADMSITE)
+   v_psite_transit_loccode   bigint;             -- LOCAL VALUE (FROM ADMSITE)
+   v_store_loccode           bigint;             -- LOCAL VALUE (FROM ADMSITE)
+   v_issecondary             CHAR;               -- LOCAL VALUE (FROM ADMSITE)
+   v_ycode                   bigint;
+   --LOCAL VALUE (YCODE FROM ADMYEAR AGAINST DOCDT
+   v_doc                     timestamp;                -- LOCAL VALUE (SYSTEM DATE)
+   v_sitetype                varchar(25);
+   v_transferin_glcode       bigint;
+   v_transferin_slcode       bigint;
+   v_transit_glcode          bigint;
+   v_transit_slcode          bigint;
+   v_transitdiff_glcode      bigint;
+   v_transitdiff_slcode      bigint;
+   v_invcode                 varchar(100);
+   v_repln_admsite_code      bigint;
+   v_psite_grt_code          varchar(100);
+   v_grc_exist               bigint;
+
+BEGIN
+   SELECT COUNT(1)
+     INTO STRICT v_grc_exist
+     FROM psite_grc
+    WHERE code = p_sitecuid || '-' || p_grcdocid :: text;
+   IF coalesce(V_GRC_EXIST, 0) > 0
+   THEN
+      CALL P_PSITE_GRC_DEL(P_SITECUID, P_GRCDOCID, P_ADMSITE_CODE);
+   END IF;
+   v_doc := clock_timestamp();
+   SELECT ycode
+     INTO STRICT v_ycode
+     FROM admyear
+    WHERE p_docdate BETWEEN dtfr AND dtto;
+   SELECT s.slcode,
+          s.store_loccode,
+          s.psite_transit_loccode,
+          s.issecondary,
+          -- START REV : 001
+          --l.admou_code
+          s.admou_code
+     -- END REV   001
+     INTO STRICT v_slcode,
+          v_store_loccode,
+          v_psite_transit_loccode,
+          v_issecondary,
+          v_admou_code
+     FROM admsite s
+
+    WHERE s.code = p_admsite_code;
+   -- START REV  : 001
+   --AND s.store_loccode = l.loccode;
+   -- END REV : 001
+   SELECT sitetype
+     INTO STRICT v_sitetype
+     FROM admsite
+    WHERE code = p_storereplnsourceid;
+   IF v_slcode IS NOT NULL
+   THEN
+      SELECT consignment_glcode,
+             consignment_slcode,
+             transit_glcode,
+             transit_slcode,
+             transitdiff_glcode,
+             transitdiff_slcode
+        INTO STRICT v_transferin_glcode,
+             v_transferin_slcode,
+             v_transit_glcode,
+             v_transit_slcode,
+             v_transitdiff_glcode,
+             v_transitdiff_slcode
+        FROM finsl
+       WHERE slcode = v_slcode;
+   ELSE
+      SELECT transferin_glcode,
+             transferin_slcode,
+             transit_glcode,
+             transit_slcode,
+             transitdiff_glcode,
+             transitdiff_slcode
+        INTO STRICT v_transferin_glcode,
+             v_transferin_slcode,
+             v_transit_glcode,
+             v_transit_slcode,
+             v_transitdiff_glcode,
+             v_transitdiff_slcode
+        FROM admou
+       WHERE code = v_admou_code;
+   END IF;
+   IF v_sitetype = 'OS-OO-CM'
+   THEN
+      v_invcode := p_grcadvicedocid;
+      v_psite_grt_code := NULL;
+--Start Rev : 004
+   ELSIF v_sitetype IN ('MS-OO-CM', 'MS-CO-CM','MS-CO-OM-TS')
+--End Rev : 004
+   THEN
+      v_invcode := NULL;
+      v_psite_grt_code := p_grcadvicedocid;
+   END IF;
+   INSERT INTO psite_grc(code,
+                          slcode,
+                          admsite_code,
+                          admou_code,
+                          docno,
+                          docdt,
+                          invcode,
+                          psite_transit_loccode,
+                          store_loccode,
+                          rec_psite_stockpoint_code,
+                          dam_psite_stockpoint_code,
+                          remarks,
+                          receiveamt,
+                          damageamt,
+                          shortexcessamt,
+                          -- start rev : 002
+                          chgamt,
+                          -- end rev : 002
+                          issecondary,
+                          ycode,
+                          doc,
+                          repln_admsite_code,
+                          psite_grt_code,
+                          transferin_glcode,
+                          transferin_slcode,
+                          transit_glcode,
+                          transit_slcode,
+                          transitdiff_glcode,
+                          transitdiff_slcode,
+                          terminalid,
+                          psite_docscheme_code,
+                          createdon,
+                          createdby,
+                          lastmodifiedon,
+                          lastmodifiedby,
+                          closedon,
+                          closedby
+                          )
+        VALUES (p_sitecuid || '-' || p_grcdocid :: text,
+                v_slcode,
+                p_admsite_code,
+                v_admou_code,
+                p_docno,
+                p_docdate,
+                v_invcode,
+                v_psite_transit_loccode,
+                v_store_loccode,
+                p_sitecuid || '-' || p_ReceiveStockPointId :: text,
+                p_sitecuid || '-' || p_DamageStockPointId :: text,
+                p_remarks,
+                p_receiveamt,
+                p_damageamt,
+                p_shortexcessamt,
+                -- start rev : 002
+                p_chgamt,
+                -- end rev : 002
+                v_issecondary,
+                v_ycode,
+                v_doc,
+                p_storereplnsourceid,
+                v_psite_grt_code,
+                v_transferin_glcode,
+                v_transferin_slcode,
+                v_transit_glcode,
+                v_transit_slcode,
+                v_transitdiff_glcode,
+                v_transitdiff_slcode,
+                p_terminalid,
+                p_docschemeid,
+                p_createdon,
+                p_createdby,
+                p_lastmodifiedon,
+                p_lastmodifiedby,
+                p_closedon,
+                p_closedby       
+                );
+   IF v_psite_grt_code IS NOT NULL
+   THEN
+      UPDATE psite_grt
+         SET isincluded = 'Y'
+       WHERE code = v_psite_grt_code;
+   END IF;
+END;
+"""
+  arguments = <
+    {
+      name = p_sitecuid
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_grcdocid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_admsite_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_docno
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_docdate
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_grcadvicedocid
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_receivestockpointid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_damagestockpointid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_remarks
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_receiveamt
+      type = double precision
+      mode = IN
+    }
+
+    {
+      name = p_damageamt
+      type = double precision
+      mode = IN
+    }
+
+    {
+      name = p_shortexcessamt
+      type = double precision
+      mode = IN
+    }
+
+    {
+      name = p_chgamt
+      type = double precision
+      mode = IN
+    }
+
+    {
+      name = p_storereplnsourceid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_terminalid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_docschemeid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_createdon
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_createdby
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_lastmodifiedon
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_lastmodifiedby
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_closedon
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_closedby
+      type = text
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

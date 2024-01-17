@@ -1,0 +1,101 @@
+procedure "main"."invstock_intra_log_refresh()" {
+  text = """
+
+DECLARE
+
+    max_seq numeric(20);
+  j RECORD;
+
+BEGIN
+/*Generate Log Sequence Number*/
+
+UPDATE INVSTOCK_INTRA_LOG
+    SET logseq = nextval('invstock_intra_log_seq') where logseq is null;
+	/* FETCHING  CURRENT MAX SEQ FROM LOG */
+
+	   SELECT
+        MAX(coalesce(LOGSEQ,0))
+        INTO STRICT  max_seq
+        FROM invstock_intra_log;
+  /* Start Block- 1*/
+
+  /*Refreshing Invstock_Onhand_Intra MV table.*/
+
+  begin
+    FOR j IN (
+    SELECT i.psite_stockpoint_code        stockpointcode,
+         p.name                         stockpointname,
+         p.TYPE                         stockpointtype,
+         i.icode,
+         i.admsite_code,
+         i.loccode,
+         i.ICODE || '~' || i.ADMSITE_CODE GDS_REFCODE_SITE,
+            i.ICODE
+         || '~'
+         || i.ADMSITE_CODE
+         || '~'
+         || i.LOCCODE
+         || '~'
+         || coalesce(i.PSITE_STOCKPOINT_CODE, 'NA')
+            GDS_REFCODE_STKPT,
+         SUM(coalesce(qty, 0))             qty,         
+         SUM(i.amount)                 amount,
+         CASE WHEN i.invbatch_serial_code IS NOT NULL
+         THEN
+            i.psite_stockpoint_code||'~'||i.icode||'~'||i.admsite_code||'~'||i.loccode||'~'||coalesce(i.invbatch_serial_code,'NA')
+         ELSE
+            i.psite_stockpoint_code||'~'||i.icode||'~'||i.admsite_code||'~'||i.loccode
+         END intra_key,
+         max(time) laststkupdtime ,
+         i.invbatch_serial_code
+    FROM invstock_intra_log i, psite_stockpoint p
+   WHERE i.psite_stockpoint_code = p.code
+   and coalesce(logseq,0) >(SELECT LOGSEQ from log_tag_agg  WHERE CONSUMER = 'INVSTOCK_ONHAND_INTRA_AGG' and logname='INVSTOCK_INTRA_LOG')
+		and coalesce(logseq,0) <= coalesce(max_seq,0)
+GROUP BY i.psite_stockpoint_code,
+         p.name,
+         p.TYPE,
+         i.icode,
+         i.admsite_code,
+         i.loccode,
+         i.invbatch_serial_code)
+    LOOP
+            UPDATE invstock_onhand_intra_agg
+            SET QTY = coalesce(qty,0)+coalesce(j.qty,0), AMOUNT =coalesce(amount,0)+ coalesce(j.amount,0),
+            laststkupdtime=j.laststkupdtime
+                WHERE KEY = j.intra_key;
+            IF NOT FOUND THEN
+                INSERT INTO invstock_onhand_intra_agg(KEY, STOCKPOINTCODE,STOCKPOINTNAME,STOCKPOINTTYPE,LOCCODE, ICODE, admsite_code, GDS_REFCODE_SITE, GDS_REFCODE_STKPT,QTY, AMOUNT,laststkupdtime,invbatch_serial_code)
+                VALUES (j.intra_key,j.STOCKPOINTCODE,j.STOCKPOINTNAME,j.STOCKPOINTTYPE, j.loccode, j.icode, j.ADMSITE_CODE,  j.GDS_REFCODE_SITE, j.GDS_REFCODE_STKPT, j.qty, j.amount,j.laststkupdtime,j.invbatch_serial_code);
+            END IF;
+    END LOOP;
+	/* Update seq no. at tagging table for invstock_onhand_mv table */
+
+	if coalesce(max_seq,0) <> 0 then -- Checking Log data exist or not.
+    UPDATE log_tag_agg
+    SET LOGSEQ = coalesce(max_seq,0)
+        WHERE CONSUMER = 'INVSTOCK_ONHAND_INTRA_AGG' and logname='INVSTOCK_INTRA_LOG';
+	end if;	
+  EXCEPTION
+  WHEN OTHERS THEN
+  null;
+  end;
+  /* end Block- 1*/
+
+    
+    
+    /* DELETE FROM LOG TABLE UPTO MIN SEQ */
+
+    DELETE FROM invstock_intra_log
+        WHERE LOGSEQ <= (SELECT
+            MIN(coalesce(LOGSEQ,0))
+            FROM log_tag_agg
+			WHERE logname = 'INVSTOCK_INTRA_LOG');
+  COMMIT;
+END;
+"""
+  arguments = [
+  ]
+  language = plpgsql
+}
+

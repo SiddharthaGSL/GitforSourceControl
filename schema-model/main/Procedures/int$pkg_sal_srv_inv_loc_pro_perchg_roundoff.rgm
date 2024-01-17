@@ -1,0 +1,169 @@
+procedure "main"."int$pkg_sal_srv_inv_loc_pro_perchg_roundoff(bigint, bigint, numeric, character, bigint, bigint, character, character, character, character varying, character)" {
+  text = """
+
+DECLARE
+
+      v_totchgamt   salsrvchg.chgamt%TYPE;
+      v_maxcode     salsrvchg_item.code%TYPE := 0;
+      v_adjamt      salsrvchg_item.chgamt%TYPE;
+      v_actamt      salsrvchg_item.chgamt%TYPE;
+
+  c6_loop RECORD;
+
+BEGIN
+      FOR c6_loop
+         IN (  SELECT a.chgcode                   chgcode,
+                      coalesce(a.rate, 0)             rate,
+                      coalesce(b.roundoff, 'N')       roundoff,
+                      SUM(coalesce(a.appamt, 0))     appamt,
+                      ABS(SUM(coalesce(a.chgamt, 0))) chgamt
+                 FROM salsrvchg_item a, salchg b
+                WHERE     a.srvcode = p_srvcode
+                      AND a.chgcode = b.salchgcode
+                      AND a.basis = 'P'
+                      AND a.chgcode = p_chgcode
+                      AND a.rate = p_rate
+                      AND a.SIGN = p_sign
+                      AND (   (p_glcode IS NULL AND a.glcode IS NULL)
+                           OR (p_glcode IS NOT NULL AND a.glcode = p_glcode))
+                      AND (   (p_slcode IS NULL OR a.slcode IS NULL)
+                           OR (p_slcode IS NOT NULL OR a.slcode = p_slcode))
+                      AND a.basis = p_basis
+                      AND a.istax = p_istax
+                      AND a.source = p_source
+                      AND a.formulae = p_formulae
+                      AND (   (    p_gst_component IS NULL
+                               AND a.gst_component IS NULL)
+                           OR (   p_gst_component IS NOT NULL
+                               OR a.gst_component = p_gst_component))
+                      AND a.source <> 'E'
+             GROUP BY a.chgcode,
+                      coalesce(a.rate, 0),
+                      coalesce(b.roundoff, 'N'),
+                      b.istax)
+      LOOP
+         SELECT MAX(code)
+           INTO STRICT v_maxcode
+           FROM salsrvchg_item si
+          WHERE     si.srvcode = p_srvcode
+                AND si.basis = 'P'
+                AND si.chgcode = p_chgcode
+                AND si.rate = p_rate
+                AND si.SIGN = p_sign
+                AND (   (p_glcode IS NULL AND si.glcode IS NULL)
+                     OR (p_glcode IS NOT NULL AND si.glcode = p_glcode))
+                AND (   (p_slcode IS NULL OR si.slcode IS NULL)
+                     OR (p_slcode IS NOT NULL OR si.slcode = p_slcode))
+                AND si.basis = p_basis
+                AND si.istax = p_istax
+                AND si.source = p_source
+                AND si.formulae = p_formulae
+                AND (   (p_gst_component IS NULL AND si.gst_component IS NULL)
+                     OR (   p_gst_component IS NOT NULL
+                         OR si.gst_component = p_gst_component))
+                AND si.source <> 'E'
+                AND coalesce(si.appamt, 0) <> 0;
+
+         IF c6_loop.roundoff = 'N'
+         THEN
+            v_actamt :=
+               ROUND (
+                  ( (coalesce(c6_loop.appamt, 0) * coalesce(c6_loop.rate, 0)) / 100),
+                  2);
+         ELSE
+            v_actamt :=
+               ROUND (
+                  ( (coalesce(c6_loop.appamt, 0) * coalesce(c6_loop.rate, 0)) / 100),
+                  0);
+         END IF;
+
+         v_adjamt := v_actamt - c6_loop.chgamt;
+
+         IF coalesce(v_adjamt, 0) <> 0
+         THEN
+            IF p_sign = '-'
+            THEN
+               v_adjamt := v_adjamt * -1;
+            END IF;
+
+            UPDATE salsrvchg_item si
+               SET si.chgamt = coalesce(si.chgamt, 0) + coalesce(v_adjamt, 0),
+                   si.roundoff_adj_amt =
+                      coalesce(si.roundoff_adj_amt, 0) + coalesce(v_adjamt, 0)
+             WHERE si.code = v_maxcode AND si.srvcode = p_srvcode;
+         END IF;
+      END LOOP;
+   END;
+
+"""
+  arguments = <
+    {
+      name = p_srvcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_chgcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_rate
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_sign
+      type = character
+      mode = IN
+    }
+
+    {
+      name = p_glcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_slcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_basis
+      type = character
+      mode = IN
+    }
+
+    {
+      name = p_istax
+      type = character
+      mode = IN
+    }
+
+    {
+      name = p_source
+      type = character
+      mode = IN
+    }
+
+    {
+      name = p_formulae
+      type = character varying
+      mode = IN
+    }
+
+    {
+      name = p_gst_component
+      type = character
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

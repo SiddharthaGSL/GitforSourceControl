@@ -1,0 +1,428 @@
+function "main"."int$pkg_socnl_int$pkg_socnl_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      errmsg                varchar(2000);
+      vsession              varchar(100);
+      vdetailtbl            varchar(2000);
+      vdetailrec            varchar(500);
+      errcode               bigint;
+      --vmaxno                  number;
+      vcount                bigint;
+      v_status              varchar(2000);
+      v_menucode            bigint := 463;
+
+      v_cnlcode             salordcnlmain.cnlcode%TYPE;
+      v_cnlno               salordcnlmain.cnlno%TYPE;
+      v_cnldt               timestamp;
+      v_ycode               salordcnlmain.ycode%TYPE;
+      v_doccode             salordcnlmain.doccode%TYPE;
+      v_scheme_docno        salordcnlmain.scheme_docno%TYPE;
+      v_qty                 int$stg_socnl.cancel_qty%TYPE := 0;
+      v_bal_qty             int$stg_socnl.cancel_qty%TYPE := 0;
+
+      v_tempno              bigint;
+      v_err                 varchar(1000);
+      g_mark                varchar(100);
+      v_str                 varchar(4000);
+      v_no                  bigint;V_admsite_code_owner    ADMSITE.CODE%TYPE;
+
+      c1 CURSOR FOR
+           SELECT DISTINCT cnlcode, socnl_mode
+             FROM int$stg_socnl
+            WHERE userid = p_userid
+         ORDER BY 1;
+
+      -- main fields
+      c_main CURSOR(p_cnlcode bigint)
+      FOR
+         SELECT DISTINCT scheme_doc_format,
+                         scheme_docno,
+                         cnldt,
+                         docno,
+                         remarks,
+                         cnlcode,
+                         ycode,
+                         doccode,
+                         admou_code
+           FROM int$stg_socnl a
+          WHERE userid = p_userid AND cnlcode = p_cnlcode;
+
+      -- detail fields
+      c_det_barcode CURSOR(p_cnlcode bigint)
+      FOR
+         SELECT *
+           FROM int$stg_socnl
+          WHERE userid = p_userid AND cnlcode = p_cnlcode;
+
+      c_det_article CURSOR(
+         p_cnlcode    bigint)
+      FOR
+           SELECT d.ordcode ordcode,
+                  m.orddt orddt,
+                  d.code  salorddet_code,
+                  d.icode icode,
+                  a.cancel_qty,
+                  CASE WHEN                      coalesce(reserve_inv, 'N')='N' THEN    coalesce(d.ordqty, 0)                          - coalesce(d.dqty, 0)                          - coalesce(d.cnlqty, 0) WHEN                      coalesce(reserve_inv, 'N')='Y' THEN    coalesce(d.ordqty, 0)                          - coalesce(d.reserve_qty, 0)                          - coalesce(d.cnlqty, 0) END
+                     pending_qty,
+                  d.rate  rate
+             FROM salordmain  m,
+                  salorddet   d,
+                  invitem     i,
+                  int$stg_socnl a
+            WHERE     m.ordcode = d.ordcode
+                  AND d.icode = i.icode
+                  AND m.admou_code = p_connect_ou
+                  AND m.admsite_code = a.det_admsite_code
+                  AND m.orddt <= a.cnldt
+                  AND cnlcode = p_cnlcode
+                  AND m.authorcode IS NOT NULL
+                  AND i.invarticle_code = a.article_code
+                  AND m.admsite_code_owner = p_connect_site
+                  AND (   (    coalesce(m.reserve_inv, 'N') = 'Y'
+                           AND (  coalesce(d.ordqty, 0)
+                                - coalesce(d.reserve_qty, 0)
+                                - coalesce(d.cnlqty, 0)) > 0)
+                       OR (    coalesce(m.reserve_inv, 'N') = 'N'
+                           AND (  coalesce(d.ordqty, 0)
+                                - coalesce(d.dqty, 0)
+                                - coalesce(d.cnlqty, 0)) > 0))
+         ORDER BY 2, 1, 3;
+
+  i RECORD;
+BEGIN
+      g_mark := 'P01';
+
+      -- Deleting all log against the Purchase of Service creation for the user
+      DELETE FROM admerraudit a
+       WHERE a.usrname = USER AND a.prcname = 'SOCNL' AND a.errcode = p_userid :: text;
+
+       /*call erraudit(USER,
+                'SOCNL',
+                p_userid,
+                '1 - Web import Purchase of Service creation start');*/
+
+      -- Updating ordcode in int$stg_SOCNL
+      FOR i IN (  SELECT DISTINCT UPPER(scheme_doc_format) scheme_doc_format1,
+                                  UPPER(scheme_docno)    scheme_docno1,
+                                  cnldt,
+                                  UPPER(docno)           docno1,
+                                  UPPER(remarks)         remarks1
+                    FROM int$stg_socnl
+                   WHERE userid = p_userid
+                ORDER BY 1)
+      LOOP
+         SELECT nextval('erp01') INTO STRICT v_cnlcode;
+
+         v_status :=
+               ' update int$stg_socnl a set    cnlcode = '
+            || v_cnlcode :: text
+            || ','
+            || ' ycode = (select ycode from admyear where '''
+            || TO_CHAR(i.cnldt, 'YYYY-MM-DD')
+            || ''' between dtfr and dtto)'
+            || ' where  cnldt = '''
+            || TO_CHAR(i.cnldt, 'YYYY-MM-DD')
+            || ''' and    upper(scheme_doc_format) = '
+            || quote_nullable(i.scheme_doc_format1)
+            || ' and    ('
+            || quote_nullable(i.scheme_docno1)
+            || ' is null or upper(a.scheme_docno) = '
+            || quote_nullable(i.scheme_docno1)
+            || ')'
+            || ' and    ('
+            || quote_nullable(i.docno1)
+            || ' is null or upper(a.docno) = '
+            || quote_nullable(UPPER(i.docno1))
+            || ')'
+            || ' and ('
+            || quote_nullable(i.remarks1)
+            || ' is null or upper(a.remarks) = '
+            || quote_nullable(i.remarks1)
+            || ') and    userid = '
+            || p_userid::text;
+
+         /*call erraudit(USER,
+                   'SOCNL',
+                   p_userid,
+                   '2 - Updating ordcode - ' || v_status);*/
+
+         v_status := db_fun_commit_statement(USER, v_status);
+      END LOOP;
+
+      FOR i IN c1
+      LOOP
+         FOR j IN c_main(i.cnlcode)
+         LOOP
+         /*   db_pkg_genentryno.set_oucode (j.admou_code);
+            db_pkg_genentryno.set_sitecode (p_connect_site);
+            db_pkg_genentryno.set_menucode (v_menucode);
+            db_pkg_genentryno.initialize_globals (j.ycode);
+
+            v_tempno := db_pkg_genentryno.get_tempno;*/
+            /*call erraudit(
+               USER,
+               'SOCNL',
+               p_userid,
+                  '71 - Inserting main entry ... '
+               || i.cnlcode::text
+               || '*'
+               || j.ycode::text);*/
+
+            v_scheme_docno := coalesce(j.scheme_docno, 'AUTOMATIC');
+
+            INSERT INTO salordcnlmain(cnlcode,
+                                       cnlno,
+                                       cnldt,
+                                       docno,
+                                       REM,
+                                       YCODE,
+                                       ECODE,
+                                       TIME,
+                                       LAST_ACCESS_TIME,
+                                       LAST_ACCESS_ECODE,
+                                       doccode,
+                                       scheme_docno,
+                                       admou_code,
+                                       admsite_code_owner,
+                                       ENTRY_SOURCE)
+                 VALUES (i.cnlcode,
+                         v_tempno,
+                         j.cnldt,
+                         j.docno,
+                         j.remarks,
+                         j.ycode,
+                         p_userid,
+                         clock_timestamp(),
+                         NULL,
+                         NULL,
+                         j.doccode,
+                         v_scheme_docno,
+                         p_connect_ou,
+                         p_connect_site,
+                         'EXCEL');
+
+            IF UPPER(i.socnl_mode) = 'BARCODE'
+            THEN
+               FOR k IN c_det_barcode(i.cnlcode)
+               LOOP
+                  INSERT INTO salordcnldet(cnlcode,
+                                            ordcode,
+                                            icode,
+                                            rate,
+                                            cnlqty,
+                                            salorddet_code)
+                       VALUES (i.cnlcode,
+                               k.det_ordcode,
+                               k.det_icode,
+                               k.det_rate,
+                               k.cancel_qty,
+                               k.det_slorddet_code);
+               END LOOP;                                -- end of dettail loop
+            ELSIF UPPER(i.socnl_mode) = 'ARTICLE'
+            THEN
+               FOR k IN c_det_article(i.cnlcode)
+               LOOP
+                  v_qty := k.cancel_qty;
+                  v_bal_qty := k.cancel_qty;
+
+                  IF v_bal_qty > 0
+                  THEN
+                     IF k.pending_qty > v_bal_qty
+                     THEN
+                        INSERT INTO salordcnldet(cnlcode,
+                                                  ordcode,
+                                                  icode,
+                                                  rate,
+                                                  cnlqty,
+                                                  salorddet_code)
+                             VALUES (i.cnlcode,
+                                     k.ordcode,
+                                     k.icode,
+                                     coalesce(k.rate, 0),
+                                     v_bal_qty,
+                                     k.salorddet_code);
+
+                        v_bal_qty := 0;
+                        EXIT;
+                     ELSE
+                        INSERT INTO salordcnldet(cnlcode,
+                                                  ordcode,
+                                                  icode,
+                                                  rate,
+                                                  cnlqty,
+                                                  salorddet_code)
+                             VALUES (i.cnlcode,
+                                     k.ordcode,
+                                     k.icode,
+                                     coalesce(k.rate, 0),
+                                     k.pending_qty,
+                                     k.salorddet_code);
+
+                        v_bal_qty := v_bal_qty - k.pending_qty;
+                     END IF;
+                  ELSE
+                     v_bal_qty := 0;
+                     EXIT;
+                  END IF;
+               END LOOP;
+            END IF;
+
+            UPDATE salordcnldet
+               SET cnlcode = cnlcode
+             WHERE cnlcode = i.cnlcode;
+         END LOOP;                                        -- end of main loop;
+      END LOOP;                                           -- end of order code
+      -- Now all data inserted with proper validation
+      -- Now you may generate the scheme_docno, otherwise it may skipped.
+      -- site wise entry
+      FOR i IN c1
+      LOOP
+         v_scheme_docno := NULL;
+         v_ycode := NULL;
+
+         SELECT DISTINCT ycode, cnldt
+           INTO  v_ycode, v_cnldt
+           FROM int$stg_socnl
+          WHERE cnlcode = i.cnlcode;
+
+       /*  db_pkg_genentryno.set_oucode (p_connect_ou);
+         db_pkg_genentryno.set_sitecode (p_connect_site);
+         db_pkg_genentryno.set_menucode (v_menucode);
+         db_pkg_genentryno.initialize_globals (v_ycode);
+
+         db_pkg_genentryno.set_entcode (i.cnlcode);*/
+         UPDATE salordcnlmain
+            SET ycode = ycode--, cnlno = db_pkg_genentryno.g_tempno
+          WHERE cnlcode = i.cnlcode;
+
+         SELECT scheme_docno,admsite_code_owner,DOCCODE
+           INTO  v_scheme_docno,V_admsite_code_owner,V_DOCCODE
+           FROM salordcnlmain
+          WHERE cnlcode = i.cnlcode;
+
+          IF  UPPER(V_SCHEME_DOCNO) = 'AUTOMATIC' THEN
+                
+                        V_SCHEME_DOCNO :=
+                                db_fun_document_number_web(NULL,
+                                        V_doccode,
+                                        V_YCODE,
+                                        TO_CHAR(v_cnldt,'DD-MM-YYYY'),
+                                        NULL,
+                                        V_ADMSITE_CODE_OWNER,
+                                        p_connect_ou,
+                                        'SalesOrdCnl');
+                        
+                    update salordcnlmain
+                    set    scheme_docno = v_scheme_docno 
+                    WHERE cnlcode = i.cnlcode;
+
+                END IF;
+
+         UPDATE int$stg_socnl
+            SET scheme_docno = v_scheme_docno
+          WHERE cnlcode = i.cnlcode;
+      END LOOP;
+
+      -- log to be added in history table
+      SELECT nextval('int$error_log_code') INTO STRICT vsession;
+
+      vdetailtbl :=
+            'CREATE TABLE ginarchive.socnl_'
+         || vsession
+         || ' AS
+                select scheme_docno, to_char(cnldt,''DD-MM-YYYY'') cnl_dt, docno, remarks
+                from   int$stg_socnl a
+                WHERE  userid = '
+         || p_userid::text
+         || ' '
+         || 'GROUP BY scheme_docno, cnldt, docno, remarks '
+         || 'ORDER BY 2, 1';
+
+      EXECUTE vdetailtbl;
+
+      vdetailrec := 'SELECT count(1) FROM ginarchive.socnl_' || vsession::text;
+
+      EXECUTE vdetailrec INTO STRICT vcount;
+
+      IF coalesce(vcount, 0) = 0
+      THEN
+         NULL;
+      --RAISE insert_violation;
+      END IF;
+
+      INSERT INTO int$history(code,
+                               importedby,
+                               importedon,
+                               classname,
+                               summary,
+                               history_detail_tablename,
+                               history_detail_row_count)
+           VALUES (nextval('int$history_code'),
+                   p_userid,
+                   clock_timestamp(),
+                   'SOCNL',
+                   vcount::TEXT || ' Cancel Sales order(s) imported successfully.',
+                   'ginarchive.SOCNL_' || vsession,
+                   vcount);
+
+      RETURN('1');
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         --NULL;
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'SOCNL',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

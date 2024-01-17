@@ -1,0 +1,1426 @@
+view "main"."v_gst_ent_hsn" {
+  text = """-
+SELECT qf.enttype,
+    qf.entcode,
+    qf.document_gstin,
+    qf.document_gst_state_code,
+    qf.document_site_code,
+    qf.document_site_type,
+    qf.cp_gstin,
+    qf.cp_gst_state_code,
+    qf.entno,
+    qf.entdt,
+    qf.refentno,
+    qf.refentdt,
+    qf.document_netamt,
+    qf.document_gstappl_flag,
+    qf.tradegroupcode,
+    qf.etin,
+    h.code AS invhsnsacmain_code,
+    h.hsn_sac_code,
+    h.description AS hsn_sac_description,
+    h.appl AS hsn_sac_appl_for,
+    COALESCE(qf.input_eligibility, 'IP'::text) AS input_eligibility,
+    i.unitname AS uom,
+    sum(qf.qty) AS qty,
+    sum(qf.taxableamt) AS taxableamt,
+    ((qf.igstrate + qf.cgstrate) + qf.sgstrate) AS totaltaxrate,
+    qf.igstrate,
+    sum(qf.igstamt) AS igstamt,
+    qf.cgstrate,
+    sum(qf.cgstamt) AS cgstamt,
+    qf.sgstrate,
+    sum(qf.sgstamt) AS sgstamt,
+    qf.cessrate,
+    sum(qf.cessamt) AS cessamt,
+    ((qf.reverse_igstrate + qf.reverse_cgstrate) + qf.reverse_sgstrate) AS reverse_totaltaxrate,
+    qf.reverse_igstrate,
+    sum(abs(qf.reverse_igstamt)) AS reverse_igstamt,
+    qf.reverse_cgstrate,
+    sum(abs(qf.reverse_cgstamt)) AS reverse_cgstamt,
+    qf.reverse_sgstrate,
+    sum(abs(qf.reverse_sgstamt)) AS reverse_sgstamt,
+    qf.reverse_cessrate,
+    sum(abs(qf.reverse_cessamt)) AS reverse_cessamt,
+    qf.cp_slcode,
+    qf.cp_psite_customer_code,
+    qf.cp_sitecode,
+    qf.originalinvno,
+    qf.originalinvdt,
+    qf.cdnreason
+   FROM ( SELECT 'SIM'::text AS enttype,
+            (d.invcode)::character varying AS entcode,
+            doc.gst_identification_no AS document_gstin,
+            doc.gst_state_code AS document_gst_state_code,
+            doc.sitecode AS document_site_code,
+            doc.site_type AS document_site_type,
+            cp.gst_identification_no AS cp_gstin,
+            cp.gst_state_code AS cp_gst_state_code,
+            (c.salinvdet_code)::character varying AS detcode,
+            m.scheme_docno AS entno,
+            m.invdt AS entdt,
+            m.docno AS refentno,
+            m.docdt AS refentdt,
+            m.netamt AS document_netamt,
+            m.gstappl AS document_gstappl_flag,
+            m.saltradegrp_code AS tradegroupcode,
+            NULL::text AS etin,
+            d.icode,
+            d.invqty AS qty,
+            NULL::text AS input_eligibility,
+            c.appamt AS taxableamt,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'IGST'::bpchar) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS igstrate,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'IGST'::bpchar) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS igstamt,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'CGST'::bpchar) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cgstrate,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'CGST'::bpchar) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cgstamt,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'SGST'::bpchar) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS sgstrate,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'SGST'::bpchar) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS sgstamt,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'CESS'::bpchar) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cessrate,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'CESS'::bpchar) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cessamt,
+            0 AS reverse_igstrate,
+            0 AS reverse_igstamt,
+            0 AS reverse_cgstrate,
+            0 AS reverse_cgstamt,
+            0 AS reverse_sgstrate,
+            0 AS reverse_sgstamt,
+            0 AS reverse_cessrate,
+            0 AS reverse_cessamt,
+            m.pcode AS cp_slcode,
+            NULL::text AS cp_psite_customer_code,
+            m.admsite_code AS cp_sitecode,
+            NULL::character varying AS originalinvno,
+            NULL::timestamp without time zone AS originalinvdt,
+            NULL::text AS cdnreason
+           FROM main.salinvdet d,
+            main.salinvchg_item c,
+            main.salinvmain m,
+            main.v_gst_site doc,
+            main.v_gst_site cp
+          WHERE ((d.code = c.salinvdet_code) AND (c.source = 'G'::bpchar) AND (d.invcode = m.invcode) AND (m.admsite_code_owner = doc.sitecode) AND (COALESCE(m.release_status, 'U'::bpchar) = 'P'::bpchar) AND (m.admsite_code = cp.sitecode))
+          GROUP BY d.invcode, doc.gst_identification_no, doc.gst_state_code, doc.sitecode, doc.site_type, cp.gst_identification_no, cp.gst_state_code, c.salinvdet_code, m.scheme_docno, m.docno, m.docdt, m.invdt, m.netamt, m.gstappl, m.saltradegrp_code, d.icode, d.invqty, c.appamt, m.pcode, m.admsite_code
+        UNION ALL
+         SELECT
+                CASE
+                    WHEN ((cp.site_type)::text ~~ '%CM%'::text) THEN 'CTM'::text
+                    ELSE 'SRT'::text
+                END AS enttype,
+            (d.rtcode)::character varying AS entcode,
+            doc.gst_identification_no AS document_gstin,
+            doc.gst_state_code AS document_gst_state_code,
+            doc.sitecode AS document_site_code,
+            doc.site_type AS document_site_type,
+            cp.gst_identification_no AS cp_gstin,
+            cp.gst_state_code AS cp_gst_state_code,
+            (c.salrtdet_code)::character varying AS detcode,
+            m.scheme_docno AS entno,
+            m.rtdt AS entdt,
+                CASE
+                    WHEN ((m.psite_grt_code)::text <> ''::text) THEN COALESCE(rg.gstdocno, ((((cp.doc_identification_no)::text || '-'::text) || (
+                    CASE
+                        WHEN (length((rg.docno)::text) > 12) THEN (substr((rg.docno)::text, '-12'::integer))::character varying
+                        ELSE rg.docno
+                    END)::text))::character varying)
+                    WHEN ((m.transferout_invcode)::text <> ''::text) THEN ri.scheme_docno
+                    ELSE m.docno
+                END AS refentno,
+                CASE
+                    WHEN ((m.psite_grt_code)::text <> ''::text) THEN rg.docdt
+                    WHEN ((m.transferout_invcode)::text <> ''::text) THEN ri.invdt
+                    ELSE m.docdt
+                END AS refentdt,
+            m.netamt AS document_netamt,
+            m.gstappl AS document_gstappl_flag,
+            m.saltradegrp_code AS tradegroupcode,
+            NULL::text AS etin,
+            d.icode,
+            d.qty,
+            NULL::text AS input_eligibility,
+            c.appamt AS taxableamt,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'IGST'::bpchar) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS igstrate,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'IGST'::bpchar) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS igstamt,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'CGST'::bpchar) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cgstrate,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'CGST'::bpchar) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cgstamt,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'SGST'::bpchar) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS sgstrate,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'SGST'::bpchar) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS sgstamt,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'CESS'::bpchar) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cessrate,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'CESS'::bpchar) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cessamt,
+            0 AS reverse_igstrate,
+            0 AS reverse_igstamt,
+            0 AS reverse_cgstrate,
+            0 AS reverse_cgstamt,
+            0 AS reverse_sgstrate,
+            0 AS reverse_sgstamt,
+            0 AS reverse_cessrate,
+            0 AS reverse_cessamt,
+            m.pcode AS cp_slcode,
+            NULL::text AS cp_psite_customer_code,
+            m.admsite_code AS cp_sitecode,
+            im.scheme_docno AS originalinvno,
+            im.invdt AS originalinvdt,
+            'Sales Return'::text AS cdnreason
+           FROM main.v_gst_site doc,
+            main.v_gst_site cp,
+            main.salrtchg_item c,
+            (main.salrtdet d
+             LEFT JOIN main.salinvmain im ON ((d.invcode = im.invcode))),
+            ((main.salrtmain m
+             LEFT JOIN main.salinvmain ri ON ((m.transferout_invcode = ri.invcode)))
+             LEFT JOIN main.psite_grt rg ON (((m.psite_grt_code)::text = (rg.code)::text)))
+          WHERE ((d.code = c.salrtdet_code) AND (c.source = 'G'::bpchar) AND (d.rtcode = m.rtcode) AND (m.admsite_code_owner = doc.sitecode) AND (COALESCE(m.release_status, 'U'::bpchar) = 'P'::bpchar) AND (m.admsite_code = cp.sitecode))
+          GROUP BY
+                CASE
+                    WHEN ((cp.site_type)::text ~~ '%CM%'::text) THEN 'CTM'::text
+                    ELSE 'SRT'::text
+                END, d.rtcode, doc.gst_identification_no, doc.gst_state_code, doc.sitecode, doc.site_type, cp.gst_identification_no, cp.gst_state_code, c.salrtdet_code, m.scheme_docno, m.rtdt, m.netamt, m.gstappl, m.saltradegrp_code, d.icode, d.qty, c.appamt, m.pcode, m.admsite_code,
+                CASE
+                    WHEN ((m.psite_grt_code)::text <> ''::text) THEN COALESCE(rg.gstdocno, ((((cp.doc_identification_no)::text || '-'::text) || (
+                    CASE
+                        WHEN (length((rg.docno)::text) > 12) THEN (substr((rg.docno)::text, '-12'::integer))::character varying
+                        ELSE rg.docno
+                    END)::text))::character varying)
+                    WHEN ((m.transferout_invcode)::text <> ''::text) THEN ri.scheme_docno
+                    ELSE m.docno
+                END,
+                CASE
+                    WHEN ((m.psite_grt_code)::text <> ''::text) THEN rg.docdt
+                    WHEN ((m.transferout_invcode)::text <> ''::text) THEN ri.invdt
+                    ELSE m.docdt
+                END, im.scheme_docno, im.invdt
+        UNION ALL
+         SELECT
+                CASE
+                    WHEN (m.jrntype = 'D'::bpchar) THEN 'SDN'::text
+                    ELSE 'SCN'::text
+                END AS enttype,
+            (d.jrncode)::character varying AS entcode,
+            doc.gst_identification_no AS document_gstin,
+            doc.gst_state_code AS document_gst_state_code,
+            doc.sitecode AS document_site_code,
+            doc.site_type AS document_site_type,
+            cp.gst_identification_no AS cp_gstin,
+            cp.gst_state_code AS cp_gst_state_code,
+            (c.salinvjrndet_code)::character varying AS detcode,
+            m.scheme_docno AS entno,
+            m.jrndt AS entdt,
+            m.docno AS refentno,
+            m.docdt AS refentdt,
+            m.netamt AS document_netamt,
+            m.gstappl AS document_gstappl_flag,
+            m.saltradegrp_code AS tradegroupcode,
+            NULL::text AS etin,
+            d.icode,
+            d.qty,
+            NULL::text AS input_eligibility,
+            c.appamt AS taxableamt,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'IGST'::bpchar) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS igstrate,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'IGST'::bpchar) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS igstamt,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'CGST'::bpchar) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cgstrate,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'CGST'::bpchar) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cgstamt,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'SGST'::bpchar) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS sgstrate,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'SGST'::bpchar) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS sgstamt,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'CESS'::bpchar) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cessrate,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'CESS'::bpchar) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cessamt,
+            0 AS reverse_igstrate,
+            0 AS reverse_igstamt,
+            0 AS reverse_cgstrate,
+            0 AS reverse_cgstamt,
+            0 AS reverse_sgstrate,
+            0 AS reverse_sgstamt,
+            0 AS reverse_cessrate,
+            0 AS reverse_cessamt,
+            m.pcode AS cp_slcode,
+            NULL::text AS cp_psite_customer_code,
+            m.admsite_code AS cp_sitecode,
+            im.scheme_docno AS originalinvno,
+            im.invdt AS originalinvdt,
+            r.reason AS cdnreason
+           FROM main.salinvjrndet d,
+            main.salinvjrnchg_item c,
+            main.salinvjrnmain m,
+            main.v_gst_site doc,
+            main.v_gst_site cp,
+            main.salinvmain im,
+            main.admgstjrnreason r
+          WHERE ((d.code = c.salinvjrndet_code) AND (c.source = 'G'::bpchar) AND (d.jrncode = m.jrncode) AND (m.admsite_code_owner = doc.sitecode) AND (COALESCE(m.release_status, 'U'::bpchar) = 'P'::bpchar) AND (m.admsite_code = cp.sitecode) AND (m.salinvmain_code = im.invcode) AND (m.admgstjrnreason_code = r.code))
+          GROUP BY
+                CASE
+                    WHEN (m.jrntype = 'D'::bpchar) THEN 'SDN'::text
+                    ELSE 'SCN'::text
+                END, d.jrncode, doc.gst_identification_no, doc.gst_state_code, doc.sitecode, doc.site_type, cp.gst_identification_no, cp.gst_state_code, c.salinvjrndet_code, m.scheme_docno, m.docno, m.docdt, m.jrndt, m.netamt, m.gstappl, m.saltradegrp_code, d.icode, d.qty, c.appamt, m.pcode, m.admsite_code, im.scheme_docno, im.invdt, r.reason
+        UNION ALL
+         SELECT 'PIM'::text AS enttype,
+            (d.invcode)::character varying AS entcode,
+            doc.gst_identification_no AS document_gstin,
+            doc.gst_state_code AS document_gst_state_code,
+            doc.sitecode AS document_site_code,
+            doc.site_type AS document_site_type,
+            cp.cp_gstin_no AS cp_gstin,
+            cp.cp_gstin_state_code AS cp_gst_state_code,
+            (c.purinvdet_code)::character varying AS detcode,
+            m.scheme_docno AS entno,
+            m.invdt AS entdt,
+            m.docno AS refentno,
+            m.docdt AS refentdt,
+            m.netamt AS document_netamt,
+            m.gstappl AS document_gstappl_flag,
+            m.fintradegrp_code AS tradegroupcode,
+            NULL::text AS etin,
+            d.icode,
+            d.qty,
+            NULL::text AS input_eligibility,
+            c.appamt AS taxableamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'IGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS igstrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'IGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS igstamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cgstrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cgstamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'SGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS sgstrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'SGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS sgstamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CESS'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cessrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CESS'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cessamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'IGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_igstrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'IGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_igstamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_cgstrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_cgstamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'SGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_sgstrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'SGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_sgstamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CESS'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_cessrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CESS'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_cessamt,
+            m.pcode AS cp_slcode,
+            NULL::text AS cp_psite_customer_code,
+            NULL::numeric AS cp_sitecode,
+            NULL::character varying AS originalinvno,
+            NULL::timestamp without time zone AS originalinvdt,
+            NULL::text AS cdnreason
+           FROM main.purinvdet d,
+            main.purinvchg_item c,
+            main.purinvmain m,
+            main.v_gst_site doc,
+            main.finsl cp
+          WHERE ((d.code = c.purinvdet_code) AND (c.source = 'G'::bpchar) AND (d.invcode = m.invcode) AND (m.admsite_code = doc.sitecode) AND (COALESCE(m.release_status, 'U'::bpchar) = 'P'::bpchar) AND (m.pcode = cp.slcode))
+          GROUP BY d.invcode, doc.gst_identification_no, doc.gst_state_code, doc.sitecode, doc.site_type, cp.cp_gstin_no, cp.cp_gstin_state_code, c.purinvdet_code, m.scheme_docno, m.invdt, m.docno, m.docdt, m.netamt, m.gstappl, m.fintradegrp_code, d.icode, d.qty, c.appamt, m.pcode
+        UNION ALL
+         SELECT 'PRM'::text AS enttype,
+            (d.rtcode)::character varying AS entcode,
+            doc.gst_identification_no AS document_gstin,
+            doc.gst_state_code AS document_gst_state_code,
+            doc.sitecode AS document_site_code,
+            doc.site_type AS document_site_type,
+            cp.cp_gstin_no AS cp_gstin,
+            cp.cp_gstin_state_code AS cp_gst_state_code,
+            (c.purrtdet_code)::character varying AS detcode,
+            m.scheme_docno AS entno,
+            m.rtdt AS entdt,
+            m.docno AS refentno,
+            m.docdt AS refentdt,
+            m.netamt AS document_netamt,
+            m.gstappl AS document_gstappl_flag,
+            m.fintradegrp_code AS tradegroupcode,
+            NULL::text AS etin,
+            d.icode,
+            d.qty,
+            NULL::text AS input_eligibility,
+            c.appamt AS taxableamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'IGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS igstrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'IGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS igstamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cgstrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cgstamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'SGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS sgstrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'SGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS sgstamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CESS'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cessrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CESS'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cessamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'IGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_igstrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'IGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_igstamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_cgstrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_cgstamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'SGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_sgstrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'SGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_sgstamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CESS'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_cessrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CESS'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_cessamt,
+            m.pcode AS cp_slcode,
+            NULL::text AS cp_psite_customer_code,
+            NULL::numeric AS cp_sitecode,
+                CASE
+                    WHEN (im.gstappl <> 'N'::bpchar) THEN im.scheme_docno
+                    ELSE im.docno
+                END AS originalinvno,
+                CASE
+                    WHEN (im.gstappl <> 'N'::bpchar) THEN im.invdt
+                    ELSE im.docdt
+                END AS originalinvdt,
+            'Sales Return'::text AS cdnreason
+           FROM main.purrtmain m,
+            main.v_gst_site doc,
+            main.purrtdet d,
+            main.finsl cp,
+            main.purrtchg_item c,
+            ((main.invgrtdet gd
+             LEFT JOIN main.purinvdet id ON ((gd.invgrcdet_code = id.invgrcdet_code)))
+             LEFT JOIN main.purinvmain im ON ((id.invcode = im.invcode)))
+          WHERE ((d.code = c.purrtdet_code) AND (c.source = 'G'::bpchar) AND (d.rtcode = m.rtcode) AND (m.admsite_code = doc.sitecode) AND (COALESCE(m.release_status, 'U'::bpchar) = 'P'::bpchar) AND (m.pcode = cp.slcode) AND (d.invgrtdet_code = gd.code))
+          GROUP BY d.rtcode, doc.gst_identification_no, doc.gst_state_code, doc.sitecode, doc.site_type, cp.cp_gstin_no, cp.cp_gstin_state_code, c.purrtdet_code, m.scheme_docno, m.rtdt, m.docno, m.docdt, m.netamt, m.gstappl, m.fintradegrp_code, d.icode, d.qty, c.appamt, m.pcode,
+                CASE
+                    WHEN (im.gstappl <> 'N'::bpchar) THEN im.scheme_docno
+                    ELSE im.docno
+                END,
+                CASE
+                    WHEN (im.gstappl <> 'N'::bpchar) THEN im.invdt
+                    ELSE im.docdt
+                END
+        UNION ALL
+         SELECT
+                CASE
+                    WHEN (m.jrntype = 'D'::bpchar) THEN 'PDN'::text
+                    ELSE 'PCN'::text
+                END AS enttype,
+            (d.jrncode)::character varying AS entcode,
+            doc.gst_identification_no AS document_gstin,
+            doc.gst_state_code AS document_gst_state_code,
+            doc.sitecode AS document_site_code,
+            doc.site_type AS document_site_type,
+            cp.cp_gstin_no AS cp_gstin,
+            cp.cp_gstin_state_code AS cp_gst_state_code,
+            (c.purinvjrndet_code)::character varying AS detcode,
+            m.scheme_docno AS entno,
+            m.jrndt AS entdt,
+            m.docno AS refentno,
+            m.docdt AS refentdt,
+            m.netamt AS document_netamt,
+            m.gstappl AS document_gstappl_flag,
+            m.fintradegrp_code AS tradegroupcode,
+            NULL::text AS etin,
+            d.icode,
+            d.qty,
+            NULL::text AS input_eligibility,
+            c.appamt AS taxableamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'IGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS igstrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'IGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS igstamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cgstrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cgstamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'SGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS sgstrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'SGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS sgstamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CESS'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cessrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CESS'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cessamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'IGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_igstrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'IGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_igstamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_cgstrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_cgstamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'SGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_sgstrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'SGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_sgstamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CESS'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_cessrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CESS'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_cessamt,
+            m.pcode AS cp_slcode,
+            NULL::text AS cp_psite_customer_code,
+            NULL::numeric AS cp_sitecode,
+                CASE
+                    WHEN (im.gstappl <> 'N'::bpchar) THEN im.scheme_docno
+                    ELSE im.docno
+                END AS originalinvno,
+                CASE
+                    WHEN (im.gstappl <> 'N'::bpchar) THEN im.invdt
+                    ELSE im.docdt
+                END AS originalinvdt,
+            r.reason AS cdnreason
+           FROM main.purinvjrndet d,
+            main.purinvjrnchg_item c,
+            main.purinvjrnmain m,
+            main.v_gst_site doc,
+            main.finsl cp,
+            main.purinvmain im,
+            main.admgstjrnreason r
+          WHERE ((d.code = c.purinvjrndet_code) AND (c.source = 'G'::bpchar) AND (d.jrncode = m.jrncode) AND (m.admsite_code_owner = doc.sitecode) AND (COALESCE(m.release_status, 'U'::bpchar) = 'P'::bpchar) AND (m.pcode = cp.slcode) AND (m.purinvmain_code = im.invcode) AND (m.admgstjrnreason_code = r.code))
+          GROUP BY
+                CASE
+                    WHEN (m.jrntype = 'D'::bpchar) THEN 'PDN'::text
+                    ELSE 'PCN'::text
+                END, d.jrncode, doc.gst_identification_no, doc.gst_state_code, doc.sitecode, doc.site_type, cp.cp_gstin_no, cp.cp_gstin_state_code, c.purinvjrndet_code, m.scheme_docno, m.jrndt, m.docno, m.docdt, m.netamt, m.gstappl, m.fintradegrp_code, d.icode, d.qty, c.appamt, m.pcode,
+                CASE
+                    WHEN (im.gstappl <> 'N'::bpchar) THEN im.scheme_docno
+                    ELSE im.docno
+                END,
+                CASE
+                    WHEN (im.gstappl <> 'N'::bpchar) THEN im.invdt
+                    ELSE im.docdt
+                END, r.reason
+        UNION ALL
+         SELECT 'SGO'::text AS enttype,
+            (d.psite_grt_code)::character varying AS entcode,
+            doc.gst_identification_no AS document_gstin,
+            doc.gst_state_code AS document_gst_state_code,
+            doc.sitecode AS document_site_code,
+            doc.site_type AS document_site_type,
+            cp.gst_identification_no AS cp_gstin,
+            cp.gst_state_code AS cp_gst_state_code,
+            (c.psite_grtitem_code)::character varying AS detcode,
+            COALESCE(m.gstdocno, ((((doc.doc_identification_no)::text || '-'::text) || (
+                CASE
+                    WHEN (length((m.docno)::text) > 12) THEN (substr((m.docno)::text, '-12'::integer))::character varying
+                    ELSE m.docno
+                END)::text))::character varying) AS entno,
+            m.docdt AS entdt,
+            NULL::character varying AS refentno,
+            NULL::timestamp without time zone AS refentdt,
+            m.netamt AS document_netamt,
+            NULL::bpchar AS document_gstappl_flag,
+            m.fintradegrp_code AS tradegroupcode,
+            NULL::text AS etin,
+            d.icode,
+            d.rtqty AS qty,
+            NULL::text AS input_eligibility,
+            c.chargeappamt AS taxableamt,
+            sum(
+                CASE
+                    WHEN (c.gstcomponent = 'IGST'::bpchar) THEN COALESCE(c.factor, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS igstrate,
+            sum(
+                CASE
+                    WHEN (c.gstcomponent = 'IGST'::bpchar) THEN COALESCE(c.chargeamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS igstamt,
+            sum(
+                CASE
+                    WHEN (c.gstcomponent = 'CGST'::bpchar) THEN COALESCE(c.factor, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cgstrate,
+            sum(
+                CASE
+                    WHEN (c.gstcomponent = 'CGST'::bpchar) THEN COALESCE(c.chargeamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cgstamt,
+            sum(
+                CASE
+                    WHEN (c.gstcomponent = 'SGST'::bpchar) THEN COALESCE(c.factor, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS sgstrate,
+            sum(
+                CASE
+                    WHEN (c.gstcomponent = 'SGST'::bpchar) THEN COALESCE(c.chargeamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS sgstamt,
+            sum(
+                CASE
+                    WHEN (c.gstcomponent = 'CESS'::bpchar) THEN COALESCE(c.factor, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cessrate,
+            sum(
+                CASE
+                    WHEN (c.gstcomponent = 'CESS'::bpchar) THEN COALESCE(c.chargeamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cessamt,
+            0 AS reverse_igstrate,
+            0 AS reverse_igstamt,
+            0 AS reverse_cgstrate,
+            0 AS reverse_cgstamt,
+            0 AS reverse_sgstrate,
+            0 AS reverse_sgstamt,
+            0 AS reverse_cessrate,
+            0 AS reverse_cessamt,
+            NULL::numeric AS cp_slcode,
+            NULL::text AS cp_psite_customer_code,
+            m.repln_admsite_code AS cp_sitecode,
+            NULL::character varying AS originalinvno,
+            NULL::timestamp without time zone AS originalinvdt,
+            NULL::text AS cdnreason
+           FROM main.psite_grtitem d,
+            main.psite_grtchgitem c,
+            main.psite_grt m,
+            main.v_gst_site doc,
+            main.v_gst_site cp
+          WHERE (((d.code)::text = (c.psite_grtitem_code)::text) AND (c.source = 'G'::bpchar) AND ((d.psite_grt_code)::text = (m.code)::text) AND (m.admsite_code = doc.sitecode) AND (m.repln_admsite_code = cp.sitecode))
+          GROUP BY d.psite_grt_code, doc.gst_identification_no, doc.gst_state_code, doc.sitecode, doc.site_type, cp.gst_identification_no, cp.gst_state_code, c.psite_grtitem_code, COALESCE(m.gstdocno, ((((doc.doc_identification_no)::text || '-'::text) || (
+                CASE
+                    WHEN (length((m.docno)::text) > 12) THEN (substr((m.docno)::text, '-12'::integer))::character varying
+                    ELSE m.docno
+                END)::text))::character varying), m.docdt, m.netamt, m.fintradegrp_code, d.icode, d.rtqty, c.chargeappamt, m.repln_admsite_code
+        UNION ALL
+         SELECT 'SGI'::text AS enttype,
+            (d.psite_grc_code)::character varying AS entcode,
+            doc.gst_identification_no AS document_gstin,
+            doc.gst_state_code AS document_gst_state_code,
+            doc.sitecode AS document_site_code,
+            doc.site_type AS document_site_type,
+            cp.gst_identification_no AS cp_gstin,
+            cp.gst_state_code AS cp_gst_state_code,
+            (d.code)::character varying AS detcode,
+            m.docno AS entno,
+            m.docdt AS entdt,
+            COALESCE(rg.gstdocno, ((((cp.doc_identification_no)::text || '-'::text) || (
+                CASE
+                    WHEN (length((rg.docno)::text) > 12) THEN (substr((rg.docno)::text, '-12'::integer))::character varying
+                    ELSE rg.docno
+                END)::text))::character varying) AS refentno,
+            rg.docdt AS refentdt,
+            rg.netamt AS document_netamt,
+            NULL::bpchar AS document_gstappl_flag,
+            rg.fintradegrp_code AS tradegroupcode,
+            NULL::text AS etin,
+            d.icode,
+            rgd.rtqty AS qty,
+            NULL::text AS input_eligibility,
+            c.chargeappamt AS taxableamt,
+            sum(
+                CASE
+                    WHEN (c.gstcomponent = 'IGST'::bpchar) THEN COALESCE(c.factor, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS igstrate,
+            sum(
+                CASE
+                    WHEN (c.gstcomponent = 'IGST'::bpchar) THEN COALESCE(c.chargeamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS igstamt,
+            sum(
+                CASE
+                    WHEN (c.gstcomponent = 'CGST'::bpchar) THEN COALESCE(c.factor, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cgstrate,
+            sum(
+                CASE
+                    WHEN (c.gstcomponent = 'CGST'::bpchar) THEN COALESCE(c.chargeamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cgstamt,
+            sum(
+                CASE
+                    WHEN (c.gstcomponent = 'SGST'::bpchar) THEN COALESCE(c.factor, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS sgstrate,
+            sum(
+                CASE
+                    WHEN (c.gstcomponent = 'SGST'::bpchar) THEN COALESCE(c.chargeamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS sgstamt,
+            sum(
+                CASE
+                    WHEN (c.gstcomponent = 'CESS'::bpchar) THEN COALESCE(c.factor, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cessrate,
+            sum(
+                CASE
+                    WHEN (c.gstcomponent = 'CESS'::bpchar) THEN COALESCE(c.chargeamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cessamt,
+            0 AS reverse_igstrate,
+            0 AS reverse_igstamt,
+            0 AS reverse_cgstrate,
+            0 AS reverse_cgstamt,
+            0 AS reverse_sgstrate,
+            0 AS reverse_sgstamt,
+            0 AS reverse_cessrate,
+            0 AS reverse_cessamt,
+            NULL::numeric AS cp_slcode,
+            NULL::text AS cp_psite_customer_code,
+            m.repln_admsite_code AS cp_sitecode,
+            NULL::character varying AS originalinvno,
+            NULL::timestamp without time zone AS originalinvdt,
+            NULL::text AS cdnreason
+           FROM main.psite_grcitem d,
+            main.psite_grtchgitem c,
+            main.psite_grc m,
+            main.v_gst_site doc,
+            main.v_gst_site cp,
+            main.psite_grt rg,
+            main.psite_grtitem rgd
+          WHERE (((m.psite_grt_code)::text = (rg.code)::text) AND ((d.psite_grtitem_code)::text = (rgd.code)::text) AND ((d.psite_grtitem_code)::text = (c.psite_grtitem_code)::text) AND (c.source = 'G'::bpchar) AND ((d.psite_grc_code)::text = (m.code)::text) AND (m.admsite_code = doc.sitecode) AND (m.repln_admsite_code = cp.sitecode) AND ((doc.site_type)::text <> 'MS-CO-OM-TS'::text))
+          GROUP BY d.psite_grc_code, doc.gst_identification_no, doc.gst_state_code, doc.sitecode, doc.site_type, cp.gst_identification_no, cp.gst_state_code, d.code, m.docno, m.docdt, rg.netamt, d.icode, rgd.rtqty, c.chargeappamt, m.repln_admsite_code, COALESCE(rg.gstdocno, ((((cp.doc_identification_no)::text || '-'::text) || (
+                CASE
+                    WHEN (length((rg.docno)::text) > 12) THEN (substr((rg.docno)::text, '-12'::integer))::character varying
+                    ELSE rg.docno
+                END)::text))::character varying), rg.docdt, rg.fintradegrp_code
+        UNION ALL
+         SELECT 'SGI'::text AS enttype,
+            (d.psite_grc_code)::character varying AS entcode,
+            doc.gst_identification_no AS document_gstin,
+            doc.gst_state_code AS document_gst_state_code,
+            doc.sitecode AS document_site_code,
+            doc.site_type AS document_site_type,
+            cp.gst_identification_no AS cp_gstin,
+            cp.gst_state_code AS cp_gst_state_code,
+            (d.code)::character varying AS detcode,
+            m.docno AS entno,
+            m.docdt AS entdt,
+            ri.scheme_docno AS refentno,
+            ri.invdt AS refentdt,
+            ri.netamt AS document_netamt,
+            NULL::bpchar AS document_gstappl_flag,
+            ri.saltradegrp_code AS tradegroupcode,
+            NULL::text AS etin,
+            d.icode,
+            rid.invqty AS qty,
+            NULL::text AS input_eligibility,
+            c.appamt AS taxableamt,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'IGST'::bpchar) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS igstrate,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'IGST'::bpchar) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS igstamt,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'CGST'::bpchar) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cgstrate,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'CGST'::bpchar) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cgstamt,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'SGST'::bpchar) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS sgstrate,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'SGST'::bpchar) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS sgstamt,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'CESS'::bpchar) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cessrate,
+            sum(
+                CASE
+                    WHEN (c.gst_component = 'CESS'::bpchar) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cessamt,
+            0 AS reverse_igstrate,
+            0 AS reverse_igstamt,
+            0 AS reverse_cgstrate,
+            0 AS reverse_cgstamt,
+            0 AS reverse_sgstrate,
+            0 AS reverse_sgstamt,
+            0 AS reverse_cessrate,
+            0 AS reverse_cessamt,
+            NULL::numeric AS cp_slcode,
+            NULL::text AS cp_psite_customer_code,
+            m.repln_admsite_code AS cp_sitecode,
+            NULL::character varying AS originalinvno,
+            NULL::timestamp without time zone AS originalinvdt,
+            NULL::text AS cdnreason
+           FROM main.psite_grcitem d,
+            main.salinvchg_item c,
+            main.psite_grc m,
+            main.v_gst_site doc,
+            main.v_gst_site cp,
+            main.salinvmain ri,
+            main.salinvdet rid
+          WHERE ((d.salinvdet_code = c.salinvdet_code) AND (m.invcode = ri.invcode) AND (d.salinvdet_code = rid.code) AND (c.source = 'G'::bpchar) AND ((d.psite_grc_code)::text = (m.code)::text) AND (m.admsite_code = doc.sitecode) AND (m.repln_admsite_code = cp.sitecode))
+          GROUP BY d.psite_grc_code, doc.gst_identification_no, doc.gst_state_code, doc.sitecode, doc.site_type, cp.gst_identification_no, cp.gst_state_code, d.code, m.docno, m.docdt, ri.netamt, d.icode, rid.invqty, c.appamt, m.repln_admsite_code, ri.scheme_docno, ri.invdt, ri.saltradegrp_code
+        UNION ALL
+         SELECT 'CSM'::text AS enttype,
+            (d.cscode)::character varying AS entcode,
+            doc.gst_identification_no AS document_gstin,
+            doc.gst_state_code AS document_gst_state_code,
+            doc.sitecode AS document_site_code,
+            doc.site_type AS document_site_type,
+            cp.cp_gstin_no AS cp_gstin,
+            cp.cp_gstin_state_code AS cp_gst_state_code,
+            (d.code)::character varying AS detcode,
+            m.scheme_docno AS entno,
+            m.csdate AS entdt,
+            m.refno AS refentno,
+            NULL::timestamp without time zone AS redentdt,
+            m.netpayable AS document_netamt,
+            m.gstappl AS document_gstappl_flag,
+            m.fintradegrp_code AS tradegroupcode,
+                CASE
+                    WHEN ((m.channeltype)::text = 'RTL'::text) THEN NULL::character varying
+                    ELSE ecom.cp_gstin_no
+                END AS etin,
+            d.icode,
+            d.qty,
+            NULL::text AS input_eligibility,
+            d.taxableamt,
+            d.igstrate,
+            d.igstamt,
+            d.cgstrate,
+            d.cgstamt,
+            d.sgstrate,
+            d.sgstamt,
+            d.cessrate,
+            d.cessamt,
+            0 AS reverse_igstrate,
+            0 AS reverse_igstamt,
+            0 AS reverse_cgstrate,
+            0 AS reverse_cgstamt,
+            0 AS reverse_sgstrate,
+            0 AS reverse_sgstamt,
+            0 AS reverse_cessrate,
+            0 AS reverse_cessamt,
+            NULL::numeric AS cp_slcode,
+            m.psite_customer_code AS cp_psite_customer_code,
+            NULL::numeric AS cp_sitecode,
+            NULL::character varying AS originalinvno,
+            NULL::timestamp without time zone AS originalinvdt,
+            NULL::text AS cdnreason
+           FROM main.finsl ecom,
+            main.v_gst_site doc,
+            main.salcsdet d,
+            (main.salcsmain m
+             LEFT JOIN main.psite_customer cp ON (((m.psite_customer_code)::text = (cp.code)::text)))
+          WHERE ((m.cscode = d.cscode) AND (m.admsite_code = doc.sitecode) AND ((doc.site_type)::text = 'OS-OO-CM'::text) AND (m.pcode = ecom.slcode) AND (COALESCE(m.release_status, 'U'::bpchar) = 'P'::bpchar) AND (COALESCE(d.taxregime, 'V'::bpchar) = 'G'::bpchar))
+        UNION ALL
+         SELECT 'POS'::text AS enttype,
+            (d.psite_posbill_code)::character varying AS entcode,
+            doc.gst_identification_no AS document_gstin,
+            doc.gst_state_code AS document_gst_state_code,
+            doc.sitecode AS document_site_code,
+            doc.site_type AS document_site_type,
+            cp.cp_gstin_no AS cp_gstin,
+            cp.cp_gstin_state_code AS cp_gst_state_code,
+            (d.code)::character varying AS detcode,
+            COALESCE(m.gstdocno, ((((doc.doc_identification_no)::text || '-'::text) || (
+                CASE
+                    WHEN (length((m.billno)::text) > 12) THEN (substr((m.billno)::text, '-12'::integer))::character varying
+                    ELSE m.billno
+                END)::text))::character varying) AS entno,
+            date_trunc('day'::text, m.billdate) AS entdt,
+            ((('POS-'::text || (doc.doc_identification_no)::text) || '-'::text) || to_char(m.billdate, 'DDMMYYYY'::text)) AS refentno,
+            NULL::timestamp without time zone AS redentdt,
+            m.netpayable AS document_netamt,
+            NULL::bpchar AS document_gstappl_flag,
+            m.fintradegrp_code AS tradegroupcode,
+            NULL::text AS etin,
+            d.icode,
+            d.qty,
+            NULL::text AS input_eligibility,
+            d.taxableamt,
+            d.igstrate,
+            d.igstamt,
+            d.cgstrate,
+            d.cgstamt,
+            d.sgstrate,
+            d.sgstamt,
+            d.cessrate,
+            d.cessamt,
+            0 AS reverse_igstrate,
+            0 AS reverse_igstamt,
+            0 AS reverse_cgstrate,
+            0 AS reverse_cgstamt,
+            0 AS reverse_sgstrate,
+            0 AS reverse_sgstamt,
+            0 AS reverse_cessrate,
+            0 AS reverse_cessamt,
+            NULL::numeric AS cp_slcode,
+            m.psite_customer_code AS cp_psite_customer_code,
+            NULL::numeric AS cp_sitecode,
+            NULL::character varying AS originalinvno,
+            NULL::timestamp without time zone AS originalinvdt,
+            NULL::text AS cdnreason
+           FROM main.v_gst_site doc,
+            main.psite_posbillitem d,
+            (main.psite_posbill m
+             LEFT JOIN main.psite_customer cp ON (((m.psite_customer_code)::text = (cp.code)::text)))
+          WHERE (((m.code)::text = (d.psite_posbill_code)::text) AND (m.admsite_code = doc.sitecode) AND (COALESCE(d.taxregime, 'V'::bpchar) = 'G'::bpchar))) qf,
+    main.invitem i,
+    main.invhsnsacmain h
+  WHERE (((qf.icode)::text = (i.icode)::text) AND (i.invhsnsacmain_code = h.code))
+  GROUP BY qf.enttype, qf.entcode, qf.document_gstin, qf.document_gst_state_code, qf.document_site_code, qf.document_site_type, qf.cp_gstin, qf.cp_gst_state_code, qf.entno, qf.entdt, qf.refentno, qf.refentdt, qf.document_netamt, qf.document_gstappl_flag, qf.tradegroupcode, qf.etin, h.code, h.hsn_sac_code, h.description, h.appl, COALESCE(qf.input_eligibility, 'IP'::text), i.unitname, ((qf.igstrate + qf.cgstrate) + qf.sgstrate), qf.igstrate, qf.cgstrate, qf.sgstrate, qf.cessrate, ((qf.reverse_igstrate + qf.reverse_cgstrate) + qf.reverse_sgstrate), qf.reverse_igstrate, qf.reverse_cgstrate, qf.reverse_sgstrate, qf.reverse_cessrate, qf.cp_slcode, qf.cp_psite_customer_code, qf.cp_sitecode, qf.originalinvno, qf.originalinvdt, qf.cdnreason
+UNION ALL
+ SELECT qf.enttype,
+    qf.entcode,
+    qf.document_gstin,
+    qf.document_gst_state_code,
+    qf.document_site_code,
+    qf.document_site_type,
+    qf.cp_gstin,
+    qf.cp_gst_state_code,
+    qf.entno,
+    qf.entdt,
+    qf.refentno,
+    qf.refentdt,
+    qf.document_netamt,
+    qf.document_gstappl_flag,
+    qf.tradegroupcode,
+    qf.etin,
+    h.code AS invhsnsacmain_code,
+    h.hsn_sac_code,
+    h.description AS hsn_sac_description,
+    h.appl AS hsn_sac_appl_for,
+    COALESCE(qf.input_eligibility, 'IP'::bpchar) AS input_eligibility,
+    NULL::character varying AS uom,
+    sum(qf.qty) AS qty,
+    sum(qf.taxableamt) AS taxableamt,
+    ((qf.igstrate + qf.cgstrate) + qf.sgstrate) AS totaltaxrate,
+    qf.igstrate,
+    sum(qf.igstamt) AS igstamt,
+    qf.cgstrate,
+    sum(qf.cgstamt) AS cgstamt,
+    qf.sgstrate,
+    sum(qf.sgstamt) AS sgstamt,
+    qf.cessrate,
+    sum(qf.cessamt) AS cessamt,
+    ((qf.reverse_igstrate + qf.reverse_cgstrate) + qf.reverse_sgstrate) AS reverse_totaltaxrate,
+    qf.reverse_igstrate,
+    sum(abs(qf.reverse_igstamt)) AS reverse_igstamt,
+    qf.reverse_cgstrate,
+    sum(abs(qf.reverse_cgstamt)) AS reverse_cgstamt,
+    qf.reverse_sgstrate,
+    sum(abs(qf.reverse_sgstamt)) AS reverse_sgstamt,
+    qf.reverse_cessrate,
+    sum(abs(qf.reverse_cessamt)) AS reverse_cessamt,
+    qf.cp_slcode,
+    qf.cp_psite_customer_code,
+    qf.cp_sitecode,
+    qf.originalinvno,
+    qf.originalinvdt,
+    qf.cdnreason
+   FROM ( SELECT 'PSM'::text AS enttype,
+            (d.srvcode)::character varying AS entcode,
+            doc.gst_identification_no AS document_gstin,
+            doc.gst_state_code AS document_gst_state_code,
+            doc.sitecode AS document_site_code,
+            doc.site_type AS document_site_type,
+            cp.cp_gstin_no AS cp_gstin,
+            cp.cp_gstin_state_code AS cp_gst_state_code,
+            (c.pursrvdet_code)::character varying AS detcode,
+            m.scheme_docno AS entno,
+            m.srvdt AS entdt,
+            m.docno AS refentno,
+            m.docdt AS refentdt,
+            m.netamt AS document_netamt,
+            m.gstappl AS document_gstappl_flag,
+            m.fintradegrp_code AS tradegroupcode,
+            NULL::text AS etin,
+            d.servicecode,
+            d.qty,
+            d.gst_itc_appl AS input_eligibility,
+            c.appamt AS taxableamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cgstrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cgstamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'SGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS sgstrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'SGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS sgstamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'IGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS igstrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'IGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS igstamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CESS'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cessrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CESS'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'N'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cessamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_cgstrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_cgstamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'SGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_sgstrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'SGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_sgstamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'IGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_igstrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'IGST'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_igstamt,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CESS'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_cessrate,
+            sum(
+                CASE
+                    WHEN ((c.gst_component = 'CESS'::bpchar) AND (COALESCE(c.isreverse, 'N'::bpchar) = 'Y'::bpchar)) THEN COALESCE(c.chgamt, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS reverse_cessamt,
+            m.pcode AS cp_slcode,
+            NULL::text AS cp_psite_customer_code,
+            NULL::numeric AS cp_sitecode,
+            NULL::character varying AS originalinvno,
+            to_timestamp(NULL::double precision) AS originalinvdt,
+            NULL::character varying AS cdnreason
+           FROM main.pursrvdet d,
+            main.pursrvchg_item c,
+            main.pursrvmain m,
+            main.v_gst_site doc,
+            main.finsl cp
+          WHERE ((d.code = c.pursrvdet_code) AND (c.source = 'G'::bpchar) AND (d.srvcode = m.srvcode) AND (m.admsite_code_owner = doc.sitecode) AND (COALESCE(m.release_status, 'U'::bpchar) = 'P'::bpchar) AND (m.pcode = cp.slcode))
+          GROUP BY d.srvcode, doc.gst_identification_no, doc.gst_state_code, doc.sitecode, doc.site_type, cp.cp_gstin_no, cp.cp_gstin_state_code, c.pursrvdet_code, m.scheme_docno, m.srvdt, m.docno, m.docdt, m.netamt, m.gstappl, m.fintradegrp_code, d.servicecode, d.qty, d.gst_itc_appl, c.appamt, m.pcode) qf,
+    main.invhsnsacmain h,
+    main.purservice s
+  WHERE ((qf.servicecode = s.servicecode) AND (s.invhsnsacmain_code = h.code))
+  GROUP BY qf.enttype, qf.entcode, qf.document_gstin, qf.document_gst_state_code, qf.document_site_code, qf.document_site_type, qf.cp_gstin, qf.cp_gst_state_code, qf.entno, qf.entdt, qf.refentno, qf.refentdt, qf.document_netamt, qf.document_gstappl_flag, qf.tradegroupcode, qf.etin, h.code, h.hsn_sac_code, h.description, h.appl, COALESCE(qf.input_eligibility, 'IP'::bpchar), ((qf.igstrate + qf.cgstrate) + qf.sgstrate), qf.igstrate, qf.cgstrate, qf.sgstrate, qf.cessrate, ((qf.reverse_igstrate + qf.reverse_cgstrate) + qf.reverse_sgstrate), qf.reverse_igstrate, qf.reverse_cgstrate, qf.reverse_sgstrate, qf.reverse_cessrate, qf.cp_slcode, qf.cp_psite_customer_code, qf.cp_sitecode, qf.originalinvno, qf.originalinvdt, qf.cdnreason;
+"""
+  columns = (
+    column "enttype" {
+      type = text
+    }
+    column "entcode" {
+      type = "character varying"
+    }
+    column "document_gstin" {
+      type = "character varying(15)"
+    }
+    column "document_gst_state_code" {
+      type = "character(2)"
+    }
+    column "document_site_code" {
+      type = "bigint"
+    }
+    column "document_site_type" {
+      type = "character varying(15)"
+    }
+    column "cp_gstin" {
+      type = "character varying(15)"
+    }
+    column "cp_gst_state_code" {
+      type = "character(2)"
+    }
+    column "entno" {
+      type = "character varying"
+    }
+    column "entdt" {
+      type = "timestamp without time zone"
+    }
+    column "refentno" {
+      type = "character varying"
+    }
+    column "refentdt" {
+      type = "timestamp without time zone"
+    }
+    column "document_netamt" {
+      type = "numeric(20,2)"
+    }
+    column "document_gstappl_flag" {
+      type = bpchar
+    }
+    column "tradegroupcode" {
+      type = "bigint"
+    }
+    column "etin" {
+      type = text
+    }
+    column "invhsnsacmain_code" {
+      type = "bigint"
+    }
+    column "hsn_sac_code" {
+      type = "character varying(20)"
+    }
+    column "hsn_sac_description" {
+      type = "character varying(100)"
+    }
+    column "hsn_sac_appl_for" {
+      type = "character(1)"
+    }
+    column "input_eligibility" {
+      type = text
+    }
+    column "uom" {
+      type = "character varying"
+    }
+    column "qty" {
+      type = "numeric"
+    }
+    column "taxableamt" {
+      type = "numeric"
+    }
+    column "totaltaxrate" {
+      type = "numeric"
+    }
+    column "igstrate" {
+      type = "numeric"
+    }
+    column "igstamt" {
+      type = "numeric"
+    }
+    column "cgstrate" {
+      type = "numeric"
+    }
+    column "cgstamt" {
+      type = "numeric"
+    }
+    column "sgstrate" {
+      type = "numeric"
+    }
+    column "sgstamt" {
+      type = "numeric"
+    }
+    column "cessrate" {
+      type = "numeric"
+    }
+    column "cessamt" {
+      type = "numeric"
+    }
+    column "reverse_totaltaxrate" {
+      type = "numeric"
+    }
+    column "reverse_igstrate" {
+      type = "numeric"
+    }
+    column "reverse_igstamt" {
+      type = "numeric"
+    }
+    column "reverse_cgstrate" {
+      type = "numeric"
+    }
+    column "reverse_cgstamt" {
+      type = "numeric"
+    }
+    column "reverse_sgstrate" {
+      type = "numeric"
+    }
+    column "reverse_sgstamt" {
+      type = "numeric"
+    }
+    column "reverse_cessrate" {
+      type = "numeric"
+    }
+    column "reverse_cessamt" {
+      type = "numeric"
+    }
+    column "cp_slcode" {
+      type = "numeric"
+    }
+    column "cp_psite_customer_code" {
+      type = text
+    }
+    column "cp_sitecode" {
+      type = "numeric"
+    }
+    column "originalinvno" {
+      type = "character varying"
+    }
+    column "originalinvdt" {
+      type = "timestamp with time zone"
+    }
+    column "cdnreason" {
+      type = text
+    }
+  )
+}
+

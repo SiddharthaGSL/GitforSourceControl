@@ -1,0 +1,137 @@
+procedure "main"."int$pkg_createpo_loc_proc_insert_excise_data(bigint)" {
+  text = """
+
+DECLARE
+
+      v_excisemain_code      purorddet.excisemain_code%TYPE;
+      v_ex_basis             purorddet.ex_basis%TYPE;
+      v_ex_effrate           purorddet.ex_effrate%TYPE;
+      v_ex_abtfactor         purorddet.ex_abtfactor%TYPE;
+      v_ex_dutyfactor        purorddet.ex_dutyfactor%TYPE;
+      v_ex_cessfactor        purorddet.ex_cessfactor%TYPE;
+      v_ex_appamt            purorddet.ex_appamt%TYPE;
+      v_ex_dutyamt           purorddet.ex_dutyamt%TYPE;
+      v_ex_cessamt           purorddet.ex_cessamt%TYPE;
+      v_ex_roundoff          excisedet.roundoff%TYPE;
+      v_ex_applicable_from   excisedet.ex_applicable_from%TYPE;
+      v_orddt                timestamp;
+      v_excise_appl          char(1);
+
+  i RECORD;
+
+BEGIN
+      SELECT m.orddt, d.isexcise
+        INTO STRICT v_orddt, v_excise_appl
+        FROM purordmain m, admdocscheme d
+       WHERE m.doccode = d.doccode AND m.ordcode = p_ordcode;
+
+      IF coalesce(v_excise_appl, 'N') = 'Y'
+      THEN
+         FOR i IN (SELECT det.icode,
+                          det.ordqty,
+                          det.rate,
+                          item.mrp,
+                          item.listed_mrp,
+                          det.code ers_code
+                     FROM purorddet det, invitem item
+                    WHERE det.ordcode = p_ordcode AND det.icode = item.icode)
+         LOOP
+            v_ex_dutyfactor := 0;
+            v_ex_abtfactor := 0;
+            v_ex_basis := NULL;
+            v_ex_cessfactor := 0;
+            v_ex_roundoff := 0;
+            v_excisemain_code := NULL;
+            v_ex_applicable_from := NULL;
+
+            BEGIN
+               SELECT coalesce(t2.dutyfactor, 0),
+                      coalesce(t2.abtfactor, 0),
+                      t2.basis,
+                      coalesce(t2.cessfactor, 0),
+                      coalesce(t2.roundoff, 0),
+                      t3.excisemain_code,
+                      t2.ex_applicable_from
+                 INTO STRICT v_ex_dutyfactor,
+                      v_ex_abtfactor,
+                      v_ex_basis,
+                      v_ex_cessfactor,
+                      v_ex_roundoff,
+                      v_excisemain_code,
+                      v_ex_applicable_from
+                 FROM invitem t1, invgrp t3
+LEFT OUTER JOIN excisedet t2 ON (t3.excisemain_code = t2.excisemain_code)
+WHERE t1.icode = i.icode AND t1.grpcode = t3.grpcode  AND (t2.dtfr =
+                              (SELECT MAX(c.dtfr)
+                                 FROM excisedet c
+                                WHERE     c.dtfr <= v_orddt
+                                      AND (   c.dtto >= v_orddt
+                                           OR c.dtto IS NULL)
+                                      AND c.excisemain_code =
+                                             t3.excisemain_code));
+            EXCEPTION
+               WHEN no_data_found
+               THEN
+                  v_ex_dutyfactor := 0;
+                  v_ex_abtfactor := 0;
+                  v_ex_basis := NULL;
+                  v_ex_cessfactor := 0;
+                  v_ex_roundoff := 0;
+                  v_excisemain_code := NULL;
+                  v_ex_applicable_from := NULL;
+            END;
+
+            UPDATE purorddet
+               SET excisemain_code = v_excisemain_code,
+                   ex_basis = v_ex_basis,
+                   ex_effrate =
+                      (CASE WHEN v_ex_basis = NULL THEN  0 WHEN v_ex_basis='M' THEN  coalesce(i.mrp, 0) WHEN v_ex_basis='R' THEN  coalesce(i.rate, 0) WHEN v_ex_basis='L' THEN  coalesce(i.listed_mrp, 0)  ELSE 0 END ),
+                   ex_abtfactor = v_ex_abtfactor,
+                   ex_dutyfactor = v_ex_dutyfactor,
+                   ex_cessfactor = v_ex_cessfactor,
+                   ex_appamt =
+                      (CASE WHEN                           v_ex_basis = NULL THEN  0 WHEN                           v_ex_basis='M' THEN  ROUND (                                  ( (  coalesce(i.ordqty, 0)                                     * (  coalesce(i.mrp, 0)                                        * (100 - v_ex_abtfactor))                                     / 100)),                                  2) WHEN                           v_ex_basis='R' THEN  ROUND (                                  ( (  coalesce(i.ordqty, 0)                                     * (  coalesce(i.rate, 0)                                        * (100 - v_ex_abtfactor))                                     / 100)),                                  2) WHEN                           v_ex_basis='L' THEN  ROUND (                                  ( (  coalesce(i.ordqty, 0)                                     * (  coalesce(i.listed_mrp, 0)                                        * (100 - v_ex_abtfactor))                                     / 100)),                                  2)  ELSE 0 END ),
+                   ex_dutyamt =
+                      (CASE WHEN                           v_ex_basis = NULL THEN  0 WHEN                           v_ex_basis='M' THEN  ROUND (                                  (  coalesce(i.ordqty, 0)                                   * (  (  (  coalesce(i.mrp, 0)                                            * ( (100 - v_ex_abtfactor) / 100))                                         * v_ex_dutyfactor)                                      / 100)),                                  (CASE WHEN coalesce(v_ex_roundoff, 0)=0 THEN  0  ELSE 2 END )) WHEN                           v_ex_basis='R' THEN  ROUND (                                  (  coalesce(i.ordqty, 0)                                   * (  (  (  coalesce(i.rate, 0)                                            * ( (100 - v_ex_abtfactor) / 100))                                         * v_ex_dutyfactor)                                      / 100)),                                  (CASE WHEN coalesce(v_ex_roundoff, 0)=0 THEN  0  ELSE 2 END )) WHEN                           v_ex_basis='L' THEN  ROUND (                                  (  coalesce(i.ordqty, 0)                                   * (  (  (  coalesce(i.listed_mrp, 0)                                            * ( (100 - v_ex_abtfactor) / 100))                                         * v_ex_dutyfactor)                                      / 100)),                                  (CASE WHEN coalesce(v_ex_roundoff, 0)=0 THEN  0  ELSE 2 END ))  ELSE 0 END ),
+                   ex_cessamt =
+                      (CASE WHEN                           v_ex_basis = NULL THEN  0 WHEN                           v_ex_basis='M' THEN  ROUND (                                  (  coalesce(i.ordqty, 0)                                   * (  (  (  (  (  coalesce(i.mrp, 0)                                                  * (  (100 - v_ex_abtfactor)                                                     / 100))                                               * v_ex_dutyfactor)                                            / 100)                                         * v_ex_cessfactor)                                      / 100)),                                  (CASE WHEN coalesce(v_ex_roundoff, 0)=0 THEN  0  ELSE 2 END )) WHEN                           v_ex_basis='R' THEN  ROUND (                                  (  coalesce(i.ordqty, 0)                                   * (  (  (  (  (  coalesce(i.rate, 0)                                                  * (  (100 - v_ex_abtfactor)                                                     / 100))                                               * v_ex_dutyfactor)                                            / 100)                                         * v_ex_cessfactor)                                      / 100)),                                  (CASE WHEN coalesce(v_ex_roundoff, 0)=0 THEN  0  ELSE 2 END )) WHEN                           v_ex_basis='L' THEN  ROUND (                                  (  coalesce(i.ordqty, 0)                                   * (  (  (  (  (  coalesce(i.listed_mrp, 0)                                                  * (  (100 - v_ex_abtfactor)                                                     / 100))                                               * v_ex_dutyfactor)                                            / 100)                                         * v_ex_cessfactor)                                      / 100)),                                  (CASE WHEN coalesce(v_ex_roundoff, 0)=0 THEN  0  ELSE 2 END ))  ELSE 0 END ),
+                   ex_roundoff = v_ex_roundoff,
+                   ex_applicable_from = v_ex_applicable_from
+             WHERE code = i.ers_code;
+         END LOOP;
+
+         -- set excise related charge to 0 as per budget 2016 if ex_effrate is less than ex_exempt_limit
+         UPDATE purorddet d
+            SET ex_dutyfactor = 0, ex_dutyamt = 0, ex_cessamt = 0
+          WHERE     ordcode = p_ordcode
+                AND coalesce(ex_effrate, 0) < coalesce(ex_applicable_from, 0);
+
+         CALL int$pkg_createpo_loc_pro_setoff_fraction_value(p_ordcode);
+      ELSE
+         UPDATE purorddet
+            SET excisemain_code  = NULL,
+                ex_basis  = NULL,
+                ex_effrate = 0,
+                ex_abtfactor = 0,
+                ex_dutyfactor = 0,
+                ex_cessfactor = 0,
+                ex_appamt = 0,
+                ex_dutyamt = 0,
+                ex_cessamt = 0,
+                ex_roundoff = 0
+          WHERE ordcode = p_ordcode;
+      END IF;
+   END;
+
+"""
+  arguments = <
+    {
+      name = p_ordcode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

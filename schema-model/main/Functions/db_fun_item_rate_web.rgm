@@ -1,0 +1,467 @@
+function "main"."db_fun_item_rate_web(timestamp without time zone, bigint, text, text, bigint, double, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+--ARGPARTY_GLCOD_CODE   CAN BE EITHER PARTYCODE OR CMPCODE FOR SAL_STORE_DEFAULT
+--ARGTYPE   SPECIFY WHETHER PARTY OF LEDGER 'P' OR 'L'
+/**********************************************************************************************************************
+   NAME: DB_FUN_ITEM_RATE_WEB
+
+   PURPOSE: For web rate Calculation
+
+   REVISIONS:
+   No.           Date        Author                      TFS ID                             Description
+   ---------     ----------  ----------------------  --------------------   ------------------------------------------------
+   REV : 001     23/01/2018  SIDDHARTHA              (BUG ID : 37351)       Import Excel Rate population logic incorporated in DB_FUN_ITEM_RATE
+   REV : 002     07/02/2018  SIDDHARTHA              (BUG ID : 37785)       Define item rate population logic to be rechecked
+   REV : 003     08/02/2018  SIDDHARTHA              (BUG ID : 37785)       Define item rate population logic to be rechecked
+   REV : 004     17/05/2019  MOUSUMI                 (TFS ID : 4177)        MARK UP CALCULATION FOR PRICE CHART APPLICABLE
+   REV : 005     02/12/2019  MOUSUMI                 (TFS ID : GRT)         LAST ITEM RATE
+   REV : 006     07/03/2022  ANINDYA                 (TFS ID : BATCH SERIAL) Introduction of BatchId in item rate derivation
+   NOTES:
+***********************************************************************************************************************/
+    V_PRICETYPE                 char(1);
+    V_PRICELISTCODE             bigint;
+    V_MRKUP_SELL_PRC            FINSL.MARKUP_SELLING_PRICE%TYPE;
+    V_MRKUP_SELL_ROUND_OFF      FINSL.MARKUP_SELLING_ROUND_OFF%TYPE;
+    V_MRKUP_SELL_LIMIT          FINSL.MARKUP_SELLING_LIMIT%TYPE;
+    V_RATE                      numeric(20,3);
+    ERRCODE                     varchar(50);
+    ERRMSG                      varchar(2000);
+    V_NOTFOUND                  char(1) := 'N';
+    V_PRICE_FACTOR              INVLOC.PRICE_FACTOR%TYPE;
+    V_PUR_PRICE_CHART_APPL      FINSL.PUR_PRICE_CHART_APPL%TYPE;
+    V_ACRATE                    INVGRCDET.ACRATE%TYPE;  -- REV : 011
+    -- START REV : 006
+    V_ITEM_MANAGEMENT_MODE      char(1);
+    V_ITEM_PRICE_MANAGEMENT     char(1);
+    -- END REV : 006
+BEGIN
+    IF  -- START REV : 002
+        ARGTYPE IN ('P','C')  THEN   -- If Party or On the fly
+        -- END REV : 002
+        BEGIN
+            SELECT  PRICETYPE, NULL, MARKUP_SELLING_PRICE, MARKUP_SELLING_ROUND_OFF, MARKUP_SELLING_LIMIT,
+                    PUR_PRICE_CHART_APPL
+            INTO STRICT    V_PRICETYPE, V_PRICELISTCODE, V_MRKUP_SELL_PRC, V_MRKUP_SELL_ROUND_OFF, V_MRKUP_SELL_LIMIT,
+                    V_PUR_PRICE_CHART_APPL
+            FROM    FINSL
+            WHERE   SLCODE = ARGSL_CMP_CODE;
+        EXCEPTION
+            WHEN no_data_found THEN
+                V_PRICELISTCODE := NULL;
+        END;
+    ELSIF   ARGTYPE  = 'L'  THEN        -- If Ledger
+            V_PRICETYPE   := 'R';
+            V_PRICELISTCODE := NULL;
+    ELSIF ARGTYPE = 'S'  THEN           -- If Stockpoint
+        BEGIN
+            SELECT  PRICETYPE, PRICE_FACTOR, NULL
+            INTO STRICT    V_PRICETYPE, V_PRICE_FACTOR, V_PRICELISTCODE
+            FROM    INVLOC
+            WHERE   LOCCODE = ARGSL_CMP_CODE;
+        EXCEPTION
+            WHEN no_data_found THEN
+                V_PRICELISTCODE := NULL;
+        END;
+    END IF;
+    IF  coalesce(V_PRICELISTCODE,0) = 0 OR V_NOTFOUND = 'Y' THEN
+        IF  V_PUR_PRICE_CHART_APPL = 'Y' THEN
+            BEGIN
+                SELECT  P.RATE
+                INTO STRICT    V_RATE
+                FROM    PUR_PRICE_CHART P
+                WHERE   P.PCODE   = ARGSL_CMP_CODE
+                AND     P.ICODE   = ARGICODE
+                AND     P.CODE    =
+                                    (
+                                        SELECT  MAX(P1.CODE)
+                                        FROM    PUR_PRICE_CHART P1
+                                        WHERE   P1.PCODE            = ARGSL_CMP_CODE
+                                        AND     P1.ICODE            = ARGICODE
+                                        AND     P1.EXTINCT          = 'N'
+                                        AND     P1.EFFECTIVE_DATE   <= ARGDATE
+                                    );
+            EXCEPTION
+                WHEN no_data_found THEN
+                -- START REV : 004
+               /* BEGIN
+                    IF NVL(P_ITEM_RATE,0) <> 0 THEN
+                        V_RATE := P_ITEM_RATE;
+                    ELSE
+                        IF  V_PRICETYPE = 'B' THEN
+                            BEGIN
+                                SELECT  NVL(D.ACRATE,0)
+                                INTO  V_ACRATE
+                                FROM  INVGRCDET D
+                                WHERE D.CODE = ( SELECT MAX(CODE)
+                                                   FROM   INVGRCDET DD
+                                                   WHERE  DD.ICODE   = ARGICODE
+                                                   AND    DD.GRCCODE = (
+                                                                            SELECT     MAX(M1.GRCCODE)
+                                                                            FROM       INVGRCMAIN M1,INVGRCDET D1,ADMSITE S1
+                                                                            WHERE M1.GRCCODE               = D1.GRCCODE
+                                                                            AND   M1.ADMSITE_CODE_IN       = S1.CODE
+                                                                            AND   S1.PSITE_ADMCMPTAX_CODE  = ARG_OU_ADMCMPTAX_CODE
+                                                                            AND   M1.PCODE                 = ARGSL_CMP_CODE
+                                                                            AND   D1.ICODE                 = ARGICODE
+                                                                            AND   M1.GRCDT                 = (SELECT MAX(M2.GRCDT)
+                                                                                                                    FROM  INVGRCMAIN M2,INVGRCDET D2,ADMSITE S2
+                                                                                                                    WHERE M2.GRCCODE         = D2.GRCCODE
+                                                                                                                    AND   M2.ADMSITE_CODE_IN = S2.CODE
+                                                                                                                    AND   S2.PSITE_ADMCMPTAX_CODE = ARG_OU_ADMCMPTAX_CODE
+                                                                                                                    AND   M2.PCODE           = ARGSL_CMP_CODE
+                                                                                                                    AND   D2.ICODE           = ARGICODE
+                                                                                                        )
+                                                                        )
+                                                   );
+                            EXCEPTION WHEN NO_DATA_FOUND THEN
+                            -- START REV : 002
+                                BEGIN
+                                    IF ARGTYPE = 'C' THEN
+                                    SELECT COSTRATE INTO V_ACRATE FROM INVITEM WHERE ICODE = ARGICODE;
+                                    ELSE
+                            -- END REV : 002
+                                    V_ACRATE :=0;
+                                    END IF;
+                                END;
+                            END;
+                        END IF;
+
+                        SELECT  CASE WHEN V_PRICETYPE = 'M' THEN NVL(MRP,0)
+                                     WHEN V_PRICETYPE = 'W' THEN NVL(WSP,0)
+                                     WHEN V_PRICETYPE = 'C' AND ARGTYPE = 'C' THEN
+                                          CASE
+                                              WHEN NVL(RATE,0) = 0 THEN NVL(COSTRATE,0)
+                                          ELSE RATE
+                                          END
+                                     WHEN V_PRICETYPE = 'C' AND ARGTYPE <> 'C' THEN NVL(RATE,0)
+                                     WHEN V_PRICETYPE = 'L' THEN NVL(LISTED_MRP,0)
+                                     WHEN V_PRICETYPE = 'R' THEN NVL(COSTRATE,0)
+                                     WHEN V_PRICETYPE = 'B' THEN NVL(V_ACRATE,0)
+                                 ELSE   0  END
+--                        DECODE
+--                                (
+--                                    V_PRICETYPE,
+--                                    'M',    NVL(MRP,0),
+--                                    'W',    NVL(WSP,0),
+--                                    'C',    NVL(RATE,0),
+--                                    'L',    NVL(LISTED_MRP,0),
+--                                    'R',    NVL(COSTRATE,0),
+--                                    'B',    NVL(V_ACRATE,0),
+--                                            0
+--                                )
+                        INTO    V_RATE
+                        FROM    INVITEM
+                        WHERE   ICODE = ''||ARGICODE||'';
+                    END IF;
+                EXCEPTION
+                    WHEN NO_DATA_FOUND THEN
+                    V_RATE := 0;
+                END;*/
+                -- END REV : 004
+                V_PUR_PRICE_CHART_APPL := 'N';
+                WHEN OTHERS THEN
+                V_RATE := 0;
+            END;
+        END IF; -- REV : 004
+        -- START REV : 004
+       -- ELSE
+       IF  coalesce(V_PUR_PRICE_CHART_APPL,'N') = 'N' THEN
+        -- END REV : 004
+            IF  coalesce(P_ITEM_RATE,0) <> 0 THEN
+                V_RATE := P_ITEM_RATE;
+            ELSE
+                IF  V_PRICETYPE = 'B' THEN
+                    BEGIN
+                        SELECT   coalesce(D.ACRATE,0)
+                        INTO STRICT     V_ACRATE
+                        FROM     INVGRCDET D
+                        WHERE    D.CODE = ( SELECT MAX(CODE)
+                                           FROM   INVGRCDET DD
+                                           WHERE  DD.ICODE   = ARGICODE
+                                           -- START REV : 006
+                                            AND (
+                                                    ARG_BATCH_SERIAL_CODE IS NULL
+                                                    OR 
+                                                    DD.INVBATCH_SERIAL_CODE = ARG_BATCH_SERIAL_CODE
+                                                    )
+                                            -- END REV : 006 
+                                           AND    DD.GRCCODE = (
+                                                                    SELECT     MAX(M1.GRCCODE)
+                                                                    FROM       INVGRCMAIN M1,INVGRCDET D1,ADMSITE S1
+                                                                    WHERE      M1.GRCCODE              = D1.GRCCODE
+                                                                    AND     M1.ADMSITE_CODE_IN      = S1.CODE
+                                                                    AND        S1.PSITE_ADMCMPTAX_CODE = ARG_OU_ADMCMPTAX_CODE
+                                                                    AND     M1.PCODE          = ARGSL_CMP_CODE
+                                                                    AND        D1.ICODE          = ARGICODE
+                                                                    -- START REV : 006
+                                                                    AND (
+                                                                            ARG_BATCH_SERIAL_CODE IS NULL 
+                                                                            OR 
+                                                                            D1.INVBATCH_SERIAL_CODE = ARG_BATCH_SERIAL_CODE
+                                                                            )
+                                                                    -- END REV : 006 
+                                                                    AND     M1.GRCDT          = (   SELECT MAX(M2.GRCDT)
+                                                                                                    FROM       INVGRCMAIN M2,INVGRCDET D2,ADMSITE S2
+                                                                                                    WHERE      M2.GRCCODE         = D2.GRCCODE
+                                                                                                    AND     M2.ADMSITE_CODE_IN = S2.CODE
+                                                                                                    AND        S2.PSITE_ADMCMPTAX_CODE = ARG_OU_ADMCMPTAX_CODE
+                                                                                                    AND     M2.PCODE           = ARGSL_CMP_CODE
+                                                                                                    AND        D2.ICODE           = ARGICODE
+                                                                                                    -- START REV : 006
+                                                                                                    AND (
+                                                                                                            ARG_BATCH_SERIAL_CODE IS NULL 
+                                                                                                            OR 
+                                                                                                            D2.INVBATCH_SERIAL_CODE = ARG_BATCH_SERIAL_CODE
+                                                                                                            )
+                                                                                                    -- END REV : 006        
+                                                                                                )
+                                                                )
+                                           );
+                    EXCEPTION WHEN no_data_found THEN
+                    -- START REV : 002
+                    -- START REV : 006
+                        BEGIN
+                            SELECT ITEM_MANAGEMENT_MODE, PRICE_MANAGEMENT
+                            INTO STRICT   V_ITEM_MANAGEMENT_MODE, V_ITEM_PRICE_MANAGEMENT
+                            FROM   INVITEM
+                            WHERE  ICODE = ARGICODE;
+                            IF V_ITEM_MANAGEMENT_MODE IN ('B','S') AND V_ITEM_PRICE_MANAGEMENT = 'I'
+                            THEN
+                                SELECT     coalesce(D.ACRATE,0)
+                                INTO STRICT     V_ACRATE
+                                FROM     INVGRCDET D
+                                WHERE     D.CODE = ( SELECT MAX(CODE)
+                                                   FROM   INVGRCDET DD
+                                                   WHERE  DD.ICODE   = ARGICODE
+                                                   AND    DD.GRCCODE = (
+                                                                            SELECT     MAX(M1.GRCCODE)
+                                                                            FROM       INVGRCMAIN M1,INVGRCDET D1,ADMSITE S1
+                                                                            WHERE      M1.GRCCODE              = D1.GRCCODE
+                                                                            AND     M1.ADMSITE_CODE_IN      = S1.CODE
+                                                                            AND        S1.PSITE_ADMCMPTAX_CODE = ARG_OU_ADMCMPTAX_CODE
+                                                                            AND     M1.PCODE          = ARGSL_CMP_CODE
+                                                                            AND        D1.ICODE          = ARGICODE
+                                                                            AND     M1.GRCDT          = (   SELECT MAX(M2.GRCDT)
+                                                                                                            FROM       INVGRCMAIN M2,INVGRCDET D2,ADMSITE S2
+                                                                                                            WHERE      M2.GRCCODE         = D2.GRCCODE
+                                                                                                            AND     M2.ADMSITE_CODE_IN = S2.CODE
+                                                                                                            AND        S2.PSITE_ADMCMPTAX_CODE = ARG_OU_ADMCMPTAX_CODE
+                                                                                                            AND     M2.PCODE           = ARGSL_CMP_CODE
+                                                                                                            AND        D2.ICODE           = ARGICODE
+                                                                                                        )
+                                                                        )
+                                                   );
+                            ELSE
+                                SELECT 0
+                                INTO STRICT   V_ACRATE
+
+                                WHERE  1=2;
+                            END  IF;
+                        EXCEPTION WHEN no_data_found THEN    
+                    -- END REV : 006
+                                BEGIN
+                                    IF ARGTYPE = 'C' THEN
+                                    -- START REV : 005
+                                    --SELECT COSTRATE
+                                    -- START REV : 016 
+                                    --SELECT NVL(db_pkg_cogs.get_item_last_in_rate (ARG_ADMSITE_CODE_OWNER, ARGICODE, ARGDATE),0)
+                                        SELECT coalesce(db_pkg_cogs$get_item_last_in_rate(ARG_ADMSITE_CODE_OWNER, ARGICODE, ARGDATE,NULL,ARG_BATCH_SERIAL_CODE),0)
+                                        -- END REV : 016
+                                        -- END REC : 005
+                                        INTO STRICT V_ACRATE FROM INVITEM WHERE ICODE = ARGICODE;
+                                    ELSE
+                        -- END REV : 002
+                                        V_ACRATE :=0;
+                                    END IF;
+                                END;
+                    -- START REV : 006
+                        END;
+                    -- END REV : 006    
+                    END;
+                END IF;
+                -- START REV : 006
+                BEGIN
+                    SELECT ITEM_MANAGEMENT_MODE, PRICE_MANAGEMENT
+                    INTO STRICT   V_ITEM_MANAGEMENT_MODE, V_ITEM_PRICE_MANAGEMENT
+                    FROM   INVITEM
+                    WHERE  ICODE =  ''||ARGICODE||'';
+                EXCEPTION
+                    WHEN no_data_found
+                    THEN
+                        NULL;
+                END;
+                IF V_ITEM_MANAGEMENT_MODE IN ('B','S') AND  V_ITEM_PRICE_MANAGEMENT = 'B'
+                THEN
+                    BEGIN
+                        SELECT  CASE WHEN V_PRICETYPE = 'M' THEN coalesce(MRP,0)
+                                         WHEN V_PRICETYPE = 'W' THEN coalesce(WSP,0)
+                                         WHEN V_PRICETYPE = 'C' AND ARGTYPE = 'C' THEN
+                                              CASE
+                                                   WHEN coalesce(db_pkg_cogs$get_item_last_in_rate(ARG_ADMSITE_CODE_OWNER, ARGICODE, ARGDATE, NULL, ARG_BATCH_SERIAL_CODE),0)= 0
+                                                  THEN COSTRATE
+                                              ELSE coalesce(db_pkg_cogs$get_item_last_in_rate(ARG_ADMSITE_CODE_OWNER, ARGICODE, ARGDATE, NULL, ARG_BATCH_SERIAL_CODE),0)
+                                              END
+                                            WHEN V_PRICETYPE ='C' AND ARGTYPE <> 'C' THEN db_pkg_cogs$get_item_last_in_rate(ARG_ADMSITE_CODE_OWNER, ARGICODE, ARGDATE, NULL ,ARG_BATCH_SERIAL_CODE)
+                                         WHEN V_PRICETYPE = 'L' THEN coalesce(LISTED_MRP,0)
+                                         WHEN V_PRICETYPE = 'R' THEN coalesce(COSTRATE,0)
+                                         WHEN V_PRICETYPE = 'B' THEN coalesce(V_ACRATE,0)
+                                         WHEN V_PRICETYPE = 'F' THEN db_pkg_cogs$get_item_last_in_rate(ARG_ADMSITE_CODE_OWNER, ARGICODE, ARGDATE, NULL, ARG_BATCH_SERIAL_CODE)
+                                     ELSE   0  END
+                        INTO STRICT    V_RATE
+                        FROM    INVBATCH_SERIAL
+                        WHERE   ICODE = ''||ARGICODE||''
+                        AND     CODE = ARG_BATCH_SERIAL_CODE;
+                    EXCEPTION
+                        WHEN no_data_found THEN
+                        -- START REV : 006
+                        BEGIN
+                            SELECT  CASE WHEN V_PRICETYPE = 'M' THEN coalesce(MRP,0)
+                                         WHEN V_PRICETYPE = 'W' THEN coalesce(WSP,0)
+                                         WHEN V_PRICETYPE = 'C' AND ARGTYPE = 'C' THEN
+                                              CASE
+                                                   WHEN coalesce(db_pkg_cogs$get_item_last_in_rate(ARG_ADMSITE_CODE_OWNER, ARGICODE, ARGDATE),0)= 0
+                                                  THEN COSTRATE
+                                              ELSE coalesce(db_pkg_cogs$get_item_last_in_rate(ARG_ADMSITE_CODE_OWNER, ARGICODE, ARGDATE),0)
+                                              END
+                                            WHEN V_PRICETYPE ='C' AND ARGTYPE <> 'C' THEN db_pkg_cogs$get_item_last_in_rate(ARG_ADMSITE_CODE_OWNER, ARGICODE, ARGDATE)
+                                         WHEN V_PRICETYPE = 'L' THEN coalesce(LISTED_MRP,0)
+                                         WHEN V_PRICETYPE = 'R' THEN coalesce(COSTRATE,0)
+                                         WHEN V_PRICETYPE = 'B' THEN coalesce(V_ACRATE,0)
+                                         WHEN V_PRICETYPE = 'F' THEN db_pkg_cogs$get_item_last_in_rate(ARG_ADMSITE_CODE_OWNER, ARGICODE, ARGDATE)
+                                     ELSE   0  END
+                            INTO STRICT    V_RATE
+                            FROM    INVITEM
+                            WHERE   ICODE = ''||ARGICODE||'';
+                        EXCEPTION WHEN no_data_found THEN
+                            -- END REV : 006
+                            V_RATE := 0;
+                        -- START REV : 006    
+                        END;
+                        -- END REV : 006
+                    END;
+                ELSE
+                -- END REV : 006
+                    BEGIN
+                        SELECT  CASE WHEN V_PRICETYPE = 'M' THEN coalesce(MRP,0)
+                                         WHEN V_PRICETYPE = 'W' THEN coalesce(WSP,0)
+                                         WHEN V_PRICETYPE = 'C' AND ARGTYPE = 'C' THEN
+                                              CASE
+                                            -- START  REV : 005
+                                                  --WHEN NVL(RATE,0) = 0
+                                                  -- START REV : 016
+                                                  --WHEN NVL(db_pkg_cogs.get_item_last_in_rate (ARG_ADMSITE_CODE_OWNER, ARGICODE, ARGDATE),0)= 0
+                                                  WHEN coalesce(db_pkg_cogs$get_item_last_in_rate(ARG_ADMSITE_CODE_OWNER, ARGICODE, ARGDATE, NULL, ARG_BATCH_SERIAL_CODE),0)= 0
+                                                  -- END REV : 016
+                                                  THEN COSTRATE
+                                              -- START REV : 016    
+                                              --ELSE NVL(db_pkg_cogs.get_item_last_in_rate (ARG_ADMSITE_CODE_OWNER, ARGICODE, ARGDATE),0)
+                                              ELSE coalesce(db_pkg_cogs$get_item_last_in_rate(ARG_ADMSITE_CODE_OWNER, ARGICODE, ARGDATE, NULL, ARG_BATCH_SERIAL_CODE),0)
+                                              -- END REV : 016
+                                            -- END REV : 005
+                                              END
+                                        -- START REV : 005
+                                        -- WHEN V_PRICETYPE = 'C' AND ARGTYPE <> 'C' THEN NVL(RATE,0)
+                                        -- START REV : 016
+                                            --WHEN V_PRICETYPE ='C' AND ARGTYPE <> 'C' THEN db_pkg_cogs.get_item_last_in_rate (ARG_ADMSITE_CODE_OWNER, ARGICODE, ARGDATE)
+                                            WHEN V_PRICETYPE ='C' AND ARGTYPE <> 'C' THEN db_pkg_cogs$get_item_last_in_rate(ARG_ADMSITE_CODE_OWNER, ARGICODE, ARGDATE, NULL, ARG_BATCH_SERIAL_CODE)
+                                        -- END REV : 016    
+                                         -- END REV : 005
+                                         WHEN V_PRICETYPE = 'L' THEN coalesce(LISTED_MRP,0)
+                                         WHEN V_PRICETYPE = 'R' THEN coalesce(COSTRATE,0)
+                                         WHEN V_PRICETYPE = 'B' THEN coalesce(V_ACRATE,0)
+                                         -- START REV : 016
+                                         --WHEN V_PRICETYPE = 'F' THEN db_pkg_cogs.get_item_last_in_rate (ARG_ADMSITE_CODE_OWNER, ARGICODE, ARGDATE)
+                                         WHEN V_PRICETYPE = 'F' THEN db_pkg_cogs$get_item_last_in_rate(ARG_ADMSITE_CODE_OWNER, ARGICODE, ARGDATE, NULL, ARG_BATCH_SERIAL_CODE)
+                                         -- END REV : 016
+                                     ELSE   0  END
+                        INTO STRICT    V_RATE
+                        FROM    INVITEM
+                        WHERE   ICODE = ''||ARGICODE||'';
+                    EXCEPTION
+                        WHEN no_data_found THEN
+                        V_RATE := 0;
+                    END;
+                -- START REV : 006    
+                END IF;
+                -- END REV : 006
+            END IF;
+        END IF;
+        IF  ARGTYPE = 'S'  THEN
+            V_RATE := ROUND( (V_RATE * ((100 + coalesce(V_PRICE_FACTOR,0)) / 100 )), 3);
+        END IF;
+        IF coalesce(V_PUR_PRICE_CHART_APPL,'N') <> 'Y' THEN
+           V_RATE  :=  CALCULATE_MRP((coalesce(V_MRKUP_SELL_PRC,0) *(-1)), V_MRKUP_SELL_ROUND_OFF, V_MRKUP_SELL_LIMIT, V_RATE,'A');
+        END IF;
+    END IF;
+    RETURN(coalesce(V_RATE,0));
+EXCEPTION
+    WHEN OTHERS THEN
+    ERRCODE := SQLSTATE;
+    ERRMSG  := SQLERRM;
+    CALL ERRAUDIT(USER,'DB_FUN_ITEM_RATE_WEB',ERRCODE,ERRMSG);
+    RAISE EXCEPTION '%', 'Internal error occured.'||errmsg USING ERRCODE = '45111';
+    RETURN(0);
+END;
+"""
+  returnType = numeric
+  arguments = <
+    {
+      name = argdate
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = argsl_cmp_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = argicode
+      type = text
+      mode = IN
+    }
+
+    {
+      name = argtype
+      type = text
+      mode = IN
+      default = 'P'::bpchar
+    }
+
+    {
+      name = arg_ou_admcmptax_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_item_rate
+      type = double precision
+      mode = IN
+      default = NULL::double precision
+    }
+
+    {
+      name = arg_admsite_code_owner
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = arg_batch_serial_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+  >
+  language = plpgsql
+}
+

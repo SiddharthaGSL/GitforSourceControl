@@ -1,0 +1,639 @@
+procedure "main"."db_pro_promo_barcode_item(bigint, character, character, bigint)" {
+  text = """
+
+DECLARE
+  --SELECT RECORD;
+
+/******************************************************************************************************************
+   NAME: New_Erpcreateitem
+
+   PURPOSE:
+
+   REVISIONS:
+   No.         Date         Author                   Description
+   --------- ----------     ----------------------   ---------------------------------------------------------------------
+   REV : 001  29-OCT-2009   MANASH                  (BUG ID : 1551)	CREATED.
+   REV : 002 05-APR-2010    MANASH                  (BUG ID : 1808 	Promotion item should be on item creation
+   								  	date, instead of items last stock in date.
+   NOTES:
+*****************************************************************************************************************/
+
+	V_TABARR 		TYPE_DB_PRO_PROMO_BARCODE_ITEM[];
+    V_COUNT BIGINT;
+	
+	/*
+	V_RECTYPE   GLOBAL_SALPROMO_ITEM_PRINT%ROWTYPE;
+    TYPE V_TAB IS TABLE OF V_RECTYPE%TYPE INDEX BY integer;
+    V_TABARR    V_TAB;
+    REF_CUR     REFCURSOR;
+    PERFORM RECORD;
+	*/
+
+BEGIN
+      EXECUTE 'DELETE FROM GLOBAL_SALPROMO_ITEM_PRINT';
+	   V_COUNT := 0;
+        LOOP
+			V_TABARR := '{}';
+			SELECT ARRAY_AGG(T)
+			STRICT INTO V_TABARR 
+			FROM (SELECT  IN_ASSORTMENT_CODE,
+                                INVITEM.ICODE,
+                                SUBSTR(
+                                    INVITEM.CNAME1   ||
+                                    INVITEM.CNAME2   ||
+                                    INVITEM.CNAME3   ||
+                                    INVITEM.CNAME4   ||
+                                    INVITEM.CNAME5   ||
+                                    INVITEM.CNAME6
+                                    ,1,100
+                                ),
+                                coalesce(INVITEM.BARCODE, INVITEM.ICODE),
+                                INVITEM.DEPARTMENT_GRPCODE,
+                                INVITEM.DIVISION_GRPNAME,
+                                INVITEM.SECTION_GRPNAME,
+                                INVITEM.DEPARTMENT_GRPNAME,
+                                INVITEM.INVARTICLE_CODE,
+                                INVITEM.ARTICLE_NAME,
+                                INVITEM.CNAME1,
+                                INVITEM.CNAME2,
+                                INVITEM.CNAME3,
+                                INVITEM.CNAME4,
+                                INVITEM.CNAME5,
+                                INVITEM.CNAME6,
+                                INVITEM.CCODE1,
+                                INVITEM.CCODE2,
+                                INVITEM.CCODE3,
+                                INVITEM.CCODE4,
+                                INVITEM.CCODE5,
+                                INVITEM.CCODE6,
+                                INVITEM.INVATTR1_NAME,
+                                INVITEM.INVATTR2_NAME,
+                                INVITEM.INVATTR3_NAME,
+                                INVITEM.INVATTR4_NAME,
+                                INVITEM.INVATTR5_NAME,
+                                INVITEM.INVATTR6_NAME,
+                                INVITEM.CAT1PROMPT,
+                                INVITEM.CAT2PROMPT,
+                                INVITEM.CAT3PROMPT,
+                                INVITEM.CAT4PROMPT,
+                                INVITEM.CAT5PROMPT,
+                                INVITEM.CAT6PROMPT,
+                                1,
+                                1,
+                                CASE WHEN IN_DISC_TYPE =  'L' THEN INVITEM.LISTED_MRP
+                                     WHEN IN_DISC_TYPE =  'W' THEN INVITEM.WSP
+                                ELSE
+                                     INVITEM.MRP
+                                END,
+                                DB_PKG_PROMOTION.GET_PROMOPRICE(
+                                    CASE  WHEN  IN_DISC_TYPE = 'L' THEN INVITEM.LISTED_MRP
+                                          WHEN  IN_DISC_TYPE = 'W' THEN INVITEM.WSP
+                                          ELSE
+                                                INVITEM.MRP
+                                    END,
+                                    1,
+                                    IN_DISC_TYPE,
+                                    IN_DISC_FACTOR,
+                                    IN_DISC_PRICE_BASIS,
+                                    INVITEM.RATE
+                                ),
+                                0
+                    FROM (
+                                    SELECT
+                                            I.ICODE,
+                                            I.BARCODE,
+                                            DI.GRPCODE  DIVISION_GRPCODE,
+                                            SE.GRPCODE  SECTION_GRPCODE,
+                                            I.GRPCODE   DEPARTMENT_GRPCODE,
+                                            DI.GRPNAME  DIVISION_GRPNAME,
+                                            SE.GRPNAME  SECTION_GRPNAME,
+                                            DE.GRPNAME  DEPARTMENT_GRPNAME,
+                                            I.INVARTICLE_CODE,
+                                            A.NAME      ARTICLE_NAME,
+                                            I.CCODE1,
+                                            I.CCODE2,
+                                            I.CCODE3,
+                                            I.CCODE4,
+                                            I.CCODE5,
+                                            I.CCODE6,
+                                            I.CNAME1,
+                                            I.CNAME2,
+                                            I.CNAME3,
+                                            I.CNAME4,
+                                            I.CNAME5,
+                                            I.CNAME6,
+                                            A.INVATTR1_NAME,
+                                            A.INVATTR2_NAME,
+                                            A.INVATTR3_NAME,
+                                            A.INVATTR4_NAME,
+                                            A.INVATTR5_NAME,
+                                            A.INVATTR6_NAME,
+                                            A.CAT1PROMPT,
+                                            A.CAT2PROMPT,
+                                            A.CAT3PROMPT,
+                                            A.CAT4PROMPT,
+                                            A.CAT5PROMPT,
+                                            A.CAT6PROMPT,
+                                            I.RATE,
+                                            I.MRP,
+                                            I.LISTED_MRP,
+                                            I.COSTRATE,
+                                            I.WSP,
+					    -- START REV : 002
+                                            --I.STOCKINDATE
+					    I.GENERATED
+					    -- END REV : 002
+                                    FROM
+                                            INVITEM     I,
+                                            INVGRP      DI,
+                                            INVGRP      SE,
+                                            INVGRP      DE,
+                                            INVARTICLE  A
+                                    WHERE
+                                            I.GRPCODE           = DE.GRPCODE
+                                    AND     DE.PARCODE          = SE.GRPCODE
+                                    AND     SE.PARCODE          = DI.GRPCODE
+                                    AND     I.INVARTICLE_CODE   = A.CODE
+                    ) INVITEM, 
+					PROMO_ASSORTMENT_INCLUDE, 
+					PROMO_ASSORTMENT M
+                    WHERE   
+							INVITEM.ICODE > V_COUNT 
+								AND M.CODE = PROMO_ASSORTMENT_INCLUDE.ASSORTMENT_CODE
+                                AND     PROMO_ASSORTMENT_INCLUDE.ASSORTMENT_CODE =  IN_ASSORTMENT_CODE
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_INCLUDE.DIVISION_GRPCODE IS NOT NULL
+                                                AND
+                                                INVITEM.DIVISION_GRPCODE = PROMO_ASSORTMENT_INCLUDE.DIVISION_GRPCODE
+                                            )
+                                            OR
+                                            PROMO_ASSORTMENT_INCLUDE.DIVISION_GRPCODE IS NULL
+                                        )
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_INCLUDE.SECTION_GRPCODE IS NOT NULL
+                                                AND
+                                                INVITEM.SECTION_GRPCODE = PROMO_ASSORTMENT_INCLUDE.SECTION_GRPCODE
+                                            )
+                                            OR
+                                            PROMO_ASSORTMENT_INCLUDE.SECTION_GRPCODE IS NULL
+                                        )
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_INCLUDE.DEPARTMENT_GRPCODE IS NOT NULL
+                                                AND
+                                                INVITEM.DEPARTMENT_GRPCODE = PROMO_ASSORTMENT_INCLUDE.DEPARTMENT_GRPCODE
+                                            )
+                                            OR
+                                            PROMO_ASSORTMENT_INCLUDE.DEPARTMENT_GRPCODE IS NULL
+                                        )
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_INCLUDE.INVARTICLE_CODE IS NOT NULL
+                                                AND
+                                                INVITEM.INVARTICLE_CODE = PROMO_ASSORTMENT_INCLUDE.INVARTICLE_CODE
+                                            )
+                                            OR
+                                            PROMO_ASSORTMENT_INCLUDE.INVARTICLE_CODE IS NULL
+                                        )
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_INCLUDE.ICODE IS NOT NULL
+                                                AND
+                                                INVITEM.ICODE =  PROMO_ASSORTMENT_INCLUDE.ICODE
+                                            )
+                                            OR
+                                            PROMO_ASSORTMENT_INCLUDE.ICODE IS NULL
+                                        )
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_INCLUDE.CCODE1 IS NOT NULL
+                                                AND
+                                                INVITEM.CCODE1 = PROMO_ASSORTMENT_INCLUDE.CCODE1
+                                            )
+                                            OR
+                                            PROMO_ASSORTMENT_INCLUDE.CCODE1 IS NULL
+                                        )
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_INCLUDE.CCODE2 IS NOT NULL
+                                                AND
+                                                INVITEM.CCODE2 =  PROMO_ASSORTMENT_INCLUDE.CCODE2
+                                            )
+                                            OR
+                                            PROMO_ASSORTMENT_INCLUDE.CCODE2 IS NULL
+                                        )
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_INCLUDE.CCODE3 IS NOT NULL
+                                                AND
+                                                INVITEM.CCODE3 = PROMO_ASSORTMENT_INCLUDE.CCODE3
+                                            )
+                                            OR
+                                            PROMO_ASSORTMENT_INCLUDE.CCODE3 IS NULL
+                                        )
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_INCLUDE.CCODE4 IS NOT NULL
+                                                AND
+                                                INVITEM.CCODE4 = PROMO_ASSORTMENT_INCLUDE.CCODE4
+                                            )
+                                            OR
+                                            PROMO_ASSORTMENT_INCLUDE.CCODE4 IS NULL
+                                        )
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_INCLUDE.CCODE5 IS NOT NULL
+                                                AND
+                                                INVITEM.CCODE5 = PROMO_ASSORTMENT_INCLUDE.CCODE5
+                                            )
+                                            OR
+                                            PROMO_ASSORTMENT_INCLUDE.CCODE5 IS NULL
+                                        )
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_INCLUDE.CCODE6 IS NOT NULL
+                                                AND
+                                                INVITEM.CCODE6 =  PROMO_ASSORTMENT_INCLUDE.CCODE6
+                                            )
+                                            OR
+                                            PROMO_ASSORTMENT_INCLUDE.CCODE6 IS NULL
+                                        )
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_INCLUDE.PRICE_RANGE_BASIS IS NOT NULL
+                                                AND '1' =
+                                                        CASE
+                                                           WHEN PROMO_ASSORTMENT_INCLUDE.PRICE_RANGE_BASIS = 'R'
+                                                           AND INVITEM.RATE
+                                                                  BETWEEN PROMO_ASSORTMENT_INCLUDE.PRICE_RANGE_FROM
+                                                                      AND PROMO_ASSORTMENT_INCLUDE.PRICE_RANGE_TO
+                                                              THEN '1'
+                                                           WHEN PROMO_ASSORTMENT_INCLUDE.PRICE_RANGE_BASIS = 'M'
+                                                           AND INVITEM.MRP
+                                                                  BETWEEN PROMO_ASSORTMENT_INCLUDE.PRICE_RANGE_FROM
+                                                                      AND PROMO_ASSORTMENT_INCLUDE.PRICE_RANGE_TO
+                                                              THEN '1'
+                                                           WHEN PROMO_ASSORTMENT_INCLUDE.PRICE_RANGE_BASIS = 'L'
+                                                           AND INVITEM.LISTED_MRP
+                                                                  BETWEEN PROMO_ASSORTMENT_INCLUDE.PRICE_RANGE_FROM
+                                                                      AND PROMO_ASSORTMENT_INCLUDE.PRICE_RANGE_TO
+                                                              THEN '1'
+                                                           WHEN PROMO_ASSORTMENT_INCLUDE.PRICE_RANGE_BASIS =  'C'
+                                                           AND INVITEM.COSTRATE
+                                                                  BETWEEN PROMO_ASSORTMENT_INCLUDE.PRICE_RANGE_FROM
+                                                                      AND PROMO_ASSORTMENT_INCLUDE.PRICE_RANGE_TO
+                                                              THEN '1'
+                                                           WHEN PROMO_ASSORTMENT_INCLUDE.PRICE_RANGE_BASIS = 'W'
+                                                           AND INVITEM.WSP
+                                                                  BETWEEN PROMO_ASSORTMENT_INCLUDE.PRICE_RANGE_FROM
+                                                                      AND PROMO_ASSORTMENT_INCLUDE.PRICE_RANGE_TO
+                                                              THEN '1'
+                                                        END
+                                                )
+                                                OR
+                                                PROMO_ASSORTMENT_INCLUDE.PRICE_RANGE_BASIS IS NULL
+                                        )
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_INCLUDE.STOCKINDATE_FROM IS NOT NULL
+                                                AND
+                                                -- START REV : 002
+						--INVITEM.STOCKINDATE BETWEEN PROMO_ASSORTMENT_INCLUDE.STOCKINDATE_FROM
+						date_trunc('day', INVITEM.GENERATED) BETWEEN date_trunc('day', PROMO_ASSORTMENT_INCLUDE.STOCKINDATE_FROM)
+						-- END REV : 002
+                                                AND date_trunc('day', PROMO_ASSORTMENT_INCLUDE.STOCKINDATE_TO)
+                                            )
+                                            OR
+                                            PROMO_ASSORTMENT_INCLUDE.STOCKINDATE_FROM IS NULL
+                                        )
+                                EXCEPT
+                                    SELECT  IN_ASSORTMENT_CODE,
+                                    INVITEM.ICODE,
+                                    SUBSTR(
+                                        INVITEM.CNAME1   ||
+                                        INVITEM.CNAME2   ||
+                                        INVITEM.CNAME3   ||
+                                        INVITEM.CNAME4   ||
+                                        INVITEM.CNAME5   ||
+                                        INVITEM.CNAME6
+                                        ,1,100
+                                    ),
+                                    coalesce(INVITEM.BARCODE, INVITEM.ICODE),
+                                    INVITEM.DEPARTMENT_GRPCODE,
+                                    INVITEM.DIVISION_GRPNAME,
+                                    INVITEM.SECTION_GRPNAME,
+                                    INVITEM.DEPARTMENT_GRPNAME,
+                                    INVITEM.INVARTICLE_CODE,
+                                    INVITEM.ARTICLE_NAME,
+                                    INVITEM.CNAME1,
+                                    INVITEM.CNAME2,
+                                    INVITEM.CNAME3,
+                                    INVITEM.CNAME4,
+                                    INVITEM.CNAME5,
+                                    INVITEM.CNAME6,
+                                    INVITEM.CCODE1,
+                                    INVITEM.CCODE2,
+                                    INVITEM.CCODE3,
+                                    INVITEM.CCODE4,
+                                    INVITEM.CCODE5,
+                                    INVITEM.CCODE6,
+                                    INVITEM.INVATTR1_NAME,
+                                    INVITEM.INVATTR2_NAME,
+                                    INVITEM.INVATTR3_NAME,
+                                    INVITEM.INVATTR4_NAME,
+                                    INVITEM.INVATTR5_NAME,
+                                    INVITEM.INVATTR6_NAME,
+                                    INVITEM.CAT1PROMPT,
+                                    INVITEM.CAT2PROMPT,
+                                    INVITEM.CAT3PROMPT,
+                                    INVITEM.CAT4PROMPT,
+                                    INVITEM.CAT5PROMPT,
+                                    INVITEM.CAT6PROMPT,
+                                    1,
+                                    1,
+                                    CASE WHEN IN_DISC_TYPE =  'L' THEN INVITEM.LISTED_MRP
+                                         WHEN IN_DISC_TYPE =  'W' THEN INVITEM.WSP
+                                    ELSE
+                                         INVITEM.MRP
+                                    END,
+                                    DB_PKG_PROMOTION.GET_PROMOPRICE(
+                                        CASE  WHEN  IN_DISC_TYPE = 'L' THEN INVITEM.LISTED_MRP
+                                              WHEN  IN_DISC_TYPE = 'W' THEN INVITEM.WSP
+                                              ELSE
+                                                    INVITEM.MRP
+                                        END,
+                                        1,
+                                        IN_DISC_TYPE,
+                                        IN_DISC_FACTOR,
+                                        IN_DISC_PRICE_BASIS,
+                                        INVITEM.RATE
+                                    ),
+                                    0
+                                FROM (
+                                    SELECT
+                                            I.ICODE,
+                                            I.BARCODE,
+                                            DI.GRPCODE  DIVISION_GRPCODE,
+                                            SE.GRPCODE  SECTION_GRPCODE,
+                                            I.GRPCODE   DEPARTMENT_GRPCODE,
+                                            DI.GRPNAME  DIVISION_GRPNAME,
+                                            SE.GRPNAME  SECTION_GRPNAME,
+                                            DE.GRPNAME  DEPARTMENT_GRPNAME,
+                                            I.INVARTICLE_CODE,
+                                            A.NAME      ARTICLE_NAME,
+                                            I.CCODE1,
+                                            I.CCODE2,
+                                            I.CCODE3,
+                                            I.CCODE4,
+                                            I.CCODE5,
+                                            I.CCODE6,
+                                            I.CNAME1,
+                                            I.CNAME2,
+                                            I.CNAME3,
+                                            I.CNAME4,
+                                            I.CNAME5,
+                                            I.CNAME6,
+                                            A.INVATTR1_NAME,
+                                            A.INVATTR2_NAME,
+                                            A.INVATTR3_NAME,
+                                            A.INVATTR4_NAME,
+                                            A.INVATTR5_NAME,
+                                            A.INVATTR6_NAME,
+                                            A.CAT1PROMPT,
+                                            A.CAT2PROMPT,
+                                            A.CAT3PROMPT,
+                                            A.CAT4PROMPT,
+                                            A.CAT5PROMPT,
+                                            A.CAT6PROMPT,
+                                            I.RATE,
+                                            I.MRP,
+                                            I.LISTED_MRP,
+                                            I.COSTRATE,
+                                            I.WSP,
+                                            -- START REV : 002
+                                            --I.STOCKINDATE
+					    I.GENERATED
+					    -- END REV : 002
+                                    FROM
+                                            INVITEM     I,
+                                            INVGRP      DI,
+                                            INVGRP      SE,
+                                            INVGRP      DE,
+                                            INVARTICLE  A
+                                    WHERE
+                                            I.GRPCODE           = DE.GRPCODE
+                                    AND     DE.PARCODE          = SE.GRPCODE
+                                    AND     SE.PARCODE          = DI.GRPCODE
+                                    AND     I.INVARTICLE_CODE   = A.CODE
+                                )       INVITEM,
+                                        PROMO_ASSORTMENT_EXCLUDE,
+                                        PROMO_ASSORTMENT M
+                                WHERE
+                                        M.CODE = PROMO_ASSORTMENT_EXCLUDE.ASSORTMENT_CODE
+                                AND     PROMO_ASSORTMENT_EXCLUDE.ASSORTMENT_CODE =  IN_ASSORTMENT_CODE
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_EXCLUDE.DIVISION_GRPCODE IS NOT NULL
+                                                AND
+                                                INVITEM.DIVISION_GRPCODE =  PROMO_ASSORTMENT_EXCLUDE.DIVISION_GRPCODE
+                                            )
+                                            OR
+                                            PROMO_ASSORTMENT_EXCLUDE.DIVISION_GRPCODE IS NULL
+                                        )
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_EXCLUDE.SECTION_GRPCODE IS NOT NULL
+                                                AND
+                                                INVITEM.SECTION_GRPCODE = PROMO_ASSORTMENT_EXCLUDE.SECTION_GRPCODE
+                                            )
+                                            OR
+                                            PROMO_ASSORTMENT_EXCLUDE.SECTION_GRPCODE IS NULL
+                                        )
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_EXCLUDE.DEPARTMENT_GRPCODE IS NOT NULL
+                                                AND
+                                                INVITEM.DEPARTMENT_GRPCODE = PROMO_ASSORTMENT_EXCLUDE.DEPARTMENT_GRPCODE
+                                            )
+                                            OR
+                                            PROMO_ASSORTMENT_EXCLUDE.DEPARTMENT_GRPCODE IS NULL
+                                        )
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_EXCLUDE.INVARTICLE_CODE IS NOT NULL
+                                                AND
+                                                INVITEM.INVARTICLE_CODE = PROMO_ASSORTMENT_EXCLUDE.INVARTICLE_CODE
+                                            )
+                                            OR
+                                            PROMO_ASSORTMENT_EXCLUDE.INVARTICLE_CODE IS NULL
+                                        )
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_EXCLUDE.ICODE IS NOT NULL
+                                                AND
+                                                INVITEM.ICODE = PROMO_ASSORTMENT_EXCLUDE.ICODE
+                                            )
+                                            OR
+                                            PROMO_ASSORTMENT_EXCLUDE.ICODE IS NULL
+                                        )
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_EXCLUDE.CCODE1 IS NOT NULL
+                                                AND
+                                                INVITEM.CCODE1 = PROMO_ASSORTMENT_EXCLUDE.CCODE1
+                                            )
+                                            OR
+                                            PROMO_ASSORTMENT_EXCLUDE.CCODE1 IS NULL
+                                        )
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_EXCLUDE.CCODE2 IS NOT NULL
+                                                AND
+                                                INVITEM.CCODE2 = PROMO_ASSORTMENT_EXCLUDE.CCODE2
+                                            )
+                                            OR
+                                            PROMO_ASSORTMENT_EXCLUDE.CCODE2 IS NULL
+                                        )
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_EXCLUDE.CCODE3 IS NOT NULL
+                                                AND
+                                                INVITEM.CCODE3 =  PROMO_ASSORTMENT_EXCLUDE.CCODE3
+                                            )
+                                            OR
+                                            PROMO_ASSORTMENT_EXCLUDE.CCODE3 IS NULL
+                                        )
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_EXCLUDE.CCODE4 IS NOT NULL
+                                                AND
+                                                INVITEM.CCODE4 =  PROMO_ASSORTMENT_EXCLUDE.CCODE4
+                                            )
+                                            OR
+                                            PROMO_ASSORTMENT_EXCLUDE.CCODE4 IS NULL
+                                        )
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_EXCLUDE.CCODE5 IS NOT NULL
+                                                AND
+                                                INVITEM.CCODE5 = PROMO_ASSORTMENT_EXCLUDE.CCODE5
+                                            )
+                                            OR
+                                            PROMO_ASSORTMENT_EXCLUDE.CCODE5 IS NULL
+                                        )
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_EXCLUDE.CCODE6 IS NOT NULL
+                                                AND
+                                                INVITEM.CCODE6 = PROMO_ASSORTMENT_EXCLUDE.CCODE6
+                                            )
+                                            OR
+                                            PROMO_ASSORTMENT_EXCLUDE.CCODE6 IS NULL
+                                        )
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_EXCLUDE.PRICE_RANGE_BASIS IS NOT NULL
+                                                AND '1' =
+                                                        CASE
+                                                           WHEN PROMO_ASSORTMENT_EXCLUDE.PRICE_RANGE_BASIS = 'R'
+                                                           AND INVITEM.RATE
+                                                                  BETWEEN PROMO_ASSORTMENT_EXCLUDE.PRICE_RANGE_FROM
+                                                                      AND PROMO_ASSORTMENT_EXCLUDE.PRICE_RANGE_TO
+                                                              THEN '1'
+                                                           WHEN PROMO_ASSORTMENT_EXCLUDE.PRICE_RANGE_BASIS = 'M'
+                                                           AND INVITEM.MRP
+                                                                  BETWEEN PROMO_ASSORTMENT_EXCLUDE.PRICE_RANGE_FROM
+                                                                      AND PROMO_ASSORTMENT_EXCLUDE.PRICE_RANGE_TO
+                                                              THEN '1'
+                                                           WHEN PROMO_ASSORTMENT_EXCLUDE.PRICE_RANGE_BASIS = 'L'
+                                                           AND INVITEM.LISTED_MRP
+                                                                  BETWEEN PROMO_ASSORTMENT_EXCLUDE.PRICE_RANGE_FROM
+                                                                      AND PROMO_ASSORTMENT_EXCLUDE.PRICE_RANGE_TO
+                                                              THEN '1'
+                                                           WHEN PROMO_ASSORTMENT_EXCLUDE.PRICE_RANGE_BASIS = 'C'
+                                                           AND INVITEM.COSTRATE
+                                                                  BETWEEN PROMO_ASSORTMENT_EXCLUDE.PRICE_RANGE_FROM
+                                                                      AND PROMO_ASSORTMENT_EXCLUDE.PRICE_RANGE_TO
+                                                              THEN '1'
+                                                           WHEN PROMO_ASSORTMENT_EXCLUDE.PRICE_RANGE_BASIS = 'W'
+                                                           AND INVITEM.WSP
+                                                                  BETWEEN PROMO_ASSORTMENT_EXCLUDE.PRICE_RANGE_FROM
+                                                                      AND PROMO_ASSORTMENT_EXCLUDE.PRICE_RANGE_TO
+                                                              THEN '1'
+                                                        END
+                                                )
+                                                OR
+                                                PROMO_ASSORTMENT_EXCLUDE.PRICE_RANGE_BASIS IS NULL
+                                        )
+                                AND     (
+                                            (
+                                                PROMO_ASSORTMENT_EXCLUDE.STOCKINDATE_FROM IS NOT NULL
+                                                AND
+                                                -- SATRT REV : 002
+						--INVITEM.STOCKINDATE BETWEEN PROMO_ASSORTMENT_EXCLUDE.STOCKINDATE_FROM
+						date_trunc('day', INVITEM.GENERATED) BETWEEN date_trunc('day', PROMO_ASSORTMENT_EXCLUDE.STOCKINDATE_FROM)
+						-- END REV : 002
+                                                    AND date_trunc('day', PROMO_ASSORTMENT_EXCLUDE.STOCKINDATE_TO)
+                                            )
+                                            OR
+                                            PROMO_ASSORTMENT_EXCLUDE.STOCKINDATE_FROM IS NULL
+                                        )
+						ORDER BY INVITEM.ICODE
+						LIMIT 100)T;
+			
+			EXIT WHEN array_lower(V_TABARR) IS NULL;
+			
+			FOR I IN array_lower(V_TABARR,1)..array_upper(V_TABARR,1) 
+			LOOP
+				V_COUNT := V_TABARR[I].icode;
+				EXECUTE 'INSERT INTO GLOBAL_SALPROMO_ITEM_PRINT 
+				VALUES $1;'
+				USING 
+				V_TABARR(I);
+				
+			END LOOP;
+		END LOOP;
+			
+		/*LOOP	
+                  FETCH   REF_CUR BULK COLLECT INTO V_TABARR LIMIT 100;
+                  EXIT WHEN V_TABARR.COUNT = 0;
+                  FORALL I IN V_TABARR.FIRST..V_TABARR.COUNT
+                      INSERT
+                      INTO    GLOBAL_SALPROMO_ITEM_PRINT VALUES V_TABARR(I);
+              END LOOP; */
+END;
+"""
+  arguments = <
+    {
+      name = in_assortment_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = in_disc_price_basis
+      type = character
+      mode = IN
+      default = NULL::bpchar
+    }
+
+    {
+      name = in_disc_type
+      type = character
+      mode = IN
+      default = 'M'::bpchar
+    }
+
+    {
+      name = in_disc_factor
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+  >
+  language = plpgsql
+}
+

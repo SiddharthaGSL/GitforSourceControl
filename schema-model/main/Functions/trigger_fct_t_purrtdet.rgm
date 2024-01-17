@@ -1,0 +1,327 @@
+function "main"."trigger_fct_t_purrtdet()" {
+  text = """
+
+-- START REV : 003
+DECLARE
+   ora2pg_rowcount integer;
+V_WHETHER_CON        char(1) := NULL;                          -- REV: 003
+   V_ADMSITE_CODE       ADMSITE.CODE%TYPE;
+   V_ADMOU_CODE         FINPOST.ADMOU_CODE%TYPE;
+   V_SCHEME_DOCNO       PURINVMAIN.SCHEME_DOCNO%TYPE;
+   V_INVNO              bigint;
+   V_INVDT              timestamp;
+   V_DOCNO              varchar(25) := NULL;
+   V_DOCDT              timestamp;
+   V_YCODE              bigint := 0;
+   V_POSTCODE           bigint := 0;
+   V_DAMOUNT            FINPOST.DAMOUNT%TYPE;
+   V_CAMOUNT            FINPOST.CAMOUNT%TYPE;
+   V_REF_ADMSITE_CODE   bigint := NULL;
+   V_REM                varchar(500) := NULL;
+   V_OLD_POSTCODE       bigint := 0;
+   V_OLD_DAMOUNT        FINPOST.DAMOUNT%TYPE;
+   V_OLD_CAMOUNT        FINPOST.CAMOUNT%TYPE;
+   V_ENTRY_SOURCE       varchar(25);
+   V_SID                bigint;
+   V_PROGRAM            varchar(50);
+BEGIN
+  BEGIN
+   BEGIN
+      -- START REV : 004
+      SELECT ENTRY_SOURCE
+        INTO STRICT V_ENTRY_SOURCE
+        FROM PURRTMAIN
+       WHERE RTCODE = coalesce(NEW.RTCODE, OLD.RTCODE);
+   -- END REV : O04
+   EXCEPTION
+      WHEN no_data_found
+      THEN
+         NULL;
+   END;
+
+   IF TG_OP = 'UPDATE'
+   THEN
+      IF coalesce(V_ENTRY_SOURCE, 'XX') <> 'WEB'
+      THEN
+         IF OLD.INVGRTDET_CODE IS NOT NULL
+         THEN                                                     -- REV : 002
+            UPDATE INVGRTDET
+               SET RTINVQTY = coalesce(RTINVQTY, 0) - coalesce(OLD.QTY, 0)
+             WHERE CODE = OLD.INVGRTDET_CODE;                    -- REV : 002
+         END IF;
+
+         IF NEW.INVGRTDET_CODE IS NOT NULL
+         THEN                                                     -- REV : 002
+            UPDATE INVGRTDET
+               SET RTINVQTY = coalesce(RTINVQTY, 0) + coalesce(NEW.QTY, 0)
+             WHERE CODE = NEW.INVGRTDET_CODE;                    -- REV : 002
+         END IF;
+      END IF;
+   END IF;
+
+   IF TG_OP = 'INSERT'
+   THEN
+      IF coalesce(V_ENTRY_SOURCE, 'XX') <> 'WEB'
+      THEN
+         IF NEW.INVGRTDET_CODE IS NOT NULL
+         THEN                                                     -- REV : 002
+            UPDATE INVGRTDET
+               SET RTINVQTY = coalesce(RTINVQTY, 0) + coalesce(NEW.QTY, 0)
+             WHERE CODE = NEW.INVGRTDET_CODE;                    -- REV : 002
+         END IF;
+      END IF;
+   END IF;
+
+
+   -- START REV : 003
+   SELECT SCHEME_DOCNO,
+          ADMSITE_CODE,
+          ADMOU_CODE,
+          RTNO,
+          RTDT,
+          YCODE,
+          DOCNO,
+          DOCDT,
+          REF_ADMSITE_CODE,
+          REM
+     INTO STRICT V_SCHEME_DOCNO,
+          V_ADMSITE_CODE,
+          V_ADMOU_CODE,
+          V_INVNO,
+          V_INVDT,
+          V_YCODE,
+          V_DOCNO,
+          V_DOCDT,
+          V_REF_ADMSITE_CODE,
+          V_REM
+     FROM PURRTMAIN
+    WHERE RTCODE = coalesce(NEW.RTCODE, OLD.RTCODE);
+
+   IF TG_OP = 'DELETE'
+   THEN
+      NULL;
+   END IF;                                                       -- RREV : 005
+   -- START REV : 003
+   SELECT SCHEME_DOCNO,
+          ADMSITE_CODE,
+          ADMOU_CODE,
+          RTNO,
+          RTDT,
+          YCODE,
+          DOCNO,
+          DOCDT,
+          REF_ADMSITE_CODE,
+          REM
+     INTO STRICT V_SCHEME_DOCNO,
+          V_ADMSITE_CODE,
+          V_ADMOU_CODE,
+          V_INVNO,
+          V_INVDT,
+          V_YCODE,
+          V_DOCNO,
+          V_DOCDT,
+          V_REF_ADMSITE_CODE,
+          V_REM
+     FROM PURRTMAIN
+    WHERE RTCODE = coalesce(NEW.RTCODE, OLD.RTCODE);
+
+   IF OLD.GLCODE IS NOT NULL
+   THEN
+      UPDATE FINPOST
+         SET camount = coalesce(camount, 0) - coalesce(OLD.GRSAMT, 0)
+       WHERE     ENTCODE = OLD.RTCODE::varchar
+             AND ENTTYPE = 'PRD'
+             AND GLCODE = OLD.GLCODE
+             AND (   (OLD.SLCODE IS NULL AND SLCODE IS NULL)
+                  OR SLCODE = OLD.SLCODE);
+
+      BEGIN
+           SELECT DISTINCT(POSTCODE), SUM(DAMOUNT), SUM(CAMOUNT)
+             INTO STRICT V_OLD_POSTCODE, V_OLD_DAMOUNT, V_OLD_CAMOUNT
+             FROM FINPOST
+            WHERE     ENTCODE = OLD.RTCODE::varchar
+                  AND ENTTYPE = 'PRD'
+                  AND GLCODE = OLD.GLCODE
+                  AND OLD.GLCODE IS NOT NULL
+                  -- AND      NVL(camount,0)  > 0
+                  AND (   (OLD.SLCODE IS NULL AND SLCODE IS NULL)
+                       OR SLCODE = OLD.SLCODE)
+         GROUP BY POSTCODE;
+
+         UPDATE FINCOSTTAG
+            SET Camount = coalesce(camount, 0) - coalesce(OLD.grsamt, 0)
+          WHERE     entcode = OLD.RTcode::varchar
+                AND enttype = 'PRD'
+                AND postcode = v_OLD_postcode
+                AND OLD.GL_CC_APPL = 'Y'
+                AND glcode = OLD.glcode
+                AND (   (OLD.SLCODE IS NULL AND SLCODE IS NULL)
+                     OR SLCODE = OLD.SLCODE);
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            NULL;
+      END;
+   END IF;
+
+   IF NEW.GLCODE IS NOT NULL
+   THEN
+      UPDATE finpost
+         SET entno = V_INVNO::varchar,
+             entdt = V_INVDT,
+             scheme_docno = V_scheme_docno,
+             docno = V_docno,
+             docDT = V_docDT,
+             glcode = NEW.glcode,
+             slcode = NEW.slcode,
+             nartext = V_rem,
+             damount = 0,
+             camount = coalesce(CAMOUNT, 0) + coalesce(NEW.GRSAMT, 0),
+             REF_ADMSITE_CODE = V_REF_ADMSITE_CODE,
+             ADMOU_CODE = V_ADMOU_CODE
+       WHERE     entcode = NEW.rtcode::varchar
+             AND enttype = 'PRD'
+             AND glcode = NEW.glcode
+             AND (   (NEW.slcode IS NULL AND slcode IS NULL)
+                  OR slcode = NEW.slcode);
+
+      GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+      THEN
+         INSERT INTO FINPOST(postcode,
+                              entcode,
+                              entno,
+                              entdt,
+                              enttype,
+                              docno,
+                              glcode,
+                              slcode,
+                              camount,
+                              ycode,
+                              nartext,
+                              scheme_docno,
+                              REF_ADMSITE_CODE,
+                              ADMOU_CODE,
+                              docDT)
+              VALUES (nextval('erp01'),
+                      NEW.rtcode::varchar,
+                      V_INVNO::varchar,
+                      V_INVDT,
+                      'PRD',
+                      V_docno,
+                      NEW.glcode,
+                      NEW.slcode,
+                      coalesce(NEW.GRSAMT, 0),
+                      V_ycode,
+                      V_rem,
+                      V_scheme_docno,
+                      V_REF_ADMSITE_CODE,
+                      V_ADMOU_CODE,
+                      V_docDT);
+      END IF;
+
+      BEGIN
+           SELECT DISTINCT(POSTCODE), SUM(DAMOUNT), SUM(CAMOUNT)
+             INTO STRICT V_POSTCODE, V_DAMOUNT, V_CAMOUNT
+             FROM FINPOST
+            WHERE     ENTCODE = NEW.RTCODE::varchar
+                  AND ENTTYPE = 'PRD'
+                  AND GLCODE = NEW.GLCODE
+                  AND NEW.GLCODE IS NOT NULL
+                  AND coalesce(CAMOUNT, 0) <> 0
+                  AND (   (NEW.SLCODE IS NULL AND SLCODE IS NULL)
+                       OR SLCODE = NEW.SLCODE)
+         GROUP BY POSTCODE;
+
+         UPDATE FINCOSTTAG
+            SET ENTCODE = NEW.RTCODE::varchar,
+                entno = V_INVno::varchar,
+                entdt = V_INVdt,
+                enttype = 'PRD',
+                glcode = NEW.glcode,
+                ycode = V_ycode,
+                costcode  = NULL,
+                slcode = NEW.slcode,                            --:new.pcode,
+                damount = 0,
+                camount = coalesce(Camount, 0) + coalesce(NEW.grsamt, 0),
+                admsite_code = V_admsite_code,
+                postcode = v_postcode,
+                ref_admsite_code = V_admsite_code,
+                ADMOU_CODE = V_ADMOU_CODE                         -- REV : 009
+          WHERE     entcode = NEW.RTCODE::varchar
+                AND enttype = 'PRD'
+                AND NEW.GL_CC_APPL = 'Y'
+                AND glcode = NEW.glcode
+                AND (   (NEW.SLCODE IS NULL AND SLCODE IS NULL)
+                     OR SLCODE = NEW.SLCODE);
+
+         GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+         THEN
+            IF     V_POSTCODE IS NOT NULL
+               AND NEW.GL_CC_APPL = 'Y'
+               AND coalesce(V_CAMOUNT, 0) <> 0
+               AND NEW.GLCODE IS NOT NULL
+            THEN
+               INSERT INTO FINCOSTTAG(ENTCODE,
+                                       ENTNO,
+                                       ENTDT,
+                                       ENTTYPE,
+                                       GLCODE,
+                                       YCODE,
+                                       COSTCODE,
+                                       SLCODE,
+                                       CAMOUNT,
+                                       POSTCODE,
+                                       ADMSITE_CODE,
+                                       REF_ADMSITE_CODE,
+                                       ADMOU_CODE)
+                    VALUES (NEW.RTCODE::varchar,
+                            V_INVNO::varchar,
+                            V_INVDT,
+                            'PRD',
+                            NEW.GLCODE,
+                            V_YCODE,
+                            NULL,
+                            NEW.SLCODE,
+                            V_CAMOUNT,
+                            V_POSTCODE,
+                            V_ADMSITE_CODE,
+                            V_ADMSITE_CODE,
+                            V_ADMOU_CODE);
+            END IF;
+         END IF;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            NULL;
+      END;
+   END IF;
+
+   DELETE FROM FINCOSTTAG
+    WHERE     ENTCODE IN (OLD.RTCODE::varchar, NEW.RTCODE::varchar)
+          AND ENTTYPE = 'PRD'
+          AND coalesce(DAMOUNT, 0) = 0
+          AND coalesce(CAMOUNT, 0) = 0;
+
+   DELETE FROM FINPOST
+    WHERE     ENTCODE IN (OLD.RTCODE::varchar, NEW.RTCODE::varchar)
+          AND ENTTYPE = 'PRD'
+          AND coalesce(DAMOUNT, 0) = 0
+          AND coalesce(CAMOUNT, 0) = 0;
+-- END REV : 003
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

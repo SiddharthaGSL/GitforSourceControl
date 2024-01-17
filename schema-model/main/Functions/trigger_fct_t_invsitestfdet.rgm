@@ -1,0 +1,268 @@
+function "main"."trigger_fct_t_invsitestfdet()" {
+  text = """
+
+/*******************************************************************************************************************
+   REVISIONS:
+   No.          Date        Author                   Description
+   ---------    ----------  ----------------------   -------------------------------------------------------------------
+   REV : 000    26/02/2011  DIPTIMAN                 (BUG ID : 2567) Created.
+   REV : 001    07/10/2011  MANASH                   (BUG ID : 034)  Multiple OU creation.
+   REV : 002    14/11/2017  DIPTIMAN                 (TFS ID : 32259) COGS costrate related changes.
+   REV : 003    02/09/2022  ANINDYA                  (TFS ID : BATCH SERIAL) Batch Serial related changes.
+ *********************************************************************************************************************/
+DECLARE
+    V_TYPE              varchar(100);
+    V_DETAIL_CODE       INVSTOCK.DETAIL_CODE%TYPE;
+    V_ENTCODE           INVSTOCK.ENTCODE%TYPE;
+    V_ENTNO             INVSTOCK.ENTNO%TYPE;
+    V_ENTDT             INVSTOCK.ENTDT%TYPE;
+    V_LOCCODE           INVSTOCK.LOCCODE%TYPE;
+    V_YCODE             INVSTOCK.YCODE%TYPE;
+    V_NEW_ICODE         INVSTOCK.ICODE%TYPE;
+    V_OLD_ICODE         INVSTOCK.ICODE%TYPE;
+    V_NEW_QTY           INVSTOCK.QTY%TYPE;
+    V_OLD_QTY           INVSTOCK.QTY%TYPE;
+    V_NEW_RATE          INVSTOCK.RATE%TYPE;
+    V_OLD_RATE          INVSTOCK.RATE%TYPE;
+    V_REFPCODE          INVSTOCK.REFPCODE%TYPE;
+    V_REFLOCCODE        INVSTOCK.LOCCODE%TYPE;
+    V_REFCMPCODE        INVSTOCK.REFCMPCODE%TYPE;
+    V_REFGLCODE         INVSTOCK.REFGLCODE%TYPE;
+    V_REFDEPTCODE       INVSTOCK.REFDEPTCODE%TYPE;
+    V_REFPRCODE         INVSTOCK.REFPRCODE%TYPE;
+    V_REFDOCNO          INVSTOCK.REFDOCNO%TYPE;
+    V_REFPKGCODE        INVSTOCK.REFPKGCODE%TYPE;
+    V_REFDCCODE         INVSTOCK.REFDCCODE%TYPE;
+    V_OTHER_RATE        INVSTOCK.COSTRATE%TYPE;
+    V_SCHEME_DOCNO      INVSTOCK.SCHEME_DOCNO%TYPE;
+    V_UPD_COST          INVSTOCK.UPD_COST%TYPE;
+    V_ITEM_REMARKS      INVSTOCK.ITEM_REMARKS%TYPE;
+    V_SITE_UPD_COST     INVSTOCK.SITE_UPD_COST%TYPE;
+    V_SITE_COSTRATE     INVSTOCK.SITE_COSTRATE%TYPE;
+    V_ADMOU_CODE_IN     INVSTOCK.ADMOU_CODE%TYPE;
+    V_ADMOU_CODE_OUT    INVSTOCK.ADMOU_CODE%TYPE;
+    V_ADMSITE_CODE_IN   INVSTOCK.ADMSITE_CODE%TYPE;
+    V_ADMSITE_CODE_OUT  INVSTOCK.ADMSITE_CODE%TYPE;
+    V_ISSECONDARY_IN    INVSTOCK.ISSECONDARY%TYPE;
+    V_ISSECONDARY_OUT   INVSTOCK.ISSECONDARY%TYPE;
+    V_TEMP_LOC          INVSTOCK.LOCCODE%TYPE;
+    V_SUBENTTYPE        INVSTOCK.SUBENTTYPE%TYPE;
+BEGIN
+    IF  TG_OP = 'INSERT' THEN
+        V_TYPE := 'INSERTING';
+    END IF;
+
+    IF  TG_OP = 'UPDATE' THEN
+        V_TYPE := 'UPDATING';
+    END IF;
+
+    IF  TG_OP = 'DELETE' THEN
+        V_TYPE := 'DELETING';
+    END IF;
+
+    -- STOCK AND COSTING REFLECTION
+    -- FOR OUT
+    SELECT  STFNO                       ENTNO
+            ,STFDT                      ENTDT
+            ,STORE_LOCCODE_OUT          LOCCODE
+            ,YCODE                      YCODE
+            ,SLCODE                     REFPCODE
+            ,STORE_LOCCODE_IN           REFLOCCODE
+            ,NULL                       REFCMPCODE
+            ,NULL                       REFGLCODE
+            ,NULL                       REFDEPTCODE
+            ,NULL                       REFPRCODE
+            ,DOCNO                      REFDOCNO
+            ,NULL                       REFPKGCODE
+            ,NULL                       REFDCCODE
+            ,SCHEME_DOCNO               SCHEME_DOCNO
+            ,ADMSITE_CODE_OUT           ADMSITE_CODE_OUT
+            ,ADMSITE_CODE_IN            ADMSITE_CODE_IN
+            ,CASE WHEN                 ISSECONDARY_OUT='Y' THEN     'Y'  ELSE NULL END                            ISSECONDARY_OUT
+            ,CASE WHEN                 ISSECONDARY_IN='Y' THEN     'Y'  ELSE NULL END                            ISSECONDARY_IN
+            -- START REV : 001
+            ,ADMOU_CODE
+            ,ADMOU_CODE_IN
+            -- END REV : 001
+    INTO STRICT
+            V_ENTNO
+            ,V_ENTDT
+            ,V_LOCCODE
+            ,V_YCODE
+            ,V_REFPCODE
+            ,V_REFLOCCODE
+            ,V_REFCMPCODE
+            ,V_REFGLCODE
+            ,V_REFDEPTCODE
+            ,V_REFPRCODE
+            ,V_REFDOCNO
+            ,V_REFPKGCODE
+            ,V_REFDCCODE
+            ,V_SCHEME_DOCNO
+            ,V_ADMSITE_CODE_OUT
+            ,V_ADMSITE_CODE_IN
+            ,V_ISSECONDARY_OUT
+            ,V_ISSECONDARY_IN
+            -- START REV : 001
+            ,V_ADMOU_CODE_OUT
+            ,V_ADMOU_CODE_IN
+            -- START REV : 001
+    FROM
+            INVSITESTFMAIN
+    WHERE
+            STFCODE = coalesce(NEW.STFCODE,OLD.STFCODE);
+
+    V_DETAIL_CODE   := coalesce(NEW.CODE,OLD.CODE);
+    V_ENTCODE       := coalesce(NEW.STFCODE,OLD.STFCODE);
+    V_NEW_ICODE     := NEW.ICODE;
+    V_OLD_ICODE     := OLD.ICODE;
+    V_NEW_QTY       := NEW.STFQTY;
+    V_OLD_QTY       := OLD.STFQTY;
+    V_NEW_RATE      := NEW.STFRATE;
+    V_OLD_RATE      := OLD.STFRATE;
+    V_SITE_COSTRATE := NEW.STFRATE;
+
+    -- START REV : 001
+    IF  coalesce(V_ADMOU_CODE_OUT, 0) <> coalesce(V_ADMOU_CODE_IN, 0) THEN
+        -- FOR STIOCK OUT
+        V_ITEM_REMARKS  := NEW.REMARKS;
+        V_UPD_COST      := NULL;
+        V_SITE_UPD_COST := NULL;
+        V_SUBENTTYPE    := 'ISO';
+
+        CALL Db_Pkg_Stock$REFLECT(
+                        V_DETAIL_CODE, V_TYPE,
+                        V_ENTCODE, V_ENTNO, V_ENTDT, 'OUO',
+                        V_LOCCODE, V_YCODE,
+                        V_NEW_ICODE, V_OLD_ICODE,
+                        V_NEW_QTY, V_OLD_QTY,
+                        V_NEW_RATE, V_OLD_RATE,
+                        V_REFPCODE, V_REFLOCCODE,
+                        V_REFCMPCODE, V_REFGLCODE, V_REFDEPTCODE,
+                        V_REFPRCODE, V_REFDOCNO, V_REFPKGCODE,
+                        V_REFDCCODE, V_OTHER_RATE, V_SCHEME_DOCNO,
+                        V_SUBENTTYPE, V_UPD_COST, V_ITEM_REMARKS,
+                        V_ADMSITE_CODE_OUT, V_ISSECONDARY_OUT,
+                        V_SITE_UPD_COST, V_SITE_COSTRATE,
+                        -- START REV : 003
+                        NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
+                        NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
+                        NULL,
+                        coalesce(NEW.INVBATCH_SERIAL_CODE,OLD.INVBATCH_SERIAL_CODE)
+                        -- END REV : 033
+                    );
+
+        -- INTERCHANGING THE LOCATION
+        V_TEMP_LOC      := V_LOCCODE;
+        V_LOCCODE       := V_REFLOCCODE;
+        V_REFLOCCODE    := V_TEMP_LOC;
+        V_UPD_COST      := NULL;
+        V_SITE_UPD_COST := NULL;
+        V_SUBENTTYPE    := 'ISI';
+
+        -- FOR STIOCK IN
+        CALL Db_Pkg_Stock$REFLECT(
+                        V_DETAIL_CODE, V_TYPE,
+                        V_ENTCODE, V_ENTNO, V_ENTDT, 'OUI',
+                        V_LOCCODE, V_YCODE,
+                        V_NEW_ICODE, V_OLD_ICODE,
+                        V_NEW_QTY, V_OLD_QTY,
+                        V_NEW_RATE, V_OLD_RATE,
+                        V_REFPCODE, V_REFLOCCODE,
+                        V_REFCMPCODE, V_REFGLCODE, V_REFDEPTCODE,
+                        V_REFPRCODE, V_REFDOCNO, V_REFPKGCODE,
+                        V_REFDCCODE, V_OTHER_RATE, V_SCHEME_DOCNO,
+                        V_SUBENTTYPE, V_UPD_COST, V_ITEM_REMARKS,
+                        V_ADMSITE_CODE_IN, V_ISSECONDARY_IN,
+                        V_SITE_UPD_COST, V_SITE_COSTRATE,
+                        -- START REV : 003
+                        NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
+                        NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
+                        NULL,
+                        coalesce(NEW.INVBATCH_SERIAL_CODE,OLD.INVBATCH_SERIAL_CODE)
+                        -- END REV : 033
+                   );
+    ELSE
+        -- FOR STIOCK OUT
+        V_ITEM_REMARKS  := NEW.REMARKS;
+        V_UPD_COST      := NULL;
+        V_SITE_UPD_COST := NULL;
+        V_SUBENTTYPE    := 'ISO';
+
+        CALL Db_Pkg_Stock$REFLECT(
+                        V_DETAIL_CODE, V_TYPE,
+                        V_ENTCODE, V_ENTNO, V_ENTDT, 'STO',
+                        V_LOCCODE, V_YCODE,
+                        V_NEW_ICODE, V_OLD_ICODE,
+                        V_NEW_QTY, V_OLD_QTY,
+                        V_NEW_RATE, V_OLD_RATE,
+                        V_REFPCODE, V_REFLOCCODE,
+                        V_REFCMPCODE, V_REFGLCODE, V_REFDEPTCODE,
+                        V_REFPRCODE, V_REFDOCNO, V_REFPKGCODE,
+                        V_REFDCCODE, V_OTHER_RATE, V_SCHEME_DOCNO,
+                        V_SUBENTTYPE, V_UPD_COST, V_ITEM_REMARKS,
+                        V_ADMSITE_CODE_OUT, V_ISSECONDARY_OUT,
+                        V_SITE_UPD_COST, V_SITE_COSTRATE
+                        -- START REV : 002
+                        ,NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NEW.COSTRATE,
+                        -- END REV : 002
+                        -- START REV : 003
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        coalesce(NEW.INVBATCH_SERIAL_CODE, OLD.INVBATCH_SERIAL_CODE)
+                        -- END REV : 003
+                    );
+
+        -- INTERCHANGING THE LOCATION
+        V_TEMP_LOC      := V_LOCCODE;
+        V_LOCCODE       := V_REFLOCCODE;
+        V_REFLOCCODE    := V_TEMP_LOC;
+        V_UPD_COST      := NULL;
+        V_SITE_UPD_COST := NULL;
+        V_SUBENTTYPE    := 'ISI';
+
+        -- FOR STIOCK IN
+        CALL Db_Pkg_Stock$REFLECT(
+                        V_DETAIL_CODE, V_TYPE,
+                        V_ENTCODE, V_ENTNO, V_ENTDT, 'STI',
+                        V_LOCCODE, V_YCODE,
+                        V_NEW_ICODE, V_OLD_ICODE,
+                        V_NEW_QTY, V_OLD_QTY,
+                        V_NEW_RATE, V_OLD_RATE,
+                        V_REFPCODE, V_REFLOCCODE,
+                        V_REFCMPCODE, V_REFGLCODE, V_REFDEPTCODE,
+                        V_REFPRCODE, V_REFDOCNO, V_REFPKGCODE,
+                        V_REFDCCODE, V_OTHER_RATE, V_SCHEME_DOCNO,
+                        V_SUBENTTYPE, V_UPD_COST, V_ITEM_REMARKS,
+                        V_ADMSITE_CODE_IN, V_ISSECONDARY_IN,
+                        V_SITE_UPD_COST, V_SITE_COSTRATE
+                        -- START REV : 002
+                        ,NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NEW.COSTRATE,
+                        -- START REV : 003
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL,
+                        coalesce(NEW.INVBATCH_SERIAL_CODE, OLD.INVBATCH_SERIAL_CODE)
+                        -- END REV : 003
+                        -- END REV : 002
+                    );
+    END IF;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

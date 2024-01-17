@@ -1,0 +1,65 @@
+procedure "main"."update_pursrvordmain_status(bigint)" {
+  text = """
+
+DECLARE
+
+    COUNTER     bigint;
+    COUNTER1    bigint;
+    ERRCODE     varchar(50);
+    ERRMSG      varchar(2000);
+   /*******************************************************************************************************************
+   REVISIONS:
+   No.        Date        Author                   Description
+   --------- ----------  ----------------------   -------------------------------------------------------------------
+   REV : 001 24/08/2016   SABYASACHI               (Bug 19333:Service invoice getting Cancelled/Deleted,
+                                                    status not getting changed in Purchase Service Order during connection failed.)
+
+   NOTES:
+********************************************************************************************************************/
+BEGIN
+    SELECT COUNT(1)
+      INTO STRICT COUNTER
+      FROM PURSRVORD_SCHEDULE
+     WHERE coalesce(PURSRVORD_SCHEDULE.ORDAMT,0) <> (coalesce(PURSRVORD_SCHEDULE.INVAMT,0)+ coalesce(PURSRVORD_SCHEDULE.CNLAMT,0))
+       AND PURSRVORD_SCHEDULE.PURSRVORDMAIN_CODE = ARGCODE;
+    IF COUNTER = 0 THEN
+       UPDATE PURSRVORDMAIN
+          SET STATUS = 'T'
+        WHERE ORDCODE = ARGCODE;
+    ELSE
+         SELECT COUNT(1)
+          INTO STRICT COUNTER1
+          FROM PURSRVORD_SCHEDULE
+          WHERE (coalesce(PURSRVORD_SCHEDULE.INVAMT,0) + coalesce(PURSRVORD_SCHEDULE.CNLAMT,0)) <> 0
+          AND  PURSRVORD_SCHEDULE.PURSRVORDMAIN_CODE = ARGCODE;
+          IF    COUNTER1 = 0 THEN
+                UPDATE PURSRVORDMAIN
+                   SET STATUS = 'N'
+                 WHERE ORDCODE = ARGCODE;
+          ELSE
+                UPDATE PURSRVORDMAIN
+                   SET STATUS = 'P'
+                 WHERE ORDCODE = ARGCODE;
+          END IF;
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+         ERRCODE := SQLSTATE;
+         ERRMSG     := SQLERRM;
+         CALL ERRAUDIT(USER,'UPDATE_PURSRVORDMAIN_STATUS',ERRCODE,ERRMSG);
+         -- START  REV : 001
+         RAISE;
+         -- END  REV : 001
+END;
+"""
+  arguments = <
+    {
+      name = argcode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

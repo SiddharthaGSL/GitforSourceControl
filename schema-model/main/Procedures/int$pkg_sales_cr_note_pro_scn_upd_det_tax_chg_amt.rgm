@@ -1,0 +1,49 @@
+procedure "main"."int$pkg_sales_cr_note_pro_scn_upd_det_tax_chg_amt(bigint)" {
+  text = """
+
+DECLARE
+
+      V_TAXAMT   SALINVCHG.CHGAMT%TYPE;
+      V_CHGAMT   SALINVCHG.CHGAMT%TYPE;
+
+  C1_LOOP RECORD;
+
+BEGIN
+      FOR C1_LOOP IN (SELECT D.CODE DETCODE
+                        FROM SALINVJRNDET D
+                       WHERE D.JRNCODE = ARINVCODE)
+      LOOP
+         SELECT SUM(CASE WHEN I.ISTAX='Y' THEN  coalesce(I.CHGAMT, 0)  ELSE 0 END ) TAXAMT,
+                SUM(CASE WHEN I.ISTAX='N' THEN  coalesce(I.CHGAMT, 0)  ELSE 0 END ) CHGAMT
+           INTO STRICT V_TAXAMT, V_CHGAMT
+           FROM SALINVJRNCHG_ITEM I
+          WHERE     I.JRNCODE = ARINVCODE
+                AND I.SALINVJRNDET_CODE = C1_LOOP.DETCODE;
+
+         UPDATE SALINVJRNDET D1
+            SET TAXAMT = V_TAXAMT, CHGAMT = V_CHGAMT
+          --EFFAMT  = NVL(D1.INVAMT, 0) + NVL(V_CHGAMT, 0)
+          WHERE D1.JRNCODE = ARINVCODE AND D1.CODE = C1_LOOP.DETCODE;
+      END LOOP;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         CALL ERRAUDIT(USER,
+                   'PRO_SCN_UPD_DET_TAX_CHG_AMT',
+                   SQLSTATE::varchar,
+                   SQLERRM);
+         RAISE EXCEPTION '%', 'ERROR ENCOUNTERED ' || SQLSTATE::varchar || '  ' || SQLERRM USING ERRCODE = '45104';
+   END;
+
+"""
+  arguments = <
+    {
+      name = arinvcode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

@@ -1,0 +1,410 @@
+procedure "main"."db_pro_gds2_event_enqueue()" {
+  text = """
+
+DECLARE
+
+/********************************************************************************************************************************
+     PURPOSE: GDS event distribution subscription wise 
+
+     REV NO     OWNER           DATE         DESCRIPTION
+     ---------  ----------      ----------- ---------------------------------------------------------------------
+     REV : 001  ANINDYA         18/04/2020   (GIN - 1601 ) Zwing integration related changes
+     REV : 002  ANINDYA         18/04/2020   (ZWING Connected App ) Item Auto Allocation changes
+     REV : 003  ANINDYA         30/06/2020   (BT Connected App ) Retracking of  missed event
+**********************************************************************************************************************************/
+   V_DISPATCH_SESSION_ID   bigint;
+   V_EXISTS                char(1);
+   V_REC_EXISTS            char(1);
+   SITE_APPL_COUNT         smallint;
+   C_EVENY_TYPE CURSOR(P_DISPATCH_SESSION_ID bigint)
+   FOR
+      SELECT DISTINCT T.EVENT_ID
+        FROM GDS2_EVENT_TRACK T
+       WHERE T.DISPATCH_SESSION_ID = P_DISPATCH_SESSION_ID;
+    C_SUBSCRIPTION CURSOR FOR
+        SELECT  DISTINCT EQ.SUBSCR_ID,
+                CASE WHEN ES.CUSTOM_ORDER_SEQ > 0 
+                THEN 1 ELSE 0 
+                END CUSTOM_ORDER_SEQ
+        FROM   GDS2_EVENT_QUEUE EQ, GDS2_SUBSCR_EVENT ES, 
+               
+               GDS2_SUBSCR GS
+               
+        WHERE  EQ.SUBSCR_ID = ES.SUBSCR_ID
+        -- START REV : 001
+        AND    ES.SUBSCR_ID = GS.ID
+        AND    GS.IS_ENABLED = 1
+        -- END REV : 001
+        AND    EQ.FETCH_SEQ IS NULL;
+     C_EVENT_CUSTOM_ORDER CURSOR( P_SUBSCR_ID  bigint)
+     FOR
+        SELECT EQ.*
+        FROM   GDS2_EVENT_QUEUE EQ
+        WHERE  EQ.SUBSCR_ID = P_SUBSCR_ID
+        AND    EQ.FETCH_SEQ IS NULL
+        AND    EQ.CUSTOM_ORDER_SEQ IS NOT NULL
+        ORDER BY EQ.CUSTOM_ORDER_SEQ;
+     C_EVENT_ACTUAL_ORDER CURSOR( P_SUBSCR_ID  bigint)
+     FOR
+        SELECT EQ.*
+        FROM   GDS2_EVENT_QUEUE EQ
+        WHERE  EQ.SUBSCR_ID = P_SUBSCR_ID
+        AND    EQ.FETCH_SEQ IS NULL
+        AND    EQ.CUSTOM_ORDER_SEQ IS NULL
+        ORDER BY EQ.GDS2_EVENT_TRACK_ID;
+      V_FETCH_SEQ bigint;
+      -- START REV : 002
+      v_item_allocation_add_exist bigint;
+      V_CONNECTED_APP_CODE bigint;
+      -- END REV : 002
+  C2 RECORD;
+  C_ITEM RECORD;
+  C3 RECORD;
+BEGIN
+   CALL DB_PRO_GDS2_TRACK_INV_EVENT();
+   SELECT CASE
+             WHEN EXISTS (SELECT 1
+                        FROM GDS2_EVENT_TRACK
+                       WHERE DISPATCH_SESSION_ID IS NOT NULL)
+             THEN
+                'Y'
+             ELSE
+                'N'
+          END
+             AS REC_EXISTS
+     INTO STRICT V_EXISTS
+;
+   IF V_EXISTS = 'N'
+   THEN
+      SELECT CASE
+                WHEN EXISTS (SELECT 1 FROM GDS2_EVENT_TRACK) THEN 'Y'
+                ELSE 'N'
+             END
+                AS REC_EXISTS
+        INTO STRICT V_REC_EXISTS
+;
+   ELSE
+      SELECT DISTINCT DISPATCH_SESSION_ID
+        INTO STRICT V_DISPATCH_SESSION_ID
+        FROM GDS2_EVENT_TRACK
+       WHERE DISPATCH_SESSION_ID IS NOT NULL;
+      V_REC_EXISTS := 'Y';
+   END IF;
+   IF V_REC_EXISTS = 'Y'
+   THEN
+      IF V_EXISTS = 'N'
+      THEN
+         SELECT nextval('seq_gds2_dispatch_session')
+           INTO STRICT V_DISPATCH_SESSION_ID
+;
+         UPDATE GDS2_EVENT_TRACK
+            SET DISPATCH_SESSION_ID = V_DISPATCH_SESSION_ID;
+      END IF;
+      -- This loof for distribution of those tracked record where connected_app_code in
+      -- GDS2_EVENT_TRACK table is null  
+      FOR C1 IN C_EVENY_TYPE(V_DISPATCH_SESSION_ID)
+      LOOP
+         FOR C2
+            IN (SELECT T.ID EVENT_TRACK_ID,
+                       S.SUBSCR_ID,
+                       T.EVENT_ID,
+                       T.REFCODE,
+                       T.EVENT_TIME,
+                       S.CUSTOM_ORDER_SEQ,
+                       T.ID GDS2_EVENT_TRACK_ID
+                  FROM GDS2_EVENT_TRACK T, GDS2_SUBSCR_EVENT S
+                 WHERE     T.EVENT_ID = S.EVENT_ID
+                       AND T.EVENT_ID = C1.EVENT_ID
+                       AND T.DISPATCH_SESSION_ID = V_DISPATCH_SESSION_ID
+                       AND T.CONNECTED_APP_CODE IS NULL)
+         LOOP
+            BEGIN
+               -- START REV : 002
+               IF C2.EVENT_ID IN (
+                                   'snd.invoice.added'
+                                  ,'procurement.grc.added'
+                                  ,'procurement.grc.released'
+                                  ,'procurement.grt.added'
+                                  ,'procurement.grt.released'
+                                  ,'snd.transferorder.added'
+                                  ,'snd.transferorder.released'
+                                  ,'inventory.conversion.production.added'
+                                  ,'inventory.conversion.production.released'
+                                  ,'inventory.conversion.split.added'
+                                  ,'inventory.conversion.split.released'
+                                  ,'inventory.conversion.bundle.added'
+                                  ,'inventory.conversion.bundle.released'
+                                  )
+               THEN
+                  SELECT COUNT(1)
+                  INTO STRICT   v_item_allocation_add_exist
+                  FROM   GDS2_SUBSCR_EVENT
+                  WHERE  SUBSCR_ID = C2.SUBSCR_ID
+                  AND    EVENT_ID = 'app.allocation.item.added';
+                  IF  coalesce(v_item_allocation_add_exist,0) >  0
+                  THEN
+                    SELECT CONNECTED_APP_CODE
+                    INTO STRICT   V_CONNECTED_APP_CODE
+                    FROM   GDS2_ENTITY
+                    WHERE  ID =  (SELECT ENTITY_ID FROM GDS2_SUBSCR WHERE ID = C2.SUBSCR_ID);
+                    SELECT COUNT(1)
+                    INTO STRICT   SITE_APPL_COUNT
+                    FROM   CONNECTED_APP_SITE
+                    WHERE  CONNECTED_APP_ID = V_CONNECTED_APP_CODE
+                    AND    ADMSITE_CODE IN (
+                                            SELECT  ADMSITE_CODE
+                                            FROM    SALINVMAIN
+                                            WHERE   INVCODE::varchar = C2.REFCODE
+                                            AND     C2.EVENT_ID = 'snd.invoice.added'
+
+UNION ALL
+
+                                            SELECT  ADMSITE_CODE_OWNER
+                                            FROM    SALORDMAIN
+                                            WHERE   ORDCODE::varchar = C2.REFCODE
+                                            AND     C2.EVENT_ID IN ('snd.transferorder.added', 'snd.transferorder.released')
+                                            
+UNION ALL
+
+                                            SELECT  ADMSITE_CODE_IN
+                                            FROM    INVGRCMAIN
+                                            WHERE   GRCCODE::varchar = C2.REFCODE
+                                            AND     C2.EVENT_ID IN ('procurement.grc.added','procurement.grc.released')
+                                            
+UNION ALL
+
+                                            SELECT  ADMSITE_CODE
+                                            FROM    INVGRTMAIN
+                                            WHERE   GRTCODE::varchar = C2.REFCODE
+                                            AND     C2.EVENT_ID IN ('procurement.grt.added','procurement.grt.released')
+                                            
+UNION ALL
+
+                                            SELECT  ADMSITE_CODE
+                                            FROM    PRDORD
+                                            WHERE   ORDCODE::varchar = C2.REFCODE
+                                            AND     C2.EVENT_ID IN ('inventory.conversion.production.added'
+                                                                    ,'inventory.conversion.production.released'
+                                                                    ,'inventory.conversion.split.added'
+                                                                    ,'inventory.conversion.split.released'
+                                                                    ,'inventory.conversion.bundle.added'
+                                                                    ,'inventory.conversion.bundle.released')
+                                            );
+                    IF  coalesce(SITE_APPL_COUNT,0) > 0
+                    THEN                       
+                        IF  C2.EVENT_ID = 'snd.invoice.added'
+                        THEN  
+                            FOR C_ITEM IN (SELECT ICODE FROM SALINVDET WHERE INVCODE::varchar = C2.REFCODE) 
+                            LOOP
+                                BEGIN
+                                    INSERT INTO CONNECTED_APP_ASSRT_INCLUDE(CONNECTED_APP_ID,ICODE)
+                                    VALUES (V_CONNECTED_APP_CODE, C_ITEM.ICODE);
+                                EXCEPTION
+                                    WHEN unique_violation
+                                THEN
+                                    NULL;
+                                END;
+                            END LOOP;
+                        END IF;
+                        IF  C2.EVENT_ID IN ('snd.transferorder.added', 'snd.transferorder.released')
+                        THEN  
+                            FOR C_ITEM IN (SELECT ICODE FROM SALORDDET WHERE ORDCODE::varchar = C2.REFCODE) 
+                            LOOP
+                                BEGIN
+                                    INSERT INTO CONNECTED_APP_ASSRT_INCLUDE(CONNECTED_APP_ID,ICODE)
+                                    VALUES (V_CONNECTED_APP_CODE, C_ITEM.ICODE);
+                                EXCEPTION
+                                    WHEN unique_violation
+                                THEN
+                                    NULL;
+                                END;
+                            END LOOP;
+                        END IF;
+                        IF  C2.EVENT_ID IN ('procurement.grc.added','procurement.grc.released')
+                        THEN
+                            FOR C_ITEM IN (SELECT ICODE FROM INVGRCDET WHERE GRCCODE::varchar = C2.REFCODE) 
+                            LOOP
+                                BEGIN
+                                    INSERT INTO CONNECTED_APP_ASSRT_INCLUDE(CONNECTED_APP_ID,ICODE)
+                                    VALUES (V_CONNECTED_APP_CODE, C_ITEM.ICODE);
+                                EXCEPTION
+                                    WHEN unique_violation
+                                THEN
+                                    NULL;
+                                END;
+                            END LOOP;
+                        END IF;
+                        IF  C2.EVENT_ID IN ('procurement.grt.added','procurement.grt.released')
+                        THEN  
+                            FOR C_ITEM IN (SELECT ICODE FROM INVGRTDET WHERE GRTCODE::varchar = C2.REFCODE) 
+                            LOOP
+                                BEGIN
+                                    INSERT INTO CONNECTED_APP_ASSRT_INCLUDE(CONNECTED_APP_ID,ICODE)
+                                    VALUES (V_CONNECTED_APP_CODE, C_ITEM.ICODE);
+                                EXCEPTION
+                                    WHEN unique_violation
+                                THEN
+                                    NULL;
+                                END;
+                            END LOOP;
+                        END IF;
+                        IF  C2.EVENT_ID IN ('inventory.conversion.production.added'
+                                            ,'inventory.conversion.production.released'
+                                            ,'inventory.conversion.split.added'
+                                            ,'inventory.conversion.split.released'
+                                            ,'inventory.conversion.bundle.added'
+                                            ,'inventory.conversion.bundle.released')
+                        THEN  
+                            FOR C_ITEM IN (SELECT ICODE FROM PRDIS WHERE ORDCODE::varchar = C2.REFCODE
+                                           
+UNION
+
+                                           SELECT ICODE FROM PRDRC WHERE ORDCODE::varchar = C2.REFCODE) 
+                            LOOP
+                                BEGIN
+                                    INSERT INTO CONNECTED_APP_ASSRT_INCLUDE(CONNECTED_APP_ID,ICODE)
+                                    VALUES (V_CONNECTED_APP_CODE, C_ITEM.ICODE);
+                                EXCEPTION
+                                    WHEN unique_violation
+                                THEN
+                                    NULL;
+                                END;
+                            END LOOP;
+                        END IF;
+                    END IF;
+                  END IF;
+               END IF;
+               -- END REV : 002
+               INSERT INTO GDS2_EVENT_QUEUE(SUBSCR_ID,
+                                             EVENT_ID,
+                                             REFCODE,
+                                             EVENT_TIME,
+                                             CUSTOM_ORDER_SEQ,
+                                             GDS2_EVENT_TRACK_ID)
+                    VALUES (C2.SUBSCR_ID,
+                            C2.EVENT_ID,
+                            C2.REFCODE,
+                            C2.EVENT_TIME,
+                            C2.CUSTOM_ORDER_SEQ,
+                            C2.GDS2_EVENT_TRACK_ID);
+               INSERT INTO gds2_event_track_archive(ID,
+                                                     EVENT_ID,
+                                                     REFCODE,
+                                                     EVENT_TIME,
+                                                     DISPATCH_SESSION_ID,
+                                                     ARCHIVE_TIME)
+                    VALUES (C2.EVENT_TRACK_ID,
+                            C2.EVENT_ID,
+                            C2.REFCODE,
+                            C2.EVENT_TIME,
+                            V_DISPATCH_SESSION_ID,
+                            clock_timestamp());
+            EXCEPTION
+               WHEN unique_violation
+               THEN
+                  NULL;
+            END;
+         END LOOP;
+       END LOOP;
+      -- This loof for distribution of those tracked record where connected_app_code in
+      -- GDS2_EVENT_TRACK table is not null  
+      FOR C1 IN C_EVENY_TYPE(V_DISPATCH_SESSION_ID)
+      LOOP
+         FOR C2
+            IN (SELECT T.ID EVENT_TRACK_ID,
+                       S.SUBSCR_ID,
+                       T.EVENT_ID,
+                       T.REFCODE,
+                       T.EVENT_TIME,
+                       S.CUSTOM_ORDER_SEQ,
+                       T.ID GDS2_EVENT_TRACK_ID
+                  FROM GDS2_EVENT_TRACK T, GDS2_SUBSCR_EVENT S
+                 WHERE     T.EVENT_ID = S.EVENT_ID
+                       AND T.EVENT_ID = C1.EVENT_ID
+                       AND T.DISPATCH_SESSION_ID = V_DISPATCH_SESSION_ID
+                       AND T.CONNECTED_APP_CODE IS NOT NULL
+                       AND S.SUBSCR_ID = (SELECT ID
+                                          FROM   GDS2_SUBSCR
+                                          WHERE  ENTITY_ID = (SELECT ID
+                                                              FROM   GDS2_ENTITY
+                                                              WHERE  CONNECTED_APP_CODE = T.CONNECTED_APP_CODE
+                                                              )
+                                          )
+                )
+         LOOP
+            BEGIN
+               INSERT INTO GDS2_EVENT_QUEUE(SUBSCR_ID,
+                                             EVENT_ID,
+                                             REFCODE,
+                                             EVENT_TIME,
+                                             CUSTOM_ORDER_SEQ,
+                                             GDS2_EVENT_TRACK_ID)
+                    VALUES (C2.SUBSCR_ID,
+                            C2.EVENT_ID,
+                            C2.REFCODE,
+                            C2.EVENT_TIME,
+                            C2.CUSTOM_ORDER_SEQ,
+                            C2.GDS2_EVENT_TRACK_ID);
+               INSERT INTO gds2_event_track_archive(ID,
+                                                     EVENT_ID,
+                                                     REFCODE,
+                                                     EVENT_TIME,
+                                                     DISPATCH_SESSION_ID,
+                                                     ARCHIVE_TIME)
+                    VALUES (C2.EVENT_TRACK_ID,
+                            C2.EVENT_ID,
+                            C2.REFCODE,
+                            C2.EVENT_TIME,
+                            V_DISPATCH_SESSION_ID,
+                            clock_timestamp());
+            EXCEPTION
+               WHEN unique_violation
+               THEN
+                  NULL;
+            END;
+         END LOOP;
+         DELETE FROM GDS2_EVENT_TRACK
+               WHERE     EVENT_ID = C1.EVENT_ID
+                     AND DISPATCH_SESSION_ID = V_DISPATCH_SESSION_ID;
+      END LOOP;
+   END IF;
+   -- START REV : 003
+   FOR C3 IN (SELECT * FROM GDS2_MISSED_EVENT)
+   LOOP
+         INSERT INTO GDS2_EVENT_QUEUE(SUBSCR_ID, EVENT_ID, REFCODE, SESSION_ID,EVENT_TIME)
+         VALUES (C3.SUBSCR_ID, C3.EVENT_ID, C3.REFCODE, V_DISPATCH_SESSION_ID,clock_timestamp());
+         INSERT INTO GDS2_MISSED_EVENT_ARCHIVE(SUBSCR_ID, EVENT_ID, REFCODE, GDS_EVENT_QUEUE_ID, SESSION_ID, ARCHIVING_TIME)
+         VALUES (C3.SUBSCR_ID, C3.EVENT_ID, C3.REFCODE, C3.GDS_EVENT_QUEUE_ID, C3.SESSION_ID, C3.ARCHIVING_TIME);
+         DELETE FROM GDS2_MISSED_EVENT
+         WHERE GDS_EVENT_QUEUE_ID = C3.GDS_EVENT_QUEUE_ID;
+    END LOOP;
+    -- END REV :003
+   FOR C3 IN C_SUBSCRIPTION
+   LOOP
+       FOR C4 IN C_EVENT_CUSTOM_ORDER(C3.SUBSCR_ID)
+       LOOP
+            SELECT nextval('gds2_fetch_seq')
+            INTO STRICT   V_FETCH_SEQ
+;
+            UPDATE GDS2_EVENT_QUEUE
+            SET    FETCH_SEQ = V_FETCH_SEQ
+            WHERE  ID = C4.ID;
+        END LOOP;
+        FOR C5 IN C_EVENT_ACTUAL_ORDER(C3.SUBSCR_ID)
+        LOOP
+            SELECT nextval('gds2_fetch_seq')
+            INTO STRICT   V_FETCH_SEQ
+;
+            UPDATE GDS2_EVENT_QUEUE
+            SET    FETCH_SEQ = V_FETCH_SEQ
+            WHERE  ID = C5.ID;
+        END LOOP;
+     END LOOP;
+
+END;
+"""
+  arguments = [
+  ]
+  language = plpgsql
+}
+

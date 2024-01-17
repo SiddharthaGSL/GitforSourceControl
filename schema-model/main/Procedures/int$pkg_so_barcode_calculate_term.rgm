@@ -1,0 +1,163 @@
+procedure "main"."int$pkg_so_barcode_calculate_term(bigint, bigint, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+        dummy_appamt		        double precision;
+        v_item_chg			        double precision;
+        dummy_totchgamt	            double precision;
+        dummy_chkchgamt	            double precision;
+        dummy_chk			        char(1);
+        dummy_prvchk		        char(1);
+        dummy_sign			        char(1);
+        v_salorddet_tot_ordamt      double precision;
+		
+		c1 CURSOR FOR
+            SELECT  saltermdet.saltermcode,
+                    saltermdet.chgcode,
+                    coalesce(saltermdet.rate,0) rate,
+                    saltermdet.formulae,
+                    length(saltermdet.formulae) formlen,
+                    saltermdet.sign,
+                    salchg.glcode glcode,
+                    coalesce(fingl.costapp,'N') costapp,
+                    salchg.formcode,
+                    salchg.roundoff,
+                    saltermdet.seq,
+                    salchg.basis,
+                    saltermdet.operation_level,
+                    salchg.istax,
+                    salchg.source,
+                    CASE WHEN salchg.glcode IS NULL THEN salchg.slcode  ELSE salchg.slcode END  slcode
+            FROM saltermdet, salchg
+LEFT OUTER JOIN fingl ON (salchg.glcode = fingl.glcode)
+WHERE saltermdet.chgcode = salchg.salchgcode  --DECODE(SALCHG.ISTAX,'N',SALCHG.GLCODE,SALCHG.GLCODE)
+  and saltermcode = p_saltermcode and saltermdet.operation_level = 'H' order by saltermdet.seq;
+
+BEGIN
+		delete FROM salordchg
+		where  ordcode = p_ordcode
+		and	   operation_level = 'H';
+		
+		begin
+            select round((sum(coalesce(ORDQTY,0)*coalesce(RATE,0)))::numeric,2)
+            into STRICT   v_salorddet_tot_ordamt
+            from   salorddet 
+            where  ordcode = p_ordcode;
+		exception
+            when no_data_found then null;
+        end;
+
+		-- ADJUST ITEM CHARGE FROM GRSAMT
+		select  sum(chgamt)
+		into STRICT    v_item_chg
+		from    salordchg_item
+		where   ordcode = p_ordcode;
+		
+		for c1rec in c1 loop
+            dummy_totchgamt := 0;
+            for i in 1..c1rec.formlen loop
+                if  mod(i,2) != 0 then
+                    dummy_chk := substr(c1rec.formulae,i,1);
+                    dummy_chkchgamt := 0;
+
+                    if dummy_chk = 'B' then
+                        dummy_chkchgamt :=  coalesce(v_salorddet_tot_ordamt,0) + coalesce(v_item_chg,0);
+                    else
+                        begin
+                            select	salordchg.chgamt
+                            into STRICT	dummy_chkchgamt
+                            from	saltermdet, salordchg
+                            where	saltermdet.chgcode = salordchg.chgcode
+                            and		salordchg.ordcode  = p_ordcode
+                            and		saltermdet.saltermcode = c1rec.saltermcode
+                            and		saltermdet.operation_level = 'H'
+                            and		saltermdet.seq = (dummy_chk)::numeric;
+                        exception
+                            when no_data_found then
+                                dummy_chkchgamt := 0;
+                        end;
+		            end if;
+
+					dummy_prvchk := substr(c1rec.formulae,i-1,1);
+					if  dummy_prvchk = '+' then
+                        dummy_totchgamt := dummy_totchgamt + coalesce(dummy_chkchgamt,0);
+                    elsif dummy_prvchk = '-' then
+                        dummy_totchgamt := dummy_totchgamt - coalesce(dummy_chkchgamt,0);
+                    else
+                        dummy_totchgamt := coalesce(dummy_chkchgamt,0);
+                    end if;
+                end if;
+            end loop;
+
+            dummy_appamt := dummy_totchgamt;
+
+            if  c1rec.basis = 'P' then
+                dummy_totchgamt := ((c1rec.rate/100)*coalesce(dummy_totchgamt,0));
+            else
+                dummy_totchgamt := c1rec.rate;
+            end if;
+
+            if 	c1rec.sign = '-' and dummy_totchgamt >= 0 then
+                dummy_totchgamt := -1 * coalesce(dummy_totchgamt,0);
+            end if;
+			
+            if dummy_totchgamt < 0 then
+                dummy_sign := '-';
+            elsif dummy_totchgamt > 0 then
+                dummy_sign := '+';
+            elsif dummy_totchgamt = 0 then
+                dummy_sign := c1rec.sign;
+            end if;
+            
+            if  c1rec.roundoff = 'Y' then
+                dummy_totchgamt := round(dummy_totchgamt);
+            end if;
+
+            insert into salordchg(ordcode,seq,chgcode,rate,sign,chgamt,glcode,
+                                   basis,appamt,formulae,operation_level,istax,source,
+                                   slcode,without_term_formula)
+            values (p_ordcode,c1rec.seq,c1rec.chgcode,c1rec.rate,dummy_sign,dummy_totchgamt,c1rec.glcode,
+                    c1rec.basis,dummy_appamt,c1rec.formulae,c1rec.operation_level,c1rec.istax,c1rec.source,
+                    c1rec.slcode, 'N');
+		end loop;
+
+        update salordchg
+        set    ordcode = ordcode
+        where  ordcode = p_ordcode;
+    exception
+        when others then
+            call erraudit(user, 'int$pkg_so_barcode#calculate_term',1,'CALCULATE_TERM : ERROR');
+            --WRITE_LOG('CALCULATE_TERM : ERROR : '||SQLERRM,2);
+    END;
+
+"""
+  arguments = <
+    {
+      name = p_ordcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_saltermcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_glcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_slcode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

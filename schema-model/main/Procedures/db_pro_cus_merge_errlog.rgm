@@ -1,0 +1,64 @@
+procedure "main"."db_pro_cus_merge_errlog(bigint, text, text, text)" {
+  text = """
+
+DECLARE
+	-- Change this to reflect the dblink connection string
+	--v_conn_str  text := format('port=%s dbname=%s user=%s', current_setting('port'), current_database(), current_user);
+    v_srvname       name;
+    v_connname      text;
+    v_connstr       text;
+    v_conn_result   text;
+    v_query         text;
+
+	v_ret    boolean;
+
+BEGIN
+
+	v_srvname := 'foreign_pgbase';
+    v_connname := replace(uuid_generate_v4()::text,'-','');
+    v_connstr  := v_srvname;
+    
+    --Open the connection  
+    SELECT dblink_connect(v_connname,v_connstr) 
+    INTO v_conn_result;
+	
+	v_query := 'CALL db_pro_cus_merge_errlog_atx ( ' || quote_nullable(p_merge_session_id::text) || '::bigint,' || quote_nullable(p_MOBILE) || ',' || quote_nullable(p_CUSTOMER_CODE) || ',' || quote_nullable(p_SQLERRM) || ' )';
+	PERFORM * FROM dblink(v_conn_str, v_query) AS p (ret boolean);
+	
+	SELECT dblink_disconnect(v_connname) 
+    INTO v_conn_result;
+EXCEPTION 
+   WHEN OTHERS THEN
+        SELECT dblink_disconnect(v_connname) 
+        INTO v_conn_result;
+END;
+"""
+  arguments = <
+    {
+      name = p_merge_session_id
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_mobile
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_customer_code
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_sqlerrm
+      type = text
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

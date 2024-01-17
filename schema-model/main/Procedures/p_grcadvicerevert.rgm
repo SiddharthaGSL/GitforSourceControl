@@ -1,0 +1,85 @@
+procedure "main"."p_grcadvicerevert(bigint, bigint, bigint, text)" {
+  text = """
+
+DECLARE
+
+v_sitetype               varchar(15);
+v_cnt                    bigint;
+v_status                 char(1);
+v_date                   timestamp;
+
+BEGIN
+   SELECT sitetype into STRICT v_sitetype FROM admsite
+   WHERE code = p_storereplnsourceId;
+    IF v_sitetype = 'OS-OO-CM' THEN
+            BEGIN
+            UPDATE salinvmain
+              SET authorize_ecode  = NULL,
+                  authorize_time  = NULL,
+                  datasendon  = NULL
+            WHERE admsite_code = p_admsite_code AND invcode = p_invcode;
+            DELETE FROM salinv_authorize_trap
+                 WHERE invcode = p_invcode;
+            END;
+    ELSE
+            BEGIN
+                SELECT docdt INTO STRICT v_date FROM psite_grt
+                    WHERE code = p_psite_grt_code
+                AND   repln_admsite_code = p_admsite_code;
+                SELECT COUNT(*) INTO STRICT v_cnt FROM psite_posstlm
+                WHERE admsite_code = p_storereplnsourceId
+                AND   stlmfor::varchar = v_date;
+                IF v_cnt > 0 THEN
+                        BEGIN
+                            SELECT status INTO STRICT v_status FROM psite_posstlm
+                                WHERE admsite_code = p_storereplnsourceId
+                                AND   stlmfor::varchar = v_date;
+                            IF v_status <> 'R' THEN
+                                BEGIN
+                                    CALL db_pkg_npos_event.track(p_admsite_code,'AUTOTRANSFER',p_psite_grt_code);
+                                END;
+                            ELSE
+                                BEGIN
+                                    CALL db_pkg_npos_event.track(p_storereplnsourceId,'GRTREVERT',p_psite_grt_code);
+                                    CALL p_psite_grt_revert(p_storereplnsourceId, p_psite_grt_code);
+                                END;
+                            END IF;
+                        END;
+                ELSE
+                    BEGIN
+                        CALL db_pkg_npos_event.track(p_storereplnsourceId,'GRTREVERT',p_psite_grt_code);
+                    END;
+                END IF;
+            END;
+    END IF;
+END;
+"""
+  arguments = <
+    {
+      name = p_admsite_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_invcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_storereplnsourceid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_psite_grt_code
+      type = text
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

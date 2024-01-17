@@ -1,0 +1,96 @@
+function "main"."trigger_fct_t_salrtdet_biu()" {
+  text = """
+
+DECLARE
+   vnCmpCode bigint;
+   -- START REV : 001
+   V_SITETYPE               ADMSITE.SITETYPE%TYPE;
+   -- END REV : 001
+   -- START REV : 002
+   V_ENTDT                  INVSTOCK.ENTDT%TYPE;
+   V_ADMSITE_CODE_OWNER     INVSTOCK.ADMSITE_CODE%TYPE;
+   -- END REV : 002
+BEGIN
+  BEGIN
+   /*******************************************************************************************************************
+     REV NO      DATE           OWNER            DESCRIPTION
+     ---------   -----------    -----------      ---------------------------------------------------------------------
+     REV : 001   10-OCT-2017    Diptiman         (TFS ID : 32259) Reference family code introduced.
+     REV : 002   13-NOV-2017    DIPTIMAN         (TFS ID : 32259) COGS costrate related changes.
+     REV : 003   16-JAN-2019    DIPTIMAN         (TFS ID : 42270, New TFS ID : 12486) GRT/SRT and Transaction updtion related changes.
+   *******************************************************************************************************************/
+   -- START REV : 001
+   BEGIN
+       SELECT SITETYPE
+       INTO STRICT   V_SITETYPE
+       FROM   ADMSITE
+       WHERE  CODE = (SELECT ADMSITE_CODE
+                      FROM   SALRTMAIN
+                      WHERE  RTCODE = NEW.RTCODE);
+   EXCEPTION
+       WHEN no_data_found THEN NULL;
+   END;
+   -- END REV : 001
+   IF TG_OP = 'INSERT'
+   THEN
+       IF  NEW.CODE IS NULL THEN
+           SELECT  nextval('salrtdet_code')
+           INTO STRICT    NEW.CODE
+;
+       END IF;
+
+       -- START REV : 002
+       SELECT RTDT, ADMSITE_CODE_OWNER
+       INTO STRICT   V_ENTDT, V_ADMSITE_CODE_OWNER
+       FROM   SALRTMAIN
+       WHERE  RTCODE = NEW.RTCODE;
+
+       IF SUBSTR(V_SITETYPE,1,2) = 'US' THEN
+          NEW.COSTRATE := coalesce(DB_PKG_COGS$GET_ITEM_LAST_IN_RATE(V_ADMSITE_CODE_OWNER, NEW.ICODE, V_ENTDT, NULL, coalesce(NEW.INVBATCH_SERIAL_CODE, OLD.INVBATCH_SERIAL_CODE)),0);
+       END IF;
+       -- END REV : 002
+   END IF;
+
+   -- START REV : 001
+   IF  TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
+           IF    SUBSTR(V_SITETYPE,1,2) = 'OS' THEN
+                 IF  NEW.SALINVDET_CODE IS NOT NULL OR NEW.TRANSFEROUT_SALINVDET_CODE IS NOT NULL THEN
+                     SELECT REF_FAMILY_CODE, COSTRATE
+                     INTO STRICT   NEW.REF_FAMILY_CODE, NEW.COSTRATE
+                     FROM   SALINVDET
+                     WHERE  CODE = coalesce(NEW.SALINVDET_CODE, NEW.TRANSFEROUT_SALINVDET_CODE);
+                 END IF;
+           ELSIF SUBSTR(V_SITETYPE,1,2) = 'MS' THEN
+                 IF  NEW.PACKETDOCID IS NOT NULL THEN
+                     SELECT REF_FAMILY_CODE, COSTRATE
+                     INTO STRICT   NEW.REF_FAMILY_CODE, NEW.COSTRATE
+                     FROM   PSITE_GRTITEM
+                     WHERE  PACKETDOCID = coalesce(NEW.PACKETDOCID, OLD.PACKETDOCID)
+                     AND (INVBATCH_SERIAL_CODE IS NULL OR INVBATCH_SERIAL_CODE = coalesce(NEW.INVBATCH_SERIAL_CODE, OLD.INVBATCH_SERIAL_CODE))
+                     AND    ICODE = coalesce(NEW.ICODE, OLD.ICODE);
+                 END IF;
+           ELSIF SUBSTR(V_SITETYPE,1,2) = 'US' THEN
+                 -- start rev : 003
+                 -- as SRT from US site would get updated in transaction table through PK i.e. code
+                 /*
+                 IF  :NEW.REF_FAMILY_CODE IS NULL THEN
+                     SELECT REF_FAMILY_CODE.NEXTVAL
+                     INTO   :NEW.REF_FAMILY_CODE
+                     FROM   DUAL;
+                 END IF;
+                 */
+                 NULL;
+                 -- start rev : 003
+           END IF;
+   END IF;
+   -- END REV : 001
+  END;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

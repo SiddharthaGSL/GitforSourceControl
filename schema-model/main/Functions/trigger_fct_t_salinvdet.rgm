@@ -1,0 +1,487 @@
+function "main"."trigger_fct_t_salinvdet()" {
+  text = """
+
+DECLARE
+   V_TYPE              varchar(100);
+   V_DETAIL_CODE       INVSTOCK.DETAIL_CODE%TYPE;
+   V_ENTCODE           INVSTOCK.ENTCODE%TYPE;
+   V_ENTNO             INVSTOCK.ENTNO%TYPE;
+   V_SCHEME_DOCNO      INVSTOCK.SCHEME_DOCNO%TYPE;
+   V_ENTDT             INVSTOCK.ENTDT%TYPE;
+   V_ENTTYPE           INVSTOCK.ENTTYPE%TYPE;
+   V_SUBENTTYPE        INVSTOCK.SUBENTTYPE%TYPE;
+   V_LOCCODE           INVSTOCK.LOCCODE%TYPE;
+   V_YCODE             INVSTOCK.YCODE%TYPE;
+   V_NEW_ICODE         INVSTOCK.ICODE%TYPE;
+   V_OLD_ICODE         INVSTOCK.ICODE%TYPE;
+   V_NEW_QTY           INVSTOCK.QTY%TYPE;
+   V_OLD_QTY           INVSTOCK.QTY%TYPE;
+   V_NEW_RATE          INVSTOCK.RATE%TYPE;
+   V_OLD_RATE          INVSTOCK.RATE%TYPE;
+   V_REFPCODE          INVSTOCK.REFPCODE%TYPE;
+   V_REFSITECODE       INVSTOCK.ADMSITE_CODE%TYPE;
+   V_ISSECONDARY       INVSTOCK.ISSECONDARY%TYPE;
+   V_SALETYPE          SALINVMAIN.SALETYPE%TYPE;
+   V_REFLOCCODE        INVSTOCK.REFLOCCODE%TYPE;
+   V_REFCMPCODE        INVSTOCK.REFCMPCODE%TYPE;
+   V_REFGLCODE         INVSTOCK.REFGLCODE%TYPE;
+   V_REFDEPTCODE       INVSTOCK.REFDEPTCODE%TYPE;
+   V_REFPRCODE         INVSTOCK.REFPRCODE%TYPE;
+   V_REFDOCNO          INVSTOCK.REFDOCNO%TYPE;
+   V_REFPKGCODE        INVSTOCK.REFPKGCODE%TYPE;
+   V_REFDCCODE         INVSTOCK.REFDCCODE%TYPE;
+   V_OTHER_RATE        INVSTOCK.COSTRATE%TYPE;
+   V_ORDCODE           INVDCDET.ORDCODE%TYPE;
+   V_SOICODE           INVDCDET.SOICODE%TYPE;
+   -- START REV : 001
+   V_ADMOUCODE         ADMOU.CODE%TYPE;
+   V_INVMAINOUCODE     ADMOU.CODE%TYPE;
+   -- END REV : 001
+   -- START REV : 002
+   V_SITECODE_OWNER    INVSTOCK.ADMSITE_CODE%TYPE;
+   V_SITETYPE          ADMSITE.SITETYPE%TYPE;
+   V_TS_SITECODE       ADMSITE.CODE%TYPE;
+   -- END REV : 002
+   -- START REV : 006
+   V_REF_FAMILY_CODE   INVSTOCK.REF_FAMILY_CODE%TYPE;
+   -- END REV : 006
+   -- START REV : 007
+   V_COSTRATE          INVSTOCK.COSTRATE%TYPE;
+   -- END REV : 007
+   V_ENTRY_SOURCE      varchar(25) := NULL;
+   V_SID               bigint;
+   V_PROGRAM           varchar(50);
+BEGIN
+  BEGIN
+   /*******************************************************************************************************************
+     REV NO      DATE           OWNER            DESCRIPTION
+     ---------   -----------    -----------      ---------------------------------------------------------------------
+     REV : 001   26-JUN-2017    Diptiman         (TFS ID : xxxxx) Issue generated in sales return. Invoice month closed.
+     REV : 006   10-OCT-2017    Diptiman         (TFS ID : 32259) Reference family code introduced.
+     REV : 007   13-NOV-2017    DIPTIMAN         (TFS ID : 32259) COGS costrate related changes.
+     REV : 008   27/AUG/2020    MOUSUMI            (TFS ID : :84371 ) MIGRATION
+     REV : 009   23-JUL-2021    PRASANTA         (MANTIS ID : 1055) In INVSTOCK table, rate column will calculate upto 3 decimal place from SALINVDET & SALRTDET
+   *******************************************************************************************************************/
+   -- START REV : 003
+   IF TG_OP = 'INSERT' AND coalesce(NEW.INVDCDET_CODE, 0) <> 0
+   THEN
+      -- START REV : 004
+      INSERT INTO TEMP_SALINVDET_STAGING(CODE,
+                                          ENT_TYPE,
+                                          DCCODE,
+                                          INVDCDET_CODE,
+                                          INVQTY)
+           VALUES (nextval('temp_salinvdet_staging_code'),
+                   'NEW',
+                   NEW.DCCODE,
+                   NEW.INVDCDET_CODE,
+                   coalesce(NEW.INVQTY, 0));
+   -- END REV : 004
+   END IF;
+
+   IF TG_OP = 'UPDATE'
+   THEN
+      -- START REV : 004
+      IF coalesce(NEW.INVDCDET_CODE, 0) <> 0
+      THEN
+         INSERT INTO TEMP_SALINVDET_STAGING(CODE,
+                                             ENT_TYPE,
+                                             DCCODE,
+                                             INVDCDET_CODE,
+                                             INVQTY)
+              VALUES (nextval('temp_salinvdet_staging_code'),
+                      'NEW',
+                      NEW.DCCODE,
+                      NEW.INVDCDET_CODE,
+                      coalesce(NEW.INVQTY, 0));
+      END IF;
+
+      IF coalesce(OLD.INVDCDET_CODE, 0) <> 0
+      THEN
+         INSERT INTO TEMP_SALINVDET_STAGING(CODE,
+                                             ENT_TYPE,
+                                             DCCODE,
+                                             INVDCDET_CODE,
+                                             INVQTY)
+              VALUES (nextval('temp_salinvdet_staging_code'),
+                      'OLD',
+                      OLD.DCCODE,
+                      OLD.INVDCDET_CODE,
+                      0 - coalesce(OLD.INVQTY, 0));
+      END IF;
+   -- END REV : 004
+   END IF;
+
+   IF TG_OP = 'DELETE' AND coalesce(OLD.INVDCDET_CODE, 0) <> 0
+   THEN
+      -- START REV : 004
+      INSERT INTO TEMP_SALINVDET_STAGING(CODE,
+                                          ENT_TYPE,
+                                          DCCODE,
+                                          INVDCDET_CODE,
+                                          INVQTY)
+           VALUES (nextval('temp_salinvdet_staging_code'),
+                   'OLD',
+                   OLD.DCCODE,
+                   OLD.INVDCDET_CODE,
+                   0 - coalesce(OLD.INVQTY, 0));
+   -- END REV : 004
+   END IF;
+
+   -- END REV : 003
+   IF TG_OP = 'INSERT'
+   THEN
+      V_TYPE := 'INSERTING';
+   END IF;
+
+   IF TG_OP = 'UPDATE'
+   THEN
+      V_TYPE := 'UPDATING';
+   END IF;
+
+   IF TG_OP = 'DELETE'
+   THEN
+      V_TYPE := 'DELETING';
+   END IF;
+
+   -- STOCK AND COSTING REFLECTION
+   SELECT INVNO                                ENTNO,
+          SCHEME_DOCNO                         SCHEME_DOCNO,
+          INVDT                                ENTDT,
+          CASE WHEN SALETYPE='O' THEN  'SAL'  ELSE 'STO' END  ENTTYPE,
+          CASE WHEN SALETYPE='C' THEN  'CT'  ELSE NULL END    SUB_ENTTYPE,
+          YCODE                                YCODE,
+          PCODE                                REFPCODE,
+          ADMSITE_CODE                         REFSITECODE,
+          INLOCCODE                            REFLOCCODE,
+          coalesce(ISSECONDARY, 'N')               REFISSECONDARY,
+          SALETYPE                             REFSALETYPE,
+          NULL                                 REFCMPCODE,
+          NULL                                 REFGLCODE,
+          NULL                                 REFDEPTCODE,
+          NULL                                 REFPRCODE,
+          DOCNO                                REFDOCNO,
+          NULL                                 REFPKGCODE,
+          ADMOU_CODE,
+          -- START REV : 002
+          ADMSITE_CODE_OWNER                   SITECODE_OWNER-- END REV : 002
+          ,
+          ENTRY_SOURCE
+     INTO STRICT V_ENTNO,
+          V_SCHEME_DOCNO,
+          V_ENTDT,
+          V_ENTTYPE,
+          V_SUBENTTYPE,
+          V_YCODE,
+          V_REFPCODE,
+          V_REFSITECODE,
+          V_REFLOCCODE,
+          V_ISSECONDARY,
+          V_SALETYPE,
+          V_REFCMPCODE,
+          V_REFGLCODE,
+          V_REFDEPTCODE,
+          V_REFPRCODE,
+          V_REFDOCNO,
+          V_REFPKGCODE,
+          -- START REV : 001
+          V_INVMAINOUCODE,
+          -- END REV : 001
+          -- START REV : 002
+          V_SITECODE_OWNER-- END REV : 002
+          ,
+          V_ENTRY_SOURCE
+     FROM SALINVMAIN
+    WHERE INVCODE = coalesce(NEW.INVCODE, OLD.INVCODE);
+
+   -- START REV : 001
+   IF coalesce(V_REFSITECODE, 0) <> 0
+   THEN
+      BEGIN
+         SELECT INVLOC.ADMOU_CODE
+           INTO STRICT V_ADMOUCODE
+           FROM ADMSITE, INVLOC
+          WHERE     ADMSITE.STORE_LOCCODE = INVLOC.LOCCODE
+                AND ADMSITE.CODE = V_REFSITECODE;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            V_ADMOUCODE := 1;
+      END;
+
+      -- START REV : 002
+      SELECT SITETYPE
+        INTO STRICT V_SITETYPE
+        FROM ADMSITE
+       WHERE CODE = V_REFSITECODE;
+   -- END REV : 002
+   END IF;
+
+   -- END REV : 001
+   V_LOCCODE := coalesce(NEW.OUTLOCCODE, OLD.OUTLOCCODE);
+   V_DETAIL_CODE := coalesce(NEW.CODE, OLD.CODE);
+   V_ENTCODE := coalesce(NEW.INVCODE, OLD.INVCODE)::text;
+   V_REFDCCODE := coalesce(NEW.DCCODE, OLD.DCCODE);
+   V_NEW_ICODE := NEW.ICODE;
+   V_OLD_ICODE := OLD.ICODE;
+   V_NEW_QTY := NEW.INVQTY;
+   V_OLD_QTY := OLD.INVQTY;
+   -- START REV : 009
+   /*
+   V_NEW_RATE := ROUND (NVL (:NEW.EFFAMT, 0) / NVL (:NEW.INVQTY, 1), 2);
+   V_OLD_RATE := ROUND (NVL (:OLD.EFFAMT, 0) / NVL (:OLD.INVQTY, 1), 2);
+   */
+   V_NEW_RATE := round((coalesce(NEW.EFFAMT, 0) / coalesce(NEW.INVQTY, 1))::numeric, 3);
+   V_OLD_RATE := round((coalesce(OLD.EFFAMT, 0) / coalesce(OLD.INVQTY, 1))::numeric, 3);
+   -- END REV : 009
+   V_OTHER_RATE := coalesce(NEW.COSTRATE, OLD.COSTRATE);
+
+   -- START REV : 006
+   IF V_ENTTYPE = 'STO' AND V_SUBENTTYPE = 'CT'
+   THEN
+      V_REF_FAMILY_CODE := coalesce(NEW.REF_FAMILY_CODE, OLD.REF_FAMILY_CODE);
+   ELSIF V_ENTTYPE = 'SAL' AND V_SUBENTTYPE IS NULL
+   THEN
+      V_REF_FAMILY_CODE := coalesce(NEW.REF_FAMILY_CODE, OLD.REF_FAMILY_CODE);
+   END IF;
+
+   -- END REV : 006
+   -- START REV : 007
+   V_COSTRATE := coalesce(NEW.COSTRATE, OLD.COSTRATE);
+
+   -- END REV : 007
+   -- FOR OUT LOCATION
+   IF TG_OP = 'DELETE'
+   THEN
+           SELECT PG_BACKEND_PID() INTO STRICT V_SID;
+        SELECT APPLICATION_NAME INTO STRICT V_PROGRAM FROM PG_STAT_ACTIVITY WHERE PID=V_SID;
+
+      IF     coalesce(V_ENTRY_SOURCE, '@@') = 'WEB'
+         AND not coalesce(V_PROGRAM,'XX') = 'w3wp.exe'
+         AND V_SALETYPE = 'O'
+      THEN
+         CALL P_SI_STK_TS_DEL(OLD.CODE, OLD.INVCODE);
+      END IF;
+   END IF;
+
+   -- END REV : 008
+   -- STOCK AND COSTING REFLECTION
+   CALL DB_PKG_STOCK$REFLECT(V_DETAIL_CODE,
+                         V_TYPE,
+                         V_ENTCODE,
+                         V_ENTNO,
+                         V_ENTDT,
+                         V_ENTTYPE,
+                         V_LOCCODE,
+                         V_YCODE,
+                         V_NEW_ICODE,
+                         V_OLD_ICODE,
+                         V_NEW_QTY,
+                         V_OLD_QTY,
+                         V_NEW_RATE,
+                         V_OLD_RATE,
+                         V_REFPCODE,
+                         V_REFLOCCODE,
+                         V_REFCMPCODE,
+                         V_REFGLCODE,
+                         V_REFDEPTCODE,
+                         V_REFPRCODE,
+                         V_REFDOCNO,
+                         V_REFPKGCODE,
+                         V_REFDCCODE,
+                         V_OTHER_RATE,
+                         V_SCHEME_DOCNO,
+                         V_SUBENTTYPE,
+                         NULL,
+                         NULL,
+                         V_SITECODE_OWNER,
+                         -- START REV : 006
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         0,
+                         V_REF_FAMILY_CODE,
+                         --END REV : 006
+                         -- START REV : 007
+                         V_COSTRATE,
+                         -- END REV : 007
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         NULL,
+                         coalesce(NEW.INVBATCH_SERIAL_CODE, OLD.INVBATCH_SERIAL_CODE)
+                         );
+                         -- REV : 002
+   -- FOR IN LOCATION
+   IF V_ISSECONDARY = 'Y' AND V_SALETYPE = 'O'
+   THEN
+      -- START REV : 002
+      IF V_SITETYPE = 'MS-CO-OM-TS'
+      THEN
+         V_ENTTYPE := 'STI';
+         V_TS_SITECODE := V_SITECODE_OWNER;
+      ELSIF V_SITETYPE = 'US-CO-OM-TS'
+      THEN
+         V_ENTTYPE := 'GRC';
+         V_TS_SITECODE := V_REFSITECODE;
+      END IF;
+
+      -- END REV : 002
+      CALL DB_PKG_STOCK$REFLECT(V_DETAIL_CODE,
+                            V_TYPE,
+                            V_ENTCODE,
+                            V_ENTNO,
+                            V_ENTDT,
+                            V_ENTTYPE,                     -- 'STI', REV : 002
+                            V_REFLOCCODE,
+                            V_YCODE,
+                            V_NEW_ICODE,
+                            V_OLD_ICODE,
+                            V_NEW_QTY,
+                            V_OLD_QTY,
+                            V_NEW_RATE,
+                            V_OLD_RATE,
+                            V_REFPCODE,
+                            V_LOCCODE,
+                            V_REFCMPCODE,
+                            V_REFGLCODE,
+                            V_REFDEPTCODE,
+                            V_REFPRCODE,
+                            V_REFDOCNO,
+                            V_REFPKGCODE,
+                            V_REFDCCODE,
+                            V_OTHER_RATE,
+                            V_SCHEME_DOCNO,
+                            'SST',
+                            NULL,
+                            NULL,
+                            V_REFSITECODE,
+                            V_ISSECONDARY,
+                            'Y',
+                            V_NEW_RATE,
+                            V_TS_SITECODE,
+                            -- START REV : 006
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            0,
+                            V_REF_FAMILY_CODE,
+                            --END REV : 006
+                            -- START REV : 007
+                            V_COSTRATE,
+                            -- END REV : 007
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            coalesce(NEW.INVBATCH_SERIAL_CODE, OLD.INVBATCH_SERIAL_CODE)
+                            );
+   ELSIF V_SALETYPE = 'C'
+   THEN
+      -- START REV : 002
+      IF V_SITETYPE IN ('OS-OO-CM',
+                        'MS-OO-CM',
+                        'MS-CO-CM',
+                        'MS-CO-OM-TS')
+      THEN
+         V_TS_SITECODE := V_SITECODE_OWNER;
+      ELSE
+         V_TS_SITECODE := NULL;
+      END IF;
+
+      -- END REV : 002
+      CALL DB_PKG_STOCK$REFLECT(V_DETAIL_CODE,
+                            V_TYPE,
+                            V_ENTCODE,
+                            V_ENTNO,
+                            V_ENTDT,
+                            'STI',
+                            V_REFLOCCODE,
+                            V_YCODE,
+                            V_NEW_ICODE,
+                            V_OLD_ICODE,
+                            V_NEW_QTY,
+                            V_OLD_QTY,
+                            V_NEW_RATE,
+                            V_OLD_RATE,
+                            V_REFPCODE,
+                            V_LOCCODE,
+                            V_REFCMPCODE,
+                            V_REFGLCODE,
+                            V_REFDEPTCODE,
+                            V_REFPRCODE,
+                            V_REFDOCNO,
+                            V_REFPKGCODE,
+                            V_REFDCCODE,
+                            V_OTHER_RATE,
+                            V_SCHEME_DOCNO,
+                            'CT',
+                            NULL,
+                            NULL,
+                            V_REFSITECODE,
+                            NULL,
+                            'Y',
+                            V_NEW_RATE,
+                            -- START REV : 002
+                            V_TS_SITECODE,
+                            -- END REV : 002
+                            -- START REV : 006
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            0,
+                            V_REF_FAMILY_CODE,
+                            --END REV : 006
+                            -- START REV : 007
+                            V_COSTRATE,
+                            -- END REV : 007
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            coalesce(NEW.INVBATCH_SERIAL_CODE, OLD.INVBATCH_SERIAL_CODE)
+                            );
+   END IF;
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

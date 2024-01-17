@@ -1,0 +1,189 @@
+function "main"."trigger_fct_t_a_prdjobdet()" {
+  text = """
+
+DECLARE
+    V_PCODE                     PRDJOBMAIN.PCODE%TYPE;
+    V_PRCODE                    PRDJOBMAIN.PRCODE%TYPE;
+    V_MODE                      varchar(10);
+    V_OPERATION_SEQ             PRDLOTOPERATION.OPERATION_SEQ%TYPE;
+    V_NEXT_PRCODE               PRDLOTOPERATION.PRCODE%TYPE;
+    V_IS_FG_ENTRY_EXISTS        char(1) := 'N';
+    
+    V_COUNT                     bigint  := 0;
+    V_PRV_PRCODE                PRDLOTOPERATION.PRCODE%TYPE := NULL;
+    V_ADMSITE_CODE              PRDJOBMAIN.ADMSITE_CODE%TYPE;
+    V_JOBTYPE                   PRDJOBMAIN.JOBTYPE%TYPE;
+    V_JOB_DATE                  PRDJOBMAIN.JOB_DATE%TYPE;
+    V_IS_FIRST_PROCESS          char(1);
+    V_CLIENT_INFO               varchar(100) := NULL;
+BEGIN
+  BEGIN
+/********************************************************************************************************************
+   NAME: T_A_PRDJOBDET
+   PURPOSE:
+   REVISIONS:
+   No.          Date            Author      Description
+   ---------    ----------      --------    -----------------------------------------------------------------
+   REV : 000    23-JUL-2013     MANASH      (BUG ID : 825)      V11 Production.
+   REV : 001    15-NOV-2013     DIPTIMAN    (BUG ID : 924)      Advance production related changes.
+   REV : 002    21-OCT-2014     MOUSUMI     (BUG ID : XXX)      Customized changes in Exception
+   REV : 003    05-FEB-2015     MAANSH      (BUG ID : 2075)     Issue in Production Cost Calculation identified for AND Design.
+   REV : 004    16-JUL-2015     MANASH      (BUG ID : XXX)      Generic Production release.  
+   REV : 005    16-MAY-2018     MANASH      (TFS ID : 40424)    Unable to make PRC against Job Order.      
+********************************************************************************************************************/
+    BEGIN
+        SELECT  PCODE,
+                PRCODE,
+                ADMSITE_CODE,
+                JOBTYPE,
+                JOB_DATE
+        INTO STRICT    V_PCODE,
+                V_PRCODE,
+                V_ADMSITE_CODE,
+                V_JOBTYPE,
+                V_JOB_DATE
+        FROM    PRDJOBMAIN
+        WHERE   CODE = coalesce(NEW.JOBCODE,OLD.JOBCODE);
+    EXCEPTION
+        WHEN OTHERS THEN
+        V_PCODE   := 0;
+        V_PRCODE  := 0;
+        V_ADMSITE_CODE := NULL;
+    END;
+
+    IF  TG_OP = 'INSERT' THEN
+        V_MODE := 'INSERTING';
+    ELSIF TG_OP = 'UPDATE' THEN
+          V_MODE := 'UPDATING';
+    ELSIF TG_OP = 'DELETE' THEN
+          V_MODE := 'DELETING';
+    END IF;
+
+    IF  V_JOBTYPE IN ('LS','LN') THEN
+	/*
+        BEGIN
+
+            SELECT  DISTINCT 'Y'
+            INTO STRICT    V_IS_FIRST_PROCESS
+            FROM    PRDLOTOPERATION
+            WHERE   LOTCODE                = coalesce(NEW.LOTCODE,OLD.LOTCODE)
+            AND     ASSEMBLY_ICODE         = coalesce(NEW.ASSEMBLY_ICODE,OLD.ASSEMBLY_ICODE)
+            AND     coalesce(ASS_SAITEM_CODE,0) = coalesce(NEW.ASS_SAITEM_CODE,coalesce(OLD.ASS_SAITEM_CODE,0))
+            HAVING  MIN(OPERATION_SEQ)     = coalesce(NEW.OPERATION_SEQ,OLD.OPERATION_SEQ);
+        EXCEPTION
+            WHEN no_data_found THEN
+            V_IS_FIRST_PROCESS := 'N';
+        END;
+		*/
+		V_IS_FIRST_PROCESS := 'N';
+    END IF;
+
+    IF (V_JOBTYPE IN ('LS','LN') AND V_IS_FIRST_PROCESS = 'Y') OR coalesce(V_IS_FIRST_PROCESS,'N') = 'N' THEN
+        -- For Order
+        CALL Db_Pkg_Production$POST_WIP_TRANSACTION(
+            V_ADMSITE_CODE,
+            V_MODE,
+            'ORD',
+            OLD.CODE,
+            NEW.CODE,
+            NEW.LOTCODE,
+            coalesce(NEW.JOBCODE,OLD.JOBCODE),
+            NULL,
+            NULL,
+            NEW.OPERATION_SEQ,
+            V_PCODE,
+            V_PRCODE,
+            NEW.ASSEMBLY_ICODE,
+            NULL,
+            'ASS',
+            NEW.QTY,
+            NULL,
+            NULL,
+            NULL,
+            V_JOB_DATE,
+            NEW.ASS_SAITEM_CODE,
+            NULL,
+            NEW.ASSEMBLY_ICODE
+        );
+    END IF;
+
+    -- WIP posting for unfinished item type
+    BEGIN
+        V_NEXT_PRCODE   := V_PRCODE;
+        V_OPERATION_SEQ := coalesce(NEW.OPERATION_SEQ, OLD.OPERATION_SEQ);
+
+        -- if it's a non-standard process
+        IF  coalesce(NEW.OPERATION_SEQ,OLD.OPERATION_SEQ) <> FLOOR(coalesce(NEW.OPERATION_SEQ,OLD.OPERATION_SEQ)) THEN
+            IF  coalesce(NEW.LOTCODE, OLD.LOTCODE) IS NOT NULL THEN
+                -- Find next process and seq
+                SELECT  PRCODE, OPERATION_SEQ
+                INTO STRICT    V_NEXT_PRCODE, V_OPERATION_SEQ
+                FROM    PRDWIPTRANS
+                WHERE   ASSEMBLY_ICODE         = coalesce(NEW.ASSEMBLY_ICODE, OLD.ASSEMBLY_ICODE)
+                AND     coalesce(ASS_SAITEM_CODE,0) = coalesce(NEW.ASS_SAITEM_CODE,coalesce(OLD.ASS_SAITEM_CODE,0))
+                AND     LOTCODE                = coalesce(NEW.LOTCODE, OLD.LOTCODE)
+                AND     ITEM_TYPE              = 'PSD'
+                AND     OPERATION_SEQ          = FLOOR(coalesce(NEW.OPERATION_SEQ,OLD.OPERATION_SEQ))
+                AND     LOTCODE IS NOT NULL  LIMIT 1;
+            ELSE
+                --For non-LOT entries find next seq and process from route master
+                --If next operation is not found in route master then FG entry has been done for this item
+                 BEGIN
+                        SELECT  PRCODE, OPERATION_SEQ
+                        INTO STRICT    V_NEXT_PRCODE, V_OPERATION_SEQ
+                        FROM    PRDROUTEDET D, INVITEM I
+                        WHERE   I.ICODE = coalesce(NEW.ASSEMBLY_ICODE, OLD.ASSEMBLY_ICODE)
+                        AND     I.ROUTECODE = D.ROUTECODE
+                        AND     D.OPERATION_SEQ = FLOOR(coalesce(NEW.OPERATION_SEQ,OLD.OPERATION_SEQ)) + 1;
+                 EXCEPTION
+                        WHEN no_data_found THEN
+                        V_IS_FG_ENTRY_EXISTS := 'Y';
+                        V_NEXT_PRCODE        := V_PRCODE;
+                        V_OPERATION_SEQ      := coalesce(NEW.PREV_OPERATION_SEQ, OLD.PREV_OPERATION_SEQ);
+                 END;
+            END IF;
+        END IF;
+    EXCEPTION
+        WHEN no_data_found THEN
+        RAISE EXCEPTION 'e_operation_seq_notfound' USING ERRCODE = '50001';
+        -- start rev : 004
+        /*
+        BEGIN
+            SELECT MAX(CLIENT_INFO)
+            INTO   V_CLIENT_INFO
+            FROM   V$SESSION;
+        EXCEPTION 
+            WHEN NO_DATA_FOUND THEN
+            V_CLIENT_INFO := NULL;
+        END;
+        
+        IF V_CLIENT_INFO IS NOT NULL THEN
+            NULL;
+        ELSE
+            RAISE E_OPERATION_SEQ_NOTFOUND;
+        END IF;
+        */
+        -- end rev : 004
+    END;
+EXCEPTION
+    WHEN SQLSTATE '50001' THEN
+         CALL Erraudit(USER, 'T_A_PRDJOBDET', SQLSTATE::varchar, SQLERRM||'Unable to find next process. Operation aborted.');
+         RAISE EXCEPTION '%', 'ERROR ENCOUNTERED  '|| 'Unable to find next process. Operation aborted.' USING ERRCODE = '45001';
+    WHEN OTHERS THEN
+         CALL Erraudit(USER, 'T_A_PRDJOBDET', SQLSTATE::varchar, SQLERRM);
+         RAISE EXCEPTION '%', 'ERROR ENCOUNTERED  '|| SQLSTATE::varchar || '  ' || SQLERRM USING ERRCODE = '45100';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

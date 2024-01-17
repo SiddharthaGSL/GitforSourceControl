@@ -1,0 +1,836 @@
+function "main"."trigger_fct_t_salinvmain()" {
+  text = """
+
+DECLARE
+   ora2pg_rowcount integer;
+V_TABNAME                      varchar(50);
+   -- START REV : 001
+   V_ADMOUCODE                    ADMOU.CODE%TYPE;
+   -- END REV : 001
+   -- START REV : 002
+   V_ENTTYPE                      INVSTOCK.ENTTYPE%TYPE;
+   V_SITETYPE                     ADMSITE.SITETYPE%TYPE;
+   V_TS_SITECODE                  ADMSITE.CODE%TYPE;
+   V_POSTCODE                     FINPOST.POSTCODE%TYPE;
+   -- V_CCCODE                       FINCOSTTAG.CODE%TYPE; -- REV : 019
+   -- END REV : 002
+   -- START REV : 004
+   V_OWNER_SITETYPE               ADMSITE.SITETYPE%TYPE;
+   -- END REV : 004
+   V_ADMOU_CODE_OWNER             ADMSITE.ADMOU_CODE%TYPE;        -- REV : 010
+   -- START REV : 011
+   V_PGLCODE_GL_CC_APP            FINGL.COSTAPP%TYPE;
+   -- END REV : 011
+   -- START REV : 012
+   
+   v_scheme_docno_Length          bigint;
+   -- END REV : 012
+   -- start rev : 013
+   v_admgstin_code                admsite.admgstin_code%TYPE;
+   -- end rev : 013
+   -- START REV : 020
+   
+   V_SID                          bigint;
+   V_PROGRAM                      varchar(50);
+-- END REV : 020
+/*****************************************************************************************************************************************************************
+REV : 010  MOUSUMI        06/04/2017     (BUG ID : 26844) Need an option to create Multi OU and all operation will be according to the same
+REV : 011  ANINDYA        15/06/2017     (TFS ID: 29634) GST Related changes.
+REV : 012  ANINDYA        30/06/2017     (TFS ID: 29634) 16 CHARACTER Restriction in scheme_docno.
+REV : 013  MANASH         07/07/2017     (TFS ID: 30869) [GST] Document numbering scheme related changes.
+REV : 014  MOUSUMI        18/09/2017     (TFS ID: 33151) CTC TYPE ADDED
+REV : 015  MANASH         18/09/2017     (TFS ID : 31108) Scheme Docno skipped at Sales Invoice.
+REV : 016  MANASH         23/10/2017     (TFS ID : 34548) Unable to Tag logistic document according to OU Wise.
+REV : 017  MOUSUMI        22/02/2018     (TFS ID : 37820) Non-trading flow - Purchase/Sale/Transfer
+REV : 019  MOUSUMI        29/07/2019     (TFS ID : 22423) Sales Invoice migration / V_CCCODE REMOVED
+REV : 020  MOUSUMI        01/APR/2020    (TFS ID : MIGRATION) CAN NOT BE DELETED OTHER THAN WEB
+*****************************************************************************************************************************************************************/
+BEGIN
+  BEGIN
+   IF coalesce(NEW.SALETYPE, OLD.SALETYPE) = 'O'
+   THEN
+      V_TABNAME := 'SALINVMAIN';
+   ELSE
+      V_TABNAME := 'SALINVMAIN_C';
+   END IF;
+
+   -- END REV : 001
+   SELECT ADMOU_CODE
+     INTO STRICT V_ADMOUCODE
+     FROM ADMSITE
+    WHERE CODE = coalesce(NEW.ADMSITE_CODE, OLD.ADMSITE_CODE);
+
+   -- start rev : 013
+   SELECT admgstin_code
+     INTO STRICT v_admgstin_code
+     FROM admsite
+    WHERE code = coalesce(NEW.admsite_code_owner, OLD.admsite_code_owner);
+
+   -- end rev : 013
+   -- START REV : 001
+   IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE'
+   THEN
+      NEW.ADMOU_CODE_IN := V_ADMOUCODE;
+   END IF;
+
+   -- END REV : 001
+   IF TG_OP = 'UPDATE'
+   THEN
+         UPDATE FINPOST
+            SET entno = NEW.invno::varchar,
+                entdt = NEW.invdt,
+                docno = NEW.docno::varchar,
+                duedt = NEW.duedt,
+                scheme_docno = NEW.scheme_docno,
+                docdt = NEW.docdt
+          WHERE     entcode = NEW.invcode::varchar
+                AND enttype IN ('SIC',
+                                'CTC',
+                                'SID',
+                                'CTD');                           -- REV : 014
+         UPDATE FINCOSTTAG
+            SET entno = NEW.invno::varchar, entdt = NEW.invdt
+          WHERE entcode = NEW.invcode::varchar AND YCODE = NEW.YCODE;
+
+      -- START REV : 013
+      -- START REV : 015
+      --IF :NEW.GSTAPPL = 'Y'  THEN
+      IF     DB_FUN_CHECK_COMMITED_ROW('SALINVMAIN',
+                                        'INVCODE',
+                                        NEW.INVCODE) <> 0
+         AND UPPER(NEW.SCHEME_DOCNO) = 'AUTOMATIC'
+      THEN
+         NEW.scheme_docno :=
+            Db_Fun_Document_Number(Db_Pkg_Genentryno.g_menucode,
+                                    NEW.doccode,
+                                    Db_Pkg_Genentryno.g_ycode,
+                                    NEW.invdt,
+                                    NEW.scheme_docno);
+      END IF;
+
+      IF     NEW.GSTAPPL IN ('D', 'C', 'Y')
+         AND NEW.SCHEME_DOCNO IS NOT NULL
+         AND UPPER(NEW.SCHEME_DOCNO) <> 'AUTOMATIC'
+      THEN
+         -- START REV : 019
+         -- Considering :NEW Instead of :OLD because we are trying to restrict the
+         -- execution of this dependent table update from trigger when update is done
+         -- from web application even if the document was created from any other source
+         -- like (Import Excel, D2K etc.)
+         IF coalesce(NEW.ENTRY_SOURCE, 'XX') <> 'WEB'
+         THEN
+            -- END REV : 019
+            UPDATE GST_DOCNO_CHECK DC
+               SET SCHEME_DOCNO = NEW.SCHEME_DOCNO, DOCCODE = NEW.DOCCODE
+             -- START REV : 014
+             -- WHERE     ENTTYPE = 'SIM'
+             -- START REV : 016
+             --WHERE     ENTTYPE = DECODE (:NEW.SALETYPE, 'O' ,'SIM','CTM')
+             WHERE ENTTYPE = 'SIM'                            -- END REV : 016
+                                                              -- END REV : 014
+                    AND ENTCODE = NEW.INVCODE AND YCODE = NEW.YCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+            THEN
+               INSERT INTO GST_DOCNO_CHECK (ENTTYPE,
+                                               ENTCODE,
+                                               DOCCODE,
+                                               SCHEME_DOCNO,
+                                               ENTDATE,
+                                               YCODE,
+                                               ADMSITE_CODE_OWNER,
+                                               ADMGSTIN_CODE)
+                    VALUES (                                -- START REV : 014
+                                                                     -- 'SIM',
+                                                            -- START REV : 016
+                           --DECODE (:NEW.SALETYPE, 'O' ,'SIM','CTM'),
+                           'SIM',
+                           -- END REV : 016
+                           -- END REV : 014
+                           NEW.INVCODE,
+                           NEW.DOCCODE,
+                           NEW.SCHEME_DOCNO,
+                           NEW.INVDT,
+                           NEW.YCODE,
+                           NEW.ADMSITE_CODE_OWNER,
+                           V_ADMGSTIN_CODE);
+            END IF;                                           -- END REV : 019
+         END IF;
+      END IF;
+
+      -- END REV : 013
+      -- START REV : 002
+      BEGIN
+         SELECT SITETYPE
+           INTO STRICT V_SITETYPE
+           FROM ADMSITE
+          WHERE CODE = NEW.ADMSITE_CODE;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            NULL;
+      END;
+
+      -- END REV : 002
+      -- START REV : 004
+      BEGIN
+         SELECT SITETYPE, ADMOU_CODE                              -- REV : 010
+           INTO STRICT V_OWNER_SITETYPE, V_ADMOU_CODE_OWNER              -- REV : 010
+           FROM ADMSITE
+          WHERE CODE = NEW.ADMSITE_CODE_OWNER;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            NULL;
+      END;
+
+      -- END REV : 004
+      -- START REV : 003
+      UPDATE FINPOST
+         SET ADMSITE_CODE_OWNER = NEW.ADMSITE_CODE_OWNER,
+             REF_ADMSITE_CODE = NEW.ADMSITE_CODE,
+             ECODE = NEW.ECODE,
+             TIME = NEW.TIME,
+             LAST_ACCESS_ECODE = NEW.LAST_ACCESS_ECODE,
+             LAST_ACCESS_TIME = NEW.LAST_ACCESS_TIME,
+             ADMOU_CODE = V_ADMOU_CODE_OWNER                      -- REV : 010
+                                            -- START REV : 017
+             ,
+             scheme_docno = NEW.scheme_docno,
+             entno = NEW.invno::varchar,
+             entdt = NEW.invdt,
+             docno = NEW.docno::varchar,
+             duedt = NEW.duedt,
+             docdt = NEW.docdt,
+             NARTEXT = NEW.REM
+       -- END REV : 017
+       WHERE     ENTCODE = NEW.INVCODE::varchar
+             AND ENTTYPE IN ('SIM',
+                             'SIC',
+                             'CTM',
+                             'CTC'                                -- REV : 014
+                                  ,
+                             'SID',
+                             'CTD'                                -- REV : 017
+                                  );
+
+      -- END REV : 003
+      /* STOCK AND COSTING REFLECTION */
+
+      IF NEW.saletype = 'O'
+      THEN
+         CALL Db_Pkg_Stock$reflect(NEW.invcode,
+                               NEW.invno,
+                               NEW.invdt,
+                               'SAL',
+                               NULL,
+                               NEW.ycode,
+                               NEW.pcode,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NEW.SCHEME_DOCNO,
+                               NULL,
+                               -- START REV : 010
+                               V_ADMOU_CODE_OWNER,
+                               -- :NEW.ADMOU_CODE_IN,
+                               -- END REV : 010
+                               NEW.ADMSITE_CODE_OWNER); -- REV : 002 OU, Site added
+         IF NEW.issecondary = 'Y'
+         THEN
+            -- START REV : 002
+            IF V_SITETYPE = 'MS-CO-OM-TS'
+            THEN
+               V_ENTTYPE := 'STI';
+            ELSIF V_SITETYPE = 'US-CO-OM-TS'
+            THEN
+               V_ENTTYPE := 'GRC';
+            END IF;
+
+            -- END REV : 002
+            CALL Db_Pkg_Stock$reflect(NEW.invcode,
+                                  NEW.invno,
+                                  NEW.invdt,
+                                  V_ENTTYPE,
+                                  NEW.inloccode,
+                                  NEW.ycode,
+                                  NEW.pcode,
+                                  NULL,
+                                  NULL,
+                                  NULL,
+                                  NULL,
+                                  NULL,
+                                  NULL,
+                                  NULL,
+                                  NEW.SCHEME_DOCNO,
+                                  NULL,
+                                  NEW.ADMOU_CODE_IN,
+                                  NEW.ADMSITE_CODE); -- REV : 002 OU, Site added ,'STI'
+         END IF;
+      ELSE
+         -- START REV : 001
+         -- START REV : 002
+         V_TS_SITECODE := NEW.ADMSITE_CODE_OWNER;
+
+         IF V_SITETYPE NOT IN ('OS-OO-CM',
+                               'MS-OO-CM',
+                               'MS-CO-CM',
+                               'MS-CO-OM-TS')
+         THEN
+            V_TS_SITECODE := NULL;
+         END IF;
+
+         -- END REV : 002
+         -- START REV : 010
+         -- END REV : 010
+         CALL Db_Pkg_Stock$reflect(NEW.invcode,
+                               NEW.invno,
+                               NEW.invdt,
+                               'STO',
+                               NULL,
+                               NEW.ycode,
+                               NEW.pcode,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NEW.SCHEME_DOCNO,
+                               NULL,
+                               -- START REV : 010
+                               V_ADMOU_CODE_OWNER,
+                               --:NEW.ADMOU_CODE_IN,
+                               -- END REV :010
+                               NEW.ADMSITE_CODE_OWNER); -- REV : 002 OU, Site added
+         CALL Db_Pkg_Stock$reflect(NEW.invcode,
+                               NEW.invno,
+                               NEW.invdt,
+                               'STI',
+                               NEW.inloccode,
+                               NEW.ycode,
+                               NEW.pcode,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NEW.SCHEME_DOCNO,
+                               NULL,
+                               NEW.ADMOU_CODE_IN,
+                               NEW.ADMSITE_CODE,
+                               V_TS_SITECODE); -- REV : 002 OU, Site, Transit site added
+      -- END IF; -- REV  :010
+      -- END REV : 001
+      END IF;
+   END IF;
+
+   IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE'
+   THEN
+      -- START REV : 010
+      BEGIN
+         SELECT ADMOU_CODE                                        -- REV : 010
+           INTO STRICT V_ADMOU_CODE_OWNER                                -- REV : 010
+           FROM ADMSITE
+          WHERE CODE = NEW.ADMSITE_CODE_OWNER;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            NULL;
+      END;
+
+      -- END REV : 010
+      UPDATE finpost
+         SET entno = NEW.invno::varchar,
+             entdt = NEW.invdt,
+             docno = NEW.docno,
+             duedt = NEW.duedt,
+             glcode = NEW.glcode,
+             slcode = NEW.slcode,
+             camount =
+                CASE
+                   WHEN(coalesce(damount, 0) - coalesce(camount, 0) -- START REV : 017
+                                                             --- NVL (:OLD.grsamt, 0)) > 0
+                         - coalesce(OLD.MAIN_GL_AMT, 0)) > 0     -- END REV : 017
+                   THEN (coalesce(damount, 0) - coalesce(camount, 0)  -- START REV : 017
+                                                           --- NVL (:OLD.grsamt, 0))
+                       - coalesce(OLD.MAIN_GL_AMT, 0))           -- END REV : 017
+                   ELSE
+                      0
+                END,
+             damount = 0,
+             scheme_docno = NEW.scheme_docno,
+             nartext = NEW.rem,
+             docdt = NEW.docdt
+       WHERE     entcode = NEW.invcode::varchar
+             AND enttype = CASE WHEN OLD.SALETYPE='O' THEN  'SIM'  ELSE 'CTM' END
+             AND glcode = OLD.glcode
+             AND coalesce(slcode, 0) = coalesce(OLD.slcode, 0);
+
+      UPDATE finpost
+         SET entno = NEW.invno::varchar,
+             entdt = NEW.invdt,
+             docno = NEW.docno,
+             duedt = NEW.duedt,
+             glcode = NEW.glcode,
+             slcode = NEW.slcode,
+             camount =
+                CASE
+                   WHEN(coalesce(damount, 0) - coalesce(camount, 0) -- START REV : 017
+                                                             --+ NVL (:NEW.grsamt, 0)) > 0
+                          + coalesce(NEW.MAIN_GL_AMT, 0)) > 0    -- END REV : 017
+                   THEN (coalesce(damount, 0) - coalesce(camount, 0)  -- START REV : 017
+                                                            --+ NVL (:NEW.grsamt, 0))
+                        + coalesce(NEW.MAIN_GL_AMT, 0))          -- END REV : 017
+                   ELSE
+                      0
+                END,
+             damount = 0,
+             scheme_docno = NEW.scheme_docno,
+             nartext = NEW.rem,
+             docdt = NEW.docdt
+       WHERE     entcode = NEW.invcode::varchar
+             AND enttype = CASE WHEN NEW.SALETYPE='C' THEN  'CTM'  ELSE 'SIM' END
+             AND glcode = NEW.glcode
+             AND coalesce(slcode, 0) = coalesce(NEW.slcode, 0);
+
+      GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+      THEN
+         INSERT INTO FINPOST(postcode,
+                              entcode,
+                              entno,
+                              entdt,
+                              enttype,
+                              docno,
+                              duedt,
+                              glcode,
+                              slcode,
+                              camount,
+                              ycode,
+                              scheme_docno,
+                              docdt,
+                              nartext,
+                              ADMSITE_CODE_OWNER                  -- REV : 010
+                                                ,
+                              ADMOU_CODE                          -- REV : 010
+                                        )
+              VALUES (nextval('erp01'),
+                      NEW.invcode::varchar,
+                      NEW.invno::varchar,
+                      NEW.invdt,
+                      CASE WHEN NEW.SALETYPE='O' THEN  'SIM'  ELSE 'CTM' END ,
+                      NEW.docno,
+                      NEW.duedt,
+                      NEW.glcode,
+                      NEW.slcode,
+                      -- START REV : 017
+                      --NVL (:NEW.grsamt, 0),
+                      coalesce(NEW.MAIN_GL_AMT, 0),
+                      -- END REV : 017
+                      NEW.ycode,
+                      NEW.scheme_docno,
+                      NEW.docdt,
+                      NEW.rem,
+                      NEW.ADMSITE_CODE_OWNER                     -- REV : 010
+                                             ,
+                      V_ADMOU_CODE_OWNER                          -- REV : 010
+                                        );
+      END IF;
+
+      -- START REV : 002
+      BEGIN
+         SELECT POSTCODE
+           INTO STRICT V_POSTCODE
+           FROM FINPOST
+          WHERE     ENTCODE = NEW.INVCODE::varchar
+                AND ENTTYPE = CASE WHEN NEW.SALETYPE='C' THEN  'CTM'  ELSE 'SIM' END
+                AND GLCODE = NEW.GLCODE
+                AND coalesce(SLCODE, 0) = coalesce(NEW.SLCODE, 0)
+                --AND    CAMOUNT = :NEW.GRSAMT
+                AND YCODE = NEW.YCODE;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            NULL;
+      END;
+
+      -- START REV : 007
+      IF NEW.SALETYPE = 'C'
+      THEN
+         DELETE FROM FINCOSTTAG
+          WHERE     ENTCODE = NEW.INVCODE::varchar
+                AND ENTTYPE = CASE WHEN NEW.SALETYPE='C' THEN  'CTM'  ELSE 'SIM' END;
+      ELSE
+         DELETE FROM FINCOSTTAG
+          WHERE     ENTCODE = NEW.INVCODE::varchar
+                AND ENTTYPE = CASE WHEN NEW.SALETYPE='C' THEN  'CTM'  ELSE 'SIM' END;
+      END IF;
+
+      -- END REV : 007
+      IF V_POSTCODE IS NOT NULL AND NEW.GL_CC_APPL = 'Y'
+      THEN
+         INSERT INTO FINCOSTTAG(ENTCODE,
+                                 ENTNO,
+                                 ENTDT,
+                                 ENTTYPE,
+                                 GLCODE,
+                                 SLCODE,
+                                 COSTCODE,
+                                 DAMOUNT,
+                                 CAMOUNT,
+                                 YCODE,
+                                 -- CODE,
+                                 POSTCODE,
+                                 ADMSITE_CODE                -- START REV :004
+                                             ,
+                                 REF_ADMSITE_CODE             -- END REV : 004
+                                                 ,
+                                 ADMOU_CODE                       -- REV : 010
+                                           )
+              VALUES (NEW.INVCODE::varchar,
+                      NEW.INVNO::varchar,
+                      NEW.INVDT,
+                      CASE WHEN NEW.SALETYPE='C' THEN  'CTM'  ELSE 'SIM' END ,
+                      NEW.GLCODE,
+                      NEW.SLCODE,
+                      NULL,
+                      0,
+                      -- START REV : 017
+                      -- NVL (:NEW.GRSAMT, 0),
+                      coalesce(NEW.MAIN_GL_AMT, 0),
+                      -- END REV : 017
+                      NEW.YCODE,
+                      -- V_CCCODE, -- REV : 019
+                      V_POSTCODE,
+                      NEW.ADMSITE_CODE_OWNER               -- START REV : 004
+                                             ,
+                      NEW.ADMSITE_CODE_OWNER                 -- END REV : 004
+                                             ,
+                      V_ADMOU_CODE_OWNER                          -- REV : 010
+                                        );
+      END IF;
+
+      -- END REV : 002
+      UPDATE finpost
+         SET entno = NEW.invno::varchar,
+             entdt = NEW.invdt,
+             docno = NEW.docno,
+             duedt = NEW.duedt,
+             glcode = OLD.pglcode,
+             damount =
+                CASE
+                   WHEN(  coalesce(damount, 0)
+                         - coalesce(camount, 0)
+                         - coalesce(OLD.netamt, 0)) > 0
+                   THEN (  coalesce(damount, 0)
+                       - coalesce(camount, 0)
+                       - coalesce(OLD.netamt, 0))
+                   ELSE
+                      0
+                END,
+             camount = 0,
+             scheme_docno = NEW.scheme_docno,
+             docdt = NEW.docdt
+       WHERE     entcode = NEW.invcode::varchar
+             AND enttype = CASE WHEN OLD.SALETYPE='C' THEN  'CTM'  ELSE 'SIM' END
+             AND glcode = OLD.pglcode
+             -- START REV :018
+             AND coalesce(slcode, 0) =
+                    CASE WHEN OLD.SALETYPE='C' THEN  coalesce(OLD.PSLCODE, 0)  ELSE coalesce(OLD.PCODE, 0) END;
+
+      -- END REV : 018
+      UPDATE finpost
+         SET entno = NEW.invno::varchar,
+             entdt = NEW.invdt,
+             docno = NEW.docno,
+             duedt = NEW.duedt,
+             glcode = NEW.pglcode,
+             damount =
+                CASE
+                   WHEN(  coalesce(damount, 0)
+                         - coalesce(camount, 0)
+                         + coalesce(NEW.netamt, 0)) > 0
+                   THEN (  coalesce(damount, 0)
+                       - coalesce(camount, 0)
+                       + coalesce(NEW.netamt, 0))
+                   ELSE
+                      0
+                END,
+             camount = 0,
+             scheme_docno = NEW.scheme_docno,
+             docdt = NEW.docdt
+       WHERE     entcode = NEW.invcode::varchar
+             AND enttype = CASE WHEN NEW.SALETYPE='C' THEN  'CTM'  ELSE 'SIM' END
+             AND glcode = NEW.pglcode
+             AND coalesce(slcode, 0) =
+                    CASE WHEN NEW.SALETYPE='C' THEN  coalesce(NEW.PSLCODE, 0)  ELSE coalesce(NEW.PCODE, 0) END;     -- :NEW.pcode; REV : 002
+      GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+      THEN
+         INSERT INTO FINPOST(postcode,
+                              entcode,
+                              entno,
+                              entdt,
+                              enttype,
+                              docno,
+                              duedt,
+                              glcode,
+                              slcode,
+                              damount,
+                              ycode,
+                              scheme_docno,
+                              docdt,
+                              ADMSITE_CODE_OWNER                  -- REV : 010
+                                                ,
+                              ADMOU_CODE                          -- REV : 010
+                                        )
+              VALUES (nextval('erp01'),
+                      NEW.invcode::varchar,
+                      NEW.invno::varchar,
+                      NEW.invdt,
+                      CASE WHEN NEW.SALETYPE='C' THEN  'CTM'  ELSE 'SIM' END ,
+                      NEW.docno,
+                      NEW.duedt,
+                      NEW.pglcode,
+                      CASE WHEN NEW.SALETYPE='C' THEN  NEW.PSLCODE  ELSE NEW.PCODE END , -- :NEW.pcode; REV : 002
+                      coalesce(NEW.netamt, 0),
+                      NEW.ycode,
+                      NEW.scheme_docno,
+                      NEW.docdt,
+                      NEW.ADMSITE_CODE_OWNER                     -- REV : 010
+                                             ,
+                      V_ADMOU_CODE_OWNER                          -- REV : 010
+                                        );
+      END IF;
+
+      -- START REV : 002
+      V_POSTCODE := NULL;
+
+      -- V_CCCODE := NULL; -- REV : 019
+      IF NEW.SALETYPE = 'C'
+      THEN
+         BEGIN
+            SELECT POSTCODE
+              INTO STRICT V_POSTCODE
+              FROM FINPOST
+             WHERE     ENTCODE = NEW.INVCODE::varchar
+                   AND ENTTYPE = 'CTM'
+                   AND GLCODE = NEW.PGLCODE
+                   AND coalesce(SLCODE, 0) = coalesce(NEW.PSLCODE, 0)
+                   --AND    NVL(DAMOUNT, 0) = :NEW.NETAMT
+                   AND YCODE = NEW.YCODE;
+         EXCEPTION
+            WHEN no_data_found
+            THEN
+               NULL;
+         END;
+
+         DELETE FROM FINCOSTTAG
+          WHERE     ENTCODE = NEW.INVCODE::varchar
+                AND ENTTYPE = 'CTM'
+                AND GLCODE = NEW.PGLCODE
+                AND coalesce(SLCODE, 0) = coalesce(NEW.PSLCODE, 0)
+                --AND       NVL(DAMOUNT, 0) = :NEW.NETAMT
+                AND YCODE = NEW.YCODE;
+
+         --   RETURNING CODE
+         --  INTO V_CCCODE;
+         --START REV : 011
+         SELECT COSTAPP
+           INTO STRICT V_PGLCODE_GL_CC_APP
+           FROM FINGL
+          WHERE GLCODE = NEW.PGLCODE;
+
+         --IF V_POSTCODE IS NOT NULL AND :NEW.GL_CC_APPL = 'Y' THEN
+         IF V_POSTCODE IS NOT NULL AND V_PGLCODE_GL_CC_APP = 'Y'
+         THEN
+            --END REV : 011
+            INSERT INTO FINCOSTTAG(ENTCODE,
+                                    ENTNO,
+                                    ENTDT,
+                                    ENTTYPE,
+                                    GLCODE,
+                                    SLCODE,
+                                    COSTCODE,
+                                    DAMOUNT,
+                                    CAMOUNT,
+                                    YCODE,
+                                    -- CODE,
+                                    POSTCODE,
+                                    ADMSITE_CODE            -- START REV : 004
+                                                ,
+                                    REF_ADMSITE_CODE          -- END REV : 004
+                                                    ,
+                                    ADMOU_CODE                    -- REV : 010
+                                              )
+                 VALUES (NEW.INVCODE::varchar,
+                         NEW.INVNO::varchar,
+                         NEW.INVDT,
+                         'CTM',
+                         NEW.PGLCODE,
+                         NEW.PSLCODE,
+                         NULL,
+                         -- START REV : 011
+                         --NVL(:NEW.GRSAMT, 0),
+                         coalesce(NEW.NETAMT, 0),
+                         --END REV : 011
+                         0,
+                         NEW.YCODE,
+                         -- V_CCCODE, -- REV : 019
+                         V_POSTCODE,
+                         -- START REV : 006
+                         CASE
+                            WHEN V_SITETYPE IN ('OS-OO-CM',
+                                                'MS-OO-CM',
+                                                'MS-CO-CM',
+                                                'US-CO-CM')
+                            THEN
+                               NEW.ADMSITE_CODE
+                            ELSE
+                               NEW.ADMSITE_CODE_OWNER
+                         END,
+                         NEW.ADMSITE_CODE                    -- END REV : 006
+                                          -- START REV : 010
+                         ,
+                         CASE
+                            WHEN V_SITETYPE IN ('OS-OO-CM',
+                                                'MS-OO-CM',
+                                                'MS-CO-CM',
+                                                'US-CO-CM')
+                            THEN
+                               V_ADMOUCODE
+                            ELSE
+                               V_ADMOU_CODE_OWNER
+                         END                                      -- REV : 010
+                            );
+         END IF;
+      END IF;
+   -- END REV : 002
+   END IF;
+
+   -- START REV : 007
+   IF TG_OP = 'DELETE'
+   THEN
+      -- START REV : 020
+	SELECT PG_BACKEND_PID() INTO STRICT V_SID;
+    SELECT APPLICATION_NAME INTO STRICT V_PROGRAM FROM PG_STAT_ACTIVITY WHERE PID=V_SID;
+
+IF not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+      THEN
+         RAISE EXCEPTION 'del_from_wrong_application' USING ERRCODE = '50002';
+      END IF;
+
+      -- END REV : 020
+      DELETE FROM FINCOSTTAG
+       WHERE     ENTCODE = OLD.INVCODE::varchar
+             AND ENTTYPE IN ('SIM',
+                             'SIC',
+                             'CTM',
+                             'CTC'                                -- REV : 014
+                                  ,
+                             'SID',
+                             'CTD')
+             AND YCODE = OLD.YCODE;
+
+      DELETE FROM FINCOSTTAG
+       WHERE POSTCODE IN (SELECT POSTCODE
+                            FROM FINPOST
+                           WHERE     ENTCODE = OLD.INVCODE::varchar
+                                 AND ENTTYPE IN ('SIM',
+                                                 'SIC',
+                                                 'CTM',
+                                                 'CTC'            -- REV : 014
+                                                      ,
+                                                 'SID',
+                                                 'CTD'));
+
+      DELETE FROM FINPOST
+       WHERE     ENTCODE = OLD.INVCODE::varchar
+             AND ENTTYPE IN ('SIM',
+                             'SIC',
+                             'CTM',
+                             'CTC'                                -- REV : 014
+                                  ,
+                             'SID',
+                             'CTD');
+   END IF;
+
+   -- END REV : 007
+   -- START REV : 002
+   DELETE FROM FINCOSTTAG
+    WHERE     ENTCODE = OLD.INVCODE::varchar
+          AND ENTTYPE IN ('SIM',
+                          'SIC',
+                          'CTM',
+                          'CTC'                                   -- REV : 014
+                               ,
+                          'SID',
+                          'CTD')
+          AND coalesce(DAMOUNT, 0) = 0
+          AND coalesce(CAMOUNT, 0) = 0;
+
+   -- END REV : 002
+   DELETE FROM FINCOSTTAG
+    WHERE POSTCODE IN (SELECT POSTCODE
+                         FROM FINPOST
+                        WHERE     ENTCODE = OLD.INVCODE::varchar
+                              AND ENTTYPE IN ('SIM',
+                                              'SIC',
+                                              'CTM',
+                                              'CTC'               -- REV : 014
+                                                   ,
+                                              'SID',
+                                              'CTD')
+                              AND coalesce(DAMOUNT, 0) = 0
+                              AND coalesce(CAMOUNT, 0) = 0);
+
+   DELETE FROM finpost
+    WHERE     entcode = OLD.invcode::varchar
+          AND enttype IN ('SIM',
+                          'SIC',
+                          'CTM',
+                          'CTC'                                   -- REV : 014
+                               ,
+                          'SID',
+                          'CTD')
+          AND coalesce(damount, 0) = 0
+          AND coalesce(camount, 0) = 0;
+EXCEPTION
+   WHEN SQLSTATE '50002' THEN
+      RAISE EXCEPTION '%', 'T_SALINVMAIN == >> Deletion from other application except GINESYS WEB not allowed.' USING ERRCODE = '45112';
+   -- END REV : 020
+   -- START REV : 012
+   WHEN SQLSTATE '50001' THEN
+      RAISE EXCEPTION '%', 'More than 16 chatacter Document number not allowed.' USING ERRCODE = '45001';
+   -- END REV : 012
+   WHEN OTHERS
+   THEN
+      CALL ERRAUDIT(USER,
+                'T_SALINVMAIN',
+                SQLSTATE::varchar,
+                SQLERRM);
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED  ' || SQLSTATE::varchar || '  ' || SQLERRM USING ERRCODE = '45001';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

@@ -1,0 +1,447 @@
+procedure "main"."p_psite_validatesettlementdata()" {
+  text = """
+
+DECLARE
+
+   v_consignmentcount             bigint;
+   v_organizationownedsitecount   bigint;
+   v_roundoffglcode               bigint;
+   v_redglcode                    bigint;
+   v_gvcontrolglcode              bigint;
+   v_gvdiscountglcode             bigint;
+--   v_creditnoteglcode             NUMBER;
+--   v_debitnoteglcode              NUMBER;
+   v_consignmentsaleglcode        bigint;
+   v_failurereason                varchar(500) := 'reason: ';
+   v_gl_count                     bigint;
+   v_AuditValidationFailCount     bigint;
+   v_AuditValidationPendingCount  bigint;
+   v_cnt                          bigint;
+   v_consignglcode_cnt            bigint;
+  c1 RECORD;
+
+BEGIN
+/***************************************************************************************************************
+-- REVISION : 101       MOUSUMI BHAUMIK    TFS ID : XXX      DATE : 18-MAY-2018         HO  AUTHORIZATION VALIDATION REMOVAL
+-- REV : 001            ANINDYA            GIN ID : Zwing    DATE : 06-MAY-2020         OU Check for SELECTED SITE WAS MISSING 
+********************************************************************************************************************/
+   --Check 0: Restricting settlement 1st July, 2017 onwards [temporarily]
+   BEGIN
+      --UPDATE staging_settlementdata
+       --  SET status = -1,
+        --     statusdisplay = 'Error',
+         --    comments = comments || '#Please update to the latest version to proceed with settlement for 1st July, 2017.'
+      -- WHERE settlementdate >= '1-JUL-2017';
+   -- Check1: Check if ledger mappings are present for consignment sites.
+   BEGIN
+      SELECT COUNT(*)
+        INTO STRICT v_consignmentcount
+        FROM staging_settlementdata ss, admsite s
+       WHERE ss.sitecode = s.code
+         AND (ss.saletype = 'C' OR s.sitetype = 'MS-CO-OM-TS');
+      IF v_consignmentcount > 0
+      THEN
+--         SELECT roundoff_glcode, redemption_glcode, gvcontrol_glcode,
+--                gvdiscount_glcode, creditnote_glcode, debitnote_glcode,
+--                consignmentsale_glcode
+--           INTO v_roundoffglcode, v_redglcode, v_gvcontrolglcode,
+--                v_gvdiscountglcode, v_creditnoteglcode, v_debitnoteglcode,
+--                v_consignmentsaleglcode
+--           FROM admou;
+         SELECT COUNT(1)
+         INTO STRICT   v_cnt
+         FROM   ADMOU
+         WHERE
+         -- START REV : 001  
+             CODE IN (SELECT ADMOU_CODE FROM ADMSITE WHERE CODE IN (SELECT SITECODE FROM staging_settlementdata))
+             AND (
+             -- END REV : 001
+                roundoff_glcode IS NULL
+                OR
+                redemption_glcode IS NULL
+                OR
+                gvcontrol_glcode IS NULL
+                OR
+                gvdiscount_glcode IS NULL
+                OR
+                consignmentsale_glcode IS NULL
+            -- START REV : 001    
+                );
+            -- END REV : 001    
+         --SELECT roundoff_glcode, redemption_glcode, gvcontrol_glcode,
+         --       gvdiscount_glcode, consignmentsale_glcode
+         --  INTO v_roundoffglcode, v_redglcode, v_gvcontrolglcode,
+         --       v_gvdiscountglcode, v_consignmentsaleglcode
+         --  FROM admou;
+         IF    --v_roundoffglcode IS NULL
+            --OR v_redglcode IS NULL
+            --OR v_gvcontrolglcode IS NULL
+            --OR v_gvdiscountglcode IS NULL
+--            OR v_creditnoteglcode IS NULL
+--            OR v_debitnoteglcode IS NULL
+             coalesce(v_cnt,0) > 0
+         THEN
+            v_failurereason :=
+                  v_failurereason
+               || 'One or more required ledger(s) are not specified.';
+            -- Now update status and failure reason for all consignment sites
+            UPDATE staging_settlementdata
+               SET status = -1,
+                   statusdisplay = 'Error',
+                   comments = v_failurereason
+             WHERE saletype = 'C'
+                OR sitecode IN (SELECT code
+                                  FROM admsite
+                                 WHERE sitetype = 'MS-CO-OM-TS');
+         END IF;
+      END IF;
+   END;
+   -- Check2: Check if ledger mappings are present for organization owned sites
+   BEGIN
+      SELECT COUNT(*)
+        INTO STRICT v_organizationownedsitecount
+        FROM staging_settlementdata
+       WHERE sitetype = 'MS-OO-CM';
+      IF v_organizationownedsitecount > 0
+      THEN
+         select count(1)
+         into STRICT v_consignglcode_cnt
+         from   admou
+         where   consignmentsale_glcode IS NULL;
+         IF coalesce(v_consignglcode_cnt,0) > 0
+         THEN
+            v_failurereason :=
+                  v_failurereason
+               || '#Consignment Sale type ledgers are mandatory for posting settlement data for a Organisation Owned site.';
+            UPDATE staging_settlementdata
+               SET status = -1,
+                   statusdisplay = 'Error',
+                   comments = v_failurereason
+             WHERE sitetype = 'MS-OO-CM';
+         END IF;
+      END IF;
+   END;
+   --Check 3: check if any unauthorized GRC/GRT document present for that date
+   -- START REV : 101
+   BEGIN
+   /*   UPDATE staging_settlementdata
+         SET status = -1,
+             statusdisplay = 'Error',
+             comments = comments || '#Unauthorized GRC document present.'
+       WHERE (sitecode, settlementdate) IN (
+                SELECT admsite_code_in, grcdt
+                  FROM invgrcmain
+                 WHERE (admsite_code_in, grcdt) IN (
+                                               SELECT sitecode,
+                                                      settlementdate
+                                                 FROM staging_settlementdata
+                                                WHERE sitetype = 'MS-OO-CM')
+                   AND auth_ecode IS NULL)
+         AND sitetype = 'MS-OO-CM'; */
+      --Check 4: check if any unauthorized GRT document present for that date
+     /* UPDATE staging_settlementdata
+         SET status = -1,
+             statusdisplay = 'Error',
+             comments = comments || '#Unauthorized GRT document present.'
+       WHERE (sitecode, settlementdate) IN (
+                SELECT admsite_code, grtdt
+                  FROM invgrtmain
+                 WHERE (admsite_code, grtdt) IN (
+                                               SELECT sitecode,
+                                                      settlementdate
+                                                 FROM staging_settlementdata
+                                                WHERE sitetype = 'MS-OO-CM')
+                   AND auth_ecode IS NULL)
+         AND sitetype = 'MS-OO-CM';*/
+      --Check 5: check if any unauthorized split document present for that date
+    /*  UPDATE staging_settlementdata
+         SET status = -1,
+             statusdisplay = 'Error',
+             comments =
+                      comments || '#Unauthorized Conversion document present.'
+       WHERE (sitecode, settlementdate) IN (
+                SELECT admsite_code, orddt
+                  FROM prdord
+                 WHERE (admsite_code, orddt) IN (
+                                               SELECT sitecode,
+                                                      settlementdate
+                                                 FROM staging_settlementdata
+                                                WHERE sitetype = 'MS-OO-CM')
+                   AND auth_ecode IS NULL)
+         AND sitetype = 'MS-OO-CM';*/
+    -- END REV : 101 
+      --Check 6: check if  Ledgers are not assigned for all PTC heads of PTC bills
+      UPDATE staging_settlementdata
+         SET status = -1,
+             statusdisplay = 'Error',
+             comments =
+                   coalesce(comments,' ')
+                || '#Ledgers are not assigned for all PTC heads of PTC bills.'
+       WHERE (sitecode, settlementdate) IN (
+                SELECT ptb.admsite_code, date_trunc('day', ptb.billdate)
+                  FROM psite_ptchead ph, psite_ptcbill ptb
+LEFT OUTER JOIN psite_ptchead_assign pha ON (ptb.psite_ptchead_code = pha.psite_ptchead_code AND ptb.admsite_code = pha.admsite_code)
+WHERE ph.code = ptb.psite_ptchead_code   AND pha.glcode IS NULL AND (ptb.admsite_code, date_trunc('day', ptb.billdate)) IN (
+                                               SELECT sitecode,
+                                                      settlementdate
+                                                 FROM staging_settlementdata
+                                                WHERE sitetype = 'MS-OO-CM') )
+         AND sitetype = 'MS-OO-CM';
+/*
+      -- Check 7: check if Net amount and MOP base amount mismatch in POS bill.
+      UPDATE staging_settlementdata
+         SET status = -1,
+             statusdisplay = 'Error',
+             comments =
+                   comments
+                || '#Net amount and MOP base amount mismatch in POS bill.'
+       WHERE sitetype = 'MS-OO-CM'
+         AND (sitecode, settlementdate) IN (
+                SELECT t.admsite_code, t.billdate
+                  FROM (SELECT   SUM (NVL (pbm.baseamt, 0)) bamt,
+                                 admsite_code, TRUNC (pbm.billdate) billdate
+                            FROM psite_posbillmop pbm
+                           WHERE paymentsource = 'POSBill'
+                             AND (pbm.admsite_code, TRUNC (pbm.billdate)) IN (
+                                               SELECT sitecode,
+                                                      settlementdate
+                                                 FROM staging_settlementdata)
+                        GROUP BY pbm.admsite_code, TRUNC (pbm.billdate)) t,
+                       (SELECT   SUM (NVL (netpayable, 0)) netpayable,
+                                 admsite_code, TRUNC (billdate) billdate
+                            FROM psite_posbill
+                           WHERE (admsite_code, TRUNC (billdate)) IN (
+                                               SELECT sitecode,
+                                                      settlementdate
+                                                 FROM staging_settlementdata)
+                        GROUP BY admsite_code, TRUNC (billdate)) t1
+                 WHERE t.admsite_code = t1.admsite_code
+                   AND t.billdate = t1.billdate
+                   AND t.bamt <> t1.netpayable);
+*/
+    -- Check 8: check if Net amount and MOP base amount mismatch in POS GV bill.
+      UPDATE staging_settlementdata
+         SET status = -1,
+             statusdisplay = 'Error',
+             comments =
+                   coalesce(comments,' ')
+                || '#Net amount and MOP base amount mismatch in POS GV bill.'
+       WHERE sitetype = 'MS-OO-CM'
+         AND (sitecode, settlementdate) IN (
+                SELECT t.admsite_code, t.billdate
+                  FROM (SELECT   SUM(coalesce(pbm.baseamt, 0)) bamt,
+                                 admsite_code, date_trunc('day', pbm.billdate) billdate
+                            FROM psite_posbillmop pbm
+                           WHERE paymentsource = 'POSGVBill'
+                             AND (pbm.admsite_code, date_trunc('day', pbm.billdate)) IN (
+                                               SELECT sitecode,
+                                                      settlementdate
+                                                 FROM staging_settlementdata)
+                        GROUP BY pbm.admsite_code, date_trunc('day', pbm.billdate)) t,
+                       (SELECT   SUM(coalesce(netamt, 0)) netpayable,
+                                 admsite_code, date_trunc('day', billdate) billdate
+                            FROM psite_posgvbill
+                           WHERE (admsite_code, date_trunc('day', billdate)) IN (
+                                               SELECT sitecode,
+                                                      settlementdate
+                                                 FROM staging_settlementdata)
+                        GROUP BY admsite_code, date_trunc('day', billdate)) t1
+                 WHERE t.admsite_code = t1.admsite_code
+                   AND t.billdate = t1.billdate
+                   AND t.bamt <> t1.netpayable);
+      -- Check 9: check if Net amount and MOP base amount mismatch in Deposit-Refund bill.
+      UPDATE staging_settlementdata
+         SET status = -1,
+             statusdisplay = 'Error',
+             comments =
+                   coalesce(comments,' ')
+                || '#Net amount and MOP base amount mismatch in Deposit-Refund bill.'
+       WHERE sitetype = 'MS-OO-CM'
+         AND (sitecode, settlementdate) IN (
+                SELECT t.admsite_code, t.billdate
+                  FROM (SELECT   SUM(coalesce(pbm.baseamt, 0)) bamt,
+                                 admsite_code, date_trunc('day', pbm.billdate) billdate
+                            FROM psite_posbillmop pbm
+                           WHERE paymentsource = 'POSDepRefBill'
+                             AND moptype NOT IN ('CNI', 'DNI')
+                             AND pbm.baseamt = 0
+                             AND (pbm.admsite_code, date_trunc('day', pbm.billdate)) IN (
+                                               SELECT sitecode,
+                                                      settlementdate
+                                                 FROM staging_settlementdata)
+                        GROUP BY pbm.admsite_code, date_trunc('day', pbm.billdate)) t,
+                       (SELECT   SUM(coalesce(amount, 0)) netpayable,
+                                 admsite_code, date_trunc('day', billdate) billdate
+                            FROM psite_posdeprefbill
+                           WHERE (admsite_code, date_trunc('day', billdate)) IN (
+                                               SELECT sitecode,
+                                                      settlementdate
+                                                 FROM staging_settlementdata)
+                        GROUP BY admsite_code, date_trunc('day', billdate)) t1
+                 WHERE t.admsite_code = t1.admsite_code
+                   AND t.billdate = t1.billdate
+                   AND t.bamt <> t1.netpayable);
+      -- Check 10: check if Net amount and MOP base amount mismatch in PTC bill.
+      UPDATE staging_settlementdata
+         SET status = -1,
+             statusdisplay = 'Error',
+             comments =
+                   coalesce(comments,' ')
+                || '#Net amount and MOP base amount mismatch in PTC bill.'
+       WHERE sitetype = 'MS-OO-CM'
+         AND (sitecode, settlementdate) IN (
+                SELECT t.admsite_code, t.billdate
+                  FROM (SELECT   SUM(coalesce(ABS(pbm.baseamt), 0)) bamt,
+                                 admsite_code, date_trunc('day', pbm.billdate) billdate
+                            FROM psite_posbillmop pbm
+                           WHERE paymentsource = 'PTCBill'
+                             AND (pbm.admsite_code, date_trunc('day', pbm.billdate)) IN (
+                                               SELECT sitecode,
+                                                      settlementdate
+                                                 FROM staging_settlementdata)
+                        GROUP BY pbm.admsite_code, date_trunc('day', pbm.billdate)) t,
+                       (SELECT   SUM(coalesce(amount, 0)) netpayable,
+                                 admsite_code, date_trunc('day', billdate) billdate
+                            FROM psite_ptcbill
+                           WHERE (admsite_code, date_trunc('day', billdate)) IN (
+                                               SELECT sitecode,
+                                                      settlementdate
+                                                 FROM staging_settlementdata)
+                        GROUP BY admsite_code, date_trunc('day', billdate)) t1
+                 WHERE t.admsite_code = t1.admsite_code
+                   AND t.billdate = t1.billdate
+                   AND t.bamt <> t1.netpayable);
+      -- Check 11 check if VAT Ledger not defined.
+      UPDATE staging_settlementdata
+         SET status = -1,
+             statusdisplay = 'Error',
+             comments = coalesce(comments,' ') || '#VAT Ledger not defined.'
+       WHERE sitetype IN ('MS-OO-CM', 'MS-CO-CM')
+         AND (sitecode, settlementdate) IN (
+                SELECT stlm.admsite_code, date_trunc('day', stlm.stlmfor) stlmdate
+                  FROM psite_posstlm stlm,
+                       (SELECT   sitecode, MIN(settlementdate) mindate,
+                                 clock_timestamp() maxdate
+                            FROM staging_settlementdata
+                        GROUP BY sitecode) sd,
+                       fintaxdet fd,
+                       admsite s
+                 WHERE stlm.admsite_code = sd.sitecode
+                   AND date_trunc('day', stlm.stlmfor) BETWEEN sd.mindate AND sd.maxdate
+                   AND sd.sitecode = s.code
+                   AND s.psite_admcmptax_code = fd.admcmptax_code
+                   --AND fd.dtfr BETWEEN sd.mindate AND sd.maxdate
+                   AND fd.saltax_glcode IS NULL
+                   AND fd.taxcode <> 0
+                   AND fd.fintradegrp_code = (SELECT code
+                                                FROM fintradegrp
+                                               WHERE UPPER(NAME) = 'LOCAL')
+                   AND coalesce(fd.formcode, 0) = 0)
+         AND sitecode IN (
+                SELECT s.code
+                  FROM admsite s
+LEFT OUTER JOIN finsl sl ON (s.slcode = sl.slcode)
+WHERE s.psite_ispublished = 'Y' AND (s.sitetype = 'MS-OO-CM' OR sl.sale_post_method = 'E'
+                       ) );
+      --Check 12: check if any unauthorized miscellaneous document present for that date
+      -- START REV : 101
+      /*UPDATE staging_settlementdata
+         SET status = -1,
+             statusdisplay = 'Error',
+             comments =
+                   comments
+                || '#Unauthorized Miscellaneous document present for that date.'
+       WHERE (sitecode, settlementdate) IN (
+                SELECT admsite_code, miscdt
+                  FROM invmiscmain
+                 WHERE (admsite_code, miscdt) IN (
+                                               SELECT sitecode,
+                                                      settlementdate
+                                                 FROM staging_settlementdata
+                                                WHERE sitetype = 'MS-OO-CM')
+                   AND auth_ecode IS NULL)
+         AND sitetype = 'MS-OO-CM';*/
+    -- END REV : 101
+    -- Check 13: Arnab 5 Jul 2016 - Checking settlement audit status. If any settlement audit validation failed record exists then FAIL this process
+   BEGIN
+     UPDATE staging_settlementdata
+         SET status = -1,
+             statusdisplay = 'Error',
+             comments =
+                   coalesce(comments,' ')
+                || '##Entry type wise mismatch found for HO and POS for the date. '
+       WHERE (sitecode, settlementdate) IN (
+                SELECT admsite_code, stlmfor
+                  FROM psite_posstlm
+                  WHERE VALIDATION_STATE in ('E')
+                  AND (admsite_code, stlmfor) IN (SELECT ps.admsite_code, ps.stlmfor
+                   from psite_posstlmstockinfo_pos ps,
+                         psite_posstlmstockinfo_ho hs
+                     where  ps.psite_posstlm_code = hs.psite_posstlm_code
+                     and    ps.entrytype = hs.entrytype
+                     and    ps.qty <> hs.qty));
+      UPDATE staging_settlementdata
+         SET status = -1,
+             statusdisplay = 'Error',
+             comments =
+                   coalesce(comments,' ')
+                || '#Settlement Audit Verification has failed'
+       WHERE (sitecode, settlementdate) IN (
+                SELECT admsite_code, stlmfor
+                  FROM psite_posstlm
+                  WHERE VALIDATION_STATE in ('E'))
+				  AND comments IS NULL;
+       UPDATE staging_settlementdata
+         SET status = -1,
+             statusdisplay = 'Error',
+             comments =
+                   coalesce(comments,' ')
+                || '#Settlement Audit Verification is pending'
+       WHERE (sitecode, settlementdate) IN (
+                SELECT admsite_code, stlmfor
+                  FROM psite_posstlm
+                  WHERE VALIDATION_STATE in ('P'));
+   END;
+-- Check 14: Check if Credit Note and Debit Note ledger mappings are present for organization owned sites
+       BEGIN
+          SELECT COUNT(1)
+            INTO STRICT v_gl_count
+            FROM psite_mop_assign pm, psite_mop m, staging_settlementdata st
+           WHERE pm.psite_mop_code = m.code
+             AND pm.admsite_code = st.sitecode
+             AND st.sitetype = 'MS-OO-CM'
+             AND m.TYPE IN ('CNI', 'CNR', 'DNI', 'DNA')
+             AND pm.mop_glcode IS NULL;
+          IF coalesce(v_gl_count, 0) > 0
+          THEN
+             v_failurereason :=
+                   v_failurereason
+                || '#One or more required MOP ledger(s) which are mandatory for posting settlement data for a Organisation Owned site are not specified.';
+             UPDATE staging_settlementdata
+                SET status = -1,
+                    statusdisplay = 'Error',
+                    comments = v_failurereason
+              WHERE sitetype = 'MS-OO-CM';
+          END IF;
+       END;
+      -- Check 15: check if previous day is settled. If not then update all next days as failed.
+      FOR c1 IN (SELECT   sitecode, MIN(settlementdate) settlementdate
+                     FROM staging_settlementdata
+                    WHERE status = -1
+                 GROUP BY sitecode)
+      LOOP
+         UPDATE staging_settlementdata
+            SET status = -1,
+                statusdisplay = 'Error',
+                comments = coalesce(comments,' ') || '#Previous day is not settled.'
+          WHERE sitecode = c1.sitecode AND settlementdate > c1.settlementdate;
+      END LOOP;
+   END;
+END;
+END;
+"""
+  arguments = [
+  ]
+  language = plpgsql
+}
+

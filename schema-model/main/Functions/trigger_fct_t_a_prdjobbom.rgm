@@ -1,0 +1,141 @@
+function "main"."trigger_fct_t_a_prdjobbom()" {
+  text = """
+
+/********************************************************************************************************************
+   NAME: T_PRDJOBBOM
+   PURPOSE:
+   REVISIONS:
+   No.          Date            Author      Description
+   ---------    ----------      --------    -----------------------------------------------------------------
+   REV : 000    16-JUL-2015     MANASH      (BUG ID : XXX)  Generic Production release.        
+********************************************************************************************************************/
+DECLARE
+    V_PCODE                     PRDJOBMAIN.PCODE%TYPE;
+    V_PRCODE                    PRDJOBMAIN.PRCODE%TYPE;
+    V_MODE                      varchar(10);
+    V_ADMSITE_CODE              PRDJOBMAIN.ADMSITE_CODE%TYPE;
+    V_JOBTYPE                   PRDJOBMAIN.JOBTYPE%TYPE;
+    V_JOB_DATE                  PRDJOBMAIN.JOB_DATE%TYPE;
+    V_PRV_PRCODE                PRDJRCMAIN.PRCODE%TYPE;
+    V_PRV_OPSEQ                 PRDLOTOPERATION.OPERATION_SEQ%TYPE;
+    V_ORD_QTY                   PRDJOBDET.QTY%TYPE := 0;
+    V_CUR_OP_SEQ                PRDJOBDET.OPERATION_SEQ%TYPE;
+    V_CONSIDER_IN_WIP           PRDJOBDET.CONSIDER_IN_WIP%TYPE;
+    V_A2F_QTY                   PRDLOTOPERATION.AVAILABLE_TO_FORWARD%TYPE;
+BEGIN
+  BEGIN
+    BEGIN
+        SELECT  PCODE,
+                PRCODE,
+                ADMSITE_CODE,
+                JOBTYPE,
+                JOB_DATE
+        INTO STRICT    V_PCODE,
+                V_PRCODE,
+                V_ADMSITE_CODE,
+                V_JOBTYPE,
+                V_JOB_DATE
+        FROM    PRDJOBMAIN
+        WHERE   CODE = coalesce(NEW.JOBCODE,OLD.JOBCODE);
+    EXCEPTION
+        WHEN OTHERS THEN
+        V_PCODE   := 0;
+        V_PRCODE  := 0;
+        V_ADMSITE_CODE := NULL;
+    END;
+
+    BEGIN
+        SELECT  OPERATION_SEQ,
+                coalesce(QTY,0),
+                PREV_PRCODE,
+                PREV_OPERATION_SEQ,
+                CONSIDER_IN_WIP
+        INTO STRICT    V_CUR_OP_SEQ,
+                V_ORD_QTY,
+                V_PRV_PRCODE,
+                V_PRV_OPSEQ,
+                V_CONSIDER_IN_WIP
+        FROM    PRDJOBDET   D
+        WHERE   CODE =  coalesce(NEW.PRDJOBDET_CODE,OLD.PRDJOBDET_CODE);
+    EXCEPTION
+        WHEN no_data_found THEN
+        V_CUR_OP_SEQ  := NULL;
+        V_ORD_QTY     := 0;
+        V_PRV_PRCODE  := NULL;
+        V_PRV_OPSEQ   := NULL;
+        V_CONSIDER_IN_WIP := 'Y';
+    END;
+
+    IF  TG_OP = 'INSERT' THEN
+        V_MODE := 'INSERTING';
+    ELSIF TG_OP = 'UPDATE' THEN
+          V_MODE := 'UPDATING';
+    ELSIF TG_OP = 'DELETE' THEN
+          V_MODE := 'DELETING';
+    END IF;
+
+    IF  V_JOBTYPE NOT IN ('AS','AN') THEN
+        IF  coalesce(NEW.OPERATION_SEQ,OLD.OPERATION_SEQ) > 1 AND coalesce(NEW.ASSEMBLY_ICODE,OLD.ASSEMBLY_ICODE) = coalesce(NEW.COMPONENT_ICODE,OLD.COMPONENT_ICODE) THEN
+            V_PRV_OPSEQ := DB_PKG_PRODUCTION$GET_PRV_OPSEQ(
+                                        coalesce(NEW.LOTCODE,OLD.LOTCODE),
+                                        coalesce(NEW.ASSEMBLY_ICODE,OLD.ASSEMBLY_ICODE),
+                                        coalesce(NEW.ASS_SAITEM_CODE,OLD.ASS_SAITEM_CODE),
+                                        coalesce(NEW.COM_SAITEM_CODE,OLD.COM_SAITEM_CODE),
+                                        coalesce(NEW.OPERATION_SEQ,OLD.OPERATION_SEQ)
+                                    );
+
+            V_PRV_PRCODE := DB_PKG_PRODUCTION$GET_PRV_PRCODE(
+                                        coalesce(NEW.LOTCODE,OLD.LOTCODE),
+                                        coalesce(NEW.ASSEMBLY_ICODE,OLD.ASSEMBLY_ICODE),
+                                        coalesce(NEW.ASS_SAITEM_CODE,OLD.ASS_SAITEM_CODE),
+                                        coalesce(NEW.COM_SAITEM_CODE,OLD.COM_SAITEM_CODE),
+                                        coalesce(NEW.OPERATION_SEQ,OLD.OPERATION_SEQ)
+                                    );
+
+            CALL DB_PKG_PRODUCTION$POST_WIP_TRANSACTION
+                    (
+                        V_ADMSITE_CODE,
+                        V_MODE,
+                        'ORD',
+                        OLD.CODE,
+                        NEW.CODE,
+                        NEW.LOTCODE,
+                        coalesce(NEW.JOBCODE,OLD.JOBCODE),
+                        NULL,
+                        NULL,
+                        coalesce(V_PRV_OPSEQ,V_CUR_OP_SEQ),
+                        V_PCODE,
+                        coalesce(V_PRV_PRCODE,V_PRCODE),
+                        NEW.ASSEMBLY_ICODE,
+                        NULL,
+                        'PSD',
+                        0-coalesce(ROUND((V_ORD_QTY*coalesce(NEW.BOM_QTY,coalesce(OLD.BOM_QTY,0))),3),0),
+                        NULL,
+                        NULL,
+                        NULL,
+                        V_JOB_DATE,
+                        NEW.COM_SAITEM_CODE,
+                        NULL,
+                        NEW.JOB_ASSEMBLY_ICODE
+                    );
+        END IF;
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+    CALL ERRAUDIT(USER, 'T_PRDJOBBOM', SQLSTATE::varchar, SQLERRM);
+    RAISE EXCEPTION '%', 'ERROR ENCOUNTERED  '|| SQLSTATE::varchar || '  ' || SQLERRM USING ERRCODE = '45100';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

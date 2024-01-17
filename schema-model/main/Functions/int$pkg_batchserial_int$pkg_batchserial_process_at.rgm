@@ -1,0 +1,250 @@
+function "main"."int$pkg_batchserial_int$pkg_batchserial_process_atx(bigint, bigint, timestamp without time zone, bigint, text)" {
+  text = """
+
+DECLARE
+
+        errmsg              varchar(500);
+        vsession            varchar(100);
+        vdetailtbl          varchar(1000);
+        vdetailrec          varchar(500);
+        errcode             bigint;
+        vcount              bigint;
+        v_cnt               bigint;
+        return_string       varchar(1000);
+        v_code              bigint;
+        v_mfg_date          timestamp;
+        v_exp_date          timestamp;
+        v_mrp               double precision;
+        v_wsp               double precision;
+        v_listed_mrp        double precision;
+        v_costrate          double precision;c RECORD;
+  i RECORD;
+  j RECORD;
+
+BEGIN
+
+        for c in (SELECT    b.code, a.icode_barcode, a.mfg_date, a.valid_upto, a.mrp, a.wsp, a.rsp, a.standard_rate, b.batch_serial_no, a.lineno
+                    from    int$stg_batchserial    a,
+                            invbatch_serial        b,
+                            invgrp                 g,
+                            invitem                d
+                  where a.icode_barcode = b.icode
+                  and   b.icode = d.icode
+                  and   d.grpcode = g.grpcode
+                  /*and   a.mfg_date = b.mfg_date
+                  and   a.valid_upto = b.exp_date 
+                  and   a.mrp = b.listed_mrp
+                  and   a.wsp = b.wsp
+                  and   a.rsp = b.mrp
+                  and   a.standard_rate = b.costrate*/
+				  and   coalesce(a.mfg_date,'15-aug-1947') = coalesce(b.mfg_date,'15-aug-1947')
+                  and   coalesce(a.valid_upto,'15-aug-1947') = coalesce(b.exp_date,'15-aug-1947')    
+                  and   coalesce(a.mrp,0) = coalesce(b.listed_mrp,0)
+                  and   coalesce(a.wsp,0) = coalesce(b.wsp,0)
+                  and   coalesce(a.rsp,0) = coalesce(b.mrp,0)
+                  and   coalesce(a.standard_rate,0) = coalesce(b.costrate,0)
+                  and   a.batch_serial_no IS NULL
+                  --and   a.update_master = 'Y'
+                  and   g.iscreatebatchdocumentwise = 'N'
+                  and   a.userid = p_userid
+				 order by
+                          b.code asc)
+            loop
+                begin               
+                  update int$stg_batchserial a
+                    set batch_serial_no = c.batch_serial_no,
+                        a.update_master = 'N',
+                        a.invbatch_serial_code = c.code
+                  where a.icode_barcode = c.icode_barcode
+                  and   a.lineno = c.lineno
+                  and   a.batch_serial_no IS NULL
+                  and   a.userid = p_userid;
+                exception
+                    when no_data_found then null;
+                end;
+            end loop;
+
+        for i in ( select * from int$stg_batchserial where userid = p_userid
+                   order by lineno)
+            loop
+                begin
+
+                select count(batch_serial_no) into STRICT v_cnt
+                    from invbatch_serial b
+                    where b.icode = i.icode_barcode
+                    and   b.batch_serial_no = i.batch_serial_no;
+
+                if v_cnt > 0                
+                    then
+                        
+                        select code, mfg_date, exp_date, mrp, wsp, listed_mrp, costrate
+                        into STRICT v_code, v_mfg_date, v_exp_date, v_mrp, v_wsp, v_listed_mrp, v_costrate
+                            from invbatch_serial b
+                        where b.icode = i.icode_barcode
+                        and   b.batch_serial_no = i.batch_serial_no;
+
+                        update invbatch_serial bs
+                        set
+                            mfg_date = coalesce(i.mfg_date,v_mfg_date),
+                            exp_date = coalesce(i.valid_upto,v_exp_date),
+                            mrp = coalesce(i.rsp,v_mrp),
+                            wsp = coalesce(i.wsp,v_wsp),
+                            listed_mrp = coalesce(i.mrp,v_listed_mrp),
+                            costrate = coalesce(i.standard_rate,v_costrate),
+                            lastmodifiedon = clock_timestamp(),
+                            lastmodifiedby = p_userid
+                        where bs.batch_serial_no = i.batch_serial_no
+                        and   bs.icode = i.icode_barcode
+                        and   i.update_master = 'Y';
+
+                        update int$stg_batchserial a
+                        set invbatch_serial_code = v_code
+                        where a.lineno = i.lineno
+                        and   invbatch_serial_code is null
+                        and   a.userid = p_userid;
+
+                    else 
+                           return_string := erpcreatebatch(i.icode_barcode::text, i.batch_serial_no::text, i.mfg_date::timestamp without time zone,
+														   i.valid_upto::timestamp without time zone, i.mrp::bigint, i.wsp::bigint, i.rsp::bigint, 
+														   i.standard_rate::bigint, i.transaction_qty::bigint, p_classname, p_userid);
+
+                        if return_string is not null
+                                then
+                                v_code := substr(return_string, instr(return_string,'~', -1) + 1);
+                        
+                                update int$stg_batchserial a
+                                set batch_serial_no = substr(return_string, 1, position('~' in return_string)-1),
+                                    invbatch_serial_code = v_code
+                                where a.icode_barcode = i.icode_barcode
+                                and   a.lineno = i.lineno
+                                and   a.batch_serial_no IS NULL
+                                and   a.userid = p_userid;
+
+                                update int$stg_batchserial a
+                                set invbatch_serial_code = v_code
+                                where a.icode_barcode = i.icode_barcode
+                                and   a.lineno = i.lineno
+                                and   a.batch_serial_no IS NOT NULL
+                                and   a.batch_serial_no = i.batch_serial_no
+                                and   a.userid = p_userid;
+                        else
+                          RAISE EXCEPTION 'e_usr_exp' USING ERRCODE = '50001';
+                        end if;
+                    end if;
+                    end;
+            end loop;
+
+        for j in (
+                   SELECT   b.code, a.icode_barcode, a.batch_serial_no, a.standard_rate, a.wsp, a.rsp, a.mrp, a.mfg_date,
+                            b.mfg_date as t_mfg_date, b.exp_date as t_exp_date, b.mrp as t_mrp, b.wsp as t_wsp, b.listed_mrp as t_listed_mrp, b.costrate as t_costrate,
+                            a.valid_upto, a.lineno
+                    from    int$stg_batchserial    a,
+                            invbatch_serial        b
+                    where   a.batch_serial_no = b.batch_serial_no
+                    and     a.rsp is not null
+                    and     a.transaction_qty is not null
+                    and     a.update_master = 'Y'
+                    --and     p_classname = 'BATCHSERIAL_TRANS'
+                    and     a.userid = p_userid
+                    )
+            loop
+                begin
+                   update invbatch_serial bs
+                   set
+                        wsp = coalesce(j.wsp,j.t_wsp),
+                        mrp = coalesce(j.rsp,j.t_mrp),
+                        listed_mrp = coalesce(j.mrp,j.t_listed_mrp),
+                        mfg_date = coalesce(j.mfg_date,j.t_mfg_date),
+                        exp_date = coalesce(j.valid_upto,j.t_exp_date),
+                        costrate = coalesce(j.standard_rate,j.t_costrate)
+                   where  bs.batch_serial_no = j.batch_serial_no
+                   and    bs.icode = j.icode_barcode
+                   and    bs.code = j.code;
+
+                   update int$stg_batchserial
+                      set invbatch_serial_code = j.code
+                   where lineno = j.lineno
+                   and   invbatch_serial_code is null;
+
+                exception
+                    when no_data_found then null;
+                end;
+            end loop;
+
+        -- log to be added in history table
+        select  nextval('int$error_log_code')
+        into STRICT    vsession;
+
+        vdetailtbl := 'create table ginarchive.batchserial_'||vsession||' as select distinct invbatch_serial_code, icode_barcode, batch_serial_no, standard_rate, wsp, rsp, mrp, mfg_date, valid_upto, transaction_qty, transaction_rate, lineno from int$stg_batchserial where userid ='|| p_userid::text;
+        EXECUTE vdetailtbl;
+
+        vdetailrec := 'select count(1) from ginarchive.batchserial_'||vsession;
+        EXECUTE vdetailrec into STRICT vcount;
+
+        insert into int$history(code, importedby, importedon, classname, summary, history_detail_tablename, history_detail_row_count)
+        values (nextval('int$history_code'), p_userid, clock_timestamp(), p_classname, vcount::TEXT||' Data updated successfully.', 'ginarchive.batchserial_'||vsession, vcount);
+
+        --COMMIT;
+
+        if p_classname = 'BATCHSERIAL_TRANS'
+        then
+            return('ginarchive.batchserial_' || vsession);
+        else
+            return('1');
+        end if;
+
+    exception
+        when SQLSTATE '50001' then
+        return('0');
+
+        when others then
+        errcode := SQLSTATE;
+        errmsg  := sqlerrm;
+
+        -- error log for oracle internal error
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        values (nextval('int$error_log_code'), 0, p_classname, p_userid, errcode, errmsg, clock_timestamp());
+        --COMMIT;
+
+        return('0');
+    end;
+
+    -- clear stagging table
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_classname
+      type = text
+      mode = IN
+      default = 'BATCHSERIAL'::text
+    }
+
+  >
+  language = plpgsql
+}
+

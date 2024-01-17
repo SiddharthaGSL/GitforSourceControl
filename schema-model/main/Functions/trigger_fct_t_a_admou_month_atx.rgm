@@ -1,0 +1,127 @@
+function "main"."trigger_fct_t_a_admou_month_atx()" {
+  text = """
+
+DECLARE
+    -- pragma introduce to by pass mutating error from trigger
+    V_NEXT_MONTH_STATUS     ADMOU_MONTH.INV_MONTH_STATUS%TYPE;
+    V_PRV_MONTH_STATUS      ADMOU_MONTH.FIN_MONTH_STATUS%TYPE;
+BEGIN
+  BEGIN
+/***********************************************************************************************************************************************
+     PURPOSE: Production Cost Calculation
+
+     REV NO     OWNER       DATE            DESCRIPTION
+     ---------  --------    -----------     ----------------------------------------------------------------------------------------------------
+     REV : 000	MANASH	    18-MAY-2017	    (TFS ID : 21200)    Inventory Valuation Revamp.
+*************************************************************************************************************************************************/
+    --chk start for inventory month
+    IF (coalesce(NEW.INV_MONTH_STATUS,'@') <> coalesce(OLD.INV_MONTH_STATUS,'@')) THEN
+        IF  coalesce(NEW.INV_MONTH_STATUS,'@') = 'O' THEN
+            BEGIN
+                SELECT  OM.INV_MONTH_STATUS
+                INTO STRICT    V_NEXT_MONTH_STATUS
+                FROM    ADMOU_MONTH OM
+                WHERE   OM.ADMOU_CODE = NEW.ADMOU_CODE
+                AND     OM.ADMMONTH_CODE =
+                                        (
+                                            SELECT  MIN(OM1.ADMMONTH_CODE)
+                                            FROM    ADMOU_MONTH OM1
+                                            WHERE   OM1.ADMOU_CODE = NEW.ADMOU_CODE
+                                            AND     OM1.ADMMONTH_CODE  > NEW.ADMMONTH_CODE
+                                        );
+            EXCEPTION
+                WHEN no_data_found THEN
+                V_NEXT_MONTH_STATUS := 'O';
+            END;
+
+            IF  V_NEXT_MONTH_STATUS <> 'O' THEN
+                RAISE EXCEPTION 'my_next_mn_chk_exp' USING ERRCODE = '50001';
+            END IF;
+
+        ELSIF   coalesce(NEW.INV_MONTH_STATUS,'@') = 'C' THEN
+                BEGIN
+                    SELECT  OM.INV_MONTH_STATUS
+                    INTO STRICT    V_PRV_MONTH_STATUS
+                    FROM    ADMOU_MONTH OM
+                    WHERE   OM.ADMOU_CODE = NEW.ADMOU_CODE
+                    AND     OM.ADMMONTH_CODE =
+                                            (
+                                                SELECT  MAX(OM1.ADMMONTH_CODE)
+                                                FROM    ADMOU_MONTH OM1
+                                                WHERE   OM1.ADMOU_CODE = NEW.ADMOU_CODE
+                                                AND     OM1.ADMMONTH_CODE  < NEW.ADMMONTH_CODE
+                                            );
+                EXCEPTION
+                    WHEN no_data_found THEN
+                    V_PRV_MONTH_STATUS := 'C';
+                END;
+
+                IF  V_PRV_MONTH_STATUS <> 'C' THEN
+                    RAISE EXCEPTION 'my_prv_mn_chk_exp' USING ERRCODE = '50002';
+                END IF;
+        END IF;
+    --chk start for finance month
+    ELSIF (coalesce(NEW.FIN_MONTH_STATUS,'@') <> coalesce(OLD.FIN_MONTH_STATUS,'@')) THEN
+            IF  coalesce(NEW.FIN_MONTH_STATUS,'@') = 'O' THEN
+                BEGIN
+                    SELECT  OM.FIN_MONTH_STATUS
+                    INTO STRICT    V_NEXT_MONTH_STATUS
+                    FROM    ADMOU_MONTH OM
+                    WHERE   OM.ADMOU_CODE = NEW.ADMOU_CODE
+                    AND     OM.ADMMONTH_CODE =
+                                            (
+                                                SELECT  MIN(OM1.ADMMONTH_CODE)
+                                                FROM    ADMOU_MONTH OM1
+                                                WHERE   OM1.ADMOU_CODE = NEW.ADMOU_CODE
+                                                AND     OM1.ADMMONTH_CODE > NEW.ADMMONTH_CODE
+                                            );
+                EXCEPTION
+                    WHEN no_data_found THEN
+                    V_NEXT_MONTH_STATUS := 'O';
+                END;
+
+                IF  V_NEXT_MONTH_STATUS <> 'O' THEN
+                    RAISE EXCEPTION 'my_next_mn_chk_exp' USING ERRCODE = '50001';
+                END IF;
+
+            ELSIF   coalesce(NEW.FIN_MONTH_STATUS,'@') = 'C' THEN
+                    BEGIN
+                        SELECT  OM.FIN_MONTH_STATUS
+                        INTO STRICT    V_PRV_MONTH_STATUS
+                        FROM    ADMOU_MONTH OM
+                        WHERE   OM.ADMOU_CODE = NEW.ADMOU_CODE
+                        AND     OM.ADMMONTH_CODE =
+                                                (
+                                                    SELECT  MAX(OM1.ADMMONTH_CODE)
+                                                    FROM    ADMOU_MONTH OM1
+                                                    WHERE   OM1.ADMOU_CODE = NEW.ADMOU_CODE
+                                                    AND     OM1.ADMMONTH_CODE < NEW.ADMMONTH_CODE
+                                                );
+                    EXCEPTION
+                        WHEN no_data_found THEN
+                        V_PRV_MONTH_STATUS := 'C';
+                    END;
+
+                    IF  V_PRV_MONTH_STATUS <> 'C' THEN
+                        RAISE EXCEPTION 'my_prv_mn_chk_exp' USING ERRCODE = '50002';
+                    END IF;
+            END IF;
+    END IF;
+EXCEPTION
+    WHEN SQLSTATE '50001' THEN
+    RAISE EXCEPTION '%', 'T_A_ADMOU_MONTH ==>>> Next month is not open.' USING ERRCODE = '45201';
+    WHEN SQLSTATE '50002' THEN
+    RAISE EXCEPTION '%', 'T_A_ADMOU_MONTH == >>> Previous month is not closed.' USING ERRCODE = '45201';
+    WHEN OTHERS THEN
+    CALL ERRAUDIT(USER, 'T_ADMOU_MONTH', SQLSTATE, SQLERRM);
+    RAISE EXCEPTION '%', 'T_ADMOU_MONTH' USING ERRCODE = '45201';
+  END;
+RETURN 1;
+END
+"""
+  returnType = bigint
+  arguments = [
+  ]
+  language = plpgsql
+}
+

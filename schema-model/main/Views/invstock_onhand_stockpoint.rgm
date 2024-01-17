@@ -1,0 +1,86 @@
+view "main"."invstock_onhand_stockpoint" {
+  text = """-
+SELECT t.stockpointcode,
+    t.loccode,
+    t.icode,
+    t.admsite_code,
+    t.invbatch_serial_code,
+    t.gds_refcode_site,
+    t.gds_refcode_stkpt,
+    sum(t.qty) AS qty,
+    sum(t.amount) AS amount,
+    0 AS rowcount,
+    0 AS qtycount,
+    0 AS qtyamount,
+    t.laststkupdtime
+   FROM ( SELECT invstock_onhand_stockpoint_agg.psite_stockpoint_code AS stockpointcode,
+            invstock_onhand_stockpoint_agg.loccode,
+            invstock_onhand_stockpoint_agg.icode,
+            invstock_onhand_stockpoint_agg.admsite_code,
+            invstock_onhand_stockpoint_agg.invbatch_serial_code,
+            invstock_onhand_stockpoint_agg.gds_refcode_site,
+            invstock_onhand_stockpoint_agg.gds_refcode_stkpt,
+            invstock_onhand_stockpoint_agg.qty,
+            invstock_onhand_stockpoint_agg.amount,
+            invstock_onhand_stockpoint_agg.laststkupdtime
+           FROM main.invstock_onhand_stockpoint_agg
+        UNION ALL
+         SELECT invstock_log.psite_stockpoint_code AS stockpointcode,
+            invstock_log.loccode,
+            invstock_log.icode,
+            invstock_log.admsite_code,
+            invstock_log.invbatch_serial_code,
+            concat_ws(''::text, invstock_log.icode, '~', invstock_log.admsite_code) AS gds_refcode_site,
+            concat_ws(''::text, invstock_log.icode, '~', invstock_log.admsite_code, '~', invstock_log.loccode, '~', COALESCE(invstock_log.psite_stockpoint_code, 'NA'::character varying)) AS gds_refcode_stkpt,
+            invstock_log.qty,
+            invstock_log.amount,
+            invstock_log."time" AS laststkupdtime
+           FROM main.invstock_log
+          WHERE ((COALESCE((invstock_log.logseq)::numeric, (0)::numeric) > ( SELECT COALESCE((log_tag_agg.logseq)::numeric, (0)::numeric) AS "coalesce"
+                   FROM main.log_tag_agg
+                  WHERE (((log_tag_agg.consumer)::text = 'INVSTOCK_ONHAND_STOCKPOINT_AGG'::text) AND ((log_tag_agg.logname)::text = 'INVSTOCK_LOG'::text)))) OR (invstock_log.logseq IS NULL))) t
+  GROUP BY t.stockpointcode, t.loccode, t.icode, t.admsite_code, t.invbatch_serial_code, t.gds_refcode_site, t.gds_refcode_stkpt, t.laststkupdtime;
+"""
+  columns = (
+    column "stockpointcode" {
+      type = "character varying(50)"
+    }
+    column "loccode" {
+      type = "bigint"
+    }
+    column "icode" {
+      type = "character varying(9)"
+    }
+    column "admsite_code" {
+      type = "bigint"
+    }
+    column "invbatch_serial_code" {
+      type = "bigint"
+    }
+    column "gds_refcode_site" {
+      type = "character varying"
+    }
+    column "gds_refcode_stkpt" {
+      type = "character varying"
+    }
+    column "qty" {
+      type = "numeric"
+    }
+    column "amount" {
+      type = "numeric"
+    }
+    column "rowcount" {
+      type = "integer"
+    }
+    column "qtycount" {
+      type = "integer"
+    }
+    column "qtyamount" {
+      type = "integer"
+    }
+    column "laststkupdtime" {
+      type = "timestamp(0) without time zone"
+    }
+  )
+}
+

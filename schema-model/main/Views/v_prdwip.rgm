@@ -1,0 +1,359 @@
+view "main"."v_prdwip" {
+  text = """-
+SELECT alias2.production_type,
+    alias2.document_site,
+    alias2.working_plan_no,
+    alias2.schedule_date,
+    alias2.job_order_no,
+    alias2.job_order_date,
+    alias2.jobber_name,
+    alias2.operation_seq,
+    alias2.process,
+    alias2.division,
+    alias2.section,
+    alias2.department,
+    alias2.material_type,
+    alias2.category_1,
+    alias2.category_2,
+    alias2.category_3,
+    alias2.category_4,
+    alias2.category_5,
+    alias2.category_6,
+    alias2.assembly_icode,
+    alias2.sub_assembly_item,
+    alias2.status,
+    alias2.document_no,
+    alias2.document_date,
+    alias2.document_type,
+    alias2.record_type,
+    alias2.wip_qty,
+    alias2.wip_value,
+    alias2.lotcode,
+    alias2.docdt,
+    alias2.component_icode,
+    alias2.component_division,
+    alias2.component_section,
+    alias2.component_department,
+    alias2.component_material_type,
+    alias2.component_category_1,
+    alias2.component_category_2,
+    alias2.component_category_3,
+    alias2.component_category_4,
+    alias2.component_category_5,
+    alias2.component_category_6,
+    alias2.doctype,
+    alias2.rectype,
+    alias2.material_cost,
+    alias2.service_cost
+   FROM ( SELECT 'PLANNED'::text AS production_type,
+            admsite.name AS document_site,
+            prdlotmain.lotno AS working_plan_no,
+            prdlotmain.schedule_date,
+            prdjobmain.jobno AS job_order_no,
+            prdjobmain.job_date AS job_order_date,
+            finsl.slname AS jobber_name,
+            prdjobstatus.operation_seq,
+            prdpr.prname AS process,
+            assembly_item.lev1grpname AS division,
+            assembly_item.lev2grpname AS section,
+            assembly_item.grpname AS department,
+            assembly_item.disp_material_type AS material_type,
+            assembly_item.cname1 AS category_1,
+            assembly_item.cname2 AS category_2,
+            assembly_item.cname3 AS category_3,
+            assembly_item.cname4 AS category_4,
+            assembly_item.cname5 AS category_5,
+            assembly_item.cname6 AS category_6,
+            COALESCE(prd_saitem.sainame, 'NA'::character varying) AS sub_assembly_item,
+                CASE
+                    WHEN ((prdjobstatus.rectype)::text = 'WIP'::text) THEN ((prdpr.prname)::text || ' IN PROGRESS'::text)
+                    WHEN ((prdjobstatus.rectype)::text = 'PSD'::text) THEN ((prdpr.prname)::text || ' COMPLETED, WAITING FOR NEXT PROCESS'::text)
+                    WHEN ((prdjobstatus.rectype)::text = 'FG'::text) THEN ((prdpr.prname)::text || ' COMPLETE, TRANSFERED TO FINISHED GOODS'::text)
+                    ELSE NULL::text
+                END AS status,
+            prdjobstatus.docno AS document_no,
+            prdjobstatus.docdt AS document_date,
+                CASE
+                    WHEN ((prdjobstatus.doctype)::text = 'ORD'::text) THEN 'JOB ORDER'::character varying
+                    WHEN ((prdjobstatus.doctype)::text = 'JRC'::text) THEN 'JOB RECEIPT'::character varying
+                    WHEN ((prdjobstatus.doctype)::text = 'CNL'::text) THEN 'JOB CANCELLATION'::character varying
+                    WHEN ((prdjobstatus.doctype)::text = 'RET'::text) THEN 'JOB RETURN'::character varying
+                    WHEN ((prdjobstatus.doctype)::text = 'WAS'::text) THEN 'JOB WASTAGE'::character varying
+                    WHEN ((prdjobstatus.doctype)::text = 'ISS'::text) THEN 'JOB ISSUE'::character varying
+                    WHEN ((prdjobstatus.doctype)::text = 'EXC'::text) THEN 'JOB ORDER AMENDMENT'::character varying
+                    ELSE prdjobstatus.doctype
+                END AS document_type,
+                CASE
+                    WHEN ((prdjobstatus.rectype)::text = 'WIP'::text) THEN 'WORK IN PROGRESS'::character varying
+                    WHEN ((prdjobstatus.rectype)::text = 'PSD'::text) THEN 'PROCESSED'::character varying
+                    WHEN ((prdjobstatus.rectype)::text = 'FG'::text) THEN 'FINISHED GOOD'::character varying
+                    WHEN ((prdjobstatus.rectype)::text = 'CON'::text) THEN 'CONSUMPTION'::character varying
+                    ELSE prdjobstatus.rectype
+                END AS record_type,
+            prdjobstatus.qty AS wip_qty,
+            prdjobstatus.total_cost AS wip_value,
+            prdjobstatus.lotcode,
+            prdjobstatus.assembly_icode,
+            prdjobstatus.orderby_operation_seq,
+            prdjobstatus.ass_saitem_code,
+            prdjobstatus.doctype,
+            prdjobstatus.rectype,
+            prdjobstatus.qty,
+            prdjobstatus.total_cost,
+            prdjobstatus.docdt,
+            prdjobstatus.component_icode,
+            component_item.lev1grpname AS component_division,
+            component_item.lev2grpname AS component_section,
+            component_item.grpname AS component_department,
+            component_item.disp_material_type AS component_material_type,
+            component_item.cname1 AS component_category_1,
+            component_item.cname2 AS component_category_2,
+            component_item.cname3 AS component_category_3,
+            component_item.cname4 AS component_category_4,
+            component_item.cname5 AS component_category_5,
+            component_item.cname6 AS component_category_6,
+            prdjobstatus.material_cost,
+            prdjobstatus.service_cost
+           FROM main.prdpr,
+            main.prdlotmain,
+            main.prdjobmain,
+            main.finsl,
+            main.v_item assembly_item,
+            main.admsite,
+            ((main.prdjobstatus
+             LEFT JOIN main.prd_saitem ON ((prdjobstatus.ass_saitem_code = prd_saitem.code)))
+             LEFT JOIN main.v_item component_item ON (((prdjobstatus.component_icode)::text = (component_item.icode)::text)))
+          WHERE ((prdjobstatus.lotcode IS NOT NULL) AND (prdjobstatus.lotcode = prdlotmain.code) AND (prdjobstatus.jobcode = prdjobmain.code) AND (prdjobstatus.prcode = prdpr.prcode) AND (prdjobstatus.pcode = finsl.slcode) AND ((prdjobstatus.assembly_icode)::text = (assembly_item.icode)::text) AND (prdlotmain.admsite_code = admsite.code))
+        UNION ALL
+         SELECT 'ADHOC'::text AS production_type,
+            admsite.name AS document_site,
+            'NA'::character varying AS working_plan_no,
+            NULL::timestamp without time zone AS schedule_date,
+            prdjobmain.jobno AS job_order_no,
+            prdjobmain.job_date AS job_order_date,
+            finsl.slname AS jobber_name,
+            prdjobstatus.operation_seq,
+            prdpr.prname AS process,
+            assembly_item.lev1grpname AS division,
+            assembly_item.lev2grpname AS section,
+            assembly_item.grpname AS department,
+            assembly_item.disp_material_type AS material_type,
+            assembly_item.cname1 AS category_1,
+            assembly_item.cname2 AS category_2,
+            assembly_item.cname3 AS category_3,
+            assembly_item.cname4 AS category_4,
+            assembly_item.cname5 AS category_5,
+            assembly_item.cname6 AS category_6,
+            COALESCE(prd_saitem.sainame, 'NA'::character varying) AS sub_assembly_item,
+                CASE
+                    WHEN ((prdjobstatus.rectype)::text = 'WIP'::text) THEN ((prdpr.prname)::text || ' IN PROGRESS'::text)
+                    WHEN ((prdjobstatus.rectype)::text = 'PSD'::text) THEN ((prdpr.prname)::text || ' COMPLETED, WAITING FOR NEXT PROCESS'::text)
+                    WHEN ((prdjobstatus.rectype)::text = 'FG'::text) THEN ((prdpr.prname)::text || ' COMPLETE, TRANSFERED TO FINISHED GOODS'::text)
+                    ELSE NULL::text
+                END AS status,
+            prdjobstatus.docno AS document_no,
+            prdjobstatus.docdt AS document_date,
+                CASE
+                    WHEN ((prdjobstatus.doctype)::text = 'ORD'::text) THEN 'JOB ORDER'::character varying
+                    WHEN ((prdjobstatus.doctype)::text = 'JRC'::text) THEN 'JOB RECEIPT'::character varying
+                    WHEN ((prdjobstatus.doctype)::text = 'CNL'::text) THEN 'JOB CANCELLATION'::character varying
+                    WHEN ((prdjobstatus.doctype)::text = 'RET'::text) THEN 'JOB RETURN'::character varying
+                    WHEN ((prdjobstatus.doctype)::text = 'WAS'::text) THEN 'JOB WASTAGE'::character varying
+                    WHEN ((prdjobstatus.doctype)::text = 'ISS'::text) THEN 'JOB ISSUE'::character varying
+                    WHEN ((prdjobstatus.doctype)::text = 'EXC'::text) THEN 'JOB ORDER AMENDMENT'::character varying
+                    ELSE prdjobstatus.doctype
+                END AS document_type,
+                CASE
+                    WHEN ((prdjobstatus.rectype)::text = 'WIP'::text) THEN 'WORK IN PROGRESS'::character varying
+                    WHEN ((prdjobstatus.rectype)::text = 'PSD'::text) THEN 'PROCESSED'::character varying
+                    WHEN ((prdjobstatus.rectype)::text = 'FG'::text) THEN 'FINISHED GOOD'::character varying
+                    ELSE prdjobstatus.rectype
+                END AS record_type,
+            prdjobstatus.qty AS wip_qty,
+            prdjobstatus.total_cost AS wip_value,
+            prdjobstatus.lotcode,
+            prdjobstatus.assembly_icode,
+            prdjobstatus.orderby_operation_seq,
+            prdjobstatus.ass_saitem_code,
+            prdjobstatus.doctype,
+            prdjobstatus.rectype,
+            prdjobstatus.qty,
+            prdjobstatus.total_cost,
+            prdjobstatus.docdt,
+            prdjobstatus.component_icode,
+            component_item.lev1grpname AS component_division,
+            component_item.lev2grpname AS component_section,
+            component_item.grpname AS component_department,
+            component_item.disp_material_type AS component_material_type,
+            component_item.cname1 AS component_category_1,
+            component_item.cname2 AS component_category_2,
+            component_item.cname3 AS component_category_3,
+            component_item.cname4 AS component_category_4,
+            component_item.cname5 AS component_category_5,
+            component_item.cname6 AS component_category_6,
+            prdjobstatus.material_cost,
+            prdjobstatus.service_cost
+           FROM main.prdpr,
+            main.prdjobmain,
+            main.finsl,
+            main.v_item assembly_item,
+            main.admsite,
+            ((main.prdjobstatus
+             LEFT JOIN main.prd_saitem ON ((prdjobstatus.ass_saitem_code = prd_saitem.code)))
+             LEFT JOIN main.v_item component_item ON (((prdjobstatus.component_icode)::text = (component_item.icode)::text)))
+          WHERE ((prdjobstatus.lotcode IS NULL) AND (prdjobstatus.jobcode = prdjobmain.code) AND (prdjobstatus.prcode = prdpr.prcode) AND (prdjobstatus.pcode = finsl.slcode) AND ((prdjobstatus.assembly_icode)::text = (assembly_item.icode)::text) AND (prdjobmain.admsite_code = admsite.code))) alias2
+  ORDER BY alias2.lotcode, alias2.assembly_icode, alias2.orderby_operation_seq, alias2.ass_saitem_code,
+        CASE
+            WHEN (((alias2.doctype)::text = 'ORD'::text) AND ((alias2.rectype)::text = 'WIP'::text)) THEN 1
+            WHEN (((alias2.doctype)::text = 'CNL'::text) AND ((alias2.rectype)::text = 'WIP'::text)) THEN 2
+            WHEN (((alias2.doctype)::text = 'ISS'::text) AND ((alias2.rectype)::text = 'WIP'::text) AND (alias2.qty >= (0)::numeric)) THEN 3
+            WHEN (((alias2.doctype)::text = 'ISS'::text) AND ((alias2.rectype)::text = 'CON'::text)) THEN 4
+            WHEN (((alias2.doctype)::text = 'RET'::text) AND ((alias2.rectype)::text = 'CON'::text)) THEN 5
+            WHEN (((alias2.doctype)::text = 'WAS'::text) AND ((alias2.rectype)::text = 'CON'::text)) THEN 6
+            WHEN (((alias2.doctype)::text = 'EXC'::text) AND ((alias2.rectype)::text = 'WIP'::text)) THEN 7
+            WHEN (((alias2.doctype)::text = 'JRC'::text) AND ((alias2.rectype)::text = 'WIP'::text)) THEN 8
+            WHEN (((alias2.doctype)::text = 'JRC'::text) AND ((alias2.rectype)::text = 'PSD'::text) AND (alias2.qty >= (0)::numeric)) THEN 9
+            WHEN (((alias2.doctype)::text = 'ISS'::text) AND ((alias2.rectype)::text = 'PSD'::text)) THEN 10
+            WHEN (((alias2.doctype)::text = 'JRC'::text) AND ((alias2.rectype)::text = 'FG'::text)) THEN 11
+            ELSE NULL::integer
+        END, alias2.docdt, alias2.component_icode;
+"""
+  columns = (
+    column "production_type" {
+      type = text
+    }
+    column "document_site" {
+      type = "character varying(100)"
+    }
+    column "working_plan_no" {
+      type = "character varying"
+    }
+    column "schedule_date" {
+      type = "timestamp without time zone"
+    }
+    column "job_order_no" {
+      type = "character varying(25)"
+    }
+    column "job_order_date" {
+      type = "timestamp(0) without time zone"
+    }
+    column "jobber_name" {
+      type = "character varying(100)"
+    }
+    column "operation_seq" {
+      type = "numeric(7,3)"
+    }
+    column "process" {
+      type = "character varying(100)"
+    }
+    column "division" {
+      type = "character varying(100)"
+    }
+    column "section" {
+      type = "character varying(100)"
+    }
+    column "department" {
+      type = "character varying(100)"
+    }
+    column "material_type" {
+      type = text
+    }
+    column "category_1" {
+      type = "character varying(100)"
+    }
+    column "category_2" {
+      type = "character varying(100)"
+    }
+    column "category_3" {
+      type = "character varying(100)"
+    }
+    column "category_4" {
+      type = "character varying(100)"
+    }
+    column "category_5" {
+      type = "character varying(100)"
+    }
+    column "category_6" {
+      type = "character varying(100)"
+    }
+    column "assembly_icode" {
+      type = "character varying(9)"
+    }
+    column "sub_assembly_item" {
+      type = "character varying"
+    }
+    column "status" {
+      type = text
+    }
+    column "document_no" {
+      type = "character varying(25)"
+    }
+    column "document_date" {
+      type = "timestamp(0) without time zone"
+    }
+    column "document_type" {
+      type = "character varying"
+    }
+    column "record_type" {
+      type = "character varying"
+    }
+    column "wip_qty" {
+      type = "numeric(20,3)"
+    }
+    column "wip_value" {
+      type = "numeric(20,6)"
+    }
+    column "lotcode" {
+      type = "bigint"
+    }
+    column "docdt" {
+      type = "timestamp(0) without time zone"
+    }
+    column "component_icode" {
+      type = "character varying(9)"
+    }
+    column "component_division" {
+      type = "character varying(100)"
+    }
+    column "component_section" {
+      type = "character varying(100)"
+    }
+    column "component_department" {
+      type = "character varying(100)"
+    }
+    column "component_material_type" {
+      type = text
+    }
+    column "component_category_1" {
+      type = "character varying(100)"
+    }
+    column "component_category_2" {
+      type = "character varying(100)"
+    }
+    column "component_category_3" {
+      type = "character varying(100)"
+    }
+    column "component_category_4" {
+      type = "character varying(100)"
+    }
+    column "component_category_5" {
+      type = "character varying(100)"
+    }
+    column "component_category_6" {
+      type = "character varying(100)"
+    }
+    column "doctype" {
+      type = "character varying(3)"
+    }
+    column "rectype" {
+      type = "character varying(3)"
+    }
+    column "material_cost" {
+      type = "numeric(20,6)"
+    }
+    column "service_cost" {
+      type = "numeric(20,6)"
+    }
+  )
+}
+

@@ -1,0 +1,1767 @@
+function "main"."int$pkg_storunmown_int$pkg_storunmown_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_site_initial      varchar(15);
+      errmsg              varchar(500);
+      v_slab_range_desc   varchar(100);
+      vsession            varchar(100);
+      vdetailtbl          varchar(5000);
+      vdetailrec          varchar(500);
+
+      errcode             text;
+      vmaxno              bigint;
+      --vloccode            NUMBER;
+      vcount              bigint;
+      v_slab_range_rate   double precision;-- start rev : 015
+       v_taxregime    varchar(5);
+     v_EXPORT_WITH_PAYMENT  varchar(5);
+     v_gstappl varchar(5);           -- 011;
+     v_postive_count integer;
+     v_negative_count integer;
+     --v_qty_cnt   number(5);      
+      -- end rev : 015      
+      V_MAIN_CSCODE         bigint :=  NULL; -- REV : 007
+      V_SCHEME_DOCNO        varchar(100) := NULL;
+
+      V_MAIN_GL_AMT        double precision := 0;
+      v_manual             varchar(5);
+      -- To Update Existing Customers
+      c CURSOR FOR
+         SELECT a.B_CUSTOMER_FIRSTNAME,
+                a.B_CUSTOMER_MIDDLENAME,
+                a.B_CUSTOMER_LASTNAME,
+                a.B_CUSTOMER_ADDRESSLINE1,
+                a.B_CUSTOMER_ADDRESSLINE2,
+                a.B_CUSTOMER_ADDRESSLINE3,
+                a.B_CUSTOMER_PIN,
+                a.B_CUSTOMER_EMAIL,
+                CASE
+                   WHEN UPPER(a.B_CUSTOMER_GENDER) = 'FEMALE' THEN 'F'
+                   WHEN UPPER(a.B_CUSTOMER_GENDER) = 'MALE' THEN  'M'
+                   WHEN UPPER(a.B_CUSTOMER_GENDER) = 'TRANSGENDER' THEN  'T'
+                   ELSE 'U'
+                END
+                   gender,
+                e.fname,
+                a.B_CUSTOMER_DISTRICT,
+                a.B_CUSTOMER_CITY,
+                a.B_CUSTOMER_STATE,
+                a.B_CUSTOMER_COUNTRY,
+                a.B_CUSTOMER_MOBILENO
+                -- start rev : 011
+                ,B_CUST_GST_ID_NO B_CUST_GST_ID_NO
+                ,B_CUST_GST_REG_DATE B_CUST_GST_REG_DATE
+                ,case when a.B_CUST_GST_ID_NO is not null then
+                           substr(a.B_CUST_GST_ID_NO,1,2)
+                      when a.B_CUST_GST_STATE_NAME is not null then
+                            gs.code
+                      else
+                            null
+                end         B_CUST_GST_STATE_NAME
+                -- end rev : 011
+                -- start rev : 012
+                ,i.code
+                -- end rev : 012                
+                 -- start rev : 015
+                ,city.code cityid
+                -- end rev : 015
+           FROM int$stg_storunmown a
+		   LEFT OUTER JOIN admgststate gs ON (upper(coalesce(a.B_CUST_GST_STATE_NAME,'@@')) = upper(gs.name))
+LEFT OUTER JOIN admisd i ON (a.B_ISDCODE::text = i.ISDCODE)
+LEFT OUTER JOIN admcity city ON (upper(a.B_CUSTOMER_CITY) = upper(city.CTNAME))
+INNER JOIN hrdemp e ON a.userid = e.ecode
+WHERE EXISTS (SELECT 1
+                          FROM psite_customer c
+                         WHERE c.mobile = a.B_CUSTOMER_MOBILENO) --START REV : 018
+  AND a.B_CUSTOMER_MOBILENO IS NOT NULL AND a.B_CUSTOMER_FIRSTNAME IS NOT NULL AND a.B_CUSTOMER_LASTNAME IS NOT NULL AND a.B_ISDCODE IS NOT NULL
+  AND userid = p_userid;
+
+            -- start rev: 015
+          c_email CURSOR FOR
+         SELECT a.B_CUSTOMER_FIRSTNAME,
+                a.B_CUSTOMER_MIDDLENAME,
+                a.B_CUSTOMER_LASTNAME,
+                a.B_CUSTOMER_ADDRESSLINE1,
+                a.B_CUSTOMER_ADDRESSLINE2,
+                a.B_CUSTOMER_ADDRESSLINE3,
+                a.B_CUSTOMER_PIN,
+                a.B_CUSTOMER_EMAIL,
+               CASE
+                   WHEN UPPER(a.B_CUSTOMER_GENDER) = 'FEMALE' THEN 'F'
+                   WHEN UPPER(a.B_CUSTOMER_GENDER) = 'MALE' THEN  'M'
+                   WHEN UPPER(a.B_CUSTOMER_GENDER) = 'TRANSGENDER' THEN  'T'
+                   ELSE 'U'
+                END
+                   gender,
+                e.fname,
+                a.B_CUSTOMER_DISTRICT,
+                a.B_CUSTOMER_CITY,
+                a.B_customer_state,
+                a.B_CUSTOMER_COUNTRY,
+                a.B_CUSTOMER_MOBILENO      
+                ,B_CUST_GST_ID_NO B_CUST_GST_ID_NO
+                ,B_CUST_GST_REG_DATE B_CUST_GST_REG_DATE
+                ,case when a.B_CUST_GST_ID_NO is not null then
+                           substr(a.B_CUST_GST_ID_NO,1,2)
+                      when a.B_CUST_GST_STATE_NAME is not null then
+                            gs.code
+                      else
+                            null
+                end         B_CUST_GST_STATE_NAME
+                ,i.code
+                 -- start rev : 015
+                ,city.code cityid
+                -- end rev : 015
+           FROM int$stg_storunmown a
+LEFT OUTER JOIN admisd i ON (a.B_ISDCODE::text = i.ISDCODE)
+LEFT OUTER JOIN admgststate gs ON (UPPER(coalesce(a.B_CUST_GST_STATE_NAME, '@@')) = UPPER(gs.name))
+LEFT OUTER JOIN admcity city ON (upper(a.B_CUSTOMER_CITY) = upper(city.CTNAME))
+INNER JOIN hrdemp e ON a.userid = e.ecode  WHERE EXISTS (SELECT 1
+                          FROM psite_customer c
+                         WHERE c.EMAIL = a.B_CUSTOMER_EMAIL ) AND a.B_CUSTOMER_MOBILENO IS NULL  -- start rev : 015
+  -- end rev : 015
+  AND userid = p_userid;
+
+            -- end rev : 015     
+      -- Populate Salcsmain Table
+      c_main CURSOR FOR
+         SELECT
+                -- START REV : 007
+               -- erp01.NEXTVAL                         cscode,
+                -- END REV : 007
+                t1.seq                                csno,
+                t1.saledt                             csdate,
+                t2.doccode                            doccode,
+                -- START REV : 007
+              /*  db_fun_document_number_web (NULL,
+                                            t2.doccode,
+                                            t1.ycode,
+                                            TO_CHAR (t1.saledt),
+                                            NULL,
+                                            p_connect_site,
+                                            -- START REV : 007
+                                           -- 1,
+                                           P_CONNECT_OU,
+                                            -- END REV : 007
+                                            'MCSStoreOwned')
+                   scheme_docno,*/
+                -- END REV : 007
+                s.slcode                              pcode,
+                s.glcode                              debtors_glcode,
+                CONSIGNMENTSALE_GLCODE                consignment_sales_glcode,
+                CONSIGNMENTSALE_SLCODE                consignment_sales_slcode,
+                -- START REV : 002
+                -- 1 admou_code,
+                P_CONNECT_OU                          ADMOU_CODE,
+                -- END REV : 002
+                p_connect_site                        admsite_code,
+                l.loccode                             outloccode,
+                t1.reference_no                       refno,
+                t1.remarks                            remarks,
+                t1.ycode,
+                clock_timestamp()                               time,
+                p_userid                              ecode,
+                clock_timestamp()                               last_access_time,
+                p_userid                              last_access_ecode,
+                0                                     adjamt,
+                'C'                                   status,
+                o.roundoff_glcode                     roundoff_glcode,
+                p_connect_site                        admsite_code_owner,
+                'RTL'                                 channeltype,
+                -- START REV : 005
+                --1 fintradegrp_code,
+                CASE WHEN                    G.ADMGSTSTATE_CODE IS NULL THEN  1  ELSE CASE WHEN                       C.CP_GSTIN_STATE_CODE IS NULL THEN  1  ELSE CASE WHEN G.ADMGSTSTATE_CODE=C.CP_GSTIN_STATE_CODE THEN  1  ELSE 2 END  END  END
+                   fintradegrp_code,
+                -- END REV : 005
+                0                                     formcode,
+                --START REV : 018
+                  CASE WHEN     t1.B_CUSTOMER_MOBILENO IS NOT NULL
+                            AND t1.B_CUSTOMER_FIRSTNAME IS NOT NULL
+                            AND t1.B_CUSTOMER_LASTNAME IS NOT NULL
+                            AND t1.B_ISDCODE IS NOT NULL
+                        THEN c.code
+                ELSE NULL
+                END                                psite_customer_code,
+                --END REV : 018
+                t1.grsamt                             grsamt,
+                t1.discount,
+                0                                     shipchg,
+                0                                     gwchg,
+                0                                     codchg,
+                t1.taxamt                             extaxamt,
+                t1.qty,
+                (t1.grsamt + t1.taxamt - t1.discount) netamt,
+                t1.roundoff,
+                (t1.grsamt - t1.discount + t1.taxamt + t1.roundoff)
+                   netpayable,
+                 CASE WHEN PRF.SAL_CANRELEASE='Y' then 
+                  'P'
+                  else 
+                  'U'
+                  end                 release_status,
+                0                                     site_costamt,
+                T1.udfstring01,
+                T1.udfstring02,
+                T1.udfstring03,
+                T1.udfstring04,
+                T1.udfstring05,
+                T1.udfstring06,
+                T1.udfstring07,
+                T1.udfstring08,
+                T1.udfstring09,
+                T1.udfstring10,
+                -- START REV : 014
+                T1.udfnum01,
+                T1.udfnum02,
+                T1.udfnum03,
+                T1.udfnum04,
+                T1.udfnum05,
+                T1.udfdate01,
+                T1.udfdate02,
+                T1.udfdate03,
+                T1.udfdate04,
+                T1.udfdate05-- START REV : 005
+                ,
+                -- END REV : 014
+                ST.ADMGSTIN_CODE                      ADMGSTIN_CODE,
+                G.GSTIN_NO                            OWNER_GSTIN_NO,
+                G.ADMGSTSTATE_CODE                    OWNER_GSTIN_STATE_CODE,
+                coalesce(G.ADMGSTSTATE_CODE,S.CP_GSTIN_STATE_CODE)  GST_ADD_CESS_RATE_STATE, -- REV : 013
+                C.CP_GSTIN_NO                         CP_GSTIN_NO,
+                C.CP_GSTIN_STATE_CODE                 CP_GSTIN_STATE_CODE,
+                NULL                                  ECOM_GSTIN_NO,
+                NULL                                  ECOM_GSTIN_STATE_CODE -- END REV : 005
+                ,
+                gstappl,
+                -- start rev : 015
+                 T1.B_CUSTOMER_FIRSTNAME,
+                 T1.B_CUSTOMER_MIDDLENAME,
+                 T1.B_CUSTOMER_LASTNAME,
+                 T1.B_CUSTOMER_GENDER,
+                 T1.B_CUSTOMER_MOBILENO,
+                 T1.B_CUSTOMER_EMAIL,
+                 T1.B_CUSTOMER_ADDRESSLINE1,
+                 T1.B_CUSTOMER_ADDRESSLINE2,
+                 T1.B_CUSTOMER_ADDRESSLINE3,
+                 T1.B_CUSTOMER_CITY,
+                 T1.B_CUSTOMER_PIN,
+                 T1.B_CUSTOMER_STATE,
+                 T1.B_CUSTOMER_COUNTRY,
+                 T1.B_CUST_GST_ID_NO,
+                 T1.B_GST_STATE_CODE,
+                 T1.B_ISDCODE,
+                 t1.scheme_doc_format,
+                 t1.scheme_docno
+                -- end rev : 015
+           FROM hrdemp usr, admdocscheme t2, finsl s, admprof prf, admou o, invloc l, admsite st
+		   LEFT OUTER JOIN admgstin g ON (ST.ADMGSTIN_CODE = G.CODE),
+		   (SELECT document_scheme,
+                        saledt,
+                        slID,
+                        locname,
+                        remarks,
+                        reference_no,
+                        coalesce(roundoff, 0) roundoff,
+                        row_number() OVER () AS seq,
+                        (SELECT ycode
+                           FROM admyear
+                          WHERE saledt BETWEEN dtfr AND dtto)
+                           ycode,
+                        grsamt,
+                        discount,
+                        taxamt,
+                        qty,
+                        udfstring01,
+                        udfstring02,
+                        udfstring03,
+                        udfstring04,
+                        udfstring05,
+                        udfstring06,
+                        udfstring07,
+                        udfstring08,
+                        udfstring09,
+                        udfstring10,
+                        udfnum01,
+                        udfnum02,
+                        udfnum03,
+                        udfnum04,
+                        udfnum05,
+                        udfdate01,
+                        udfdate02,
+                        udfdate03,
+                        udfdate04,
+                        udfdate05,
+                        -- start rev : 015
+                         B_CUSTOMER_FIRSTNAME,
+                         B_CUSTOMER_MIDDLENAME,
+                         B_CUSTOMER_LASTNAME,
+                         B_CUSTOMER_GENDER,
+                         B_CUSTOMER_MOBILENO,
+                         B_CUSTOMER_EMAIL,
+                         B_CUSTOMER_ADDRESSLINE1,
+                         B_CUSTOMER_ADDRESSLINE2,
+                         B_CUSTOMER_ADDRESSLINE3,
+                         B_CUSTOMER_CITY,
+                         B_CUSTOMER_PIN,
+                         B_CUSTOMER_STATE,
+                         B_CUSTOMER_COUNTRY,
+                         B_CUST_GST_ID_NO,
+                         B_GST_STATE_CODE,
+                         B_ISDCODE,
+                         scheme_doc_format,
+                         scheme_docno
+                   FROM (  SELECT UPPER(document_scheme)        document_scheme,
+                                  saledt,
+                                  remarks,
+                                  reference_no,
+                                  a.roundoff,
+                                  CHANNEL_ID                 slID,
+                                  stock_point_name               locname,
+                                  SUM(coalesce(item_qty, 0) * coalesce(item_rate, 0))
+                                     grsamt,
+                                  SUM(coalesce(item_discountamt, 0)) discount,
+                                  SUM(coalesce(item_extra_taxamt, 0)) taxamt,
+                                  SUM(coalesce(item_qty, 0))        qty,
+                                  a.udfstring01,
+                                  a.udfstring02,
+                                  a.udfstring03,
+                                  a.udfstring04,
+                                  a.udfstring05,
+                                  a.udfstring06,
+                                  a.udfstring07,
+                                  a.udfstring08,
+                                  a.udfstring09,
+                                  a.udfstring10,
+                                  a.udfnum01,
+                                  a.udfnum02,
+                                  a.udfnum03,
+                                  a.udfnum04,
+                                  a.udfnum05,
+                                  a.udfdate01,
+                                  a.udfdate02,
+                                  a.udfdate03,
+                                  a.udfdate04,
+                                  a.udfdate05,
+                                  -- start rev : 015
+                                  a.B_CUSTOMER_FIRSTNAME,
+                                  a.B_CUSTOMER_MIDDLENAME,
+                                  a.B_CUSTOMER_LASTNAME,
+                                  case 
+                                    WHEN upper(a.B_CUSTOMER_GENDER) = 'MALE' THEN 'M'
+                                    WHEN upper(a.B_CUSTOMER_GENDER) = 'FEMALE' THEN 'F'
+                                    WHEN upper(a.B_CUSTOMER_GENDER) = 'TRANSGENDER' THEN 'T'
+                                    WHEN upper(a.B_CUSTOMER_GENDER) = 'UNDISCLOSED' THEN 'U'
+                                  END B_CUSTOMER_GENDER,
+                                  A.B_CUSTOMER_MOBILENO,
+                                  A.B_CUSTOMER_EMAIL,
+                                  A.B_CUSTOMER_ADDRESSLINE1,
+                                  A.B_CUSTOMER_ADDRESSLINE2,
+                                  A.B_CUSTOMER_ADDRESSLINE3,
+                                  a.B_CUSTOMER_CITY,
+                                  a.B_CUSTOMER_PIN,
+                                  a.B_CUSTOMER_STATE,
+                                  a.B_CUSTOMER_COUNTRY,
+                                  a.B_CUST_GST_ID_NO,
+                                  ST.CODE B_GST_STATE_CODE,
+                                  bi.code B_ISDCODE,
+                                  UPPER(a.SCHEME_DOC_FORMAT) SCHEME_DOC_FORMAT,
+                                  a.SCHEME_DOCNO
+                             FROM int$stg_storunmown a
+				LEFT OUTER JOIN admisd bi ON (a.B_ISDCODE::text = bi.ISDCODE)
+				LEFT OUTER JOIN admgststate st ON (UPPER(a.B_CUST_GST_STATE_NAME) = UPPER(ST.NAME))
+					WHERE a.userid = p_userid
+						 GROUP BY UPPER(document_scheme),
+                                  saledt,
+                                  remarks,
+                                  reference_no,
+                                  roundoff,
+                                  CHANNEL_ID,
+                                  stock_point_name,
+                                  a.udfstring01,
+                                  a.udfstring02,
+                                  a.udfstring03,
+                                  a.udfstring04,
+                                  a.udfstring05,
+                                  a.udfstring06,
+                                  a.udfstring07,
+                                  a.udfstring08,
+                                  a.udfstring09,
+                                  a.udfstring10,
+                                  a.udfnum01,
+                                  a.udfnum02,
+                                  a.udfnum03,
+                                  a.udfnum04,
+                                  a.udfnum05,
+                                  a.udfdate01,
+                                  a.udfdate02,
+                                  a.udfdate03,
+                                  a.udfdate04,
+                                  a.udfdate05,
+                                  -- start rev : 015
+                                  a.B_CUSTOMER_FIRSTNAME,
+                                  a.B_CUSTOMER_MIDDLENAME,
+                                  a.B_CUSTOMER_LASTNAME,
+                                  case 
+                                  WHEN upper(a.B_CUSTOMER_GENDER) = 'MALE' THEN 'M'
+                                  WHEN upper(a.B_CUSTOMER_GENDER) = 'FEMALE' THEN 'F'
+                                  WHEN upper(a.B_CUSTOMER_GENDER) = 'TRANSGENDER' THEN 'T'
+                                  WHEN upper(a.B_CUSTOMER_GENDER) = 'UNDISCLOSED' THEN 'U'
+                                  END ,
+                                  A.B_CUSTOMER_MOBILENO,
+                                  A.B_CUSTOMER_EMAIL,
+                                  A.B_CUSTOMER_ADDRESSLINE1,
+                                  A.B_CUSTOMER_ADDRESSLINE2,
+                                  A.B_CUSTOMER_ADDRESSLINE3,
+                                  a.B_CUSTOMER_CITY,
+                                  a.B_CUSTOMER_PIN,
+                                  a.B_CUSTOMER_STATE,
+                                  a.B_CUSTOMER_COUNTRY,
+                                  a.B_CUST_GST_ID_NO,
+                                  ST.CODE ,
+                                  bi.code,
+                                  a.SCHEME_DOC_FORMAT,
+                                  a.SCHEME_DOCNO
+                         ORDER BY saledt) alias29) t1
+LEFT OUTER JOIN (select code, mobile,CP_GSTIN_NO,CP_GSTIN_STATE_CODE 
+				 from (select code,mobile,CP_GSTIN_NO,CP_GSTIN_STATE_CODE,rank() over (partition by mobile order by code) rnk
+                            from psite_customer) alias33
+                         where rnk = 1) c ON (t1.B_CUSTOMER_MOBILENO = c.mobile)
+WHERE UPPER(t1.scheme_doc_format) = UPPER(t2.docname)
+	AND UPPER(t1.slID) = UPPER(s.slID)
+	AND O.CODE = P_CONNECT_OU 
+  	AND ST.CODE = P_CONNECT_SITE
+  	AND UPPER(T1.LOCNAME) = UPPER(L.LOCNAME)
+  	AND USR.PROFCODE = PRF.PROFCODE
+  	AND USR.ECODE  = p_userid
+ ORDER BY t1.saledt;
+
+      -- Calculate tax in Salcsdet table
+      ctax CURSOR(
+         p_cscode             bigint,
+         p_date               timestamp,
+         p_sitecode           bigint,
+         -- START REV : 016
+         p_tradegrp_code      bigint,
+         -- END REV : 016
+         P_ADMGSTIN_CODE    bigint)
+      FOR
+         SELECT t1.code,
+                t1.netamt,
+                t1.icode,
+                CASE
+                   WHEN t2.vatcode IS NULL THEN t3.vatcode
+                   ELSE t2.vatcode
+                END
+                   vatcode,
+                CASE
+                   WHEN t2.vatcode IS NULL THEN t3.description
+                   ELSE t2.description
+                END
+                   description,
+                CASE WHEN t2.vatcode IS NULL THEN t3.rate ELSE t2.rate END
+                   rate,
+                CASE WHEN t2.vatcode IS NULL THEN t3.vatid ELSE t2.vatid END
+                   vatid,
+                CASE
+                   WHEN t2.vatcode IS NULL THEN coalesce(t3.rangeappl, 0)
+                   ELSE coalesce(t2.rangeappl, 0)
+                END
+                   rangeappl,
+                CASE
+                   WHEN t2.vatcode IS NULL THEN t3.rangebasis
+                   ELSE t2.rangebasis
+                END
+                   rangebasis,
+                t1.mrp                              rsp,
+                round((ABS(t1.netamt / t1.qty))::numeric, 3) netprice,
+                INVHSNSACMAIN_CODE
+           FROM (SELECT m.admsite_code,
+                        i.taxcode,
+                        d.code,
+                        d.netamt,
+                        i.icode,
+                        d.qty,
+                        d.mrp,
+                        INVHSNSACMAIN_CODE
+                   FROM salcsmain m, salcsdet d, invitem i
+                  WHERE     m.cscode = d.cscode
+                        AND d.icode = i.icode
+                        AND m.admsite_code = p_sitecode
+                        AND date_trunc('day', csdate) = p_date
+                        AND m.cscode = p_cscode) t1
+LEFT OUTER JOIN (SELECT site_code,
+                        vatcode,
+                        description,
+                        rate,
+                        vatid,
+                        rangeappl,
+                        basis                 rangebasis,
+                        date_trunc('day', effectivedate) effdt
+                   FROM (SELECT s.code           site_code,
+                                d.admcmptax_code admcmptax_code,
+                                d.taxdetcode     vatid,
+                                d.taxcode        vatcode,
+                                m.taxname        NAME,
+                                d.taxdesc        description,
+                                d.dtfr           effectivedate,
+                                d.rate           rate,
+                                0                isextinct,
+                                CASE
+                                   WHEN coalesce(d.range_appl, 'N') = 'N' THEN 0
+                                   WHEN coalesce(d.range_appl, 'N') = 'Y' THEN 1
+                                END
+                                   rangeappl,
+                                CASE
+                                   WHEN d.tax_basis = 'M' THEN 'R'
+                                   ELSE 'N'
+                                END
+                                   basis
+                           FROM fintaxdet d, fintaxmain m, admsite s
+                          WHERE     d.taxcode = m.taxcode
+                                AND d.admcmptax_code = s.psite_admcmptax_code
+                                AND ADMOU_CODE = P_CONNECT_OU      -- REV : 002
+                                AND coalesce(d.formcode, 0) = 0
+                                AND d.fintradegrp_code =
+                                       -- START REV : 016
+                                       p_tradegrp_code
+                                       -- END REV : 016
+                                       ) v1
+                  WHERE (v1.vatcode, v1.effectivedate) IN (  SELECT v2.vatcode,
+                                         MAX(v2.effectivedate) AS expr1
+                                    FROM (SELECT s.code  site_code,
+                                                 0       isextinct,
+                                                 d.taxcode vatcode,
+                                                 d.dtfr  effectivedate
+                                            FROM fintaxdet d,
+                                                 fintaxmain m,
+                                                 admsite  s
+                                           WHERE     d.taxcode = m.taxcode
+                                                 AND d.admcmptax_code =
+                                                        s.psite_admcmptax_code
+                                                 AND ADMOU_CODE = P_CONNECT_OU  -- REV : 002
+                                                 AND coalesce(d.formcode, 0) = 0
+                                                 AND d.fintradegrp_code =
+                                                 -- START REV : 016
+                                                 p_tradegrp_code
+                                       -- END REV : 016
+                                                        ) v2
+                                   WHERE     date_trunc('day', effectivedate) <= p_date
+                                         AND v2.isextinct = 0
+                                         AND v2.site_code = p_sitecode
+                                GROUP BY v2.vatcode)
+                        AND v1.isextinct = 0
+                        AND v1.site_code = p_sitecode) t2 ON (t1.taxcode = t2.vatcode AND t1.admsite_code = t2.site_code)
+LEFT OUTER JOIN (SELECT s.code           site_code,
+                        d.admcmptax_code admcmptax_code,
+                        d.taxdetcode     vatid,
+                        d.taxcode        vatcode,
+                        m.taxname        NAME,
+                        d.taxdesc        description,
+                        d.dtfr           effectivedate,
+                        d.rate           rate,
+                        0                isextinct,
+                        CASE
+                           WHEN coalesce(d.range_appl, 'N') = 'N' THEN 0
+                           WHEN coalesce(d.range_appl, 'N') = 'Y' THEN 1
+                        END
+                           rangeappl,
+                        CASE WHEN d.tax_basis = 'M' THEN 'R' ELSE 'N' END
+                           rangebasis
+                   FROM fintaxdet d, fintaxmain m, admsite s
+                  WHERE     d.taxcode = m.taxcode
+                        AND d.admcmptax_code = s.psite_admcmptax_code
+                        AND ADMOU_CODE = P_CONNECT_OU              -- REV : 002
+                        AND coalesce(d.formcode, 0) = 0
+                        AND d.fintradegrp_code =
+                               (SELECT code
+                                  FROM fintradegrp
+                                 WHERE UPPER(NAME) = 'LOCAL')
+                        AND d.taxcode = 0
+                        AND s.code = p_sitecode) t3 ON (t1.admsite_code = t3.site_code)
+WHERE    -- START REV : 004
+   (   (T1.ICODE NOT IN
+                            (SELECT ICODE
+                               FROM INVHSNSACDET D, INVITEM IT
+                              WHERE     D.INVHSNSACMAIN_CODE =
+                                           IT.INVHSNSACMAIN_CODE
+                                    AND D.INVHSNSACMAIN_CODE =
+                                           T1.INVHSNSACMAIN_CODE
+                                    AND D.CODE =
+                                           (SELECT DISTINCT D1.CODE
+                                              FROM INVHSNSACDET D1,
+                                                   INVITEM      IT1
+                                             WHERE     D1.INVHSNSACMAIN_CODE =
+                                                          IT1.INVHSNSACMAIN_CODE
+                                                   AND D1.INVHSNSACMAIN_CODE =
+                                                          T1.INVHSNSACMAIN_CODE
+                                                   AND EFFECTIVE_DATE =
+                                                          (SELECT MAX(
+                                                                     EFFECTIVE_DATE)
+                                                             FROM INVHSNSACDET
+                                                                  D3,
+                                                                  INVITEM IT3
+                                                            WHERE     D3.INVHSNSACMAIN_CODE =
+                                                                         IT3.INVHSNSACMAIN_CODE
+                                                                  AND D3.INVHSNSACMAIN_CODE =
+                                                                         T1.INVHSNSACMAIN_CODE
+                                                                  AND D3.EFFECTIVE_DATE <=
+                                                                         p_date))))
+                     OR P_ADMGSTIN_CODE IS NULL                    -- REV : 005
+                                               );
+   -- END REV : 004
+BEGIN
+      SELECT cmpinit INTO STRICT v_site_initial FROM admcmp;
+
+      --  Populate New Customers
+      INSERT INTO psite_customer(admsite_code,
+                                  fname,
+                                  mname,
+                                  lname,
+                                  address1,
+                                  address2,
+                                  address3,
+                                  pin,
+                                  mobile,
+                                  email,
+                                  gender,
+                                  createdon,
+                                  createdby,
+                                  lastmodifiedon,
+                                  lastmodifiedby,
+                                  code,
+                                  district,
+                                  city,
+                                  state,
+                                  country,
+                                  receivemessage,
+                                  prefcommunicationmode,
+                                  createdbyid,
+                                  lastmodifiedbyid,
+                                  lastmodify_admsite_code,
+                                  cp_gstin_no,
+                                  cp_gstin_date,
+                                  cp_gstin_state_code,
+                                  admisd_code,
+                                  cityid
+                                  )
+         SELECT p_connect_site,
+                B_CUSTOMER_FIRSTNAME,
+                B_CUSTOMER_MIDDLENAME,
+                B_CUSTOMER_LASTNAME,
+                B_CUSTOMER_ADDRESSLINE1,
+                B_CUSTOMER_ADDRESSLINE2,
+                B_CUSTOMER_ADDRESSLINE3,
+                B_CUSTOMER_PIN,
+                B_CUSTOMER_MOBILENO,
+                B_CUSTOMER_EMAIL,
+                CASE
+                   WHEN UPPER(a.B_CUSTOMER_GENDER) = 'FEMALE' THEN 'F'
+                   WHEN UPPER(a.B_CUSTOMER_GENDER) = 'MALE' THEN  'M'
+                   WHEN UPPER(a.B_CUSTOMER_GENDER) = 'TRANSGENDER' THEN  'T'
+                   ELSE 'U'
+                END,
+                clock_timestamp(),
+                e.fname,
+                clock_timestamp(),
+                e.fname,
+                uuid_generate_v4(),
+                B_CUSTOMER_DISTRICT,
+                B_CUSTOMER_CITY,
+                B_CUSTOMER_STATE,
+                B_CUSTOMER_COUNTRY,
+                1,
+                'S',
+                p_userid,
+                p_userid,
+                p_connect_site,
+                UPPER(a.B_CUST_GST_ID_NO),
+                a.B_CUST_GST_REG_DATE,
+                case when a.B_CUST_GST_ID_NO is not null then
+                           substr(a.B_CUST_GST_ID_NO,1,2)
+                      when a.B_CUST_GST_STATE_NAME is not null then
+                            gs.code
+                      else
+                            null
+                end,
+                i.code,
+                city.code
+           FROM (SELECT DISTINCT userid,
+                                 B_CUSTOMER_FIRSTNAME,
+                                 B_CUSTOMER_MIDDLENAME,
+                                 B_CUSTOMER_LASTNAME,
+                                 B_CUSTOMER_ADDRESSLINE1,
+                                 B_CUSTOMER_ADDRESSLINE2,
+                                 B_CUSTOMER_ADDRESSLINE3,
+                                 B_CUSTOMER_PIN,
+                                 B_CUSTOMER_MOBILENO,
+                                 B_CUSTOMER_EMAIL,
+                                 B_CUSTOMER_GENDER,
+                                 B_CUSTOMER_DISTRICT,
+                                 B_CUSTOMER_CITY,
+                                 B_CUSTOMER_STATE,
+                                 B_CUSTOMER_COUNTRY,
+                                 B_CUST_GST_ID_NO,
+                                 B_CUST_GST_REG_DATE,
+                                 B_CUST_GST_STATE_NAME,
+                                 B_ISDCODE
+                   FROM int$stg_storunmown
+                  WHERE USERID = p_userid) a
+				  LEFT OUTER JOIN psite_customer b ON (a.B_CUSTOMER_MOBILENO = b.mobile)
+				  LEFT OUTER JOIN admgststate gs ON (upper(coalesce(a.B_CUST_GST_STATE_NAME,'@@')) = upper(gs.name))
+				  LEFT OUTER JOIN admisd i ON (a.B_ISDCODE::text = i.ISDCODE) 
+				  LEFT OUTER JOIN admcity city ON (upper(a.B_CUSTOMER_CITY) = upper(city.CTNAME))
+				  INNER JOIN hrdemp e ON a.userid = e.ecode
+			WHERE b.mobile IS NULL
+  			AND a.B_CUSTOMER_MOBILENO IS NOT NULL
+			AND a.B_CUSTOMER_FIRSTNAME IS NOT NULL
+			AND a.B_CUSTOMER_LASTNAME IS NOT NULL
+  			AND userid = p_userid;
+
+      -- Updating Existing Customers
+      FOR r IN c
+      LOOP
+        UPDATE psite_customer
+            SET fname = coalesce(r.B_CUSTOMER_FIRSTNAME,fname),
+                mname = coalesce(r.B_CUSTOMER_MIDDLENAME,mname),
+                lname = coalesce(r.B_CUSTOMER_LASTNAME,lname),
+                address1 = coalesce(r.B_CUSTOMER_ADDRESSLINE1,address1),
+                address2 = coalesce(r.B_CUSTOMER_ADDRESSLINE2,address2),
+                address3 = coalesce(r.B_CUSTOMER_ADDRESSLINE3,address3),
+                pin = coalesce(r.B_CUSTOMER_PIN,pin),
+                email =coalesce( r.B_CUSTOMER_EMAIL,email),
+                gender = coalesce(r.gender,gender),
+                lastmodifiedon = coalesce(clock_timestamp(),lastmodifiedon),
+                lastmodifiedby = coalesce(r.fname,lastmodifiedby),
+                district = coalesce(r.B_CUSTOMER_DISTRICT,district),
+                city = coalesce(r.B_CUSTOMER_CITY,city),
+                cityid = coalesce(r.cityid,cityid),
+                state = coalesce(r.B_customer_state,state),
+                country = coalesce(r.B_CUSTOMER_COUNTRY,country),
+                lastmodifiedbyid = p_userid,
+                lastmodify_admsite_code = p_connect_site
+                 ,cp_gstin_no               = coalesce(R.B_CUST_GST_ID_NO,cp_gstin_no)
+                 ,cp_gstin_date             = coalesce(R.B_CUST_GST_REG_DATE,cp_gstin_date)
+                 ,cp_gstin_state_code        = coalesce(R.B_CUST_GST_STATE_NAME,cp_gstin_state_code)
+                 ,admisd_code               = coalesce(r.code,admisd_code)
+          WHERE mobile = r.B_CUSTOMER_MOBILENO
+          AND r.B_CUSTOMER_MOBILENO IS NOT NULL;
+
+      END LOOP;
+
+      FOR r IN c_EMAIL
+      LOOP
+         UPDATE psite_customer
+            SET fname = coalesce(r.B_CUSTOMER_FIRSTNAME,fname),
+                mname = coalesce(r.B_CUSTOMER_MIDDLENAME,mname),
+                lname = coalesce(r.B_CUSTOMER_LASTNAME,lname),
+                address1 = coalesce(r.B_CUSTOMER_ADDRESSLINE1,address1),
+                address2 = coalesce(r.B_CUSTOMER_ADDRESSLINE2,address2),
+                address3 = coalesce(r.B_CUSTOMER_ADDRESSLINE3,address3),
+                pin = coalesce(r.B_CUSTOMER_PIN,pin),
+                email =coalesce( r.B_CUSTOMER_EMAIL,email),
+                gender = coalesce(r.gender,gender),
+                lastmodifiedon = coalesce(clock_timestamp(),lastmodifiedon),
+                lastmodifiedby = coalesce(r.fname,lastmodifiedby),
+                district = coalesce(r.B_CUSTOMER_DISTRICT,district),
+                city = coalesce(r.B_CUSTOMER_CITY,city),
+                cityid = coalesce(r.cityid,cityid),
+                state = coalesce(r.B_customer_state,state),
+                country = coalesce(r.B_CUSTOMER_COUNTRY,country),
+                lastmodifiedbyid = p_userid,
+                lastmodify_admsite_code = p_connect_site
+                 ,cp_gstin_no               = coalesce(R.B_CUST_GST_ID_NO,cp_gstin_no)
+                 ,cp_gstin_date             = coalesce(R.B_CUST_GST_REG_DATE,cp_gstin_date)
+                 ,cp_gstin_state_code        = coalesce(R.B_CUST_GST_STATE_NAME,cp_gstin_state_code)
+                 ,admisd_code               = coalesce(r.code,admisd_code)
+          WHERE EMAIL = r.B_CUSTOMER_EMAIL;
+      END LOOP;
+      -- To insert data into SALCSMAIN table
+      vmaxno := NULL;
+      SELECT coalesce(MAX(csno), 0) INTO STRICT vmaxno FROM salcsmain;
+
+      FOR r IN c_main
+      LOOP
+
+         V_MAIN_CSCODE := NULL;
+
+        SELECT nextval('erp01') INTO STRICT V_MAIN_CSCODE;
+
+        V_SCHEME_DOCNO :=       db_fun_document_number_web(NULL,
+                                            R.doccode,
+                                            R.ycode,
+                                            TO_CHAR(R.csdate,'DD-MM-YYYY'),
+                                            NULL,
+                                            p_connect_site,
+                                            -- START REV : 007
+                                           -- 1,
+                                           P_CONNECT_OU,
+                                            -- END REV : 007
+                                            'MCSStoreOwned');
+
+            -- start rev : 015
+             if V_SCHEME_DOCNO is null then 
+         V_SCHEME_DOCNO := r.scheme_docno;
+         end if;
+            -- end rev : 015                                            
+         -- Populate Salcsmain Table
+         INSERT INTO salcsmain(cscode,
+                                csno,
+                                csdate,
+                                doccode,
+                                scheme_docno,
+                                pcode,
+                                debtors_glcode,
+                                consignment_sales_glcode,
+                                consignment_sales_slcode,
+                                admou_code,
+                                admsite_code,
+                                outloccode,
+                                refno,
+                                remarks,
+                                ycode,
+                                time,
+                                ecode,
+                                last_access_time,
+                                last_access_ecode,
+                                adjamt,
+                                status,
+                                roundoff_glcode,
+                                admsite_code_owner,
+                                channeltype,
+                                fintradegrp_code,
+                                formcode,
+                                psite_customer_code,
+                                grsamt,
+                                discount,
+                                shipchg,
+                                gwchg,
+                                codchg,
+                                extaxamt,
+                                qty,
+                                netamt,
+                                roundoff,
+                                netpayable,
+                                release_status,
+                                site_costamt,
+                                dataversion,
+                                udfstring01,
+                                udfstring02,
+                                udfstring03,
+                                udfstring04,
+                                udfstring05,
+                                udfstring06,
+                                udfstring07,
+                                udfstring08,
+                                udfstring09,
+                                udfstring10,
+                                udfnum01,
+                                udfnum02,
+                                udfnum03,
+                                udfnum04,
+                                udfnum05,
+                                udfdate01,
+                                udfdate02,
+                                udfdate03,
+                                udfdate04,
+                                udfdate05,-- START REV : 005,
+                                OWNER_GSTIN_NO,
+                                OWNER_GSTIN_STATE_CODE,
+                                CP_GSTIN_NO,
+                                CP_GSTIN_STATE_CODE,
+                                ECOM_GSTIN_NO,
+                                ECOM_GSTIN_STATE_CODE,-- END REV : 005
+                                gstappl ,                          -- rev : 006
+                                -- start rev : 015
+                                BILL_FNAME   ,
+                                BILL_MNAME,
+                                BILL_LNAME,
+                                BILL_GENDER,
+                                BILL_ADMISD_CODE,
+                                BILL_MOBILE,
+                                BILL_EMAIL,
+                                BILL_ADDRESSLINE1,
+                                BILL_ADDRESSLINE2,
+                                BILL_ADDRESSLINE3,
+                                BILL_CITY,
+                                BILL_STATE,
+                                BILL_COUNTRY,
+                                BILL_PIN,
+                                BILL_GSTIN_NO,
+                                BILL_GST_STATE_CODE,
+                                -- end rev : 015
+                                --START REV :20
+                                RETURN_LOCCODE, 
+                                DAMAGED_LOCCODE
+                                --END REV : 20
+                                       )
+              VALUES (
+                    -- START REV : 007
+                     -- r.cscode,
+                     V_MAIN_CSCODE,
+                    -- END REV : 007
+                      vmaxno + r.csno,
+                      r.csdate,
+                      r.doccode,
+                      -- START REV : 007
+                      --r.scheme_docno,
+                      V_SCHEME_DOCNO,
+                      -- END REV : 007
+                      r.pcode,
+                      r.debtors_glcode,
+                      r.consignment_sales_glcode,
+                      r.consignment_sales_slcode,
+                      r.admou_code,
+                      r.admsite_code,
+                      r.outloccode,
+                      r.refno,
+                      r.remarks,
+                      r.ycode,
+                      r.time,
+                      r.ecode,
+                      r.last_access_time,
+                      r.last_access_ecode,
+                      r.adjamt,
+                      r.status,
+                      r.roundoff_glcode,
+                      r.admsite_code_owner,
+                      r.channeltype,
+                      r.fintradegrp_code,
+                      r.formcode,
+                      r.psite_customer_code,
+                      r.grsamt,
+                      r.discount,
+                      r.shipchg,
+                      r.gwchg,
+                      r.codchg,
+                      r.extaxamt,
+                      r.qty,
+                      r.netamt,
+                      r.roundoff,
+                      r.netpayable,
+                      r.release_status,
+                      r.site_costamt,
+                      nextval('psite_dataversion'),
+                      r.udfstring01,
+                      r.udfstring02,
+                      r.udfstring03,
+                      r.udfstring04,
+                      r.udfstring05,
+                      r.udfstring06,
+                      r.udfstring07,
+                      r.udfstring08,
+                      r.udfstring09,
+                      r.udfstring10,
+                      r.udfnum01,
+                      r.udfnum02,
+                      r.udfnum03,
+                      r.udfnum04,
+                      r.udfnum05,
+                      r.udfdate01,
+                      r.udfdate02,
+                      r.udfdate03,
+                      r.udfdate04,
+                      r.udfdate05,-- START REV : 005
+                      R.OWNER_GSTIN_NO,
+                      R.OWNER_GSTIN_STATE_CODE,
+                      R.B_CUST_GST_ID_NO,
+                      R.B_GST_STATE_CODE,
+                      R.ECOM_GSTIN_NO,
+                      R.ECOM_GSTIN_STATE_CODE,-- END REV : 005
+                      r.gstappl,                                   -- rev : 006
+                      -- start rev : 015
+                      R.B_CUSTOMER_FIRSTNAME,
+                      R.B_CUSTOMER_MIDDLENAME,
+                      R.B_CUSTOMER_LASTNAME,
+                      R.B_CUSTOMER_GENDER,
+                      R.B_ISDCODE,
+                      R.B_CUSTOMER_MOBILENO,
+                      R.B_CUSTOMER_EMAIL,
+                      R.B_CUSTOMER_ADDRESSLINE1,
+                      R.B_CUSTOMER_ADDRESSLINE2,
+                      R.B_CUSTOMER_ADDRESSLINE3,
+                      R.B_CUSTOMER_CITY,                                    
+                      R.B_CUSTOMER_STATE,
+                      R.B_CUSTOMER_COUNTRY,
+                      R.B_CUSTOMER_PIN,
+                      R.B_CUST_GST_ID_NO,
+                      R.B_GST_STATE_CODE,
+                      -- end rev : 015
+                      --START REV : 20
+                      r.outloccode,
+                      r.outloccode
+                      --END REV : 20
+                               );
+
+         -- Populate Salcedet table without Tax details
+         INSERT INTO salcsdet(code,
+                               cscode,
+                               icode,
+                               qty,
+                               mrp,
+                               rate,
+                               grsamt,
+                               discount,
+                               remarks,
+                               extaxamt,
+                               netamt,
+                               shipchg,
+                               gwchg,
+                               codchg,
+                               site_costrate,
+                               costrate,
+                               site_costamt,
+                               -- START REV : 009
+                               glcode,
+                               slcode,
+                               gl_cc_appl,
+                               -- END REV : 009
+                               taxregime,
+                               isdamaged,
+                               -- START REV : 022
+                               invbatch_serial_code
+                               -- END REV : 022
+                               )
+            SELECT nextval('salcsdet_code'),
+            -- START REV : 007
+                  -- r.cscode,
+                  V_MAIN_CSCODE,
+            -- END REV : 007
+                   i.icode,
+                   coalesce(item_qty, 0),
+                   coalesce(item_rsp, 0),
+                   coalesce(item_rate, 0),
+                   coalesce(item_qty, 0) * coalesce(item_rate, 0),
+                   coalesce(item_discountamt, 0),
+                   item_remarks,
+                   coalesce(item_extra_taxamt, 0),
+                     (coalesce(item_qty, 0) * coalesce(item_rate, 0))
+                   - coalesce(item_discountamt, 0)
+                   + coalesce(item_extra_taxamt, 0),
+                   0,
+                   0,
+                   0,
+                   0,
+                   0,
+                   0,
+                   i.glcode glcode,
+                   i.slcode slcode,
+                   gl.costapp  gl_cc_appl,
+                   case when i.INVHSNSACMAIN_CODE is not null then 'G'
+                    else
+                    'V'
+                   end taxregime,
+                   0,
+                   b.code invbatch_serial_code
+                   --END REV : 021
+              FROM int$stg_storunmown a,
+			  (SELECT m.csdate,
+                           s.slID,
+                           coalesce(l.locname,'@@')        locname,
+                           coalesce(m.refno, '@@')         refno,
+                           coalesce(m.bill_mobile, '0')           mobile,
+                           coalesce(m.remarks, '@@')       Remarks,
+                           coalesce(m.roundoff, 0)         roundoff,
+                           coalesce(m.udfstring01, '@@')   udfstring01,
+                           coalesce(m.udfstring02, '@@')   udfstring02,
+                           coalesce(m.udfstring03, '@@')   udfstring03,
+                           coalesce(m.udfstring04, '@@')   udfstring04,
+                           coalesce(m.udfstring05, '@@')   udfstring05,
+                           coalesce(m.udfstring06, '@@')   udfstring06,
+                           coalesce(m.udfstring07, '@@')   udfstring07,
+                           coalesce(m.udfstring08, '@@')   udfstring08,
+                           coalesce(m.udfstring09, '@@')   udfstring09,
+                           coalesce(m.udfstring10, '@@')   udfstring10,
+                           coalesce(m.udfnum01, 0)         udfnum01,
+                           coalesce(m.udfnum02, 0)         udfnum02,
+                           coalesce(m.udfnum03, 0)         udfnum03,
+                           coalesce(m.udfnum04, 0)         udfnum04,
+                           coalesce(m.udfnum05, 0)         udfnum05,
+                           coalesce(m.udfdate01, m.csdate) udfdate01,
+                           coalesce(m.udfdate02, m.csdate) udfdate02,
+                           coalesce(m.udfdate03, m.csdate) udfdate03,
+                           coalesce(m.udfdate04, m.csdate) udfdate04,
+                           coalesce(m.udfdate05, m.csdate) udfdate05,
+			   			   coalesce (m.scheme_docno, v_scheme_docno)  scheme_docno
+                      FROM salcsmain m 
+			          LEFT OUTER JOIN invloc l 
+			   ON (m.outloccode = l.loccode)
+			   inner join finsl s on m.pcode = s.slcode
+            	WHERE cscode = V_MAIN_CSCODE   ) t1,
+						invitem i
+				LEFT OUTER JOIN fingl gl ON (I.GLCODE = GL.GLCODE)
+				LEFT OUTER JOIN invbatch_serial b ON (i.icode = b.icode)
+					WHERE a.saledt = t1.csdate 
+					AND a.userid = p_userid 
+					AND coalesce (a.scheme_docno, v_scheme_docno) = t1.scheme_docno
+					AND UPPER(a.CHANNEL_ID) = UPPER(t1.slID) 
+					AND UPPER(coalesce(a.stock_point_name,'@@')) = UPPER(t1.locname)    
+  					AND coalesce(a.reference_no, '@@') = t1.refno 
+					AND coalesce(a.B_CUSTOMER_MOBILENO, t1.mobile) = t1.mobile 
+  					AND coalesce(a.roundoff, 0) = t1.roundoff AND coalesce(a.REMARKS, '@@') = T1.REMARKS 
+  					AND coalesce(a.udfstring01, '@@') = T1.udfstring01 
+  					AND coalesce(a.udfstring02, '@@') = T1.udfstring02 
+  					AND coalesce(a.udfstring03, '@@') = T1.udfstring03 
+  					AND coalesce(a.udfstring04, '@@') = T1.udfstring04 
+  					AND coalesce(a.udfstring05, '@@') = T1.udfstring05 
+  					AND coalesce(a.udfstring06, '@@') = T1.udfstring06 
+  					AND coalesce(a.udfstring07, '@@') = T1.udfstring07 
+  					AND coalesce(a.udfstring08, '@@') = T1.udfstring08 
+  					AND coalesce(a.udfstring09, '@@') = T1.udfstring09 
+  					AND coalesce(a.udfstring10, '@@') = T1.udfstring10 
+  					AND coalesce(a.udfnum01, 0) = T1.udfnum01 
+  					AND coalesce(a.udfnum02, 0) = T1.udfnum02 
+  					AND coalesce(a.udfnum03, 0) = T1.udfnum03 
+  					AND coalesce(a.udfnum04, 0) = T1.udfnum04 
+  					AND coalesce(a.udfnum05, 0) = T1.udfnum05 
+  					AND coalesce(a.udfdate01, a.saledt) = T1.udfdate01 
+  					AND coalesce(a.udfdate02, a.saledt) = T1.udfdate02 
+  					AND coalesce(a.udfdate03, a.saledt) = T1.udfdate03 
+  					AND coalesce(a.udfdate04, a.saledt) = T1.udfdate04 
+  					AND coalesce(a.udfdate05, a.saledt) = T1.udfdate05 
+  					AND (   (UPPER(a.item_barcode) = UPPER(i.icode))
+  					                  OR (UPPER(a.item_barcode) = UPPER(i.barcode))) 
+  					AND (a.batch_serial_no IS NULL or UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no));
+
+                        BEGIN
+                            SELECT  SUM(coalesce(NETAMT,0))
+                            INTO STRICT    V_MAIN_GL_AMT
+                            FROM    SALCSDET
+                            WHERE   CSCODE = V_MAIN_CSCODE
+                            AND     GLCODE IS NULL;
+
+                            UPDATE SALCSMAIN
+                            SET    MAIN_GL_AMT = V_MAIN_GL_AMT
+                            WHERE  CSCODE = V_MAIN_CSCODE;
+
+                        EXCEPTION WHEN no_data_found THEN
+                            V_MAIN_GL_AMT := NULL;
+                        END;
+
+                        -- end rev : 009
+         -- Populate Tax Details in Salcsdet Table
+         FOR d IN ctax(
+                        -- START REV : 007
+                        --r.cscode,
+                        V_MAIN_CSCODE,
+                        -- END REV : 007
+                        r.csdate,
+                        r.admsite_code,
+                        -- START REV : 016
+                        r.fintradegrp_code,
+                        -- END REV : 016
+                        R.ADMGSTIN_CODE)
+         LOOP
+            IF d.rangeappl = 0
+            THEN
+               UPDATE salcsdet
+                  SET taxdetcode = d.vatid,
+                      taxdescription = d.description,
+                      taxregime = 'V',
+                      taxpercent = d.rate,
+                      taxamt =
+                         ROUND ( (d.netamt / (100 + d.rate)) * d.rate, 2),
+                      taxableamt =
+                         ROUND ( (d.netamt / (100 + d.rate)) * 100, 2)
+                WHERE code = d.code;
+            ELSE
+               BEGIN
+                  SELECT range_desc, rate
+                    INTO STRICT v_slab_range_desc, v_slab_range_rate
+                    FROM fintax_range
+                   WHERE     taxdetcode = d.vatid
+                         AND (   (    d.rangebasis = 'N'
+                                  AND d.netprice BETWEEN rangefrom
+                                                     AND coalesce(rangeto,
+                                                              99999999))
+                              OR (    d.rangebasis = 'R'
+                                  AND d.rsp BETWEEN rangefrom
+                                                AND coalesce(rangeto, 99999999)));
+
+                  UPDATE salcsdet
+                     SET taxdetcode = d.vatid,
+                         taxdescription = v_slab_range_desc,
+                         taxregime = 'V',
+                         taxpercent = v_slab_range_rate,
+                         taxamt =
+                            ROUND (
+                                 (d.netamt / (100 + v_slab_range_rate))
+                               * v_slab_range_rate,
+                               2),
+                         taxableamt =
+                            ROUND (
+                               (d.netamt / (100 + v_slab_range_rate)) * 100,
+                               2)
+                   WHERE code = d.code;
+               EXCEPTION
+                  WHEN no_data_found
+                  THEN
+                     UPDATE salcsdet
+                        SET taxdetcode = d.vatid,
+                            taxdescription = 'Slab not defined',
+                            taxpercent = 0,
+                            taxamt = 0,
+                            taxableamt = d.netamt
+                      WHERE code = d.code;
+               END;
+            END IF;
+         END LOOP;
+
+         -- FOR GST APPL ITEM
+         -- start rev : 004
+         DECLARE
+            C_GST CURSOR(
+               p_Cscode             bigint,
+               p_date               timestamp,
+               p_sitecode           bigint,
+               P_ADMGSTIN_CODE    bigint)
+            FOR
+               SELECT t1.code,
+                      t1.netamt,
+                      t1.icode,
+                      t1.qty,
+                      t1.mrp                              rsp,
+                      round((ABS(t1.netamt / t1.qty))::numeric, 3) netprice,
+                      t1.INVHSNSACMAIN_CODE,
+                      T1.HSN_SAC_CODE
+                 -- ,DECODE(
+                 FROM (SELECT m.admsite_code,
+                              i.INVHSNSACMAIN_CODE,
+                              d.code,
+                              d.netamt,
+                              i.icode,
+                              d.qty,
+                              d.mrp,
+                              H.HSN_SAC_CODE
+                         --,(SELECT code FROM fintradegrp WHERE UPPER (NAME) = 'LOCAL') LOCAL_TRADE
+                         FROM salCsmain     m,
+                              salCsdet      d,
+                              invitem       i,
+                              INVHSNSACMAIN H
+                        WHERE     m.Cscode = d.Cscode
+                              AND d.icode = i.icode
+                              AND I.INVHSNSACMAIN_CODE = H.CODE
+                              AND m.admsite_code = p_sitecode
+                              AND date_trunc('day', Csdate) = p_date
+                              AND m.Cscode = p_Cscode) t1
+                WHERE (    (T1.ICODE IN
+                               (SELECT ICODE
+                                  FROM INVHSNSACDET D, INVITEM IT
+                                 WHERE     D.INVHSNSACMAIN_CODE =
+                                              IT.INVHSNSACMAIN_CODE
+                                       AND D.INVHSNSACMAIN_CODE =
+                                              T1.INVHSNSACMAIN_CODE
+                                       AND D.CODE =
+                                              (SELECT DISTINCT D1.CODE
+                                                 FROM INVHSNSACDET D1,
+                                                      INVITEM      IT1
+                                                WHERE     D1.INVHSNSACMAIN_CODE =
+                                                             IT1.INVHSNSACMAIN_CODE
+                                                      AND D1.INVHSNSACMAIN_CODE =
+                                                             T1.INVHSNSACMAIN_CODE
+                                                      AND EFFECTIVE_DATE =
+                                                             (SELECT MAX(
+                                                                        EFFECTIVE_DATE)
+                                                                FROM INVHSNSACDET
+                                                                     D3,
+                                                                     INVITEM
+                                                                     IT3
+                                                               WHERE     D3.INVHSNSACMAIN_CODE =
+                                                                            IT3.INVHSNSACMAIN_CODE
+                                                                     AND D3.INVHSNSACMAIN_CODE =
+                                                                            T1.INVHSNSACMAIN_CODE
+                                                                     AND D3.EFFECTIVE_DATE <=
+                                                                            p_date))))
+                       AND P_ADMGSTIN_CODE IS NOT NULL             -- REV : 005
+                                                      );
+
+            -- Populate GST Details in Salssdet Table
+            V_RATE              double precision := 0;
+            /*V_SGST_RATE          NUMBER(20,2) := 0;
+            V_CGST_RATE          NUMBER(20,2) := 0;
+            V_IGST_RATE          NUMBER(20,2) := 0;
+            V_CESS_RATE          NUMBER(20,2) := 0;*/
+            V_CGST_RATE         INVGSTRATE.CGST_RATE%TYPE:= 0;
+            V_SGST_RATE         INVGSTRATE.SGST_RATE%TYPE:= 0;
+            V_IGST_RATE         INVGSTRATE.IGST_RATE%TYPE:= 0;
+            V_CESS_RATE         INVGSTRATE.CESS_RATE%TYPE:= 0;
+            V_MAINCODE          INVHSNSACMAIN.CODE%TYPE;
+            V_SLAB_APPL         INVHSNSACDET.SLAB_APPL%TYPE;
+            V_SLAB_BASIS        INVHSNSACDET.SLAB_BASIS%TYPE;
+            V_DETCODE           INVHSNSACDET.CODE%TYPE;
+            V_RANGEFROM         bigint;
+            V_FLAG              char(1);
+            DUP_RATE            double precision := 0;
+            V_APPAMT            double precision := 0;
+            V_INVGSTRATE_CODE   INVGSTRATE.CODE%TYPE;
+            V_TAX_NAME          varchar(100) := NULL;
+         BEGIN
+            FOR dG IN C_GST(
+                            -- START REV : 007
+                             --r.cscode,
+                             V_MAIN_CSCODE,
+                             -- END REV : 007
+                             r.csdate,
+                             r.admsite_code,
+                             R.ADMGSTIN_CODE)
+            LOOP
+               IF DG.INVHSNSACMAIN_CODE IS NOT NULL
+               THEN
+                  BEGIN
+                     SELECT SLAB_APPL,
+                            SLAB_BASIS,
+                            CODE,
+                            INVGSTRATE_CODE
+                       INTO STRICT V_SLAB_APPL,
+                            V_SLAB_BASIS,
+                            V_DETCODE,
+                            V_INVGSTRATE_CODE
+                       FROM INVHSNSACDET D
+                      WHERE     D.INVHSNSACMAIN_CODE = DG.INVHSNSACMAIN_CODE
+                            AND D.CODE =
+                                   (SELECT DISTINCT D1.CODE
+                                      FROM INVHSNSACDET D1
+                                     WHERE     D1.INVHSNSACMAIN_CODE =
+                                                  DG.INVHSNSACMAIN_CODE
+                                           AND EFFECTIVE_DATE =
+                                                  (SELECT MAX(
+                                                             EFFECTIVE_DATE)
+                                                     FROM INVHSNSACDET D3
+                                                    WHERE     D3.INVHSNSACMAIN_CODE =
+                                                                 DG.INVHSNSACMAIN_CODE
+                                                          AND D3.EFFECTIVE_DATE <=
+                                                                 R.CSDATE));
+                  EXCEPTION
+                     WHEN no_data_found
+                     THEN
+                        NULL;
+                     WHEN OTHERS
+                     THEN
+                        V_RATE := 0;
+                  END;
+
+                  IF coalesce(V_SLAB_APPL, 'N') = 'Y'
+                  THEN
+                     IF V_SLAB_BASIS = 'R'
+                     THEN
+                        V_APPAMT := round((DG.RSP)::numeric, 2);
+                     ELSE
+                        V_APPAMT := round((DG.NETPRICE)::numeric, 2);
+                     END IF;
+
+                     BEGIN
+                     -- START REV : 006
+                     /*
+                        SELECT INVGSTRATE_CODE
+                          INTO V_INVGSTRATE_CODE
+                          FROM INVHSNSACSLAB D
+                         WHERE     D.INVHSNSACDET_CODE = V_DETCODE
+                               AND D.CODE =
+                                      (SELECT D1.CODE
+                                         FROM INVHSNSACSLAB D1
+                                        WHERE     D1.INVHSNSACDET_CODE =
+                                                     V_DETCODE
+                                              AND AMOUNT_FROM =
+                                                     (SELECT MAX (
+                                                                AMOUNT_FROM)
+                                                        FROM INVHSNSACSLAB D3
+                                                       WHERE     D3.INVHSNSACDET_CODE =
+                                                                    V_DETCODE
+                                                             AND D3.AMOUNT_FROM <=
+                                                                    NVL (
+                                                                       V_APPAMT,
+                                                                       0)));
+                                                */
+                            SELECT	INVGSTRATE_CODE
+                            INTO STRICT    V_INVGSTRATE_CODE
+                            FROM	 V_GSTSLAB_CALC D
+                            WHERE		D.INVHSNSACDET_CODE = V_DETCODE
+                            AND     	D.INVHSNSACSLAB_CODE = (  SELECT D1.INVHSNSACSLAB_CODE
+                                                    FROM   V_GSTSLAB_CALC D1
+                                                    WHERE  D1.INVHSNSACDET_CODE = V_DETCODE
+                                                    AND    EFF_AMOUNT_FROM = ( SELECT MAX(EFF_AMOUNT_FROM)
+                                                                          FROM   V_GSTSLAB_CALC D3
+                                                                          WHERE  D3.INVHSNSACDET_CODE = V_DETCODE
+                                                                          AND    D3.EFF_AMOUNT_FROM 	<=  coalesce(V_APPAMT,0)
+                                                                            )
+                                                 )	;
+                     -- END REV : 006
+                     EXCEPTION
+                        WHEN no_data_found
+                        THEN
+                           V_INVGSTRATE_CODE := NULL;
+                        WHEN OTHERS
+                        THEN
+                           V_INVGSTRATE_CODE := 0;
+                     END;
+                  END IF;
+
+                  BEGIN
+                     SELECT CGST_RATE,
+                            IGST_RATE,
+                            SGST_RATE,
+                            -- SART REV : 013
+                            --CESS_RATE,
+                            coalesce(CESS_RATE,0) + coalesce(GET_GSTADD_CESSRATE(V_INVGSTRATE_CODE,R.CSDATE, R.GST_ADD_CESS_RATE_STATE, R.fintradegrp_code, R.CP_GSTIN_NO ),0),
+                            -- END REV : 013
+                            TAX_NAME
+                       INTO STRICT V_CGST_RATE,
+                            V_IGST_RATE,
+                            V_SGST_RATE,
+                            V_CESS_RATE,
+                            V_TAX_NAME
+                       FROM INVGSTRATE R
+                      WHERE CODE = V_INVGSTRATE_CODE;
+                  EXCEPTION
+                     WHEN no_data_found
+                     THEN
+                        V_RATE := 0;
+                  END;
+
+                  UPDATE salcsdet
+                     SET HSN_SAC_CODE = DG.HSN_SAC_CODE,
+                         taxdescription = V_TAX_NAME,
+                         CGSTRATE =
+                            CASE WHEN r.fintradegrp_code=2 THEN  0 WHEN r.fintradegrp_code=1 THEN  V_CGST_RATE END ,
+                         SGSTRATE =
+                            CASE WHEN r.fintradegrp_code=2 THEN  0 WHEN r.fintradegrp_code=1 THEN  V_SGST_RATE END ,
+                         IGSTRATE =
+                            CASE WHEN r.fintradegrp_code=2 THEN  V_IGST_RATE  ELSE 0 END ,
+                         CESSRATE = V_CESS_RATE,
+                         taxpercent =
+                            round((
+                                 CASE WHEN r.fintradegrp_code=2 THEN  0 WHEN r.fintradegrp_code=1 THEN  V_CGST_RATE END
+                               + CASE WHEN r.fintradegrp_code=2 THEN  0 WHEN r.fintradegrp_code=1 THEN  V_SGST_RATE END 
+                               + CASE WHEN r.fintradegrp_code=2 THEN  V_IGST_RATE  ELSE 0 END 
+                               + coalesce(V_CESS_RATE, 0))::numeric,
+                               2)
+                   WHERE code = dG.code;
+
+                  UPDATE salcsdet
+                     SET CGSTAMT =
+                            CASE WHEN                                r.fintradegrp_code=2 THEN  0 WHEN                                r.fintradegrp_code=1 THEN  ROUND (                                     (netamt / (100 + taxpercent)) * CGSTRATE,                                     2) END ,
+                         SGSTAMT =
+                            CASE WHEN                                r.fintradegrp_code=2 THEN  0 WHEN                                r.fintradegrp_code=1 THEN  ROUND (                                     (netamt / (100 + taxpercent)) * SGSTRATE,                                     2) END ,
+                         IGSTAMT =
+                            CASE WHEN                                r.fintradegrp_code=2 THEN  ROUND (                                     (netamt / (100 + taxpercent)) * IGSTRATE,                                     2)  ELSE 0 END ,
+                         CESSAMT =
+                            ROUND (
+                               (dG.netamt / (100 + taxpercent)) * CESSRATE,
+                               2)
+                   WHERE code = dG.code;
+
+                  UPDATE salCsdet
+                     SET taxamt =
+                            round((
+                                 coalesce(CGSTAMT, 0)
+                               + coalesce(SGSTAMT, 0)
+                               + coalesce(IGSTAMT, 0)
+                               + coalesce(CESSAMT, 0))::numeric,
+                               2),
+                         TAXREGIME = 'G',
+                         taxableamt =
+                            round((
+                                 coalesce(NETAMT, 0)
+                               - round((
+                                      coalesce(CGSTAMT, 0)
+                                    + coalesce(SGSTAMT, 0)
+                                    + coalesce(IGSTAMT, 0)
+                                    + coalesce(CESSAMT, 0))::numeric,
+                                    2))::numeric,
+                               2)
+                   WHERE code = dG.code;
+               END IF;
+            END LOOP;
+         END;
+
+         -- END REV : 004
+         -- END OF GST APPL ITEM
+    -- start rev : 015
+         begin
+            select distinct coalesce(TAXREGIME,'V') into STRICT v_taxregime from salcsdet
+            where cscode=V_MAIN_CSCODE;
+                exception
+                    when too_many_rows then
+                --rollback;
+                    RAISE EXCEPTION '%', 'Multi tax regime is not allowed in a single document. Kindly create two separate documents.' USING ERRCODE = '45111';
+                end;
+        
+            select EXPORT_WITH_PAYMENT_OF_GST into STRICT v_EXPORT_WITH_PAYMENT from admgstin
+            where code in (SELECT ADMGSTIN_CODE from admsite where code=p_connect_site);
+
+            select gstappl into STRICT v_gstappl from admdocscheme 
+            where doccode=r.doccode;
+            
+            select coalesce(manual,'N') into STRICT v_manual from admdocscheme 
+            where doccode=r.doccode;
+
+            select count(1) into STRICT v_postive_count
+            from salcsdet where cscode=V_MAIN_CSCODE
+            and qty >0;
+
+            select count(1) into STRICT v_negative_count
+            from salcsdet where cscode=V_MAIN_CSCODE
+            and qty <0;
+
+            --==============
+    
+            if  v_taxregime= 'G'
+            and v_export_with_payment <> 'N'
+            and v_gstappl= 'N'
+            and r.scheme_docno is null then
+                   --rollback;
+             RAISE EXCEPTION '%', 'Other Doc scheme is not allowed for GST transaction except when Export is made without payment of GST.' USING ERRCODE = '45111';
+            end if;
+
+            --==============
+            
+            if r.OWNER_GSTIN_NO is not null and --r.cp_GSTIN_NO 
+               r.B_CUST_GST_ID_NO is not null then
+                        
+            if coalesce(v_postive_count,0) > 0 and coalesce(v_negative_count,0) > 0 then
+            --rollback;
+                RAISE EXCEPTION '%', 'For B2B both Sale and return transaction is not allowed in a single document under GST.' USING ERRCODE = '45111';
+            end if;
+            end if;
+
+            --==============            
+            if  v_taxregime='G' and r.fintradegrp_code in (1,2)  then
+                if  v_manual<>'Y' and v_gstappl<>'Y' then
+                if coalesce(v_postive_count,0) > 0 then
+                        --rollback;
+                    RAISE EXCEPTION '%', 'Only ''GST Invoice'' & Manual type document schemes are allowed when there are only sales or mix items.' USING ERRCODE = '45111';
+                end if;
+            end if;
+            end if;
+
+            --==============
+            
+            if v_taxregime='G' and v_manual<>'Y'and ((coalesce(v_postive_count,0)=0 and v_gstappl<> 'C') or (coalesce(v_postive_count,0)> 0 and v_gstappl= 'C')) then
+            --rollback;
+            RAISE EXCEPTION '%', 'GST Credit Note can only be used in Sales return cases.' USING ERRCODE = '45111';
+            end if;
+
+            --==============
+           if v_taxregime = 'V' and v_gstappl <> 'N' then
+           --rollback;
+             RAISE EXCEPTION '%', 'Only Other Documents & Manual type document schemes are allowed when Tax Regime is VAT.' USING ERRCODE = '45111';
+           end if;
+
+            --==============
+           
+          /*  if v_taxregime = 'G' and v_gstappl ='N' and r.scheme_docno is null  then
+           rollback;
+             raise_application_error(-20111,'GST Scheme is mandatory when item is GST applicable.');
+           end if;*/
+                      
+           if v_taxregime = 'G' and r.fintradegrp_code =3 then            
+           if coalesce(v_postive_count,0) > 0 and coalesce(v_negative_count,0) > 0 then
+           --rollback;
+             RAISE EXCEPTION '%', 'Both Sale and Return transaction is not allowed in Export under GST.' USING ERRCODE = '45111';
+           end if;
+           end if;
+
+            --==============
+           
+           IF v_gstappl='N' and r.scheme_docno is NOT null  AND v_taxregime = 'G' THEN
+           IF coalesce(v_negative_count,0) > 0 AND coalesce(v_postive_count,0) =0 THEN
+           UPDATE SALCSMAIN SET GSTAPPL='C'
+           WHERE CSCODE = V_MAIN_CSCODE;
+           ELSE
+           UPDATE SALCSMAIN SET GSTAPPL='Y'
+           WHERE CSCODE = V_MAIN_CSCODE;
+           END IF;
+           END IF;
+
+                -- end rev : 015        
+         UPDATE SALCSMAIN
+            SET STATUS = 'C'
+            -- START REV : 007
+          --WHERE cscode = R.CSCODE;
+          WHERE cscode = V_MAIN_CSCODE;
+          -- END REV : 007
+      END LOOP;
+
+      -- log to be added in History table
+      SELECT nextval('int$error_log_code') INTO STRICT vsession;
+
+      vdetailtbl :=                                         -- start rev : 001
+                                                     --'CREATE TABLE storown_'
+            'CREATE TABLE ginarchive.storown_'
+         -- end rev : 001
+         || vsession
+         || ' AS
+                            SELECT Party_Name, SALE_DATE, REFERENCE_NO
+                            FROM
+                            (
+                            SELECT  b.slname Party_Name, DATE_TRUNC(''day'',a.saledt) SALE_DATE, a.reference_no REFERENCE_NO, COUNT(1)
+                                    ,a.remarks
+                                    ,a.roundoff
+                                    ,a.B_CUSTOMER_MOBILENO
+                                    ,a.udfstring01
+                                    ,a.udfstring02
+                                    ,a.udfstring03
+                                    ,a.udfstring04
+                                    ,a.udfstring05
+                                    ,a.udfstring06
+                                    ,a.udfstring07
+                                    ,a.udfstring08
+                                    ,a.udfstring09
+                                    ,a.udfstring10
+                                    ,a.udfnum01
+                                    ,a.udfnum02
+                                    ,a.udfnum03
+                                    ,a.udfnum04
+                                    ,a.udfnum05
+                                    ,a.udfdate01
+                                    ,a.udfdate02
+                                    ,a.udfdate03
+                                    ,a.udfdate04
+                                    ,a.udfdate05
+                            FROM int$stg_storunmown a, finsl b WHERE upper(a.CHANNEL_ID) = upper(b.slID)
+                            AND userid ='
+         || p_userid::text
+         || ' GROUP BY b.slname, DATE_TRUNC(''day'',a.saledt), a.reference_no
+                                    ,a.remarks
+                                    ,a.roundoff
+                                    ,a.B_CUSTOMER_MOBILENO
+                                    ,a.udfstring01
+                                    ,a.udfstring02
+                                    ,a.udfstring03
+                                    ,a.udfstring04
+                                    ,a.udfstring05
+                                    ,a.udfstring06
+                                    ,a.udfstring07
+                                    ,a.udfstring08
+                                    ,a.udfstring09
+                                    ,a.udfstring10
+                                    ,a.udfnum01
+                                    ,a.udfnum02
+                                    ,a.udfnum03
+                                    ,a.udfnum04
+                                    ,a.udfnum05
+                                    ,a.udfdate01
+                                    ,a.udfdate02
+                                    ,a.udfdate03
+                                    ,a.udfdate04
+                                    ,a.udfdate05
+                            ) x';
+
+      EXECUTE vdetailtbl;
+
+      -- start rev : 001
+      --vdetailrec := 'SELECT count(1) FROM storown_'||vsession;
+      vdetailrec := 'SELECT count(1) FROM ginarchive.storown_' || vsession::text;
+
+      -- end rev : 001
+      EXECUTE vdetailrec INTO STRICT vcount;
+
+      IF coalesce(vcount, 0) = 0
+      THEN
+         RAISE EXCEPTION 'insert_violation' USING ERRCODE = '50001';
+      END IF;
+
+      INSERT INTO int$history(code,
+                               importedby,
+                               importedon,
+                               classname,
+                               summary,
+                               history_detail_tablename,
+                               history_detail_row_count)
+           -- start rev : 001
+           --VALUES (int$history_code.NEXTVAL, p_userid, SYSDATE, 'STORUNMOWN', vcount::TEXT||' Transaction has been created', 'storown_'||vsession, vcount);
+           VALUES (nextval('int$history_code'),
+                   p_userid,
+                   clock_timestamp(),
+                   'STORUNMOWN',
+                   vcount::TEXT || ' Transaction has been created',
+                   'ginarchive.storown_' || vsession,
+                   vcount);
+
+      -- end rev : 001
+      RETURN('1');
+   EXCEPTION
+      WHEN SQLSTATE '50001' THEN
+      --rollback;
+         errcode := -02222;
+         errmsg := 'Data inconsistency';
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'storunmown',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+
+         RETURN('0');
+      WHEN OTHERS
+      THEN
+      --rollback;
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'storunmown',
+                      p_userid,
+                       'Validation',
+                      substr(errmsg,position(':' in errmsg)+1),
+                     clock_timestamp());
+
+         --COMMIT;
+
+         RETURN('0');
+   END;
+
+   -- Clear Store Franchise Consignment Sale
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

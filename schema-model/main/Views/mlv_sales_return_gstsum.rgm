@@ -1,0 +1,113 @@
+view "main"."mlv_sales_return_gstsum" {
+  text = """-
+SELECT z.hsn_sac_code,
+    sum(z.taxable) AS taxable_amount,
+    z.cgst_rate,
+    sum(z.cgst_amt) AS cgst_amt,
+    z.sgst_rate,
+    sum(z.sgst_amt) AS sgst_amt,
+    z.igst_rate,
+    sum(z.igst_amt) AS igst_amt,
+    z.cess_rate,
+    sum(z.cess_amt) AS cess_amt,
+    z.rtcode AS grp_rtcode,
+    sum(COALESCE(z.qty, (0)::numeric)) AS sum_qty,
+    z.unit
+   FROM ( SELECT d.code AS detcode,
+            d.hsn_sac_code,
+            COALESCE(cgst.taxable, COALESCE(sgst.taxable, COALESCE(igst.taxable, cess.taxable))) AS taxable,
+            COALESCE(cgst.rate, (0)::numeric) AS cgst_rate,
+            COALESCE(cgst.taxamt, (0)::numeric) AS cgst_amt,
+            COALESCE(sgst.rate, (0)::numeric) AS sgst_rate,
+            COALESCE(sgst.taxamt, (0)::numeric) AS sgst_amt,
+            COALESCE(igst.rate, (0)::numeric) AS igst_rate,
+            COALESCE(igst.taxamt, (0)::numeric) AS igst_amt,
+            COALESCE(cess.rate, (0)::numeric) AS cess_rate,
+            COALESCE(cess.taxamt, (0)::numeric) AS cess_amt,
+            d.rtcode,
+            d.qty,
+            it.unitname AS unit
+           FROM main.v_item it,
+            ((((main.salrtdet d
+             LEFT JOIN ( SELECT ci.salrtdet_code AS detcode,
+                    ci.appamt AS taxable,
+                    ci.gst_component AS component,
+                    ci.rate,
+                    sum(ci.chgamt) AS taxamt
+                   FROM main.salrtchg_item ci,
+                    main.salrtdet i
+                  WHERE ((i.code = ci.salrtdet_code) AND (ci.gst_component IS NOT NULL) AND (ci.gst_component = 'CGST'::bpchar))
+                  GROUP BY ci.salrtdet_code, ci.appamt, ci.rate, ci.gst_component) cgst ON ((d.code = cgst.detcode)))
+             LEFT JOIN ( SELECT ci.salrtdet_code AS detcode,
+                    ci.appamt AS taxable,
+                    ci.gst_component AS component,
+                    ci.rate,
+                    sum(ci.chgamt) AS taxamt
+                   FROM main.salrtchg_item ci,
+                    main.salrtdet i
+                  WHERE ((i.code = ci.salrtdet_code) AND (ci.gst_component IS NOT NULL) AND (ci.gst_component = 'SGST'::bpchar))
+                  GROUP BY ci.salrtdet_code, ci.appamt, ci.rate, ci.gst_component) sgst ON ((d.code = sgst.detcode)))
+             LEFT JOIN ( SELECT ci.salrtdet_code AS detcode,
+                    ci.appamt AS taxable,
+                    ci.gst_component AS component,
+                    ci.rate,
+                    sum(ci.chgamt) AS taxamt
+                   FROM main.salrtchg_item ci,
+                    main.salrtdet i
+                  WHERE ((i.code = ci.salrtdet_code) AND (ci.gst_component IS NOT NULL) AND (ci.gst_component = 'IGST'::bpchar))
+                  GROUP BY ci.salrtdet_code, ci.appamt, ci.rate, ci.gst_component) igst ON ((d.code = igst.detcode)))
+             LEFT JOIN ( SELECT ci.salrtdet_code AS detcode,
+                    ci.appamt AS taxable,
+                    ci.gst_component AS component,
+                    ci.rate,
+                    sum(ci.chgamt) AS taxamt
+                   FROM main.salrtchg_item ci,
+                    main.salrtdet i
+                  WHERE ((i.code = ci.salrtdet_code) AND (ci.gst_component IS NOT NULL) AND (ci.gst_component = 'CESS'::bpchar))
+                  GROUP BY ci.salrtdet_code, ci.appamt, ci.rate, ci.gst_component) cess ON ((d.code = cess.detcode)))
+          WHERE ((d.icode)::text = (it.icode)::text)) z
+  GROUP BY z.hsn_sac_code, z.cgst_rate, z.sgst_rate, z.cess_rate, z.igst_rate, z.rtcode, z.unit;
+"""
+  columns = (
+    column "hsn_sac_code" {
+      type = "character varying(20)"
+    }
+    column "taxable_amount" {
+      type = "numeric"
+    }
+    column "cgst_rate" {
+      type = "numeric"
+    }
+    column "cgst_amt" {
+      type = "numeric"
+    }
+    column "sgst_rate" {
+      type = "numeric"
+    }
+    column "sgst_amt" {
+      type = "numeric"
+    }
+    column "igst_rate" {
+      type = "numeric"
+    }
+    column "igst_amt" {
+      type = "numeric"
+    }
+    column "cess_rate" {
+      type = "numeric"
+    }
+    column "cess_amt" {
+      type = "numeric"
+    }
+    column "grp_rtcode" {
+      type = "bigint"
+    }
+    column "sum_qty" {
+      type = "numeric"
+    }
+    column "unit" {
+      type = "character varying(100)"
+    }
+  )
+}
+

@@ -1,0 +1,121 @@
+procedure "main"."int$pkg_sal_srv_inv_sumup_line_lvl_salsrvchg(bigint)" {
+  text = """
+
+DECLARE
+
+      C3 CURSOR FOR
+           SELECT I.SRVCODE,
+                  I.CHGCODE,
+                  I.RATE,
+                  I.SIGN,
+                  I.BASIS,
+                  I.ISTAX,
+                  I.SOURCE,
+                  I.FORMULAE,
+                  round((SUM(I.CHGAMT))::numeric, 2) CHGAMT,
+                  round((SUM(I.APPAMT))::numeric, 2) APPAMT,
+                  SUM(I.SEQ),
+                  I.GLCODE,
+                  coalesce(F.COSTAPP, 'N')    GL_CC_APPL,
+                  I.SLCODE,
+                  GST_COMPONENT
+             FROM salsrvchg_item i
+LEFT OUTER JOIN fingl f ON (I.GLCODE = F.GLCODE)
+WHERE I.SRVCODE = p_srvcode  GROUP BY I.SRVCODE,
+                  I.CHGCODE,
+                  I.RATE,
+                  I.SIGN,
+                  I.BASIS,
+                  I.ISTAX,
+                  I.SOURCE,
+                  I.FORMULAE,
+                  I.GLCODE,
+                  F.COSTAPP,
+                  I.SLCODE,
+                  GST_COMPONENT
+         ORDER BY SUM(I.SEQ);
+
+      V_SEQ            bigint := 1;
+      V_ITEM_LVL_SEQ   bigint := 1;
+      V_TERMED         char(1);
+      V_CNT            smallint := 0;
+
+   
+BEGIN
+      DELETE FROM SALSRVCHG
+       WHERE SRVCODE = p_srvcode AND OPERATION_LEVEL = 'L';
+
+      FOR C3REC IN C3
+      LOOP
+         BEGIN
+            SELECT 'Y', SEQ
+              INTO STRICT V_TERMED, V_SEQ
+              FROM SALTERMDET
+             WHERE SALTERMCODE = p_srvcode AND CHGCODE = C3REC.CHGCODE;
+         EXCEPTION
+            WHEN no_data_found
+            THEN
+               V_TERMED := 'N';
+               V_SEQ := 999;
+         END;
+
+         INSERT INTO SALSRVCHG(SRVCODE,
+                                SEQ,
+                                CHGCODE,
+                                RATE,
+                                SIGN,
+                                GLCODE,
+                                GL_CC_APPL,
+                                SLCODE,
+                                BASIS,
+                                ISTAX,
+                                SOURCE,
+                                FORMULAE,
+                                CHGAMT,
+                                APPAMT,
+                                OPERATION_LEVEL,
+                                WITHOUT_TERM_FORMULA,
+                                GST_COMPONENT,
+                                CODE)
+              VALUES (C3REC.SRVCODE,
+                      V_SEQ,
+                      C3REC.CHGCODE,
+                      C3REC.RATE,
+                      C3REC.SIGN,
+                      C3REC.GLCODE,
+                      C3REC.GL_CC_APPL,
+                      C3REC.SLCODE,
+                      C3REC.BASIS,
+                      C3REC.ISTAX,
+                      C3REC.SOURCE,
+                      C3REC.FORMULAE,
+                      C3REC.CHGAMT,
+                      C3REC.APPAMT,
+                      'L',
+                      CASE WHEN V_TERMED='N' THEN  'Y'  ELSE 'N' END ,
+                      C3REC.GST_COMPONENT,
+                      nextval('salsrvchg_code'));
+
+         V_SEQ := coalesce(V_SEQ, 0) + 1;
+      END LOOP;
+   EXCEPTION
+      WHEN SQLSTATE '50003' THEN
+         call erraudit('x6',
+                   '11',
+                   '0',
+                   'error');
+         NULL;
+   END;
+
+"""
+  arguments = <
+    {
+      name = p_srvcode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

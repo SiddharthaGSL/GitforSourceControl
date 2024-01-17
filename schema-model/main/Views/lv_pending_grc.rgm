@@ -1,0 +1,113 @@
+view "main"."lv_pending_grc" {
+  text = """-
+SELECT m.grccode AS uk,
+    m.admou_code,
+    ou.name AS admou_name,
+    m.admsite_code_in,
+    s.shrtname AS owner_site,
+    s.name AS site_name,
+    sl.slname AS supplier_name,
+    m.scheme_docno AS receive_no,
+    m.docno AS document_no,
+    (m.grcdt)::date AS receive_date,
+    m.rcqty AS received_quantity,
+    m.netamt AS received_net_amount,
+    m.rcinvqty AS invoiced_quantity,
+    po.order_no,
+    (po.order_date)::date AS order_date,
+    m.ycode,
+    initcap(
+        CASE
+            WHEN (m.whether_consignment = 'Y'::bpchar) THEN 'CONSIGNMENT'::text
+            WHEN (m.whether_consignment = 'N'::bpchar) THEN 'NON-CONSIGNMENT'::text
+            ELSE NULL::text
+        END) AS grc_type,
+    pi.scheme_docno,
+    (pi.invdt)::date AS invdt,
+    (COALESCE(pi.invdt, (to_date('31-12-2999'::text, 'DD-MM-YYYY'::text))::timestamp without time zone))::date AS invoice_date
+   FROM (((((main.invgrcmain m
+     JOIN main.admou ou ON ((m.admou_code = ou.code)))
+     JOIN main.admsite s ON ((m.admsite_code_in = s.code)))
+     JOIN main.finsl sl ON ((m.pcode = sl.slcode)))
+     LEFT JOIN ( SELECT a.grccode,
+            string_agg((c.scheme_docno)::text, ', '::text ORDER BY a.grccode) AS order_no,
+            string_agg((c.orddt)::text, ', '::text ORDER BY a.grccode) AS order_date
+           FROM ((main.invgrcmain a
+             JOIN ( SELECT DISTINCT invgrcdet.grccode,
+                    invgrcdet.ordcode
+                   FROM main.invgrcdet) b ON ((a.grccode = b.grccode)))
+             JOIN main.purordmain c ON ((b.ordcode = c.ordcode)))
+          GROUP BY a.grccode) po ON ((m.grccode = po.grccode)))
+     LEFT JOIN ( SELECT d.grccode,
+            m_1.scheme_docno,
+            m_1.invdt,
+            count(1) AS count
+           FROM (main.purinvmain m_1
+             JOIN main.purinvdet d ON ((m_1.invcode = d.invcode)))
+          GROUP BY d.grccode, m_1.scheme_docno, m_1.invdt) pi ON ((m.grccode = pi.grccode)))
+  WHERE (m.whether_consignment = 'N'::bpchar);
+"""
+  columns = (
+    column "uk" {
+      type = "bigint"
+    }
+    column "admou_code" {
+      type = "bigint"
+    }
+    column "admou_name" {
+      type = "character varying(100)"
+    }
+    column "admsite_code_in" {
+      type = "bigint"
+    }
+    column "owner_site" {
+      type = "character varying(25)"
+    }
+    column "site_name" {
+      type = "character varying(100)"
+    }
+    column "supplier_name" {
+      type = "character varying(100)"
+    }
+    column "receive_no" {
+      type = "character varying(25)"
+    }
+    column "document_no" {
+      type = "character varying(100)"
+    }
+    column "receive_date" {
+      type = date
+    }
+    column "received_quantity" {
+      type = "numeric(20,3)"
+    }
+    column "received_net_amount" {
+      type = "numeric(20,2)"
+    }
+    column "invoiced_quantity" {
+      type = "numeric(20,3)"
+    }
+    column "order_no" {
+      type = text
+    }
+    column "order_date" {
+      type = date
+    }
+    column "ycode" {
+      type = "bigint"
+    }
+    column "grc_type" {
+      type = text
+    }
+    column "scheme_docno" {
+      type = "character varying(25)"
+    }
+    column "invdt" {
+      type = date
+    }
+    column "invoice_date" {
+      type = date
+    }
+  )
+}
+

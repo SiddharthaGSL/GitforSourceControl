@@ -1,0 +1,79 @@
+procedure "main"."db_pro_populate_po_send_mail(bigint, text)" {
+  text = """
+
+DECLARE
+
+ora2pg_rowcount int;
+/*******************************************************************************************************************
+   No.        Date        Author                   Description
+   ---------  ----------  ----------------------   ------------------------------------------------------------------
+   REV : 000  26/09/2014 PRASANTA                 (BUG ID : 1681) Purchase Order and Purchase Order Cancel to be made
+                                                                   Auto Email compatible  .
+   REV : 001  08/03/2016 PRASANTA                 (TFS ID : 13862) 'MAIL_SEND_YN' flag updation change in PO_SEND_MAIL for Purchase Order auto emails
+ *********************************************************************************************************************/
+ ERRCODE                 varchar(50);
+ ERRMSG                  varchar(2000);
+ V_ORDDT                 PURORDMAIN.ORDDT%TYPE;
+ V_NETAMT                PURORDMAIN.NETAMT%TYPE;
+ V_AUTHORCODE            PURORDMAIN.AUTHORCODE%TYPE;
+
+BEGIN
+         IF P_ACTION = 'DELETE' THEN
+            DELETE FROM PO_SEND_MAIL
+            WHERE  ORDCODE = P_ORDCODE;
+         ELSIF P_ACTION = 'INSERT' THEN
+            SELECT ORDDT,NETAMT,AUTHORCODE
+            INTO STRICT   V_ORDDT,V_NETAMT,V_AUTHORCODE
+            FROM   PURORDMAIN
+            WHERE  ORDCODE = P_ORDCODE;
+            INSERT INTO PO_SEND_MAIL(ORDCODE,ORDDT,NETAMT,AUTHORCODE,MAIL_SEND_YN,STATUS)
+            VALUES (P_ORDCODE,V_ORDDT,V_NETAMT,V_AUTHORCODE,'N','CREATED');
+         ELSIF P_ACTION = 'UPDATE' THEN
+            SELECT ORDDT,NETAMT,AUTHORCODE
+            INTO STRICT   V_ORDDT,V_NETAMT,V_AUTHORCODE
+            FROM   PURORDMAIN
+            WHERE  ORDCODE = P_ORDCODE;
+            -- START REV : 001
+            /*
+            UPDATE PO_SEND_MAIL
+            SET ORDDT = V_ORDDT,NETAMT = V_NETAMT,AUTHORCODE = V_AUTHORCODE,
+            MAIL_SEND_YN = 'N',STATUS = 'MODIFIED'
+            WHERE  ORDCODE = P_ORDCODE;
+            */
+            UPDATE PO_SEND_MAIL
+            SET ORDDT = V_ORDDT,NETAMT = V_NETAMT,AUTHORCODE = V_AUTHORCODE,
+            MAIL_SEND_YN = 'N',STATUS = CASE WHEN MAIL_SEND_YN='Y' THEN 'MODIFIED'  ELSE 'CREATED' END
+            WHERE  ORDCODE = P_ORDCODE;
+            -- END REV : 001
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0 THEN
+              INSERT INTO PO_SEND_MAIL(ORDCODE,ORDDT,NETAMT,AUTHORCODE,MAIL_SEND_YN,STATUS)
+              VALUES (P_ORDCODE,V_ORDDT,V_NETAMT,V_AUTHORCODE,'N','CREATED');
+            END IF;
+         END IF;
+         COMMIT;
+    EXCEPTION
+           WHEN OTHERS THEN
+                ERRCODE   := SQLSTATE;
+                ERRMSG  := SQLERRM;
+                CALL ERRAUDIT(USER,'DB_PRO_POPULATE_PO_SEND_MAIL',ERRCODE,ERRMSG);
+                RAISE EXCEPTION '%', 'Internal error occured.'||errmsg USING ERRCODE = '45111';
+END;
+"""
+  arguments = <
+    {
+      name = p_ordcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_action
+      type = text
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

@@ -1,0 +1,127 @@
+function "main"."trigger_fct_t_prdwiptrans_cogs_state()" {
+  text = """
+
+DECLARE
+    V_COGS_STATE                char(1);
+    
+    
+    V_INV_MON_CLS_CHK_STATE     char(1);
+    V_INV_MON_CLS_CHK_DT        timestamp;
+    V_INV_MONTH_STATUS          ADMOU_MONTH.INV_MONTH_STATUS%TYPE;
+    
+    V_ADMOU_CODE                ADMOU.CODE%TYPE;
+    V_OWNER             varchar(50);
+    V_NAME              varchar(50);
+    V_LINE              integer;
+    V_TYPE              varchar(50);
+BEGIN
+  BEGIN
+/********************************************************************************************************************************************
+    REV NO      OWNER       DATE            DESCRIPTION
+    ---------   --------    -----------     -------------------------------------------------------------------------------------------------
+    REV : 000   MANASH      14-APR-2017     (TFS ID : 21200) Inventory Valuation Revamp.
+    REV : 001   MANASH      04-JUL-2017     (TFS ID : 30718) COGS showing error when COGS is run with Production Cost.
+    REV : 002   DIPTIMAN    05-MAR-2018     (TFS ID : 32061) New cogs calculation related changes.
+*********************************************************************************************************************************************/
+    -- we have restricted data manupulation at stock other than relect package.
+    --CALL OWA_UTIL.WHO_CALLED_ME(V_OWNER,V_NAME,V_LINE,V_TYPE);
+
+    --V_COGS_STATE := DB_PKG_GINESYS_CONTEXT.GET_ATTRIBUTE('COGS_STATE');
+	--V_COGS_STATE := 'R';
+
+    -- START REV : 001
+    /*
+    IF  NVL(V_COGS_STATE,'N') = 'R' AND NVL(:NEW.COGS_CODE,1) <> 0 THEN
+        RAISE MY_COGS_EXP;
+    ELSIF   NVL(V_COGS_STATE,'N') = 'R' AND NVL(:NEW.COGS_CODE,1) = 0 THEN
+            :NEW.COGS_CODE := NULL;
+    */
+    IF  coalesce(V_COGS_STATE,'N') = 'R' THEN
+        IF  TG_OP = 'INSERT' THEN
+            IF  coalesce(NEW.ADMOU_CODE,0) = 0 THEN
+                SELECT  S.ADMOU_CODE
+                INTO STRICT    V_ADMOU_CODE
+                FROM    ADMSITE S
+                WHERE   S.CODE = coalesce(NEW.ADMSITE_CODE,OLD.ADMSITE_CODE);
+
+                NEW.ADMOU_CODE := V_ADMOU_CODE;
+            END IF;
+
+            NEW.COGS_CODE := NULL;
+        END IF;
+    -- END REV : 001
+    ELSE
+        -- checking inv month closing validation routine started or not
+        --V_INV_MON_CLS_CHK_STATE := DB_PKG_GINESYS_CONTEXT.GET_ATTRIBUTE('INV_MN_CLS');
+        --V_INV_MON_CLS_CHK_DT    := DB_PKG_GINESYS_CONTEXT.GET_ATTRIBUTE('INV_MN_CLS_DT');
+		V_INV_MON_CLS_CHK_DT    := '2023-04-17';
+
+        IF (coalesce(V_INV_MON_CLS_CHK_STATE,'@') = 'S' 
+			AND TO_CHAR(coalesce(OLD.TXN_DATE, NEW.TXN_DATE),'YYYYMMDD') <= TO_CHAR(V_INV_MON_CLS_CHK_DT,'YYYYMMDD'))
+            -- AND UPPER(NVL(V_NAME,'@')) != 'DB_PKG_PRODUCTION_COST_CALC' THEN
+            -- START REV : 002
+            -- AND UPPER(NVL(V_NAME,'@')) not in ('DB_PKG_PRODUCTION_COST_CALC') THEN
+            --AND UPPER(coalesce(V_NAME,'@')) not in ('DB_PKG_PRODUCTION_COST_CALC','DB_PKG_COGS') 
+			THEN
+            -- END REV : 002
+            RAISE EXCEPTION 'my_inv_mon_cls_chk' USING ERRCODE = '50002';
+        END IF;
+
+        SELECT  S.ADMOU_CODE
+        INTO STRICT    V_ADMOU_CODE
+        FROM    ADMSITE S
+        WHERE   S.CODE = coalesce(NEW.ADMSITE_CODE,OLD.ADMSITE_CODE);
+
+        IF  TG_OP = 'INSERT' THEN
+            IF  coalesce(NEW.ADMOU_CODE,0) = 0 THEN
+                NEW.ADMOU_CODE := V_ADMOU_CODE;
+            END IF;
+        END IF;
+
+        BEGIN
+            SELECT  OM.INV_MONTH_STATUS
+            INTO STRICT    V_INV_MONTH_STATUS
+            FROM    ADMOU_MONTH OM,
+                    ADMMONTH    MN
+            WHERE   OM.ADMOU_CODE   = V_ADMOU_CODE
+            AND     OM.ADMMONTH_CODE = MN.MCODE
+            AND     coalesce(OLD.TXN_DATE, NEW.TXN_DATE) BETWEEN MN.DTFR AND MN.DTTO;
+        EXCEPTION
+            WHEN no_data_found THEN
+            V_INV_MONTH_STATUS := 'O';
+            WHEN too_many_rows THEN
+            V_INV_MONTH_STATUS := 'O';
+        END;
+
+        -- IF  NVL(V_INV_MONTH_STATUS,'O') = 'C' AND UPPER(NVL(V_NAME,'@')) != 'DB_PKG_PRODUCTION_COST_CALC' THEN
+        IF  coalesce(V_INV_MONTH_STATUS,'O') = 'C' 
+			--AND UPPER(coalesce(V_NAME,'@')) not in ('DB_PKG_PRODUCTION_COST_CALC','DB_PKG_COGS','DB_PKG_PRODUCTION') 
+			THEN
+            RAISE EXCEPTION 'my_inv_mon_exp' USING ERRCODE = '50003';
+        END IF;
+    END IF;
+	
+EXCEPTION
+    WHEN SQLSTATE '50003' THEN
+    RAISE EXCEPTION '%', 'T_PRDWIPTRANS_COGS_STATE == >> Internal error occured.Invetory Month is already closed, unable to pass entry.'||'~'||V_NAME USING ERRCODE = '45111';
+    WHEN SQLSTATE '50002' THEN
+    CALL ERRAUDIT(USER, 'T_PRDWIPTRANS_COGS_STATE', -20111, 'T_PRDWIPTRANS_COGS_STATE == >> Internal error occured. Closing process of inventory month is going on, uanble to pass entry.'||'~'||V_NAME);
+    RAISE EXCEPTION '%', 'T_PRDWIPTRANS_COGS_STATE == >> Internal error occured. Closing process of inventory month is going on, uanble to pass entry.'||'~'||V_NAME USING ERRCODE = '45111';
+    WHEN SQLSTATE '50001' THEN
+    CALL ERRAUDIT(USER, 'T_PRDWIPTRANS_COGS_STATE', -20111, 'T_PRDWIPTRANS_COGS_STATE == >> Internal error occured. COGS is in running state, unable pass entry.'||'~'||V_NAME);
+    RAISE EXCEPTION '%', 'T_PRDWIPTRANS_COGS_STATE == >> Internal error occured. COGS is in running state, unable to pass entry.'||'~'||V_NAME USING ERRCODE = '45111';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

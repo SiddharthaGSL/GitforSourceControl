@@ -1,0 +1,84 @@
+procedure "main"."p_psite_grt_del(text, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+ /********************************************************************************************************************************
+	 PURPOSE: TO DELETE GRT AND RELATED INFORMATION FOR GRT REVERT OPERATION
+
+	REV NO		 OWNER			DATE			DESCRIPTION
+	---------	 -----------	-----------		------------------------------------------------------------------------
+	REV : 001	 SIDDHARTHA		07-DEC-2016	    (BUG ID : XXX) From this version packet information will not be deleted with
+	                                                            GRTREVERT operation.
+	REV : 002	 MOUSUMI		25-APR-2018	    (BUG ID : 37820) Non trading
+	REV : 003	 SIDDHARTHA		25-APR-2018	    (BUG ID : 37820) Comment out the Finpost Portion because we are including it into GRT and GRTITEM Triggers
+  *********************************************************************************************************************************/
+BEGIN
+   /*DELETE FROM fincosttag
+         WHERE     postcode IN (SELECT postcode
+                                  FROM finpost
+                                 WHERE entcode = p_sitecuid||'-'||p_grcdocid)
+               AND enttype IN  ('TOA','TOD');
+
+   DELETE FROM finpost
+         WHERE entcode = p_sitecuid||'-'||p_grcdocid AND enttype IN ('TOA','TOD');
+
+   DELETE FROM invstock
+         WHERE     entcode = p_sitecuid||'-'||p_grcdocid
+               AND (   (enttype = 'STI' AND subenttype IN ('COI', 'SOI'))
+                    OR (enttype = 'STO' AND subenttype = 'COO')
+                    OR (enttype = 'GRT' AND subenttype = 'SOO'));*/
+   -- START REV : 001
+   /*
+   DELETE FROM psite_packet
+    WHERE     ID IN (SELECT DISTINCT packetdocid
+                       FROM psite_grtitem
+                      WHERE psite_grt_code = p_grtcode);
+   */
+   UPDATE psite_packet
+      SET GRTDOCID  = NULL
+    WHERE     ID IN (SELECT DISTINCT packetdocid
+                       FROM psite_grtitem
+                      WHERE psite_grt_code = concat(p_sitecuid,'-',p_grcdocid));/*p_sitecuid||'-'||p_grcdocid)*/
+    -- END REV : 001
+   DELETE FROM psite_grtchgitem
+         WHERE psite_grt_code = concat(p_sitecuid,'-',p_grcdocid);/*p_sitecuid||'-'||p_grcdocid*/
+    -- START REV : 001
+   /*DELETE FROM psite_packetitem
+         WHERE packetdocid IN (
+                  SELECT DISTINCT pkt.ID
+                             FROM psite_packet pkt, psite_grtitem grt
+                            WHERE pkt.ID = grt.packetdocid
+                              AND grt.psite_grt_code = p_grtcode);*/
+     -- END REV : 001
+   DELETE FROM psite_grtitem
+         WHERE psite_grt_code = concat(p_sitecuid,'-',p_grcdocid)/*p_sitecuid||'-'||p_grcdocid*/;
+   DELETE FROM psite_grtchg
+         WHERE psite_grt_code = concat(p_sitecuid,'-',p_grcdocid)/*p_sitecuid||'-'||p_grcdocid*/;
+   DELETE FROM psite_grt
+         WHERE code = concat(p_sitecuid,'-',p_grcdocid)/*p_sitecuid||'-'||p_grcdocid*/;
+END;
+"""
+  arguments = <
+    {
+      name = p_sitecuid
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_grcdocid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_admsite_code
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

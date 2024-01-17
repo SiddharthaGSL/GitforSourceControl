@@ -1,0 +1,186 @@
+procedure "main"."db_pkg_check_routine_ym_close$loc_pro_check_year_close(bigint, bigint, character varying)" {
+  text = """
+
+DECLARE
+
+      v_prv_yr_stat   admyear.ext%TYPE;
+      v_cnt           integer;
+      v_err_flag      char(1) := 'N';
+      v_plglcode      admcmpprof.profit_loss_glcode%TYPE;
+      v_year_status   admou_year.admyear_status%TYPE;
+      v_err_msg       admou_year.validation_error%TYPE
+                         := '[' || clock_timestamp() || ']';
+
+BEGIN
+      -- checking year is already close
+      BEGIN
+         SELECT coalesce(y.admyear_status, 'O')
+           INTO STRICT v_year_status
+           FROM admou_year y
+          WHERE y.admou_code = p_admou_code AND y.admyear_code = p_ycode;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            v_year_status := 'O';
+      END;
+      IF v_year_status = 'O'
+      THEN
+         IF p_ycode > 2
+         THEN
+            -- checking for previous year status
+            SELECT coalesce(y.admyear_status, 'O')
+              INTO STRICT v_prv_yr_stat
+              FROM admou_year y
+             WHERE     y.admou_code = p_admou_code
+                   AND y.admyear_code =
+                          (SELECT MAX(y1.admyear_code)
+                             FROM admou_year y1
+                            WHERE     y1.admyear_code < p_ycode
+                                  AND y1.admou_code = p_admou_code);
+            IF v_prv_yr_stat <> 'C'
+            THEN
+               v_err_flag := 'Y';
+               v_err_msg :=
+                     v_err_msg
+                  || ' Previous Accounting Year in not closed yet. Please close the previous year and try again.';
+            END IF;
+         END IF;
+         -- checking all finance month close or not
+         SELECT coalesce(COUNT(1), 0)
+           INTO STRICT v_cnt
+           FROM admmonth mn, admou_month um
+          WHERE     mn.ycode = p_ycode
+                AND mn.mcode = um.admmonth_code
+                AND um.fin_month_status <> 'C'
+                AND um.admou_code = p_admou_code;
+         IF v_cnt <> 0
+         THEN
+            v_err_flag := 'Y';
+            v_err_msg :=
+                  v_err_msg
+               || '~'
+               || '['
+               || clock_timestamp()
+               || ']'
+               || ' Please Close all the Financial Months before proceeding to close the Accounting Year.';
+         END IF;
+         -- checking p/l gl is defined in company profile
+         BEGIN
+            SELECT p.profit_loss_glcode
+              INTO STRICT v_plglcode
+              FROM admcmpprof p;
+            IF v_plglcode IS NULL
+            THEN
+               v_err_flag := 'Y';
+               v_err_msg :=
+                     v_err_msg
+                  || '~'
+                  || '['
+                  || clock_timestamp()
+                  || ']'
+                  || ' Please provide Profit and Loss for B/S Posting ledger in Organization Group.';
+            END IF;
+         EXCEPTION
+            WHEN no_data_found
+            THEN
+               v_plglcode := NULL;
+               v_err_flag := 'Y';
+               v_err_msg :=
+                     v_err_msg
+                  || '~'
+                  || '['
+                  || clock_timestamp()
+                  || ']'
+                  || ' Please provide Profit and Loss for B/S Posting ledger in Organization Group.';
+         END;
+         -- checking for next a/c year status
+         SELECT coalesce(COUNT(1), 0)
+           INTO STRICT v_cnt
+           FROM admou_year y
+          WHERE y.admyear_code > p_ycode AND y.admou_code = p_admou_code;
+         IF v_cnt = 0
+         THEN
+            v_err_flag := 'Y';
+            v_err_msg :=
+                  v_err_msg
+               || '~'
+               || '['
+               || clock_timestamp()
+               || ']'
+               || ' Please create next Accounting Year before closing the selected Accounting Year.';
+         END IF;
+         -- before check any unposted document
+         -- reset unposted status at stock table
+         CALL db_pro_upd_release_status(p_ycode, p_admou_code);
+         -- check all financial documents are posted
+         SELECT coalesce(COUNT(1), 0)
+           INTO STRICT v_cnt
+           FROM ginview.lv_finance_entry f
+          WHERE     f.release_status = 'U'
+                AND f.ycode = p_ycode
+                AND f.admou_code = p_admou_code;
+         IF v_cnt <> 0
+         THEN
+            v_err_flag := 'Y';
+            v_err_msg :=
+                  v_err_msg
+               || '~'
+               || '['
+               || clock_timestamp()
+               || ']'
+               || ' Unposted entries exists. Accounting Year cannot be closed.';
+         END IF;
+         -- if all chks pass the close.
+         IF v_err_flag <> 'Y'
+         THEN
+            CALL db_pro_ledger_bal_transfer(p_ycode, v_plglcode, p_admou_code);
+            UPDATE admou_year y
+               SET admyear_status = 'C',
+                   admyear_closed_on = clock_timestamp(),
+                   admyear_closed_by = p_user_id,
+                   validation_error  = NULL
+             WHERE y.admyear_code = p_ycode AND y.admou_code = p_admou_code;
+         ELSE
+            UPDATE admou_year y
+               SET admyear_status = 'O', validation_error = v_err_msg
+             WHERE y.admyear_code = p_ycode AND y.admou_code = p_admou_code;
+         END IF;
+      ELSE
+         UPDATE admou_year y
+            SET validation_error =
+                   'Selected accounting year has already been closed.'
+          WHERE y.admyear_code = p_ycode AND y.admou_code = p_admou_code;
+      END IF;
+      COMMIT;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         CALL erraudit(USER,
+                   'db_pkg_check_routine_ym_close_loc_pro_check_year_close',
+                   SQLSTATE,
+                   SQLERRM);
+   END;
+"""
+  arguments = <
+    {
+      name = p_admou_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_ycode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_user_id
+      type = character varying
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

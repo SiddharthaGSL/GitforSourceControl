@@ -1,0 +1,255 @@
+function "main"."int$pkg_bom_int$pkg_bom_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      errmsg             varchar(500);
+      vsession           varchar(100);
+      vdetailtbl         varchar(1000);
+      vdetailrec         varchar(500);
+      errcode            text;
+      vcount             bigint;
+      v_bommaincode      bigint;
+      v_bomversioncode   bigint;
+      v_bomversion       bigint;
+      v_PRDBOMOPERATION_CODE bigint;
+      v_userapprovepriv   char(1);
+      v_comp_count       bigint;
+BEGIN
+      DECLARE
+         C_BOMS CURSOR FOR
+            SELECT a.DERIVED_ASSEMBLY_ICODE, a.DERIVED_ROUTECODE, a.DERIVED_PRDBOMMAIN_CODE
+              FROM int$stg_bom a
+             WHERE     a.userid = p_userid
+             GROUP BY a.DERIVED_ASSEMBLY_ICODE, a.DERIVED_ROUTECODE, DERIVED_PRDBOMMAIN_CODE;
+
+         C_BOMOPS CURSOR(p_routecode bigint, p_ass_item_code text)
+         FOR 
+            SELECT a.*, y.ASSEMBLY_SUPPLY_TYPE
+            FROM prdroutedet a
+LEFT OUTER JOIN ( SELECT distinct DERIVED_ROUTECODE, DERIVED_OPERATION_SEQ, DERIVED_PROCESSCODE, ASSEMBLY_SUPPLY_TYPE
+                                    FROM int$stg_BOM a
+                                  WHERE  a.USERID = p_userid
+                                    AND  a.DERIVED_ROUTECODE = p_routecode
+                                    and  a.DERIVED_ASSEMBLY_ICODE = p_ass_item_code
+                                 ) y ON (a.ROUTECODE = y.DERIVED_ROUTECODE AND a.OPERATION_SEQ = y.DERIVED_OPERATION_SEQ AND a.PRCODE = y.DERIVED_PROCESSCODE)
+WHERE a.ROUTECODE = p_routecode    ORDER BY a.OPERATION_SEQ;
+
+      BEGIN
+      
+         SELECT coalesce(approve_bomversion, 'N') 
+         into STRICT v_userapprovepriv
+         from hrdemp e, admprof p
+         where ecode = p_userid
+         and p.PROFCODE = e.PROFCODE;
+
+         FOR BOM IN C_BOMS
+         LOOP
+            IF BOM.DERIVED_PRDBOMMAIN_CODE IS NULL
+             THEN
+                SELECT nextval('prdbommain_code') INTO STRICT v_bommaincode;
+
+                INSERT INTO PRDBOMMAIN(CODE, ASSEMBLY_ICODE, IS_SELECTED, TIME, ECODE, ROUTECODE, ENTRY_SOURCE)
+                VALUES (v_bommaincode, BOM.DERIVED_ASSEMBLY_ICODE, 0, clock_timestamp(), p_userid, BOM.DERIVED_ROUTECODE, 'EXCEL');
+
+                v_bomversion := 1;
+
+             ELSE
+             
+                v_bommaincode := BOM.DERIVED_PRDBOMMAIN_CODE;
+
+                UPDATE PRDBOMMAIN 
+                SET LAST_ACCESS_TIME = clock_timestamp(), LAST_ACCESS_ECODE = p_userid
+                WHERE CODE =  v_bommaincode;
+
+                SELECT coalesce(MAX(v.BOM_VERSION_NO), 0) + 1
+                INTO STRICT v_bomversion
+                FROM PRDBOMVER v
+                where v.BOMCODE = v_bommaincode;
+
+            END IF;
+
+            
+            SELECT nextval('prdbomver_code') INTO STRICT v_bomversioncode;
+
+            INSERT INTO PRDBOMVER(CODE, BOM_VERSION_NO, BOMCODE, STATUS, ECODE, TIME, APPROV_ECODE, APPROV_TIME)
+            VALUES (v_bomversioncode, v_bomversion, v_bommaincode, 
+                    CASE WHEN v_userapprovepriv = 'Y' THEN 'A' ELSE 'N' END,
+                    p_userid, 
+                    clock_timestamp(),
+                    CASE WHEN v_userapprovepriv = 'Y' THEN p_userid ELSE NULL END,
+                    CASE WHEN v_userapprovepriv = 'Y' THEN clock_timestamp() ELSE NULL END );
+
+            
+            FOR OP IN C_BOMOPS(BOM.DERIVED_ROUTECODE, BOM.DERIVED_ASSEMBLY_ICODE)
+                LOOP
+                
+                    SELECT nextval('prdbomoperation_code') INTO STRICT v_PRDBOMOPERATION_CODE;
+
+                    INSERT INTO PRDBOMOPERATION(CODE, BOMCODE, OPERATION_SEQ, PRCODE, CONSIDER_IN_WIP, ASSEMBLY_ICODE, BOMVER_CODE, ASSEMBLY_SUPPLY_TYPE)
+                    VALUES (
+                            v_PRDBOMOPERATION_CODE, v_bommaincode, 
+                            OP.OPERATION_SEQ, OP.PRCODE, OP.CONSIDER_IN_WIP,
+                            BOM.DERIVED_ASSEMBLY_ICODE, v_bomversioncode,
+                            CASE WHEN OP.OPERATION_SEQ = 1 THEN 'N'
+                                 WHEN UPPER(OP.ASSEMBLY_SUPPLY_TYPE) = 'PUSH' THEN 'P'
+                                 ELSE 'O' END
+                            );
+
+                    -- INSERT DEFINED COMPONENTS for the operation
+                    SELECT COUNT(*)
+                    into STRICT v_comp_count
+                    FROM int$stg_BOM a
+                    WHERE a.USERID = p_userid
+                    AND a.DERIVED_COMP_ICODE IS NOT NULL
+                    AND a.DERIVED_ASSEMBLY_ICODE = BOM.DERIVED_ASSEMBLY_ICODE
+                    and a.derived_routecode = BOM.derived_routecode
+                    and a.DERIVED_OPERATION_SEQ = OP.OPERATION_SEQ
+                    and a.derived_processcode = op.prcode;
+
+                    IF coalesce(v_comp_count, 0) > 0 
+                        THEN
+                            INSERT INTO PRDBOMDET(CODE, BOMCODE, OPERATION_SEQ, PRCODE, COMPONENT_ICODE, 
+                                                    ALT_GRPCODE, 
+                                                    SUPPLY_TYPE, 
+                                                    ISMANDATORY, 
+                                                    QTY, TOLERANCE, SHRINKAGE, 
+                                                    ISSUE_ASSEMBLY_ITEM, 
+                                                    IS_ASS_ITEM,
+                                                    BOMOPERATION_CODE, BOMVER_CODE, ASSEMBLY_ICODE)
+                            SELECT nextval('prdbomdet_code'), v_bommaincode, OP.OPERATION_SEQ, OP.PRCODE, a.DERIVED_COMP_ICODE,
+                                   CASE WHEN UPPER(a.COMP_ALTERNATE_ALLOWED) = 'NO' THEN NULL ELSE
+                                   coalesce(coalesce(a.DERIVED_ALTDEPARTMENTCODE, a.DERIVED_ALTSECTIONCODE), a.DERIVED_ALTDIVISIONCODE) END, 
+                                   CASE WHEN UPPER(a.COMP_SUPPLY_TYPE) = 'PUSH' THEN 'P'
+                                        WHEN UPPER(a.COMP_SUPPLY_TYPE) = 'PULL ON ORDER' THEN 'O'
+                                        ELSE 'C' END,
+                                   CASE WHEN UPPER(a.COMP_IS_MANDATORY) = 'YES' THEN 'Y' ELSE 'N' END,
+                                   a.COMP_QTY, a.COMP_TOLERANCE_FACTOR, a.COMP_SHRINKAGE_FACTOR, 
+                                   CASE WHEN OP.OPERATION_SEQ = 1 THEN 'N'
+                                         WHEN UPPER(OP.ASSEMBLY_SUPPLY_TYPE) = 'PUSH' THEN 'P'
+                                         ELSE 'O' END,
+                                   'N',
+                                   v_PRDBOMOPERATION_CODE, v_bomversioncode, BOM.DERIVED_ASSEMBLY_ICODE
+                            FROM int$stg_BOM a
+                            WHERE a.USERID = p_userid
+                              AND a.DERIVED_COMP_ICODE IS NOT NULL
+                              AND a.DERIVED_ASSEMBLY_ICODE = BOM.DERIVED_ASSEMBLY_ICODE
+                              and a.derived_routecode = BOM.derived_routecode
+                              and a.DERIVED_OPERATION_SEQ = op.OPERATION_SEQ
+                              and a.derived_processcode = op.prcode;
+
+                    END IF;
+
+                    v_comp_count := 0;
+
+                    -- Inserting assembly icode as component for processes other than operation_seq 1
+                    IF OP.OPERATION_SEQ > 1
+                        THEN
+                            --CALL erraudit(user, 'bom', '5', SQLERRM);
+                            INSERT INTO PRDBOMDET(CODE, BOMCODE, OPERATION_SEQ, PRCODE, COMPONENT_ICODE,
+                                                    SUPPLY_TYPE, ISMANDATORY, QTY,
+                                                    ISSUE_ASSEMBLY_ITEM, 
+                                                    IS_ASS_ITEM,
+                                                    BOMOPERATION_CODE, BOMVER_CODE, ASSEMBLY_ICODE)
+                            VALUES (nextval('prdbomdet_code'), v_bommaincode, OP.OPERATION_SEQ, OP.PRCODE, BOM.DERIVED_ASSEMBLY_ICODE, 
+                                   'O', 'Y', 1,
+                                   CASE WHEN OP.OPERATION_SEQ = 1 THEN 'N'
+                                         WHEN UPPER(OP.ASSEMBLY_SUPPLY_TYPE) = 'PUSH' THEN 'P'
+                                         ELSE 'O' END,
+                                   'Y',
+                                   v_PRDBOMOPERATION_CODE, v_bomversioncode, BOM.DERIVED_ASSEMBLY_ICODE );
+                    END IF;
+
+                END LOOP;
+
+         END LOOP;
+      END;
+
+      -- log to be added in history table
+      SELECT nextval('int$error_log_code') INTO STRICT vsession;
+
+      vdetailtbl :=
+            'create table ginarchive.bom_'
+         || vsession
+         || ' as select distinct ASSEMBLY_ICODE_BARCODE, ROUTE_ID from int$stg_bom where userid ='
+         || p_userid::text;
+
+      EXECUTE vdetailtbl;
+
+      vdetailrec := 'select count(1) from ginarchive.bom_' || vsession::text;
+
+      EXECUTE vdetailrec INTO STRICT vcount;
+
+      INSERT INTO int$history(code,
+                               importedby,
+                               importedon,
+                               classname,
+                               summary,
+                               history_detail_tablename,
+                               history_detail_row_count)
+           VALUES (nextval('int$history_code'),
+                   p_userid,
+                   clock_timestamp(),
+                   'BOM',
+                   vcount::TEXT || ' Data updated successfully.',
+                   'ginarchive.bom_' || vsession,
+                   vcount);
+
+      RETURN('1');
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         -- error log for oracle internal error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'BOM',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

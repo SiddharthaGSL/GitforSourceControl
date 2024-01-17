@@ -1,0 +1,268 @@
+procedure "main"."db_pkg_upd_rate$sumup_line_lvl_salordchg()" {
+  text = """
+
+DECLARE
+
+       ora2pg_rowcount int;
+v_seq             integer := 1;
+       v_item_lvl_seq    bigint    := 1;
+       v_termed          char(1);
+       v_cnt             smallint := 0;
+
+       C3 CURSOR FOR
+              SELECT i.ordcode, i.salchgcode, i.rate, i.sign, i.glcode,
+                     i.slcode, i.basis,  i.istax, i.source, i.formulae,
+                     round((SUM(i.chgamt))::numeric, 2) chgamt, round((SUM(i.appamt))::numeric, 2) appamt, SUM(i.seq) seq
+                     ,gst_component  -- rev : 001
+              FROM   salordchg_item i
+              WHERE  i.ordcode = current_setting('db_pkg_upd_rate.g_ordcode')::bigint
+              GROUP BY i.ordcode, i.salchgcode, i.rate, i.sign, i.glcode, i.slcode, i.basis, i.istax,i.source, i.formulae
+                        ,gst_component  -- rev : 001
+              ORDER BY SUM(i.seq);
+
+BEGIN
+       DELETE FROM salordchg
+       WHERE  ordcode = current_setting('db_pkg_upd_rate.g_ordcode')::bigint
+       AND    operation_level = 'L';
+
+       BEGIN
+           SELECT COUNT(DISTINCT glcode) + COUNT(DISTINCT slcode)
+           INTO STRICT   v_cnt
+           FROM   salordchg_item i
+           WHERE  i.ordcode = current_setting('db_pkg_upd_rate.g_ordcode')::bigint
+           GROUP BY i.ordcode, i.salchgcode, i.rate
+           HAVING COUNT(DISTINCT glcode) > 1 OR COUNT(DISTINCT slcode) > 1;
+
+           IF   coalesce(v_cnt,0) > 0 THEN -- SAME CHARGE, RATE HAVING DIFFERENT GL/SL COMBINATION
+                RAISE EXCEPTION 'unique_err' USING ERRCODE = '50001';
+           END IF;
+       EXCEPTION
+           WHEN no_data_found THEN NULL;
+       END;
+
+       FOR c3rec IN c3 LOOP
+           BEGIN
+               SELECT 'Y', SEQ
+               INTO STRICT   v_termed, v_seq
+               FROM   saltermdet
+               WHERE  saltermcode = current_setting('db_pkg_upd_rate.g_saltermcode')::bigint
+               AND    chgcode     = c3rec.salchgcode;
+           EXCEPTION
+               WHEN no_data_found THEN
+                    v_termed  := 'N';
+                    v_seq     := 999;
+           END;
+
+           IF  c3rec.basis = 'A' THEN
+               SELECT MIN(seq)
+               INTO STRICT   v_seq
+               FROM   salordchg_item
+               WHERE  ordcode = current_setting('db_pkg_upd_rate.g_ordcode')::bigint
+               AND    salchgcode = c3rec.salchgcode
+               AND    operation_level = 'L';
+           ELSE
+               SELECT MIN(seq)
+               INTO STRICT   v_seq
+               FROM   salordchg_item
+               WHERE  ordcode = current_setting('db_pkg_upd_rate.g_ordcode')::bigint
+               AND    salchgcode = c3rec.salchgcode
+               AND    coalesce(rate, 0)    = coalesce(c3rec.rate, 0)
+               AND    operation_level = 'L';
+           END IF;
+
+           IF  coalesce(v_seq,0) = 0 THEN
+               v_seq := 800 + v_item_lvl_seq;
+               v_item_lvl_seq := v_item_lvl_seq + 1;
+           END IF;
+
+           INSERT INTO salordchg(ordcode, seq, chgcode, rate, sign, glcode, slcode, basis, istax, source,
+                          formulae, chgamt, appamt, operation_level, without_term_formula
+                           ,gst_component -- rev : 001
+                          )
+           VALUES (c3rec.ordcode, v_seq, c3rec.salchgcode, c3rec.rate, c3rec.sign, c3rec.glcode, c3rec.slcode, c3rec.basis,
+                   c3rec.istax, c3rec.source, c3rec.formulae, c3rec.chgamt, c3rec.appamt, 'L', CASE WHEN v_termed='N' THEN 'Y'  ELSE 'N' END
+                    ,c3rec.gst_component -- rev : 001
+                   );
+
+           --v_seq := NVL(v_seq,0) + 1;
+       END LOOP;
+
+       -- ROUND OFF ADJUSTED IN MAIN CHARGE TABLE
+       DECLARE
+           C1 CURSOR FOR
+               SELECT a.code,
+                      coalesce(b.roundoff, 'N')   roundoff,
+                      coalesce(a.chgamt, 0)       chgamt,
+                      coalesce(a.appamt, 0)       appamt,
+                      coalesce(a.rate, 0)         rate,
+                      a.sign                 sign
+               FROM   salordchg a, salchg b
+               WHERE  a.ordcode = current_setting('db_pkg_upd_rate.g_ordcode')::bigint
+               AND    a.chgcode = b.salchgcode
+               AND    a.basis = 'P'
+               AND    b.source <> 'E';
+       BEGIN
+           FOR c1_loop IN c1 LOOP
+               UPDATE salordchg
+               SET    chgamt = CASE WHEN c1_loop.sign='+' THEN  ROUND(coalesce(c1_loop.chgamt, 0) + (((coalesce(c1_loop.appamt, 0) * coalesce(c1_loop.rate, 0)) / 100) - coalesce(c1_loop.chgamt, 0)), CASE WHEN c1_loop.roundoff='N' THEN  2  ELSE 0 END )  ELSE -1*(ROUND(coalesce(c1_loop.chgamt, 0) + (((coalesce(c1_loop.appamt, 0) * coalesce(c1_loop.rate, 0)) / 100) - coalesce(c1_loop.chgamt, 0)), CASE WHEN c1_loop.roundoff='N' THEN  2  ELSE 0 END )) END
+               WHERE  code = c1_loop.code;
+           END LOOP;
+       END;
+
+       -- ROUND OFF ADJUSTED IN ITEM CHARGE TABLE
+       DECLARE
+          v_totchgamt    salordchg.chgamt%TYPE;
+          v_maxcode      salordchg_item.code%TYPE := 0;
+
+          c1 CURSOR FOR
+               SELECT a.salchgcode, coalesce(a.rate, 0) rate, b.istax, coalesce(b.roundoff, 'N') roundoff, SUM(coalesce(a.chgamt, 0)) chgamt
+               FROM   salordchg_item a, salchg b
+               WHERE  a.ordcode = current_setting('db_pkg_upd_rate.g_ordcode')::bigint
+               AND    a.salchgcode = b.salchgcode
+               AND    a.basis   = 'P'
+               AND    b.source  <> 'E'
+               GROUP BY a.salchgcode, coalesce(a.rate, 0), b.istax, coalesce(b.roundoff, 'N');
+       BEGIN
+           FOR c1_loop IN c1 LOOP
+               BEGIN
+                   SELECT coalesce(chgamt, 0)
+                   INTO STRICT   v_totchgamt
+                   FROM   salordchg
+                   WHERE  chgcode = c1_loop.salchgcode
+                   AND    ordcode = current_setting('db_pkg_upd_rate.g_ordcode')::bigint
+                   AND    coalesce(rate, 0) = coalesce(c1_loop.rate, 0);
+               EXCEPTION
+                   WHEN no_data_found THEN
+                        v_totchgamt := 0;
+               END;
+
+               SELECT MAX(code)
+               INTO STRICT   v_maxcode
+               FROM   salordchg_item
+               WHERE  ordcode = current_setting('db_pkg_upd_rate.g_ordcode')::bigint
+               AND    salchgcode = c1_loop.salchgcode
+               AND    coalesce(appamt, 0) <> 0;
+
+               UPDATE salordchg_item
+               SET    chgamt = ROUND(coalesce(chgamt, 0) + (coalesce(v_totchgamt, 0) - coalesce(c1_loop.chgamt, 0)), CASE WHEN c1_loop.roundoff='N' THEN  2  ELSE 0 END )
+               WHERE  code   = v_maxcode
+               AND    ordcode = current_setting('db_pkg_upd_rate.g_ordcode')::bigint;
+
+               GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount <> 0 THEN
+                  DELETE FROM global_temp_storage
+                  WHERE  code_1 = v_maxcode;
+
+                  INSERT INTO global_temp_storage(code_1)
+                                (SELECT salorddet_code FROM salordchg_item WHERE code = v_maxcode);
+               END IF;
+
+               IF  c1_loop.istax = 'N' THEN
+                   UPDATE salorddet
+                   SET    chgamt = ROUND(coalesce(chgamt, 0) + (coalesce(v_totchgamt, 0) - coalesce(c1_loop.chgamt, 0)), CASE WHEN c1_loop.roundoff='N' THEN  2  ELSE 0 END )
+                   WHERE  code   = (
+                                       SELECT a.salorddet_code
+                                       FROM   salordchg_item    a
+                                       WHERE  code = (
+                                                         SELECT MAX(b.code)
+                                                         FROM   salordchg_item    b
+                                                         WHERE  b.ordcode = current_setting('db_pkg_upd_rate.g_ordcode')::bigint
+                                                         AND    b.salchgcode = c1_loop.salchgcode
+                                                     )
+                                   )
+                   AND     ordcode = current_setting('db_pkg_upd_rate.g_ordcode')::bigint;
+               END IF;
+           END LOOP;
+       END;
+
+       DECLARE
+           v_chgamt        salordchg_item.chgamt%TYPE := 0;
+           v_basic         salordchg_item.appamt%TYPE := 0;
+           v_dummy_chgamt  salordchg_item.chgamt%TYPE := 0;
+           v_sign          char(1);
+
+           c2 CURSOR FOR
+               SELECT 	SOURCE,
+								SLCODE,
+								SIGN,
+								SEQ,
+								SALORDDET_CODE,
+								SALCHGCODE,
+								RATE,
+								ORDCODE,
+								OPERATION_LEVEL,
+								ISTAX,
+								GST_COMPONENT,
+								GLCODE,
+								FORMULAE,
+								CODE,
+								CHGAMT,
+								BASIS,
+								APPAMT
+               FROM   salordchg_item
+               WHERE  salorddet_code IN (SELECT code_1 FROM global_temp_storage)
+               AND    ordcode = current_setting('db_pkg_upd_rate.g_ordcode')::bigint
+               ORDER BY code, seq;
+
+           C4 CURSOR FOR
+               SELECT i.ordcode, i.salchgcode, i.rate, i.sign, i.glcode costapp, i.slcode, i.basis, i.istax, i.source, i.formulae,
+                      round((SUM(i.chgamt))::numeric, 2) chgamt,
+                      round((SUM(i.appamt))::numeric, 2) appamt,
+                      SUM(i.seq)
+               FROM   salordchg_item i
+               WHERE  i.ordcode = current_setting('db_pkg_upd_rate.g_ordcode')::bigint
+               GROUP BY i.ordcode, i.salchgcode, i.rate, i.sign, i.glcode, i.slcode, i.basis, i.istax, i.source, i.formulae
+               ORDER BY sum(i.seq);
+       BEGIN
+           FOR c2_loop IN c2 LOOP
+               IF  c2_loop.formulae <> 'B' THEN
+                   FOR i IN 1..LENGTH(c2_loop.formulae) LOOP
+                       IF  SUBSTR(c2_loop.formulae, I,1) <> 'B' THEN
+                           IF  SUBSTR(c2_loop.formulae, I,1) IN ('-', '+') THEN
+                               v_sign := SUBSTR(c2_loop.formulae, i,1);
+                           ELSE
+                               BEGIN
+                                   SELECT chgamt
+                                   INTO STRICT   v_dummy_chgamt
+                                   FROM   salordchg_item
+                                   WHERE  ordcode = current_setting('db_pkg_upd_rate.g_ordcode')::bigint
+                                   AND    salorddet_code = c2_loop.salorddet_code
+                                   AND    seq = SUBSTR(c2_loop.formulae, i,1);
+                               EXCEPTION
+                                   WHEN no_data_found THEN NULL;
+                                   WHEN OTHERS THEN null;
+                               END;
+
+                               IF  V_SIGN = '+' THEN
+                                   V_CHGAMT := coalesce(v_chgamt, 0) + coalesce(v_dummy_chgamt, 0);
+                               ELSE
+                                   V_CHGAMT := coalesce(v_chgamt, 0) - coalesce(v_dummy_chgamt, 0);
+                               END IF;
+                           END IF;
+                       END IF;
+                   END LOOP;
+               END IF;
+           END LOOP;
+
+           FOR c4_loop IN c4 LOOP
+               UPDATE salordchg
+               SET    appamt  = c4_loop.appamt
+               WHERE  ordcode =    current_setting('db_pkg_upd_rate.g_ordcode')::bigint
+               AND    chgcode = c4_loop.salchgcode
+               AND    rate = c4_loop.rate;
+           END LOOP;
+       END;
+   EXCEPTION
+       WHEN SQLSTATE '50001' THEN
+            PERFORM set_config('db_pkg_upd_rate.v_errcode', SQLSTATE, false);
+            PERFORM set_config('db_pkg_upd_rate.v_errmsg', SQLERRM, false);
+            CALL erraudit(USER, 'DB_PKG_PACKET.CALCULATE_TERM_ITEM_SO - ', current_setting('db_pkg_upd_rate.v_errcode')::varchar(50), current_setting('db_pkg_upd_rate.v_errmsg')::varchar(2000));
+            RAISE EXCEPTION '%', 'ERROR SUMUP = SAME CHARGE, RATE HAVING DIFFERENT GL/SL COMBINATION - '|| current_setting('db_pkg_upd_rate.v_errmsg')::varchar(2000) USING ERRCODE = '45200';
+   END;
+
+"""
+  arguments = [
+  ]
+  language = plpgsql
+}
+

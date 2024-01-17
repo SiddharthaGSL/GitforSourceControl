@@ -1,0 +1,202 @@
+procedure "main"."db_pro_get_pricelistcode(bigint, bigint, bigint, character)" {
+  text = """
+
+DECLARE
+
+    V_PCODE                FINSL.SLCODE%TYPE;
+    V_PRICELISTCODE        ADMSITE.CODE%TYPE;
+    V_SL_PRICELISTCODE     ADMSITE.CODE%TYPE;
+    V_SITETYPE             ADMSITE.SITETYPE%TYPE;
+    V_MSG                  varchar(2000);
+
+BEGIN
+    SELECT  SITETYPE, SLCODE
+    INTO STRICT    V_SITETYPE, V_PCODE
+    FROM    ADMSITE
+    WHERE   CODE = P_SITECODE;
+    BEGIN
+        SELECT PRICELISTCODE
+        INTO STRICT   V_SL_PRICELISTCODE
+        FROM   FINSL
+        WHERE  SLCODE = V_PCODE;
+    EXCEPTION
+        WHEN no_data_found THEN NULL;
+    END;
+    IF    V_SITETYPE IN ('MS-OO-CM', 'OS-OO-CM') THEN
+          V_PRICELISTCODE := NULL;
+    ELSIF V_SITETYPE IN ('MS-CO-CM','MS-CO-OM-TS') THEN
+          BEGIN
+              SELECT A.PRICELIST_CODE
+              INTO STRICT   V_PRICELISTCODE
+              FROM   ADMSITE_OU A
+              WHERE  A.REPLN_ADMSITE_CODE = P_SITECODE_OWNER
+              AND    A.ADMSITE_CODE       = P_SITECODE;
+              IF  V_PRICELISTCODE IS NULL THEN
+                  SELECT A.PRICELIST_CODE
+                  INTO STRICT   V_PRICELISTCODE
+                  FROM   ADMSITE A
+                  WHERE  A.CODE = P_SITECODE;
+                  IF  V_PRICELISTCODE IS NULL THEN
+                      V_PRICELISTCODE := V_SL_PRICELISTCODE;
+                  END IF;
+              ELSE
+                  IF  V_PRICELISTCODE IS NULL THEN
+                      V_MSG := 'Please select Price List in the customer master to proceed.';
+                  END IF;
+              END IF;
+          EXCEPTION
+              WHEN no_data_found THEN
+                   BEGIN
+                       SELECT  A.PRICELIST_CODE
+                       INTO STRICT    V_PRICELISTCODE
+                       FROM    ADMSITE A
+                       WHERE   A.CODE = P_SITECODE;
+                       IF  V_PRICELISTCODE IS NULL THEN
+                           V_PRICELISTCODE := V_SL_PRICELISTCODE;
+                       END IF;
+                   EXCEPTION
+                       WHEN no_data_found THEN
+                            IF  V_PRICELISTCODE IS NULL THEN
+                                V_MSG := 'Please select Price List in the customer master to proceed.';
+                            END IF;
+                   END;
+          END;
+    ELSIF SUBSTR(V_SITETYPE,1,2) = 'US' THEN
+          BEGIN
+              SELECT A.PRICELISTCODE
+              INTO STRICT   V_PRICELISTCODE
+              FROM   FINSL_OU_SITE A, FINSL_OU B, FINSL C
+              WHERE  A.FINSL_OU_CODE = B.CODE
+              AND    C.SLCODE        = B.SLCODE
+              AND    B.SLCODE        = V_PCODE
+              AND    A.SITE_CODE     = P_SITECODE
+              AND    B.ADMSITE_CODE  = P_SITECODE_OWNER;
+              IF  V_PRICELISTCODE IS NULL THEN
+                  BEGIN
+                      SELECT A.PRICELIST_CODE
+                      INTO STRICT   V_PRICELISTCODE
+                      FROM   ADMSITE A
+                      WHERE  A.CODE = P_SITECODE;
+                      IF  V_PRICELISTCODE IS NULL THEN
+                          BEGIN
+                              SELECT B.PRICELISTCODE
+                              INTO STRICT   V_PRICELISTCODE
+                              FROM   FINSL_OU B, FINSL C
+                              WHERE  C.SLCODE        = B.SLCODE
+                              AND    B.SLCODE        = V_PCODE
+                              AND    B.ADMSITE_CODE  = P_SITECODE;
+                              IF  V_PRICELISTCODE IS NULL THEN
+                                  V_PRICELISTCODE := V_SL_PRICELISTCODE;
+                              END IF;
+                          EXCEPTION
+                              WHEN no_data_found THEN
+                                   IF V_PRICELISTCODE IS NULL THEN
+                                      V_MSG := 'Please select Price List in the customer master to proceed.';
+                                   END IF;
+                          END;
+                      END IF;
+                  EXCEPTION
+                      WHEN no_data_found THEN
+                           BEGIN
+                               SELECT DISTINCT B.PRICELISTCODE
+                               INTO STRICT   V_PRICELISTCODE
+                               FROM   FINSL_OU B, FINSL C
+                               WHERE  C.SLCODE        = B.SLCODE
+                               AND    B.SLCODE        = V_PCODE
+                               AND    B.ADMSITE_CODE  = P_SITECODE_OWNER;
+                               IF  V_PRICELISTCODE IS NULL THEN
+                                   V_PRICELISTCODE := V_SL_PRICELISTCODE;
+                               END IF;
+                           EXCEPTION
+                               WHEN no_data_found THEN
+                                    IF  V_PRICELISTCODE IS NULL THEN
+                                        V_MSG := 'Please select Price List in the customer master to proceed.';
+                                    END IF;
+                           END;
+                  END;
+              END IF;
+          EXCEPTION
+              WHEN no_data_found THEN
+                   BEGIN
+                       SELECT A.PRICELIST_CODE
+                       INTO STRICT   V_PRICELISTCODE
+                       FROM   ADMSITE A
+                       WHERE  A.CODE = P_SITECODE;
+                       IF  V_PRICELISTCODE IS NULL THEN
+                           BEGIN
+                               SELECT DISTINCT B.PRICELISTCODE
+                               INTO STRICT   V_PRICELISTCODE
+                               FROM   FINSL_OU B, FINSL C
+                               WHERE  C.SLCODE        = B.SLCODE
+                               AND    B.SLCODE        = V_PCODE
+                               AND    B.ADMSITE_CODE  = P_SITECODE_OWNER;
+                               IF  V_PRICELISTCODE IS NULL THEN
+                                   V_PRICELISTCODE := V_SL_PRICELISTCODE;
+                               END IF;
+                           EXCEPTION
+                               WHEN no_data_found THEN
+                                    IF  V_PRICELISTCODE IS NULL THEN
+                                        V_MSG := 'Please select Price List in the customer master to proceed.';
+                                    END IF;
+                           END;
+                       END IF;
+                   EXCEPTION
+                       WHEN no_data_found THEN
+                            BEGIN
+                                SELECT DISTINCT B.PRICELISTCODE
+                                INTO STRICT   V_PRICELISTCODE
+                                FROM   FINSL_OU B, FINSL C
+                                WHERE  C.SLCODE        = B.SLCODE
+                                AND    B.SLCODE        = V_PCODE
+                                AND    B.ADMSITE_CODE  = P_SITECODE_OWNER;
+                                IF  V_PRICELISTCODE IS NULL THEN
+                                    V_PRICELISTCODE := V_SL_PRICELISTCODE;
+                                END IF;
+                            EXCEPTION
+                                WHEN no_data_found THEN
+                                     IF  V_PRICELISTCODE IS NULL THEN
+                                         V_MSG := 'Please select Price List in the customer master to proceed.';
+                                     END IF;
+                            END;
+                   END;
+          END;
+    END IF;
+    P_PRICELISTCODE  := V_PRICELISTCODE;
+    P_MSG            := V_MSG;
+EXCEPTION
+    WHEN no_data_found THEN
+         P_MSG := 'Invalid sitecode.';
+    WHEN OTHERS THEN
+         CALL ERRAUDIT(USER,'DB_PRO_GET_PRICELISTCODE',SQLSTATE,SQLERRM);
+         P_MSG := SQLSTATE||' : '||SQLERRM;
+END;
+"""
+  arguments = <
+    {
+      name = p_sitecode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_sitecode_owner
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_pricelistcode
+      type = bigint
+      mode = INOUT
+    }
+
+    {
+      name = p_msg
+      type = character
+      mode = INOUT
+    }
+
+  >
+  language = plpgsql
+}
+

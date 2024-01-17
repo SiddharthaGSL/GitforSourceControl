@@ -1,0 +1,712 @@
+function "main"."int$pkg_budgetmaster_int$pkg_budgetmaster_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status   char(1);
+      errmsg     varchar(200);
+      errcode    bigint;
+BEGIN
+      -- Budget is already defined for the given ledger combination. Can not proceed.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BUDGETMASTER',
+                userid,
+                'Data Validation',
+                'Budget is already defined for the given ledger combination. Can not proceed.',
+                clock_timestamp()
+           FROM int$stg_budgetmaster a,
+                (SELECT y.yname                     accounting_year,
+                        f.glname                    gl_name,
+                        m.month_name                fin_month,
+                        coalesce(s.slname, 'XXXXX')     sl_slid,
+                        coalesce(adm.shrtname, 'YYYYY') tag_admsite_shrtname,
+                        fb.admou_code
+                   FROM admyear y, admmonth m, fingl f, finglbud fb
+LEFT OUTER JOIN finsl s ON (fb.slcode = s.slcode)
+LEFT OUTER JOIN admsite adm ON (fb.costcode = adm.code)
+WHERE fb.glcode = f.glcode  AND fb.mcode = m.mcode AND m.ycode = y.ycode  ) b
+          WHERE     a.gl_name IS NOT NULL
+                AND a.behaviour = 'Validate if ledger combination exist'
+                AND a.gl_name = b.gl_name
+                AND UPPER(a.fin_month) = UPPER(b.fin_month)
+                AND coalesce(UPPER(a.sl_slid), 'XXXXX') = UPPER(b.sl_slid)
+                AND coalesce(UPPER(a.tag_admsite_shrtname), 'YYYYY') =
+                       UPPER(b.tag_admsite_shrtname)
+                AND b.admou_code = p_connect_ou
+                AND userid = p_userid;
+
+      -- Duplicate lines of same ledger combination exist. Can not proceed.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BUDGETMASTER',
+                userid,
+                'Data Validation',
+                'Duplicate lines of same ledger combination exist. Can not proceed.',
+                clock_timestamp()
+           FROM int$stg_budgetmaster a,
+                (  SELECT COUNT(*), gl_name, fin_month
+                     FROM int$stg_budgetmaster
+                 GROUP BY accounting_year,
+                          behaviour,
+                          gl_name,
+                          sl_applicable,
+                          sl_slid,
+                          site_applicable,
+                          tag_admsite_shrtname,
+                          fin_month,
+                          p_connect_ou
+                   HAVING COUNT(*) > 1) b
+          WHERE     a.gl_name IS NOT NULL
+                AND b.gl_name IS NOT NULL
+                AND a.gl_name = b.gl_name
+                AND a.fin_month = b.fin_month
+                AND userid = p_userid;
+
+      -- You can not define budget in different combination for a ledger in an accounting year.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'BUDGETMASTER',
+                a.userid,
+                'Data Validation',
+                'You can not define budget in different combination for a ledger in an accounting year.',
+                clock_timestamp()
+           FROM int$stg_budgetmaster a
+          WHERE     a.gl_name IS NOT NULL
+                AND (a.accounting_year, gl_name) IN (  SELECT accounting_year, gl_name
+                            FROM int$stg_budgetmaster
+                        GROUP BY accounting_year, gl_name
+                          HAVING COUNT(
+                                    DISTINCT sl_applicable || site_applicable) >
+                                    1)
+                AND a.userid = p_userid;
+
+      -- Ledger must be valid and Non extinct
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BUDGETMASTER',
+                userid,
+                'Data Validation',
+                a.gl_name || ': GL_NAME, should be valid and non-extinct.',
+                clock_timestamp()
+           FROM int$stg_budgetmaster a
+          WHERE     a.gl_name IS NOT NULL
+                AND (   (UPPER(a.gl_name) NOT IN (SELECT UPPER(f.glname)
+                                                     FROM fingl f))
+                     OR (UPPER(a.gl_name) IN (SELECT UPPER(f.glname)
+                                                 FROM fingl f
+                                                WHERE f.ext = 'Y')))
+                AND userid = p_userid;
+
+      -- Ledger nature must be General in nature.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BUDGETMASTER',
+                userid,
+                'Data Validation',
+                   a.gl_name
+                || ': GL_NAME, you can define budget for only those Ledgers having nature as General.',
+                clock_timestamp()
+           FROM int$stg_budgetmaster a, fingl f
+          WHERE     UPPER(f.glname) = UPPER(a.gl_name)
+                AND a.gl_name IS NOT NULL
+                AND f.srctype <> 'G'
+                AND userid = p_userid;
+
+      -- Ledger Type must be Income or Expense.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BUDGETMASTER',
+                userid,
+                'Data Validation',
+                   a.gl_name
+                || ': GL_NAME, you can define budget for only Income & Expense type Ledgers.',
+                clock_timestamp()
+           FROM int$stg_budgetmaster a, fingl f
+          WHERE     UPPER(f.glname) = UPPER(a.gl_name)
+                AND a.gl_name IS NOT NULL
+                AND f.TYPE NOT IN ('I', 'E')
+                AND userid = p_userid;
+
+      -- Value must be valid
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BUDGETMASTER',
+                userid,
+                'Data Validation',
+                a.sl_applicable || ': SL_APPLICABLE, should be valid.',
+                clock_timestamp()
+           FROM int$stg_budgetmaster a
+          WHERE     a.gl_name IS NOT NULL
+                AND UPPER(a.sl_applicable) NOT IN ('YES', 'NO')
+                AND userid = p_userid;
+
+      -- YES values is allowed only when GL is Sub ledger applicable
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BUDGETMASTER',
+                userid,
+                'Data Validation',
+                   a.sl_applicable
+                || ': SL_APPLICABLE, general ledger is not sub ledger applicable. Yes Value not allowed.',
+                clock_timestamp()
+           FROM int$stg_budgetmaster a, fingl f
+          WHERE     UPPER(f.glname) = UPPER(a.gl_name)
+                AND a.gl_name IS NOT NULL
+                AND UPPER(f.slapp) = 'N'
+                AND UPPER(a.sl_applicable) = 'YES'
+                AND userid = p_userid;
+
+      -- It is not required only when SL_APPLICABLE is set to YES
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BUDGETMASTER',
+                userid,
+                'Data Validation',
+                'SL_SLID, is not required for GL_NAME where SL_APPLICABLE is No.',
+                clock_timestamp()
+           FROM int$stg_budgetmaster a
+          WHERE     a.gl_name IS NOT NULL
+                AND UPPER(a.sl_applicable) = 'NO'
+                AND a.sl_slid IS NOT NULL
+                AND userid = p_userid;
+
+      -- If SL_APPLICABLE is YES, then this field is mandatory
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BUDGETMASTER',
+                userid,
+                'Data Validation',
+                'SL_SLID, is mandatory for GL_NAME where SL_APPLICABLE is Yes.',
+                clock_timestamp()
+           FROM int$stg_budgetmaster a
+          WHERE     a.gl_name IS NOT NULL
+                AND UPPER(a.sl_applicable) = 'YES'
+                AND a.sl_slid IS NULL
+                AND userid = p_userid;
+
+      -- SL_SLID, should be valid and non-extinct.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BUDGETMASTER',
+                userid,
+                'Data Validation',
+                a.sl_slid || ': SL_SLID, should be valid and non-extinct.',
+                clock_timestamp()
+           FROM int$stg_budgetmaster a, fingl f
+          WHERE     UPPER(f.glname) = UPPER(a.gl_name)
+                AND a.gl_name IS NOT NULL
+                AND a.sl_slid IS NOT NULL
+                AND (UPPER(a.sl_slid) NOT IN
+                        (SELECT UPPER(s.slid)
+                           FROM finsl s,
+                                (SELECT slcode
+                                   FROM finsl_gl
+                                  WHERE ext = 'N') fs
+                          WHERE s.slcode = fs.slcode AND s.ext = 'N'))
+                AND userid = p_userid;
+
+      -- Mentioned GL should be SL applicable & defined SL should be tagged with the GL, and Only those sub ledger, where class type is Others, and AR Ledger should be NULL, for the SL.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BUDGETMASTER',
+                userid,
+                'Data Validation',
+                   a.sl_slid
+                || ': SL_SLID, Either sub ledger is not tagged with the mentioned Ledger Or class type is invalid Or AR Ledger is already defined for the sub ledger.',
+                clock_timestamp()
+           FROM  int$stg_budgetmaster a, fingl f,finsl s
+LEFT OUTER JOIN finsl_gl fs ON (f.glcode = fs.glcode)
+WHERE UPPER(f.glname) = UPPER(a.gl_name) AND a.gl_name IS NOT NULL AND UPPER(a.sl_applicable) = 'YES'  AND fs.slcode = s.slcode AND UPPER(s.slid) = UPPER(a.sl_slid) AND (   fs.glcode IS NULL
+                     OR fs.slcode NOT IN (SELECT DISTINCT slcode
+                              FROM finsl
+                             WHERE clscode = 6 AND glcode IS NULL)) AND userid = p_userid;
+
+      -- Value must be validA
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BUDGETMASTER',
+                userid,
+                'Data Validation',
+                a.site_applicable || ': SITE_APPLICABLE, should be valid.',
+                clock_timestamp()
+           FROM int$stg_budgetmaster a
+          WHERE     a.gl_name IS NOT NULL
+                AND UPPER(a.site_applicable) NOT IN ('YES', 'NO')
+                AND userid = p_userid;
+
+      -- YES values is allowed only when GL is Site applicable
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BUDGETMASTER',
+                userid,
+                'Data Validation',
+                   a.site_applicable
+                || ': SITE_APPLICABLE, general ledger is not site applicable. Yes Value not allowed.',
+                clock_timestamp()
+           FROM int$stg_budgetmaster a, fingl f
+          WHERE     UPPER(f.glname) = UPPER(a.gl_name)
+                AND a.gl_name IS NOT NULL
+                AND UPPER(a.site_applicable) = 'YES'
+                AND f.costapp <> 'Y'
+                AND userid = p_userid;
+
+      -- It is not required only when SITE_APPLICABLE is set to YES
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BUDGETMASTER',
+                userid,
+                'Data Validation',
+                   a.tag_admsite_shrtname
+                || ': TAG_ADMSITE_SHRTNAME, is not required for GL_NAME where SITE_APPLICABLE is No.',
+                clock_timestamp()
+           FROM int$stg_budgetmaster a, fingl f
+          WHERE     UPPER(f.glname) = UPPER(a.gl_name)
+                AND a.gl_name IS NOT NULL
+                AND UPPER(a.site_applicable) = 'NO'
+                AND a.tag_admsite_shrtname IS NOT NULL
+                AND userid = p_userid;
+
+      -- If SITE_APPLICABLE is YES, then this field is mandatory
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BUDGETMASTER',
+                userid,
+                'Data Validation',
+                'TAG_ADMSITE_SHRTNAME, is mandatory for GL_NAME where SITE_APPLICABLE is Yes.',
+                clock_timestamp()
+           FROM int$stg_budgetmaster a, fingl f
+          WHERE     UPPER(f.glname) = UPPER(a.gl_name)
+                AND a.gl_name IS NOT NULL
+                AND UPPER(a.site_applicable) = 'YES'
+                AND a.tag_admsite_shrtname IS NULL
+                AND userid = p_userid;
+
+      -- Site must be valid and Non extinct.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BUDGETMASTER',
+                userid,
+                'Data Validation',
+                   a.tag_admsite_shrtname
+                || ': TAG_ADMSITE_SHRTNAME, should be valid and non-extinct.',
+                clock_timestamp()
+           FROM int$stg_budgetmaster a
+          WHERE (UPPER(a.tag_admsite_shrtname) NOT IN (SELECT s.shrtname
+                           FROM admsite s
+                          WHERE coalesce(
+                                   s.ext,
+                                   'N') = 'N'))
+                AND a.tag_admsite_shrtname IS NOT NULL
+                AND userid = p_userid;
+
+      -- Site must be tagged with the GL & Tagging must be non extinct.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BUDGETMASTER',
+                userid,
+                'Data Validation',
+                   a.tag_admsite_shrtname
+                || ': TAG_ADMSITE_SHRTNAME, site is either extinct or not tagged with the given GL_Name/SL_Slid or not tagged in the connected OU.',
+                clock_timestamp()
+           FROM int$stg_budgetmaster a, fingl f
+LEFT OUTER JOIN fingl_site gs ON (f.glcode = gs.glcode)
+, admsite s
+LEFT OUTER JOIN fingl_site glsite ON (s.code = glsite.admsite_code)
+WHERE UPPER(s.shrtname) = UPPER(a.tag_admsite_shrtname) AND UPPER(f.glname) = UPPER(a.gl_name)   AND (gs.glcode IS NULL OR s.admou_code <> p_connect_ou) AND userid = p_userid;
+
+      -- Site must be tagged with the SL & Tagging must be non extinct.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BUDGETMASTER',
+                userid,
+                'Data Validation',
+                   a.tag_admsite_shrtname
+                || ': TAG_ADMSITE_SHRTNAME, site is either extinct or not tagged with the given GL_Name/SL_Slid or not tagged in the connected OU.',
+                clock_timestamp()
+           FROM finsl sl, admsite s, fingl f, int$stg_budgetmaster a, finsl_gl fs
+LEFT OUTER JOIN finsl_gl_site gs ON (fs.code = gs.finsl_gl_code)
+WHERE UPPER(s.shrtname) = UPPER(a.tag_admsite_shrtname) AND UPPER(f.glname) = UPPER(a.gl_name) AND UPPER(a.sl_slid) = UPPER(sl.slid) AND UPPER(a.sl_slid) IS NOT NULL AND f.glcode = fs.glcode AND sl.slcode = fs.slcode  AND a.tag_admsite_shrtname IS NOT NULL AND gs.admsite_code = s.code AND (gs.finsl_gl_code IS NULL OR gs.ext = 'Y') AND userid = p_userid;
+
+      -- FIN_MONTH, should be valid.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BUDGETMASTER',
+                userid,
+                'Data Validation',
+                a.fin_month || ': FIN_MONTH, should be valid.',
+                clock_timestamp()
+           FROM int$stg_budgetmaster a, admyear y
+          WHERE     a.accounting_year = y.yname
+                AND UPPER(a.fin_month) NOT IN (SELECT UPPER(m.month_name)
+                                                  FROM admmonth m
+                                                 WHERE m.YCODE = y.ycode)
+                AND a.fin_month IS NOT NULL
+                AND userid = p_userid;
+
+      -- Defined month should belong to the selected accounting year for the connected site's OU.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BUDGETMASTER',
+                userid,
+                'Data Validation',
+                   a.fin_month
+                || ': FIN_MONTH, doesn’t belong to the selected accounting year.',
+                clock_timestamp()
+           FROM int$stg_budgetmaster a, admmonth m, admyear y
+          WHERE     UPPER(m.month_name) = UPPER(a.fin_month)
+                AND a.fin_month IS NOT NULL
+                AND m.ycode = y.ycode
+                AND y.yname <> a.accounting_year
+                AND userid = p_userid;
+
+      -- Amount can not be = 0
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BUDGETMASTER',
+                userid,
+                'Data Validation',
+                a.amount::TEXT || ': AMOUNT, can not be 0.',
+                clock_timestamp()
+           FROM int$stg_budgetmaster a
+          WHERE a.amount = 0 AND a.amount IS NOT NULL AND userid = p_userid;
+
+      -- AMOUNT, min & max value are -99,99,99,99,999.00 & 99,99,99,99,999.00.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BUDGETMASTER',
+                userid,
+                'Data Validation',
+                   a.amount::TEXT
+                || ': AMOUNT, min and max value are -99,99,99,99,999.00 and 99,99,99,99,999.00.',
+                clock_timestamp()
+           FROM int$stg_budgetmaster a
+          WHERE (a.amount > -99999999999.00 AND a.amount < 0)
+                AND (a.amount > 0 AND a.amount < 99999999999.00)
+                AND a.amount IS NOT NULL
+                AND userid = p_userid;
+
+      -- AMOUNT, Only numeric value is allowed.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BUDGETMASTER',
+                userid,
+                'Data Validation',
+                   a.amount::TEXT
+                || ': AMOUNT, For Expense Type ledger - positive value allowed & For ''Income'' Type ledger - negative value allowed.',
+                clock_timestamp()
+           FROM int$stg_budgetmaster a, fingl f
+          WHERE     UPPER(f.glname) = UPPER(a.gl_name)
+                AND a.gl_name IS NOT NULL
+                AND a.amount IS NOT NULL
+                AND (   (f.TYPE = 'E' AND a.amount < 0)
+                     OR (f.TYPE = 'I' AND a.amount > 0))
+                AND userid = p_userid;
+
+      -- check whether records are valid or not
+      BEGIN
+         SELECT 'S'
+           INTO STRICT v_status
+           
+          WHERE EXISTS (SELECT 'S'
+                      FROM int$error_log
+                     WHERE userid = p_userid);
+
+         RETURN('0');
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            RETURN('1');
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'BUDGETMASTER',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+
+function "main"."int$pkg_budgetmaster_int$pkg_budgetmaster_validate(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+ 
+DECLARE
+	-- Change this to reflect the dblink connection string
+    --v_conn_str  text := format('port=%s dbname=%s user=%s', current_setting('port'), current_database(), current_user);
+    v_srvname       name;
+    v_connname      text;
+    v_connstr       text;
+    v_conn_result   text;
+    v_query         text;
+
+    v_ret    text;
+BEGIN
+
+    v_srvname := 'foreign_pgbase';
+    v_connname := replace(uuid_generate_v4()::text,'-','');
+    v_connstr  := v_srvname;
+    
+    --Open the connection  
+    SELECT dblink_connect(v_connname,v_connstr) 
+    INTO v_conn_result;
+	v_query := 'SELECT * FROM int$pkg_budgetmaster_int$pkg_budgetmaster_validate_atx ( ' || quote_nullable(p_userid::text) || '::bigint,' || quote_nullable(p_connect_site::text) || '::bigint,' || quote_nullable(p_logging_date::text) || '::timestamp without time zone,' || quote_nullable(p_connect_ou::text) || '::bigint )';
+	SELECT * INTO v_ret FROM dblink(v_connname, v_query) AS p (ret text);
+
+	SELECT dblink_disconnect(v_connname) 
+    INTO v_conn_result;
+	
+	RETURN v_ret;
+EXCEPTION 
+   WHEN OTHERS THEN
+        SELECT dblink_disconnect(v_connname) 
+        INTO v_conn_result;
+
+END;
+"""
+  returnType = text
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

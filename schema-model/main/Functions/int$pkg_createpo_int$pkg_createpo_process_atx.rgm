@@ -1,0 +1,1228 @@
+function "main"."int$pkg_createpo_int$pkg_createpo_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_site_initial           varchar(15);
+      errmsg                   varchar(500);
+      vsession                 varchar(100);
+      vdetailtbl               varchar(5000);
+      vdetailrec               varchar(500);
+      errcode                  text;
+      vcount                   bigint;
+      --v_scheme_docno     VARCHAR2 (25)   := NULL;
+      v_ordcode                numeric(20);
+      v_ycode                  smallint;
+      v_admou_code             bigint;
+      v_admsite_code           bigint;
+      v_grsamt                 double precision;
+      v_chgamt                 double precision;
+      v_netamt                 double precision;
+      v_orddt                  timestamp;
+
+      -- For Scheme Document No generation
+      v_tempno                 numeric(20);
+      -- v_menucode         number(12) := 86;  -- rev : 022
+      v_scheme_docno           varchar(25);
+      v_slname                 varchar(100);
+
+      return_string            char(699);
+      v_username               admcmp.cmpinit%TYPE;
+      v_cmpcode                bigint;
+      v_itemprefix             admcmp.itemprefix%TYPE;
+      -- START REV : 007
+      v_isprice_excludes_tax   smallint;
+      -- END REV : 007
+      v_status                 varchar(1000);
+
+      g_mark                   varchar(100);
+
+      V_DOCCODE                PURORDMAIN.DOCCODE%TYPE;
+
+      -- start rev : 015
+      v_orddt1                 purordmain.orddt%TYPE;
+      v_pcode1                 purordmain.pcode%TYPE;
+      v_dtfr1                  purordmain.dtfr%TYPE;
+      v_price_chart_appl       finsl.pur_price_chart_appl%TYPE;
+      v_deldays                bigint;
+      v_purorddet_code         purorddet.code%TYPE;
+      v_duedate                timestamp;
+      -- end rev : 015
+      
+      -- start rev : 026
+      v_maxdt                  timestamp;
+      v_dtto                   timestamp;
+      -- end rev : 026
+      V_FINAL_SCHEME_DOCNO     PURORDMAIN.SCHEME_DOCNO%TYPE;
+	  v_ou_admcmptax_code   admou.admcmptax_code%type; 
+	  
+	  C1 CURSOR FOR
+           SELECT DISTINCT ordcode
+             FROM int$stg_createpo_all_fld
+            WHERE userid = p_userid
+         ORDER BY 1;
+
+      -- main fields
+      C2 CURSOR(p_ordcode bigint)
+      FOR
+         SELECT DISTINCT orddt,
+                         pcode,
+                         docno,
+                         agrate,
+                         trpcode,
+                         ord_rem,
+                         scheme_docno,
+                         ycode,
+                         date_trunc('day', dtfr) dtfr,
+                         date_trunc('day', dtto) dtto,
+                         payterm,
+                         whether_consignment,
+                         doccode,
+                         admou_code,
+                         mrchndsrcode,
+                         fintradegrp_code,
+                         admcurrency_code,
+                         exrate,
+                         admsite_code,
+                         formcode,
+                         enable_lgt_track,
+                         purtermcode,
+                         udfstring01,
+                         udfstring02,
+                         udfstring03,
+                         udfstring04,
+                         udfstring05,
+                         udfstring06,
+                         udfstring07,
+                         udfstring08,
+                         udfstring09,
+                         udfstring10,
+                         udfnum01,
+                         udfnum02,
+                         udfnum03,
+                         udfnum04,
+                         udfnum05,
+                         udfdate01,
+                         udfdate02,
+                         udfdate03,
+                         udfdate04,
+                         udfdate05,
+                         agcode,
+                         site_shortname
+           FROM int$stg_createpo_all_fld
+          WHERE ordcode = p_ordcode;
+
+      -- start rev : 027
+      /*
+      -- detail fields group by icode, rate, sum(qty)
+      CURSOR C3 (p_ordcode NUMBER)
+      IS
+           SELECT icode,
+                  rate,
+                  rsp,
+                  order_item_rem,
+                  -- start rev : 015
+                  order_item_due_date,
+                  -- end rev : 015
+                  SUM (NVL (ordqty, 0)) ordqty
+             FROM int$stg_createpo_all_fld
+            WHERE ordcode = p_ordcode
+         GROUP BY icode,
+                  rate,
+                  rsp,
+                  -- start rev : 015
+                  order_item_rem,
+                  order_item_due_date;
+                  -- end rev : 015
+                  */
+        
+        -- detail fields group by icode, rate, sum(qty)
+        c3 CURSOR(p_ordcode bigint)
+                FOR
+                SELECT  t1.icode,
+                        t1.rate,
+                        coalesce(t1.rsp,coalesce(t2.mrp,0))   rsp,
+                        t1.order_item_rem,
+                        t1.order_item_due_date,
+                        sum(coalesce(t1.ordqty, 0)) ordqty
+                from
+                        int$stg_createpo_all_fld    t1,
+                        v_item                      t2
+                where   
+                        t1.icode    = t2.icode
+                and     t1.ordcode  = p_ordcode
+                group by 
+                        t1.icode,
+                        t1.rate,
+                        coalesce(t1.rsp,coalesce(t2.mrp,0)),
+                        t1.order_item_rem,
+                        t1.order_item_due_date;
+        -- end rev : 027
+  i RECORD;
+BEGIN
+      g_mark := 'P01';
+
+      -- Deleting all log against the PO creation for the user
+      DELETE FROM admerraudit a
+       WHERE a.usrname = USER AND a.prcname = 'createpo' AND a.errcode = p_userid::text;
+
+      /*call erraudit(USER,
+                'createpo',
+                p_userid,
+                '1 - Web import PO creation start');*/
+
+      BEGIN
+         SELECT cmpcode, itemprefix
+           INTO STRICT v_cmpcode, v_itemprefix
+           FROM admcmp;
+      EXCEPTION
+         WHEN OTHERS
+         THEN
+            call erraudit(USER,
+                      'createpo',
+                      '1',
+                      SQLERRM);
+      END;
+	  
+      -- start rev : 033
+      v_ou_admcmptax_code := null;
+      begin
+        select  psite_admcmptax_code
+        into STRICT    v_ou_admcmptax_code
+        from    admsite
+        where   code = p_connect_site;
+      exception
+        when no_data_found then
+        v_ou_admcmptax_code := null;
+      end;
+      -- end rev : 033
+
+      /*call erraudit(USER,
+                'createpo',
+                p_userid,
+                '2 - Creating item categories ...');*/
+
+      -- Update item categories ...
+      FOR i IN (  SELECT *
+                    FROM int$stg_createpo_all_fld
+                   WHERE icode IS NULL                      -- START REV : 005
+                                      AND userid = p_userid
+                -- END REV : 005
+                ORDER BY lineno)
+      LOOP
+         return_string :=
+            erpcheckcategory(i.cname1,
+                              i.cname2,
+                              i.cname3,
+                              i.cname4,
+                              i.cname5,
+                              i.cname6);
+
+         IF return_string IS NULL
+         THEN
+            call erraudit(
+               USER,
+               'createpo',
+               p_userid,
+               '2 - error generated in category creation or selection process.');
+         ELSE
+            UPDATE int$stg_createpo_all_fld
+               SET ccode1 =
+                      NULLIF(LTRIM(
+                         RTRIM(SUBSTR(LPAD(return_string, 72), 1, 12))),'')::bigint,
+                   ccode2 =
+                      NULLIF(LTRIM(
+                         RTRIM(SUBSTR(LPAD(return_string, 72), 13, 12))),'')::bigint,
+                   ccode3 =
+                      NULLIF(LTRIM(
+                         RTRIM(SUBSTR(LPAD(return_string, 72), 25, 12))),'')::bigint,
+                   ccode4 =
+                      NULLIF(LTRIM(
+                         RTRIM(SUBSTR(LPAD(return_string, 72), 37, 12))),'')::bigint,
+                  ccode5 =
+                      NULLIF(LTRIM(
+                         RTRIM(SUBSTR(LPAD(return_string, 72), 49, 12))),'')::bigint,
+                   ccode6 =
+                      NULLIF(LTRIM(
+                         RTRIM(SUBSTR(LPAD(return_string, 72), 61, 12))),'')::bigint -- START REV : 020
+                                                                           ,
+                   cname1 =
+                      NULLIF(LTRIM(
+                         RTRIM(SUBSTR(RPAD(return_string, 600), 73, 100))),''),
+                   cname2 =
+                      NULLIF(LTRIM(
+                         RTRIM(SUBSTR(RPAD(return_string, 600), 173, 100))),''),
+                   cname3 =
+                      NULLIF(LTRIM(
+                         RTRIM(SUBSTR(RPAD(return_string, 600), 273, 100))),''),
+                   cname4 =
+                      NULLIF(LTRIM(
+                         RTRIM(SUBSTR(RPAD(return_string, 600), 373, 100))),''),
+                   cname5 =
+                      NULLIF(LTRIM(
+                         RTRIM(SUBSTR(RPAD(return_string, 600), 473, 100))),''),
+                   cname6 =
+                      NULLIF(LTRIM(
+                         RTRIM(SUBSTR(RPAD(return_string, 600), 573, 100))),'')
+             -- END REV : 020
+             WHERE lineno = i.lineno;
+         END IF;
+
+      END LOOP;
+
+      /*call erraudit(USER,
+                'createpo',
+                p_userid,
+                '3 - Creating item categories ... END');*/
+
+      -- START REV : 020
+      DECLARE
+         v_cname   invcat1.cname%TYPE;
+      BEGIN
+         FOR i IN (SELECT DISTINCT ccode1
+                     FROM int$stg_createpo_all_fld
+                    WHERE userid = p_userid)
+         LOOP
+            BEGIN
+               v_cname := NULL;
+
+               SELECT cname
+                 INTO STRICT v_cname
+                 FROM invcat1
+                WHERE ccode = i.ccode1;
+
+               UPDATE int$stg_createpo_all_fld a
+                  SET cname1 = v_cname
+                WHERE ccode1 = i.ccode1;
+
+               --COMMIT;
+            EXCEPTION
+               WHEN no_data_found
+               THEN
+                  NULL;
+            END;
+         END LOOP;
+
+         FOR i IN (SELECT DISTINCT ccode2
+                     FROM int$stg_createpo_all_fld
+                    WHERE userid = p_userid)
+         LOOP
+            BEGIN
+               v_cname := NULL;
+
+               SELECT cname
+                 INTO STRICT v_cname
+                 FROM invcat2
+                WHERE ccode = i.ccode2;
+
+               UPDATE int$stg_createpo_all_fld a
+                  SET cname2 = v_cname
+                WHERE ccode2 = i.ccode2;
+
+               --COMMIT;
+            EXCEPTION
+               WHEN no_data_found
+               THEN
+                  NULL;
+            END;
+         END LOOP;
+
+         FOR i IN (SELECT DISTINCT ccode3
+                     FROM int$stg_createpo_all_fld
+                    WHERE userid = p_userid)
+         LOOP
+            BEGIN
+               v_cname := NULL;
+
+               SELECT cname
+                 INTO STRICT v_cname
+                 FROM invcat3
+                WHERE ccode = i.ccode3;
+
+               UPDATE int$stg_createpo_all_fld a
+                  SET cname3 = v_cname
+                WHERE ccode3 = i.ccode3;
+
+               --COMMIT;
+            EXCEPTION
+               WHEN no_data_found
+               THEN
+                  NULL;
+            END;
+         END LOOP;
+
+         FOR i IN (SELECT DISTINCT ccode4
+                     FROM int$stg_createpo_all_fld
+                    WHERE userid = p_userid)
+         LOOP
+            BEGIN
+               v_cname := NULL;
+
+               SELECT cname
+                 INTO STRICT v_cname
+                 FROM invcat4
+                WHERE ccode = i.ccode4;
+
+               UPDATE int$stg_createpo_all_fld a
+                  SET cname4 = v_cname
+                WHERE ccode4 = i.ccode4;
+
+               --COMMIT;
+            EXCEPTION
+               WHEN no_data_found
+               THEN
+                  NULL;
+            END;
+         END LOOP;
+
+         FOR i IN (SELECT DISTINCT ccode5
+                     FROM int$stg_createpo_all_fld
+                    WHERE userid = p_userid)
+         LOOP
+            BEGIN
+               v_cname := NULL;
+
+               SELECT cname
+                 INTO STRICT v_cname
+                 FROM invcat5
+                WHERE ccode = i.ccode5;
+
+               UPDATE int$stg_createpo_all_fld a
+                  SET cname5 = v_cname
+                WHERE ccode5 = i.ccode5;
+
+               --COMMIT;
+            EXCEPTION
+               WHEN no_data_found
+               THEN
+                  NULL;
+            END;
+         END LOOP;
+
+         FOR i IN (SELECT DISTINCT ccode6
+                     FROM int$stg_createpo_all_fld
+                    WHERE userid = p_userid)
+         LOOP
+            BEGIN
+               v_cname := NULL;
+
+               SELECT cname
+                 INTO STRICT v_cname
+                 FROM invcat6
+                WHERE ccode = i.ccode6;
+
+               UPDATE int$stg_createpo_all_fld a
+                  SET cname6 = v_cname
+                WHERE ccode6 = i.ccode6;
+
+               --COMMIT;
+            EXCEPTION
+               WHEN no_data_found
+               THEN
+                  NULL;
+            END;
+         END LOOP;
+      END;
+
+      -- END REV : 020
+      return_string := NULL;
+
+      /*call erraudit(USER,
+                'createpo',
+                p_userid,
+                '4 - Creating items ... START');*/
+
+      -- Create or select the items from the items parameter
+      FOR i IN (  SELECT *
+                    FROM int$stg_createpo_all_fld
+                   WHERE icode IS NULL                      -- START REV : 005
+                                      AND userid = p_userid
+                -- END REV : 005
+                ORDER BY lineno)
+      LOOP
+         -- START REV : 001
+         /*
+         begin
+             v_slname := null;
+
+             select slname into v_slname
+             from   finsl
+             where  slcode = i.pcode;
+         exception
+             when no_data_found then null;
+         end;
+         */
+         -- END REV : 001
+         -- START REV : 007
+         IF UPPER(i.isprice_excludes_tax) = 'YES'
+         THEN
+            v_isprice_excludes_tax := 1;
+         ELSE
+            v_isprice_excludes_tax := 0;
+         END IF;
+
+         -- END REV : 007
+         return_string :=
+            new_erpcreateitem(
+               v_cmpcode::bigint,
+               v_itemprefix::text,
+               i.partycode::bigint,                                  -- START REV : 001-- ,REPLACE (v_slname, '''', ' ')
+               REPLACE(i.partyname::text, '''', ' '),               -- END REV : 001
+               i.uom::text,
+               i.grpcode::bigint,
+               i.article_code::bigint,
+               coalesce(i.taxcode::bigint, 0),
+               coalesce(i.barunit::bigint, 1),
+               coalesce(i.standard_rate::bigint, 0),
+               coalesce(i.rsp::bigint, 0),
+               i.cname1::text,
+               i.cname2::text,
+               i.cname3::text,
+               i.cname4::text,
+               i.cname5::text,
+               i.cname6::text,
+               NULL::bigint,
+               trim(both i.icode::text),
+               i.oem_barcode::text,
+               i.listed_mrp::bigint,
+               i.wsp::bigint,
+               i.expiry_date,
+               i.item_shrtname::text,
+               i.ageing_appl::text,
+               i.orddt,                                     --:PARAMETER.P_DATE
+               i.ageing_dtfr,                               --:PARAMETER.P_DTFR
+               i.ageing_dtto,                               --:PARAMETER.P_DTTO
+               'N'::text , 				-- argconsiderasfree           (same as on the fly item creator)
+               'N'::text , 				-- argwhetherconsignment       (same as on the fly item creator)
+               i.costing_method::text , -- argavgcostingapplicable     (same as on the fly item creator)
+               'N'::text, 				-- argnoninventory             (same as on the fly item creator)
+               'N'::text,                     -- argallow_price_modification
+               'N'::text, 					-- argmodule_name              (same as on the fly item creator)
+               'N'::text,                     -- argautoqtypopup
+               'N'::text,                                 -- argpos_multiprice_action
+               'N'::text,                                               -- argismetal
+               current_date,                                 -- arggenerated
+               i.desc1::text,
+               i.desc2::text,
+               i.desc3::text,
+               i.desc4::text,
+               i.desc5::text,
+               i.desc6::text,
+               i.num1::bigint,
+               i.num2::bigint,
+               i.num3::bigint,
+               NULL::bigint,                                   -- argprice_change_limit
+               coalesce(UPPER(SUBSTR(trim(both i.negative_stk_alert::text), 1, 1)), 'P'),
+               coalesce(UPPER(SUBSTR(trim(both i.material_type::text), 1, 1)), 'F'), -- START REV : 001
+               i.invitem_udfstring01::text,
+               i.invitem_udfstring02::text,
+               i.invitem_udfstring03::text,
+               i.invitem_udfstring04::text,
+               i.invitem_udfstring05::text,
+               i.invitem_udfstring06::text,
+               i.invitem_udfstring07::text,
+               i.invitem_udfstring08::text,
+               i.invitem_udfstring09::text,
+               i.invitem_udfstring10::text,
+               i.invitem_udfnum01::text,
+               i.invitem_udfnum02::text,
+               i.invitem_udfnum03::text,
+               i.invitem_udfnum04::text,
+               i.invitem_udfnum05::text,
+               i.invitem_udfdate01::text,
+               i.invitem_udfdate02::text,
+               i.invitem_udfdate03::text,
+               i.invitem_udfdate04::text,
+               i.invitem_udfdate05::text,                            -- END REV : 001
+               -- START REV : 006
+               i.invhsnsacmain_code::bigint,                           -- END REV : 006
+               -- START REV : 007
+               i.isprice_excludes_tax::bigint,                         -- END REV : 007
+               -- START REV : 012
+               I.GLCODE::bigint,
+               I.SLCODE::bigint,
+               coalesce(I.GST_ITC_APPL::text, 'IP'),
+               -- END REV : 012
+               -- START REV : 028
+               I.ITEM_MANAGEMENT_MODE::text,
+               I.PRICE_MANAGEMENT::text,
+               I.MANAGE_EXPIRY::text,
+               I.VALIDITY_MODE::text,
+               I.BATCH_VALIDITY_PERIOD::numeric,
+               I.POS_BATCH_SELECTION_MODE::text
+               -- END REV : 028
+                                  );
+
+         IF return_string IS NULL
+         THEN
+            call erraudit(
+               USER,
+               'createpo',
+               p_userid,
+               '5 - error generated in item creation or selection process.');
+         ELSE
+            call erraudit(USER,
+                      'createpo',
+                      p_userid,
+                      '5 - Create item return string = ' || return_string);
+
+            IF trim(both UPPER(SUBSTR(return_string, 682, 1))) = 'Y'
+            THEN
+               UPDATE invitem
+                  SET rem = i.item_rem, item_name = i.item_name
+                WHERE icode = trim(both UPPER(SUBSTR(return_string, 1, 9)));
+				
+               update invitem a
+               set allow_price_modification = (SELECT grp_allow_price_modification from invgrp where grpcode = a.grpcode),
+               pos_multiprice_action = (select grp_pos_multiprice_action from invgrp where grpcode = a.grpcode),
+               price_change_limit = (select grp_price_change_limit from invgrp where grpcode = a.grpcode),
+               autoqtypopup = (select grp_autoqtypopup from invgrp where grpcode = a.grpcode)
+               where icode = trim(both UPPER(SUBSTR(return_string, 1, 9)));
+            END IF;
+
+            v_status :=
+                  'update int$stg_createpo_all_fld '
+               || 'set    icode = '''
+               || trim(both UPPER(SUBSTR(return_string, 1, 9)))
+               || ''' '
+               || 'where  lineno = '
+               || i.lineno::text;
+
+            --v_status := db_fun_commit_statement(USER, v_status);
+			EXECUTE v_status;
+         END IF;
+      END LOOP;
+
+      /*call erraudit(USER,
+                'createpo',
+                p_userid,
+                '5 - Creating items ... END');*/
+
+      -- Updating ordcode in int$stg_createpo_all_fld
+      FOR i IN (  SELECT DISTINCT site_shortname, docno
+                    FROM int$stg_createpo_all_fld
+
+                   WHERE userid = p_userid
+                -- END REV : 005
+                ORDER BY 1, 2)
+      LOOP
+         SELECT nextval('erp01') INTO STRICT v_ordcode;
+
+         -- START REV : 023
+         /*
+         v_status :=
+               'update int$stg_createpo_all_fld '
+            || 'set    ordcode = '
+            || v_ordcode
+            || ' '
+            || 'where  site_shortname = '''
+            || i.site_shortname
+            || ''' '
+            || 'and    docno = '''
+            || i.docno
+            || ''' ';
+         */
+         v_status := 'update int$stg_createpo_all_fld '||
+                        'set    ordcode = '||v_ordcode::text||' '||
+                        'where  site_shortname = '''||i.site_shortname||''' '||
+                        'and    userid = '||p_userid::text||' '||
+                        'and    docno = '''||i.docno||''' ';
+         -- END REV : 023
+         /*call erraudit(USER,
+                   'createpo',
+                   p_userid,
+                   '76 - Updating ordcode - ' || v_status);*/
+				   
+				execute v_status;
+
+         --v_status := db_fun_commit_statement(USER, v_status);
+      END LOOP;
+
+      -- Updating ord_rate in int$stg_createpo_all_fld
+      FOR i IN (SELECT *
+                  FROM int$stg_createpo_all_fld
+                 WHERE userid = p_userid)
+      LOOP
+         v_status :=
+               'update int$stg_createpo_all_fld '
+            || 'set    rate = COALESCE(order_rate,'
+            /*|| db_fun_item_rate(i.orddt,
+                                 i.pcode,
+                                 i.icode,
+                                 'P',
+                                 i.ou_admcmptax_code)::text*/
+			||  db_fun_item_rate_web
+                            (   
+                                i.orddt,            --p_trandt , 
+                                v_cmpcode,          --p_cmp_code, 
+                                i.icode,            --p_icode, 
+                                'P',                --p_pctype, 
+                                v_ou_admcmptax_code,--p_admcmptax_code_site,
+                                0,                  --p_item_rate,
+                                p_connect_site      --p_site_code_owner
+                            )::text    
+            || ') '
+            || 'where  lineno = '
+            || i.lineno::text;
+
+         /*call erraudit(
+            USER,
+            'createpo',
+            p_userid,
+               '7-1 - item rate updation - '
+            || i.orddt
+            || ','
+            || i.pcode::text
+            || ','
+            || i.icode
+            || ','
+            || i.ou_admcmptax_code::text);
+         call erraudit(USER,
+                   'createpo',
+                   p_userid,
+                   '7 - item rate updation - ' || v_status);*/
+         EXECUTE v_status;
+		-- v_status := db_fun_commit_statement(USER, v_status);
+      END LOOP;
+
+      /*
+      -- Updating ordcode in int$stg_createpo_all_fld
+      for i in (select distinct site_shortname, docno
+                from   int$stg_createpo_all_fld
+                order by 1,2) loop
+          select erp01.nextval into v_ordcode from sys.dual;
+
+          v_status := 'update int$stg_createpo_all_fld '||
+                      'set    ordcode = '||v_ordcode||' '||
+                      'where  site_shortname = '''||i.site_shortname||''' '||
+                      'and    docno = '''||i.docno||''' ';
+
+          erraudit (user, 'createpo', p_userid, '76 - Updating ordcode - '||v_status);
+
+          v_status := db_fun_commit_statement(user, v_status);
+      end loop;
+      */
+      /*call erraudit(USER,
+                'createpo',
+                p_userid,
+                '6 - Site wise entry ... START');*/
+
+      -- site wise entry
+      FOR i IN c1
+      LOOP
+         -- Document main entry
+         call erraudit(USER,
+                   'createpo',
+                   p_userid,
+                   '7 - Document entry ... START ' || i.ordcode::text);
+
+         FOR j IN c2(i.ordcode)
+         LOOP
+            -- START REV : 022
+            /* db_pkg_genentryno.set_oucode(j.admou_code);
+             db_pkg_genentryno.set_sitecode(j.admsite_code);
+             db_pkg_genentryno.set_menucode(v_menucode);
+             db_pkg_genentryno.initialize_globals(j.ycode);
+
+             v_tempno := db_pkg_genentryno.get_tempno;*/
+            -- END REV : 022
+            --select erp01.nextval into v_ordcode from sys.dual;
+            SELECT SUM(round((coalesce(a.ordqty, 0) * coalesce(a.rate, 0))::numeric, 2))
+              INTO STRICT v_grsamt
+              FROM int$stg_createpo_all_fld a
+             WHERE ordcode = i.ordcode;
+
+            /*call erraudit(USER,
+                      'createpo',
+                      p_userid,
+                      '71 - Inserting main entry ... ' || i.ordcode::text);*/
+
+            INSERT INTO purordmain(ordcode,
+                                    ordno,
+                                    orddt,
+                                    pcode,
+                                    docno,
+                                    agcode,
+                                    agrate,
+                                    trpcode,
+                                    stat,
+                                    REM,
+                                    ycode,
+                                    ecode,
+                                    time,
+                                    template_flg,
+                                    dtfr,
+                                    dtto,
+                                    payterm,
+                                    whether_consignment,
+                                    creatorcmpcode,
+                                    doccode,
+                                    scheme_docno,
+                                    admou_code,
+                                    mrchndsrcode,
+                                    fintradegrp_code,
+                                    grsamt,
+                                    chgamt,
+                                    netamt,
+                                    admcurrency_code,
+                                    exrate,
+                                    admsite_code,
+                                    formcode,
+                                    enable_lgt_track,
+                                    purtermcode,
+                                    set_applicable,
+                                    -- start rev : 014
+                                    udfstring01,
+                                    udfstring02,
+                                    udfstring03,
+                                    udfstring04,
+                                    udfstring05,
+                                    udfstring06,
+                                    udfstring07,
+                                    udfstring08,
+                                    udfstring09,
+                                    udfstring10,
+                                    -- END RE : 014
+                                    udfnum01,
+                                    udfnum02,
+                                    udfnum03,
+                                    udfnum04,
+                                    udfnum05,
+                                    udfdate01,
+                                    udfdate02,
+                                    udfdate03,
+                                    udfdate04,
+                                    udfdate05               -- START REV : 022
+                                             ,
+                                    ENTRY_SOURCE              -- END REV : 022
+                                                )
+                 VALUES (i.ordcode,
+					 	NULL,
+                         --i.ordcode,
+                         j.orddt,
+                         j.pcode,
+                         j.docno,
+                         j.agcode,
+                         j.agrate,
+                         j.trpcode,
+                         'N',
+                         j.ord_rem,
+                         j.ycode,
+                         p_userid,
+                         clock_timestamp(),
+                         'N',
+                         j.dtfr,
+                         j.dtto,
+                         j.payterm,
+                         UPPER(SUBSTR(j.whether_consignment, 1, 1)),
+                         1,
+                         j.doccode,
+                         coalesce(j.scheme_docno, 'Automatic'),
+                         j.admou_code,
+                         j.mrchndsrcode,
+                         j.fintradegrp_code,
+                         v_grsamt,
+                         0,
+                         v_grsamt,
+                         j.admcurrency_code,
+                         j.exrate,
+                         j.admsite_code,
+                         j.formcode,
+                         j.enable_lgt_track,
+                         j.purtermcode,
+                         'N',
+                         j.udfstring01,
+                         j.udfstring02,
+                         j.udfstring03,
+                         j.udfstring04,
+                         j.udfstring05,
+                         j.udfstring06,
+                         j.udfstring07,
+                         j.udfstring08,
+                         j.udfstring09,
+                         j.udfstring10,
+                         j.udfnum01,
+                         j.udfnum02,
+                         j.udfnum03,
+                         j.udfnum04,
+                         j.udfnum05,
+                         j.udfdate01,
+                         j.udfdate02,
+                         j.udfdate03,
+                         j.udfdate04,
+                         j.udfdate05,
+                         'EXCEL'                                  -- REV : 022
+                                );
+
+            /*call erraudit(USER,
+                      'createpo',
+                      p_userid,
+                      '72 - Inserting detail entry ... ');*/
+
+            -- Document detail entry
+            FOR k IN c3(i.ordcode)
+            LOOP
+               -- round((NVL(:PURORDDET.RATE,0)*NVL(:PURORDDET.ORDQTY,0)) - NVL(:PURORDDET.DISCOUNT,0) + NVL(:PURORDDET.TAXAMT,0),2)
+               -- Discount and Taxamt not initialized from FROM
+               INSERT INTO purorddet(ordcode,
+                                      icode,
+                                      ordqty,
+                                      rate,
+                                      rsp,
+                                      netamt,
+                                      rem)
+                       VALUES (
+                                 i.ordcode,
+                                 k.icode,
+                                 k.ordqty,
+                                 k.rate,
+                                 k.rsp,
+                                 ROUND (
+                                    (coalesce(k.rate, 0) * coalesce(k.ordqty, 0)),
+                                    2),
+                                 k.order_item_rem);
+
+               -- start rev : 015
+               IF k.order_item_due_date IS NOT NULL
+               THEN
+                  INSERT INTO purorddet_delivery(purorddet_code, duedate)
+                     SELECT MAX(code), k.order_item_due_date
+                       FROM purorddet
+                      WHERE     ordcode = i.ordcode
+                            AND icode = k.icode
+                            AND rate = k.rate;
+               ELSE
+                  SELECT orddt, pcode, dtfr
+                    INTO STRICT v_orddt1, v_pcode1, v_dtfr1
+                    FROM purordmain
+                   WHERE ordcode = i.ordcode;
+
+                  SELECT pur_price_chart_appl
+                    INTO STRICT v_price_chart_appl
+                    FROM finsl
+                   WHERE slcode = v_pcode1;
+
+                  IF coalesce(v_price_chart_appl, 'N') = 'Y'
+                  THEN
+                     v_deldays :=
+                        db_pkg_get_data_procurement$get_delivery_days(
+                           v_orddt1,
+                           v_pcode1,
+                           k.icode,
+                           'P');
+
+                     IF coalesce(v_deldays, 0) <> 0
+                     THEN
+                        SELECT MAX(code)
+                          INTO STRICT v_purorddet_code
+                          FROM purorddet
+                         WHERE ordcode = i.ordcode;
+
+                        v_duedate := v_dtfr1 + coalesce(v_deldays, 0);
+
+                        INSERT
+                          INTO purorddet_delivery(purorddet_code, duedate)
+                        VALUES (v_purorddet_code, v_duedate);
+                     END IF;
+                  END IF;
+               END IF;
+            -- end rev : 015
+            END LOOP;                             -- Document detail entry END
+            -- Insert into excise information
+            CALL int$pkg_createpo_loc_proc_insert_excise_data(i.ordcode);
+
+            /*call erraudit(USER,
+                      'createpo',
+                      p_userid,
+                      '73 - Calculating line level charge ... ');*/
+
+            -- Calculate charge
+            -- Line level charge
+            CALL int$pkg_createpo_calculate_term_item(i.ordcode);
+
+            /*call erraudit(USER,
+                      'createpo',
+                      p_userid,
+                      '74 - Calculating header level charge ... ');*/
+
+            -- Header level charge
+            CALL int$pkg_createpo_calculate_term(i.ordcode, j.purtermcode);
+         --erraudit (user, 'createpo', p_userid, '75 - Updating charge amount in  main table ... ');
+         END LOOP;                                  -- Document main entry END
+      END LOOP;                                             -- site wise entry
+      /*call erraudit(USER,
+                'createpo',
+                p_userid,
+                '76 - Updating charge amount in  main table ... ');*/
+
+      -- Now all data inserted with proper validation
+      -- Now you may generate the scheme_docno, otherwise it may skipped.
+      -- site wise entry
+      FOR i IN c1
+      LOOP
+         v_scheme_docno := NULL;
+
+         SELECT DISTINCT admou_code,
+                         admsite_code,
+                         ycode,
+                         orddt,
+                         DOCCODE
+           INTO STRICT v_admou_code,
+                v_admsite_code,
+                v_ycode,
+                v_orddt,
+                V_DOCCODE
+           FROM int$stg_createpo_all_fld
+          WHERE ordcode = i.ordcode;
+
+         SELECT SCHEME_DOCNO
+           INTO STRICT V_FINAL_SCHEME_DOCNO
+           FROM PURORDMAIN
+          WHERE ordcode = i.ordcode;
+
+         -- STRAT REV :022
+         /*   db_pkg_genentryno.set_oucode(v_admou_code);
+            db_pkg_genentryno.set_sitecode(v_admsite_code);
+            db_pkg_genentryno.set_menucode(v_menucode);
+            db_pkg_genentryno.initialize_globals(v_ycode);
+
+            db_pkg_genentryno.set_entcode(i.ordcode);*/
+         IF V_FINAL_SCHEME_DOCNO = 'Automatic'
+         THEN
+            V_FINAL_SCHEME_DOCNO :=
+               db_fun_document_number_web(NULL,
+                                           V_doccode,
+                                           V_YCODE,
+                                           TO_CHAR(V_ORDDT, 'DD-MM-YYYY'),
+                                           NULL,
+                                           v_admsite_code,
+                                           v_admou_code,
+                                           'ProcOrd');
+         END IF;
+
+         -- END REV : 022
+         -- Update main entry
+         SELECT coalesce(SUM(coalesce(netamt, 0)), 0)
+           INTO STRICT v_grsamt
+           FROM purorddet
+          WHERE ordcode = i.ordcode;
+
+           -- start rev : 026
+          select dtto into STRICT v_dtto 
+          from purordmain 
+          where ordcode = i.ordcode;
+
+          /*select max(coalesce(duedate,v_dtto))
+          into STRICT v_maxdt
+          from purorddet_delivery
+          where purorddet_code in (
+            SELECT	code
+            from	purorddet
+            where	ordcode = i.ordcode
+          );*/
+		  
+		  SELECT  coalesce(MAX(duedate), v_dtto)
+           INTO STRICT v_maxdt
+           FROM purorddet_delivery
+          WHERE purorddet_code IN (SELECT code
+                                     FROM purorddet
+                                    WHERE ordcode = i.ordcode);
+		  
+		  if v_maxdt is null
+		  then 
+		  v_maxdt := v_dtto;
+		  end if;
+
+          update purordmain 
+          set dtto = v_maxdt 
+          where ordcode = i.ordcode;
+          -- end rev : 026
+         SELECT round((coalesce(SUM(coalesce(chgamt, 0)), 0))::numeric, 2)
+           INTO STRICT v_chgamt
+           FROM purordchg
+          WHERE ordcode = i.ordcode;
+
+         v_netamt := coalesce(v_grsamt, 0) + coalesce(v_chgamt, 0);
+
+         UPDATE purordmain
+            SET grsamt = v_grsamt,
+                chgamt = v_grsamt,
+                netamt = v_netamt,
+                orddt = v_orddt,
+                -- START REV : 022
+                SCHEME_DOCNO = V_FINAL_SCHEME_DOCNO
+          -- ordno  = db_pkg_genentryno.g_tempno -- REV : 022
+          -- END REV : 022
+          WHERE ordcode = i.ordcode;
+
+         SELECT scheme_docno
+           INTO STRICT v_scheme_docno
+           FROM purordmain
+          WHERE ordcode = i.ordcode;
+
+         UPDATE int$stg_createpo_all_fld
+            SET po_scheme_docno = v_scheme_docno
+          WHERE ordcode = i.ordcode;
+
+         V_FINAL_SCHEME_DOCNO := NULL;
+      END LOOP;
+
+      -- log to be added in history table
+      SELECT nextval('int$error_log_code') INTO STRICT vsession;
+
+      /*
+      vdetailtbl := 'create table createpoimport_'||vsession||
+                    ' as select distinct scheme_doc_format, scheme_docno, orddt, supplier_slid, docno, agent_slid,
+                                  agrate, transporters_slid, ord_rem, dtfr, validity_period, payterm,
+                                  whether_consignment, mrchantdiser_id, fintradegrp_name, purterm_name,
+                                  form_name, currency_shortcode, exrate, site_shortname, icode_barcode,
+                                  oem_barcode, ordqty, order_rate, order_item_rem, udfstring01, udfstring02,
+                                  udfstring03, udfstring04, udfstring05, udfstring06, udfstring07, udfstring08,
+                                  udfstring09, udfstring10, udfnum01, udfnum02, udfnum03, udfnum04, udfnum05,
+                                  udfdate01, udfdate02, udfdate03, udfdate04, udfdate05, article_name, item_name,
+                                  item_rem, cname1, cname2, cname3, cname4, cname5, cname6, desc1, desc2, desc3,
+                                  desc4, desc5, desc6, num1, num2, num3, item_shrtname, tax_name, negative_stk_alert,
+                                  barunit, standard_rate, rsp, listed_mrp, wsp, uom, material_type, item_vendor_id,
+                                  expiry_date, order_item_due_date, lineno, userid, item_master_mrp, ordcode, pcode,
+                                  agcode, trpcode, ycode, ecode, dtto, doccode, admou_code, mrchndsrcode, fintradegrp_code,
+                                  admcurrency_code, admsite_code, formcode, enable_lgt_track, purtermcode, icode,
+                                  article_code, grpcode, ageing_appl, costing_method, ccode1, ccode2, ccode3,
+                                  ccode4, ccode5, ccode6, partycode, partyname, partyalias, taxcode, classname
+                         from  int$stg_createpo_all_fld
+                         where userid ='|| p_userid::text;
+      */
+      -- START REV : 003
+      --vdetailtbl := 'create table createpoimport_'||vsession||
+      vdetailtbl :=
+            'create table ginarchive.createpoimport_'
+         || vsession
+         ||                                                   -- END REV : 003
+           ' as select  scheme_doc_format, scheme_docno, orddt, supplier_slid, docno, agent_slid, agrate, transporters_slid, ord_rem, dtfr, validity_period, 
+                        payterm, whether_consignment, fintradegrp_name, purterm_name, form_name, currency_shortcode, exrate, site_shortname, icode_barcode, 
+                        oem_barcode, ordqty, order_rate, order_item_rem, allow_zero_rate, udfstring01, udfstring02, udfstring03, udfstring04, udfstring05, 
+                        udfstring06, udfstring07, udfstring08, udfstring09, udfstring10, udfnum01, udfnum02, udfnum03, udfnum04, udfnum05, udfdate01, 
+                        udfdate02, udfdate03, udfdate04, udfdate05, article_name, item_name, item_rem, cname1, cname2, cname3, cname4, cname5, cname6, 
+                        desc1, desc2, desc3, desc4, desc5, desc6, num1, num2, num3, item_shrtname, tax_name, negative_stk_alert, barunit, standard_rate, 
+                        rsp, listed_mrp, wsp, uom, material_type, item_vendor_id, expiry_date, order_item_due_date, item_master_mrp, lineno, 
+                        userid, ordcode, ou_admcmptax_code, po_scheme_docno, pcode, agcode, trpcode, ycode, ecode, dtto, doccode, admou_code, 
+                        mrchndsrcode, fintradegrp_code, admcurrency_code, admsite_code, formcode, enable_lgt_track, purtermcode, icode, rate, article_code, 
+                        grpcode, ageing_appl, costing_method, ageing_dtfr, ageing_dtto, ccode1, ccode2, ccode3, ccode4, ccode5, ccode6, partycode, 
+                        partyname, partyalias, taxcode, classname, invitem_udfstring01, invitem_udfstring02, invitem_udfstring03, invitem_udfstring04, 
+                        invitem_udfstring05, invitem_udfstring06, invitem_udfstring07, invitem_udfstring08, invitem_udfstring09, invitem_udfstring10, 
+                        invitem_udfnum01, invitem_udfnum02, invitem_udfnum03, invitem_udfnum04, invitem_udfnum05, invitem_udfdate01, invitem_udfdate02,
+                        invitem_udfdate03, invitem_udfdate04, invitem_udfdate05, mrchantdiser_username, hsn_sac_code hsn_sac_id, invhsnsacmain_code, extra_tax, 
+                        isprice_excludes_tax, glcode, slcode, gst_itc_appl, slid, glname, item_management_mode, price_management, manage_expiry, validity_mode, batch_validity_period, pos_batch_selection_mode
+                        from   int$stg_createpo_all_fld
+                        where  userid ='
+         || p_userid::text;
+
+      EXECUTE vdetailtbl;
+
+      -- START REV : 003
+      --vdetailrec := 'select count(distinct ordcode) from createpoimport_'||vsession;
+      vdetailrec :=
+            'select count(distinct ordcode) from ginarchive.createpoimport_'
+         || vsession::text;
+
+      -- END REV : 003
+      EXECUTE vdetailrec INTO STRICT vcount;
+
+      INSERT INTO int$history(code,
+                               importedby,
+                               importedon,
+                               classname,
+                               summary,
+                               history_detail_tablename,
+                               history_detail_row_count)
+           -- START REV : 003
+           --values (int$history_code.nextval, p_userid, sysdate, 'CREATEPO', vcount::TEXT||' PO imported successfully.', 'createpoimport_'||vsession, vcount);
+           VALUES (nextval('int$history_code'),
+                   p_userid,
+                   clock_timestamp(),
+                   'CREATEPO',
+                   vcount::TEXT || ' PO imported successfully.',
+                   'ginarchive.createpoimport_' || vsession::text,
+                   vcount);
+
+      -- END REV : 003
+      --COMMIT;
+      RETURN('1');
+   EXCEPTION
+      WHEN SQLSTATE '50001' THEN
+         errcode := -02222;
+         errmsg := 'Data inconsistency';
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'CREATEPO',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'CREATEPO',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

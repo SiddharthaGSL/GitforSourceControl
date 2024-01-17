@@ -1,0 +1,381 @@
+view "main"."v_finadj" {
+  text = """-
+SELECT fintag.entcode1 AS entcode,
+    fintag.enttype1 AS enttype,
+    finpost.entcode AS adj_entcode,
+    finpost1.scheme_docno AS document_no,
+    finpost1.entdt AS document_date,
+    finpost1.ycode AS document_ycode,
+    finpost1.docno AS document_refno,
+    finpost1.docdt AS document_refdt,
+    finenttype1.entname AS document_entname,
+    finpost1.enttype AS document_entype,
+    finpost1.postcode AS document_postcode,
+    finpost1.release_status AS document_release_status,
+        CASE
+            WHEN (COALESCE(finpost1.camount, (0)::numeric) <> (0)::numeric) THEN COALESCE(finpost1.camount, (0)::numeric)
+            ELSE COALESCE(finpost1.damount, (0)::numeric)
+        END AS document_amount,
+    finpost1.adjamt AS document_totadjamt,
+    admsite.name AS document_owner_site,
+    admsite.shrtname AS document_owner_siteshortname,
+    finpost.admou_code,
+    finpost.scheme_docno AS adj_document_no,
+    finpost.entdt AS adj_document_date,
+    finpost.ycode AS adj_document_ycode,
+    finpost.docno AS adj_refno,
+    finpost.docdt AS adj_refdt,
+    finenttype.entname AS adj_entname,
+    finpost.enttype AS adj_entype,
+    finpost.postcode AS adj_document_postcode,
+    finpost.release_status AS adj_document_release_status,
+    finpost.glcode,
+    fingl.glname,
+    finpost.slcode,
+    finsl.slname,
+    admcls.clstype AS sl_clstype,
+        CASE
+            WHEN (COALESCE(finpost.camount, (0)::numeric) <> (0)::numeric) THEN 'C'::text
+            ELSE 'D'::text
+        END AS debit_credit,
+        CASE
+            WHEN (COALESCE(finpost1.camount, (0)::numeric) <> (0)::numeric) THEN 'C'::text
+            ELSE 'D'::text
+        END AS document_debit_credit,
+        CASE
+            WHEN (COALESCE(finpost.camount, (0)::numeric) <> (0)::numeric) THEN COALESCE(finpost.camount, (0)::numeric)
+            ELSE COALESCE(finpost.damount, (0)::numeric)
+        END AS adj_document_amount,
+    COALESCE(fintag.amount, (0)::numeric) AS adj_adjamt,
+    finpost.adjamt AS adj_document_totadjamt,
+    (
+        CASE
+            WHEN (COALESCE(finpost.camount, (0)::numeric) <> (0)::numeric) THEN COALESCE(finpost.camount, (0)::numeric)
+            ELSE COALESCE(finpost.damount, (0)::numeric)
+        END - COALESCE(pi.tdsamt, (0)::numeric)) AS adj_document_netoftdsamt,
+    finpost.ref_admsite_code,
+    ref_admsite.name AS ref_admsite_name,
+    ref_admsite.shrtname AS ref_admsite_shrtname,
+    finpost.cash_discount_percentage AS org_cash_discount_percentage,
+    finpost.cash_discount_applicable AS adj_cash_discount_applicable,
+    finvchdn.cash_discount_percentage AS adj_cash_discount_percentage,
+    finpost.cash_discount_period AS adj_cash_discount_period,
+    finvchdn.cash_discount_appamount AS adj_cash_discount_appamount,
+    finvchdn.cash_discount_amount AS adj_cash_discount_amount,
+    fintdssrc.tdssrcname AS adj_document_tdssource,
+    fintdstype.tdsname AS adj_document_tdsname,
+    fintdstype.section AS adj_document_tdssection,
+        CASE
+            WHEN (finpost.enttype = 'PIM'::bpchar) THEN
+            CASE
+                WHEN ((finpost.ycode)::numeric = (1)::numeric) THEN opdoc.cash_discount_appamt
+                ELSE (0)::numeric
+            END
+            ELSE (0)::numeric
+        END AS adj_op_cash_appamt,
+        CASE
+            WHEN (finpost.enttype = 'PIM'::bpchar) THEN
+            CASE
+                WHEN ((finpost.ycode)::numeric = (1)::numeric) THEN 'Y'::text
+                ELSE 'N'::text
+            END
+            ELSE 'N'::text
+        END AS adj_op_cash,
+        CASE
+            WHEN ((finpost.ycode)::numeric = (1)::numeric) THEN 'Y'::text
+            ELSE 'N'::text
+        END AS is_op_document,
+    'Y'::text AS isentcodebasedoc
+   FROM ((((((((((((((main.fintag
+     JOIN main.finpost finpost1 ON ((fintag.postcode1 = finpost1.postcode)))
+     JOIN main.finpost ON ((fintag.postcode2 = finpost.postcode)))
+     JOIN main.fingl ON ((finpost.glcode = fingl.glcode)))
+     JOIN main.finsl ON ((finpost.slcode = finsl.slcode)))
+     JOIN main.admcls ON ((finsl.clscode = admcls.clscode)))
+     JOIN main.finenttype ON ((finpost.enttype = finenttype.enttype)))
+     JOIN main.finenttype finenttype1 ON ((finpost1.enttype = finenttype1.enttype)))
+     JOIN main.admsite ON ((finpost.admsite_code_owner = admsite.code)))
+     LEFT JOIN ( SELECT m.invcode AS entcode,
+            m.agcode,
+            sl.slname AS agname,
+            m.tdsamt
+           FROM (main.purinvmain m
+             LEFT JOIN main.finsl sl ON ((m.agcode = sl.slcode)))
+          WHERE ((m.agcode IS NOT NULL) OR (m.tdsamt > (0)::numeric))) pi ON (((finpost.entcode)::text = (pi.entcode)::text)))
+     LEFT JOIN main.finopdoc opdoc ON (((finpost.entcode)::text = (opdoc.entcode)::text)))
+     LEFT JOIN main.admsite ref_admsite ON ((finpost.ref_admsite_code = ref_admsite.code)))
+     LEFT JOIN main.fintdssrc ON ((finpost.tdssrccode = fintdssrc.tdssrccode)))
+     LEFT JOIN main.fintdstype ON ((finpost.tdstypecode = fintdstype.tdstypecode)))
+     LEFT JOIN main.finvchdn ON ((((fintag.entcode1)::numeric = (finvchdn.finvchmain_code)::numeric) AND ((fintag.entcode2)::numeric = (finvchdn.purinvmain_invcode)::numeric))))
+UNION ALL
+ SELECT fintag.entcode2 AS entcode,
+    fintag.enttype2 AS enttype,
+    finpost.entcode AS adj_entcode,
+    finpost1.scheme_docno AS document_no,
+    finpost1.entdt AS document_date,
+    finpost1.ycode AS document_ycode,
+    finpost1.docno AS document_refno,
+    finpost1.docdt AS document_refdt,
+    finenttype1.entname AS document_entname,
+    finpost1.enttype AS document_entype,
+    finpost1.postcode AS document_postcode,
+    finpost1.release_status AS document_release_status,
+        CASE
+            WHEN (COALESCE(finpost1.camount, (0)::numeric) <> (0)::numeric) THEN COALESCE(finpost1.camount, (0)::numeric)
+            ELSE COALESCE(finpost1.damount, (0)::numeric)
+        END AS document_amount,
+    finpost1.adjamt AS document_totadjamt,
+    admsite.name AS document_owner_site,
+    admsite.shrtname AS document_owner_siteshortname,
+    finpost.admou_code,
+    finpost.scheme_docno AS adj_document_no,
+    finpost.entdt AS adj_document_date,
+    finpost.ycode AS adj_document_ycode,
+    finpost.docno AS adj_refno,
+    finpost.docdt AS adj_refdt,
+    finenttype.entname AS adj_entname,
+    finpost.enttype AS adj_entype,
+    finpost.postcode AS adj_document_postcode,
+    finpost.release_status AS adj_document_release_status,
+    finpost.glcode,
+    fingl.glname,
+    finpost.slcode,
+    finsl.slname,
+    admcls.clstype AS sl_clstype,
+        CASE
+            WHEN (COALESCE(finpost.camount, (0)::numeric) <> (0)::numeric) THEN 'C'::text
+            ELSE 'D'::text
+        END AS debit_credit,
+        CASE
+            WHEN (COALESCE(finpost1.camount, (0)::numeric) <> (0)::numeric) THEN 'C'::text
+            ELSE 'D'::text
+        END AS document_debit_credit,
+        CASE
+            WHEN (COALESCE(finpost.camount, (0)::numeric) <> (0)::numeric) THEN COALESCE(finpost.camount, (0)::numeric)
+            ELSE COALESCE(finpost.damount, (0)::numeric)
+        END AS adj_document_amount,
+    COALESCE(fintag.amount, (0)::numeric) AS adj_adjamt,
+    finpost.adjamt AS adj_document_totadjamt,
+    (
+        CASE
+            WHEN (COALESCE(finpost.camount, (0)::numeric) <> (0)::numeric) THEN COALESCE(finpost.camount, (0)::numeric)
+            ELSE COALESCE(finpost.damount, (0)::numeric)
+        END - COALESCE(pi.tdsamt, (0)::numeric)) AS adj_document_netoftdsamt,
+    finpost.ref_admsite_code,
+    ref_admsite.name AS ref_admsite_name,
+    ref_admsite.shrtname AS ref_admsite_shrtname,
+    finpost.cash_discount_percentage AS org_cash_discount_percentage,
+    finpost.cash_discount_applicable AS adj_cash_discount_applicable,
+    finvchdn.cash_discount_percentage AS adj_cash_discount_percentage,
+    finpost.cash_discount_period AS adj_cash_discount_period,
+    finvchdn.cash_discount_appamount AS adj_cash_discount_appamount,
+    finvchdn.cash_discount_amount AS adj_cash_discount_amount,
+    fintdssrc.tdssrcname AS adj_document_tdssource,
+    fintdstype.tdsname AS adj_document_tdsname,
+    fintdstype.section AS adj_document_tdssection,
+        CASE
+            WHEN (finpost.enttype = 'PIM'::bpchar) THEN
+            CASE
+                WHEN ((finpost.ycode)::numeric = (1)::numeric) THEN opdoc.cash_discount_appamt
+                ELSE (0)::numeric
+            END
+            ELSE (0)::numeric
+        END AS adj_op_cash_appamt,
+        CASE
+            WHEN (finpost.enttype = 'PIM'::bpchar) THEN
+            CASE
+                WHEN ((finpost.ycode)::numeric = (1)::numeric) THEN 'Y'::text
+                ELSE 'N'::text
+            END
+            ELSE 'N'::text
+        END AS adj_op_cash,
+        CASE
+            WHEN ((finpost.ycode)::numeric = (1)::numeric) THEN 'Y'::text
+            ELSE 'N'::text
+        END AS is_op_document,
+    'N'::text AS isentcodebasedoc
+   FROM ((((((((((((((main.fintag
+     JOIN main.finpost ON ((fintag.postcode1 = finpost.postcode)))
+     JOIN main.finpost finpost1 ON ((fintag.postcode2 = finpost1.postcode)))
+     JOIN main.fingl ON ((finpost.glcode = fingl.glcode)))
+     JOIN main.finsl ON ((finpost.slcode = finsl.slcode)))
+     JOIN main.admcls ON ((finsl.clscode = admcls.clscode)))
+     JOIN main.finenttype ON ((finpost.enttype = finenttype.enttype)))
+     JOIN main.finenttype finenttype1 ON ((finpost1.enttype = finenttype1.enttype)))
+     JOIN main.admsite ON ((finpost.admsite_code_owner = admsite.code)))
+     LEFT JOIN ( SELECT m.invcode AS entcode,
+            m.agcode,
+            sl.slname AS agname,
+            m.tdsamt
+           FROM (main.purinvmain m
+             LEFT JOIN main.finsl sl ON ((m.agcode = sl.slcode)))
+          WHERE ((m.agcode IS NOT NULL) OR (m.tdsamt > (0)::numeric))) pi ON (((finpost.entcode)::text = (pi.entcode)::text)))
+     LEFT JOIN main.fintdstype ON ((finpost.tdstypecode = fintdstype.tdstypecode)))
+     LEFT JOIN main.fintdssrc ON ((finpost.tdssrccode = fintdssrc.tdssrccode)))
+     LEFT JOIN main.admsite ref_admsite ON ((finpost.ref_admsite_code = ref_admsite.code)))
+     LEFT JOIN main.finopdoc opdoc ON (((finpost.entcode)::text = (opdoc.entcode)::text)))
+     LEFT JOIN main.finvchdn ON ((((fintag.entcode2)::numeric = (finvchdn.finvchmain_code)::numeric) AND ((fintag.entcode1)::numeric = (finvchdn.purinvmain_invcode)::numeric))));
+"""
+  columns = (
+    column "entcode" {
+      type = "bigint"
+    }
+    column "enttype" {
+      type = "character(3)"
+    }
+    column "adj_entcode" {
+      type = "character varying(100)"
+    }
+    column "document_no" {
+      type = "character varying(50)"
+    }
+    column "document_date" {
+      type = "timestamp(0) without time zone"
+    }
+    column "document_ycode" {
+      type = "bigint"
+    }
+    column "document_refno" {
+      type = "character varying(100)"
+    }
+    column "document_refdt" {
+      type = "timestamp(0) without time zone"
+    }
+    column "document_entname" {
+      type = "character varying(100)"
+    }
+    column "document_entype" {
+      type = "character(3)"
+    }
+    column "document_postcode" {
+      type = "bigint"
+    }
+    column "document_release_status" {
+      type = "character(1)"
+    }
+    column "document_amount" {
+      type = "numeric"
+    }
+    column "document_totadjamt" {
+      type = "numeric(20,2)"
+    }
+    column "document_owner_site" {
+      type = "character varying(100)"
+    }
+    column "document_owner_siteshortname" {
+      type = "character varying(25)"
+    }
+    column "admou_code" {
+      type = "bigint"
+    }
+    column "adj_document_no" {
+      type = "character varying(50)"
+    }
+    column "adj_document_date" {
+      type = "timestamp(0) without time zone"
+    }
+    column "adj_document_ycode" {
+      type = "bigint"
+    }
+    column "adj_refno" {
+      type = "character varying(100)"
+    }
+    column "adj_refdt" {
+      type = "timestamp(0) without time zone"
+    }
+    column "adj_entname" {
+      type = "character varying(100)"
+    }
+    column "adj_entype" {
+      type = "character(3)"
+    }
+    column "adj_document_postcode" {
+      type = "bigint"
+    }
+    column "adj_document_release_status" {
+      type = "character(1)"
+    }
+    column "glcode" {
+      type = "bigint"
+    }
+    column "glname" {
+      type = "character varying(100)"
+    }
+    column "slcode" {
+      type = "bigint"
+    }
+    column "slname" {
+      type = "character varying(100)"
+    }
+    column "sl_clstype" {
+      type = "character(1)"
+    }
+    column "debit_credit" {
+      type = text
+    }
+    column "document_debit_credit" {
+      type = text
+    }
+    column "adj_document_amount" {
+      type = "numeric"
+    }
+    column "adj_adjamt" {
+      type = "numeric"
+    }
+    column "adj_document_totadjamt" {
+      type = "numeric(20,2)"
+    }
+    column "adj_document_netoftdsamt" {
+      type = "numeric"
+    }
+    column "ref_admsite_code" {
+      type = "bigint"
+    }
+    column "ref_admsite_name" {
+      type = "character varying(100)"
+    }
+    column "ref_admsite_shrtname" {
+      type = "character varying(25)"
+    }
+    column "org_cash_discount_percentage" {
+      type = "numeric(6,2)"
+    }
+    column "adj_cash_discount_applicable" {
+      type = "character(1)"
+    }
+    column "adj_cash_discount_percentage" {
+      type = "numeric(6,2)"
+    }
+    column "adj_cash_discount_period" {
+      type = "bigint"
+    }
+    column "adj_cash_discount_appamount" {
+      type = "numeric(20,3)"
+    }
+    column "adj_cash_discount_amount" {
+      type = "numeric(20,3)"
+    }
+    column "adj_document_tdssource" {
+      type = "character varying(100)"
+    }
+    column "adj_document_tdsname" {
+      type = "character varying(100)"
+    }
+    column "adj_document_tdssection" {
+      type = "character varying(100)"
+    }
+    column "adj_op_cash_appamt" {
+      type = "numeric"
+    }
+    column "adj_op_cash" {
+      type = text
+    }
+    column "is_op_document" {
+      type = text
+    }
+    column "isentcodebasedoc" {
+      type = text
+    }
+  )
+}
+

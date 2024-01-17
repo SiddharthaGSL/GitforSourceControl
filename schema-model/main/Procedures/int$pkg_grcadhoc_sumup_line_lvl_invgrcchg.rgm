@@ -1,0 +1,214 @@
+procedure "main"."int$pkg_grcadhoc_sumup_line_lvl_invgrcchg(bigint)" {
+  text = """
+
+DECLARE
+
+      C3 CURSOR FOR
+           SELECT I.GRCCODE,
+                  I.CHGCODE,
+                  I.RATE,
+                  I.SIGN,
+                  I.BASIS,
+                  I.ISTAX,
+                  I.SOURCE,
+                  I.FORMULAE,
+                  round((SUM(I.CHGAMT))::numeric, 2) CHGAMT,
+                  round((SUM(I.APPAMT))::numeric, 2) APPAMT,
+                  SUM(I.SEQ),
+                  GST_COMPONENT,
+                  ISREVERSE
+             FROM INVGRCCHG_ITEM I
+            WHERE I.GRCCODE = P_GRCCODE AND I.BASIS <> 'A'
+         GROUP BY I.GRCCODE,
+                  I.CHGCODE,
+                  I.RATE,
+                  I.SIGN,
+                  I.BASIS,
+                  I.ISTAX,
+                  I.SOURCE,
+                  I.FORMULAE,
+                  I.GST_COMPONENT,
+                  I.ISREVERSE
+
+UNION ALL
+
+           SELECT I.GRCCODE,
+                  I.CHGCODE,
+                  SUM(I.RATE)            RATE,
+                  I.SIGN,
+                  I.BASIS,
+                  I.ISTAX,
+                  I.SOURCE,
+                  I.FORMULAE,
+                  round((SUM(I.CHGAMT))::numeric, 2) CHGAMT,
+                  round((SUM(I.APPAMT))::numeric, 2) APPAMT,
+                  SUM(I.SEQ),
+                  GST_COMPONENT,
+                  ISREVERSE
+             FROM INVGRCCHG_ITEM I
+            WHERE I.GRCCODE = P_GRCCODE AND I.BASIS = 'A'
+         GROUP BY I.GRCCODE,
+                  I.CHGCODE,
+                  I.SIGN,
+                  I.BASIS,
+                  I.ISTAX,
+                  I.SOURCE,
+                  I.FORMULAE,
+                  I.GST_COMPONENT,
+                  I.ISREVERSE
+         ORDER BY 11;
+
+      V_SEQ            bigint := 1;
+      V_ITEM_LVL_SEQ   bigint := 1;
+      V_CNT            smallint := 0;
+
+BEGIN
+      DELETE FROM INVGRCCHG
+            WHERE GRCCODE = P_GRCCODE;
+
+      FOR C3REC IN C3
+      LOOP
+         IF C3REC.BASIS = 'A'
+         THEN
+            SELECT MIN(SEQ)
+              INTO STRICT V_SEQ
+              FROM INVGRCCHG_ITEM
+             WHERE     GRCCODE = P_GRCCODE
+                   AND CHGCODE = C3REC.CHGCODE
+                   AND OPERATION_LEVEL = 'L';
+         ELSE
+            SELECT MIN(SEQ)
+              INTO STRICT V_SEQ
+              FROM INVGRCCHG_ITEM
+             WHERE     GRCCODE = P_GRCCODE
+                   AND CHGCODE = C3REC.CHGCODE
+                   AND coalesce(RATE, 0) = coalesce(C3REC.RATE, 0)
+                   AND OPERATION_LEVEL = 'L';
+         END IF;
+
+         -- END REV : 014
+         IF coalesce(V_SEQ, 0) = 0
+         THEN
+            V_SEQ := 800 + V_ITEM_LVL_SEQ;
+            V_ITEM_LVL_SEQ := V_ITEM_LVL_SEQ + 1;
+         END IF;
+
+         INSERT INTO INVGRCCHG(GRCCODE,
+                                SEQ,
+                                CHGCODE,
+                                RATE,
+                                SIGN,
+                                BASIS,
+                                ISTAX,
+                                SOURCE,
+                                FORMULAE,
+                                CHGAMT,
+                                APPAMT,
+                                OPERATION_LEVEL,
+                                GST_COMPONENT,
+                                ISREVERSE)
+              VALUES (C3REC.GRCCODE,
+                      V_SEQ,
+                      C3REC.CHGCODE,
+                      C3REC.RATE,
+                      C3REC.SIGN,
+                      C3REC.BASIS,
+                      C3REC.ISTAX,
+                      C3REC.SOURCE,
+                      C3REC.FORMULAE,
+                      C3REC.CHGAMT,
+                      C3REC.APPAMT,
+                      'L',
+                      C3REC.GST_COMPONENT,
+                      C3REC.ISREVERSE);
+
+         V_SEQ := V_SEQ + 1;
+      END LOOP;
+
+      DECLARE
+         C1 CURSOR FOR
+            SELECT A.CODE                ERS_CODE,
+                   coalesce(B.ROUNDOFF, 'N') ROUNDOFF,
+                   coalesce(A.CHGAMT, 0)     CHGAMT,
+                   coalesce(A.APPAMT, 0)     APPAMT,
+                   coalesce(A.RATE, 0)       RATE,
+                   A.SIGN                SIGN
+              FROM INVGRCCHG A, FINCHG B
+             WHERE     A.GRCCODE = P_GRCCODE
+                   AND A.CHGCODE = B.CHGCODE
+                   AND A.BASIS = 'P'
+                   AND B.SOURCE <> 'E';
+      BEGIN
+         FOR C1_LOOP IN C1
+         LOOP
+            UPDATE INVGRCCHG
+               SET CHGAMT =
+                      CASE WHEN                          C1_LOOP.SIGN='+' THEN  ROUND (                                   coalesce(C1_LOOP.CHGAMT, 0)                                 + (  (  (  coalesce(C1_LOOP.APPAMT, 0)                                          * coalesce(C1_LOOP.RATE, 0))                                       / 100)                                    - coalesce(C1_LOOP.CHGAMT, 0)),                                 CASE WHEN C1_LOOP.ROUNDOFF='N' THEN  2  ELSE 0 END ) WHEN                          C1_LOOP.SIGN='-' THEN    -1                              * (ROUND (                                      coalesce(C1_LOOP.CHGAMT, 0)                                    + (  (  (  coalesce(C1_LOOP.APPAMT, 0)                                             * coalesce(C1_LOOP.RATE, 0))                                          / 100)                                       - coalesce(C1_LOOP.CHGAMT, 0)),                                    CASE WHEN C1_LOOP.ROUNDOFF='N' THEN  2  ELSE 0 END )) END
+             WHERE CODE = C1_LOOP.ERS_CODE;
+         END LOOP;
+      END;
+
+      -- ROUND OFF ADJUSTED IN ITEM CHARGE TABLE
+      DECLARE
+         C1 CURSOR
+         FOR
+              SELECT A.CHGCODE,
+                     coalesce(A.RATE, 0)       RATE,
+                     coalesce(B.ROUNDOFF, 'N') ROUNDOFF,
+                     SUM(coalesce(A.CHGAMT, 0)) CHGAMT
+                FROM INVGRCCHG_ITEM A, FINCHG B
+               WHERE     A.GRCCODE = P_GRCCODE
+                     AND A.CHGCODE = B.CHGCODE
+                     AND A.BASIS = 'P'
+                     AND B.SOURCE <> 'E'
+            GROUP BY A.CHGCODE, coalesce(A.RATE, 0), coalesce(B.ROUNDOFF, 'N');
+
+         V_TOTCHGAMT   INVGRCCHG.CHGAMT%TYPE;
+      BEGIN
+         FOR C1_LOOP IN C1
+         LOOP
+            BEGIN
+               SELECT coalesce(CHGAMT, 0)
+                 INTO STRICT V_TOTCHGAMT
+                 FROM INVGRCCHG
+                WHERE     CHGCODE = C1_LOOP.CHGCODE
+                      AND GRCCODE = P_GRCCODE
+                      AND coalesce(RATE, 0) = coalesce(C1_LOOP.RATE, 0);
+            EXCEPTION
+               WHEN no_data_found
+               THEN
+                  V_TOTCHGAMT := 0;
+            END;
+
+            UPDATE INVGRCCHG_ITEM
+               SET CHGAMT =
+                      ROUND (
+                           coalesce(CHGAMT, 0)
+                         + (coalesce(V_TOTCHGAMT, 0) - coalesce(C1_LOOP.CHGAMT, 0)),
+                         CASE WHEN C1_LOOP.ROUNDOFF='N' THEN  2  ELSE 0 END )
+             WHERE     CODE =
+                          (SELECT MAX(CODE)
+                             FROM INVGRCCHG_ITEM
+                            WHERE     GRCCODE = P_GRCCODE
+                                  AND CHGCODE = C1_LOOP.CHGCODE)
+                   AND GRCCODE = P_GRCCODE;
+         END LOOP;
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         NULL;
+   END;
+
+"""
+  arguments = <
+    {
+      name = p_grccode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

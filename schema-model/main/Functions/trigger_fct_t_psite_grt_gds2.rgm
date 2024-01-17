@@ -1,0 +1,55 @@
+function "main"."trigger_fct_t_psite_grt_gds2()" {
+  text = """
+
+DECLARE
+    SUB_COUNT_POSGRT       bigint;
+    SUB_COUNT_SITETOSITE   bigint;
+    V_ISENABLED     bigint;
+    SITE_TYPE   varchar(15);
+    V_INSTALLATION_TYPE  varchar(10);
+BEGIN
+    SELECT COUNT(1)
+      INTO STRICT SUB_COUNT_POSGRT
+      FROM GDS2_SUBSCR_EVENT
+     WHERE EVENT_ID = 'POSGRT';
+
+    SELECT COUNT(1)
+      INTO STRICT SUB_COUNT_SITETOSITE
+      FROM GDS2_SUBSCR_EVENT
+     WHERE EVENT_ID = 'SITETOSITETRANSFER';
+
+    SELECT COUNT(1)
+      INTO STRICT V_ISENABLED
+      FROM GDS2_SUBSCR_EVENT
+     WHERE EVENT_ID IN ('pos.goodsreturn.added');
+
+     SELECT SITETYPE, INSTALLATION_TYPE INTO STRICT SITE_TYPE, V_INSTALLATION_TYPE
+      FROM ADMSITE
+     WHERE CODE = NEW.REPLN_ADMSITE_CODE;
+
+
+    IF coalesce(SUB_COUNT_POSGRT, 0) > 0
+    THEN
+       CALL DB_PKG_GDS2_EVENT$TRACK('POSGRT', NEW.CODE);
+    END IF;
+
+    IF coalesce(SUB_COUNT_SITETOSITE, 0) > 0 AND SITE_TYPE LIKE '%MS%' AND V_INSTALLATION_TYPE = 'ZPOS'
+    THEN
+       CALL DB_PKG_GDS2_EVENT$TRACK('SITETOSITETRANSFER', NEW.CODE);
+    END IF;
+
+    IF TG_OP = 'INSERT' THEN
+      IF coalesce(V_ISENABLED,0) > 0 AND SITE_TYPE LIKE 'MS%'
+            THEN
+                CALL DB_PKG_GDS2_EVENT$TRACK('pos.goodsreturn.added', NEW.CODE);
+            END IF;
+    END IF;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

@@ -1,0 +1,62 @@
+procedure "main"."grcmain_iqry(refcursor, bigint, timestamp without time zone, bigint, bigint)" {
+  text = """
+
+BEGIN
+ OPEN BLOCK_DATA FOR
+	SELECT 	INVGRCMAIN.GRCCODE
+		,INVGRCMAIN.GRCNO
+		,INVGRCMAIN.GRCDT
+		,INVGRCMAIN.DOCNO
+		,INVGRCMAIN.PCODE
+		,INVGRCMAIN.YCODE
+		,INVGRCMAIN.WHETHER_CONSIGNMENT
+		,INVGRCMAIN.RCQTY
+		,INVGRCMAIN.RTQTY
+		,INVGRCMAIN.RTINVQTY
+		,INVGRCMAIN.RCINVQTY
+		,INVLOC.LOCNAME
+		,PURORDMAIN.ORDNO
+		,PURORDMAIN.ORDDT
+		,CASE WHEN INVOICE_TAGGED.GRCCODE IS NULL THEN 0  ELSE 1 END  STATUS
+	FROM invloc, invgrcmain
+LEFT OUTER JOIN purordmain ON (INVGRCMAIN.ORDCODE = PURORDMAIN.ORDCODE)
+LEFT OUTER JOIN (SELECT DISTINCT GRCCODE FROM PURINVDET WHERE INVCODE = N_INVCODE) invoice_tagged ON (INVGRCMAIN.GRCCODE = INVOICE_TAGGED.GRCCODE)
+WHERE INVGRCMAIN.LOCCODE = INVLOC.LOCCODE  AND INVGRCMAIN.PCODE = N_PCODE AND INVGRCMAIN.YCODE = N_YCODE AND INVGRCMAIN.GRCDT <= N_INVDT AND (INVOICE_TAGGED.GRCCODE IS NOT NULL OR coalesce(INVGRCMAIN.RCQTY,0) - coalesce(INVGRCMAIN.RTQTY,0) - coalesce(INVGRCMAIN.RCINVQTY,0) > 0)  ORDER BY CASE WHEN INVOICE_TAGGED.GRCCODE IS NULL THEN 0  ELSE 1 END  DESC, coalesce(INVGRCMAIN.WHETHER_CONSIGNMENT,'N') DESC, INVGRCMAIN.GRCNO;
+END;
+
+"""
+  arguments = <
+    {
+      name = block_data
+      type = refcursor
+      mode = INOUT
+    }
+
+    {
+      name = n_pcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = n_invdt
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = n_ycode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = n_invcode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

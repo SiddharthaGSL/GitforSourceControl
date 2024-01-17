@@ -1,0 +1,340 @@
+function "main"."int$pkg_orgunmgtag_int$pkg_orgunmgtag_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status   char(1);
+      errmsg     varchar(200);
+      errcode    bigint;V_MAXSEQ_NO   bigint := NULL;
+
+BEGIN
+        --code  Validation
+        
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ORGUNMGTAG', userid, 'Data Validation', a.org_site_shortname||': Organization site shortname, is either invalid or it is not tagged with the given Sub ledger.', clock_timestamp()
+        FROM int$stg_orgunmgtag a, admsite b
+LEFT OUTER JOIN finsl_ou c ON (b.slcode = c.slcode)
+LEFT OUTER JOIN admsite d ON (c.admsite_code = d.code)
+WHERE upper(a.customer_site_shortname) = upper(b.shrtname)  and upper(a.org_site_shortname) = upper(d.SHRTNAME)  and (d.code is null or d.sitetype not in ('OS-OO-CM')) and a.userid = p_userid;
+
+        -- CUSTOMER_SITE_SHORTNAME
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ORGUNMGTAG', userid, 'Data Validation', a.customer_site_shortname||': Customer site shortname, is either invalid or extinct.', clock_timestamp()
+        FROM int$stg_orgunmgtag a
+		LEFT OUTER JOIN admsite b ON (upper(a.customer_site_shortname) = upper(b.shrtname))
+		WHERE (b.code is null or coalesce(b.ext,'N') = 'Y') and (b.code is null or b.sitetype in ('US-CO-CM','US-CO-OM','US-CO-OM-TS')) and a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ORGUNMGTAG', userid, 'Data Validation', 'Multiple rows exist for same Organization site shortname and Customer site shortname combination, cannot proceed.', clock_timestamp()
+        from   int$stg_orgunmgtag a
+        where  upper(org_site_shortname)||'-'||upper(customer_site_shortname) in (
+                    SELECT x||'-'||y 
+                    from (
+                                select upper(org_site_shortname) x, upper(customer_site_shortname) y, count(*) 
+                                from   int$stg_orgunmgtag
+                                where  userid = p_userid
+                                group by upper(org_site_shortname), upper(customer_site_shortname)
+                                having count(*) > 1) alias11)
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ORGUNMGTAG', userid, 'Data Validation', a.customer_site_shortname||': Customer site shortname, only unmanaged sites are allowed.', clock_timestamp()
+        from   int$stg_orgunmgtag a, admsite b
+        where  upper(a.customer_site_shortname) = upper(b.shrtname)
+        and    coalesce(b.ext,'N') = 'N'
+        and    b.sitetype not in ('US-CO-CM','US-CO-OM','US-CO-OM-TS')
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ORGUNMGTAG', userid, 'Data Validation', a.customer_site_shortname||': Customer site shortname, Customer is extinct, can not proceed.', clock_timestamp()
+        from   int$stg_orgunmgtag a, admsite b, finsl c
+        where  upper(a.customer_site_shortname) = upper(b.shrtname)
+        and    coalesce(b.ext,'N') = 'N'
+        and    coalesce(c.ext,'N') = 'Y'
+        and    b.sitetype not in ('US-CO-CM','US-CO-OM','US-CO-OM-TS')
+        and    a.userid = p_userid;
+		
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ORGUNMGTAG', userid, 'Data Validation', a.org_site_shortname||': Organization site shortname is not present.', clock_timestamp()
+        from   int$stg_orgunmgtag a LEFT OUTER JOIN admsite b ON upper(a.org_site_shortname) = upper(b.shrtname)
+        where  a.customer_site_shortname IS NOT NULL
+        and    b.shrtname IS NULL
+        and    a.userid = p_userid;
+
+        update int$stg_orgunmgtag
+        set    organization_site_code = (SELECT code 
+                                         from   admsite 
+                                         where  upper(shrtname) = upper(org_site_shortname))
+        where  userid = p_userid;
+
+        update int$stg_orgunmgtag
+        set    customer_site_code = (SELECT code 
+                                     from   admsite 
+                                     where  upper(shrtname) = upper(customer_site_shortname)),
+               slcode = (select slcode 
+                         from   admsite 
+                         where  upper(shrtname) = upper(customer_site_shortname))
+        where  userid = p_userid;
+
+        --COMMIT;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ORGUNMGTAG', userid, 'Data Validation', a.org_site_shortname||': Organization site shortname, is either invalid or it is not tagged with the given Sub ledger.', clock_timestamp()
+        from   int$stg_orgunmgtag a
+        where  a.organization_site_code::TEXT||'-'||a.slcode::TEXT not in (SELECT b.admsite_code::TEXT||'-'||b.slcode::TEXT from finsl_ou b)
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ORGUNMGTAG', userid, 'Data Validation', a.customer_site_shortname||': Customer site shortname, Customer is extinct, can not proceed.', clock_timestamp()
+        from   int$stg_orgunmgtag a, finsl b
+        where  a.slcode = b.slcode
+        and    coalesce(b.ext,'N') = 'Y'
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ORGUNMGTAG', userid, 'Data Validation', a.org_site_shortname||': Organization site shortname, is either invalid or it is not tagged with the given Sub ledger.', clock_timestamp()
+        FROM int$stg_orgunmgtag a
+LEFT OUTER JOIN finsl_ou b ON (a.organization_site_code = b.admsite_code)
+WHERE b.code is null and a.organization_site_code is not null and a.userid = p_userid;
+        -- END REV : 002             
+        
+        --PRICELIST_NAME Validation
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+         -- START REV : 002
+         -- SELECT int$error_log_code.NEXTVAL, lineno, 'ORGUNMGTAG', userid, 'Data Validation', 'Invalid Pricelist Name.', SYSDATE
+         SELECT nextval('int$error_log_code'), lineno, 'ORGUNMGTAG', userid, 'Data Validation', a.SALE_PRICELIST_NAME||': Price list name, is not valid.', clock_timestamp()
+         -- END REV : 002
+         FROM int$stg_orgunmgtag a
+		 LEFT OUTER JOIN salpricelistmain b ON (UPPER(a.sale_pricelist_name) = UPPER(b.pricelistname))
+		 WHERE a.SALE_PRICELIST_NAME IS NOT NULL AND b.pricelistname IS NULL AND a.userid = p_userid;
+
+        -- START REV : 002
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ORGUNMGTAG', userid, 'Data Validation', a.sale_pricelist_name||': Price list name, all Sale details are required.', clock_timestamp()
+        FROM int$stg_orgunmgtag a, finsl_ou b
+		LEFT OUTER JOIN finsl_ou_site c ON (b.code = c.finsl_ou_code)
+		WHERE a.organization_site_code = b.admsite_code and a.slcode = b.slcode  and a.sale_pricelist_name is not null and (
+                    coalesce(a.sale_term_name,c.termcode::varchar) is null
+                    or
+                    coalesce(a.sale_form_name,c.salformcode::varchar) is null
+                ) and a.userid = p_userid;
+        -- END REV : 002
+        
+        --TERM_NAME Validation
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        -- START REV : 002
+        -- SELECT int$error_log_code.NEXTVAL, lineno, 'ORGUNMGTAG', userid, 'Data Validation', 'Invalid Term Name / Extinct', SYSDATE
+        SELECT nextval('int$error_log_code'), lineno, 'ORGUNMGTAG', userid, 'Data Validation', a.sale_term_name||': Sale term name, is not valid or extinct.', clock_timestamp()
+        -- END REV : 002
+        FROM  int$stg_orgunmgtag a
+		LEFT OUTER JOIN saltermmain b ON (UPPER(a.sale_term_name) = UPPER(b.saltermname))
+		WHERE (b.saltermname IS NULL OR B.EXT = 'Y') AND a.sale_term_name IS NOT NULL AND a.userid = p_userid;
+
+        -- START REV : 002
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ORGUNMGTAG', userid, 'Data Validation', msg, clock_timestamp()
+        from (
+                    SELECT distinct lineno, userid, a.sale_term_name||': Sale term name, both Price list name and sale term name are required.' msg
+                    from   int$stg_orgunmgtag a, finsl_ou_site b, finsl_ou c
+                    where  a.customer_site_code = b.site_code
+                    and    b.finsl_ou_code = c.code
+                    and    a.slcode = c.slcode
+                    and    a.sale_term_name is not null
+                    and    coalesce(a.sale_pricelist_name,b.pricelistcode::varchar) is null
+                    and    a.userid = p_userid
+                ) alias4;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ORGUNMGTAG', userid, 'Data Validation', a.sale_term_name||': Sale term name, all Sale details are required.', clock_timestamp()
+        FROM int$stg_orgunmgtag a, finsl_ou b
+		LEFT OUTER JOIN finsl_ou_site c ON (b.code = c.finsl_ou_code)
+		WHERE a.organization_site_code = b.admsite_code and a.slcode = b.slcode  and a.sale_term_name is not null and (
+		                    coalesce(a.sale_pricelist_name,c.pricelistcode::varchar) is null
+		                    or
+		                    coalesce(a.sale_form_name,c.salformcode::varchar) is null
+		                ) and a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ORGUNMGTAG', userid, 'Data Validation', A.SALE_TERM_NAME||': Sale term name, is not allowed with given form name.', clock_timestamp()
+        FROM   INT$STG_ORGUNMGTAG A, SALTERMMAIN B, FINSL_OU_SITE E, FINTRADEGRP F, FINSL_OU G
+        WHERE  UPPER(A.SALE_TERM_NAME) = UPPER(B.SALTERMNAME)
+        AND    B.FINTRADEGRP_CODE = F.CODE
+        AND    A.CUSTOMER_SITE_CODE = E.SITE_CODE
+        AND    E.FINSL_OU_CODE = G.CODE
+        AND    A.SLCODE = G.SLCODE
+        AND    UPPER(F.NAME) = 'LOCAL'
+        AND    UPPER(coalesce(A.SALE_FORM_NAME,CASE WHEN E.SALFORMCODE::varchar='0' THEN  'NONE'  ELSE 'XX' END )) <> 'NONE'
+        AND    coalesce(B.EXT,'N') = 'N'
+        AND    a.userid = p_userid;
+        -- END REV : 002
+        -- TRANSIT_VIA_SITE_SHORTNAME
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ORGUNMGTAG', userid, 'Data Validation', a.transit_via_site_shortname||': Transit via site, is either invalid or extinct.', clock_timestamp()
+        FROM int$stg_orgunmgtag a
+		LEFT OUTER JOIN admsite b ON (upper(a.transit_via_site_shortname) = upper(b.shrtname))
+		WHERE a.transit_via_site_shortname is not null and (
+		                    b.code is null
+		                    or (
+		                        coalesce(b.ext,'N') = 'Y'
+		                        or
+		                        b.sitetype <> 'OS-OO-CM'
+		                    )
+		                ) and a.userid = p_userid;
+
+        update int$stg_orgunmgtag
+        set    transit_via_admsite_code = (SELECT code 
+                                           from   admsite 
+                                           where  upper(shrtname) = upper(transit_via_site_shortname))
+        where  userid = p_userid;
+
+        -- follow_transit_route
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ORGUNMGTAG', userid, 'Data Validation', a.follow_transit_route||': Strictly follow transit route, is not valid.', clock_timestamp()
+        from   int$stg_orgunmgtag a
+        where  upper(follow_transit_route) not in ('YES','NO')
+        and    a.follow_transit_route is not null
+        and    a.userid = p_userid;
+
+        -- out_lgt_appl
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ORGUNMGTAG', userid, 'Data Validation', a.out_lgt_appl||': Outward logistics, is not valid.', clock_timestamp()
+        from   int$stg_orgunmgtag a
+        where  a.out_lgt_appl is not null 
+        and    upper(a.out_lgt_appl) not in ('YES','NO')
+        and    a.userid = p_userid;
+
+        -- SALE_FORM_NAME
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ORGUNMGTAG', userid, 'Data Validation', A.SALE_FORM_NAME||': Sale form, this form is not allowed with LOCAL trade group.', clock_timestamp()
+        FROM   INT$stg_orgunmgtag A, SALTERMMAIN B, FINSL C, ADMSITE D, FINSL_OU E, FINTRADEGRP F, ADMSITE G, FINSL_OU_SITE H
+        WHERE  UPPER(A.SALE_TERM_NAME) = UPPER(B.SALTERMNAME)
+        AND    UPPER(A.CUSTOMER_SITE_SHORTNAME) = UPPER(G.SHRTNAME)
+        AND    UPPER(A.ORG_SITE_SHORTNAME) = UPPER(D.SHRTNAME)
+        AND    G.SLCODE = C.SLCODE
+        AND    B.FINTRADEGRP_CODE = F.CODE
+        AND    C.SLCODE = E.SLCODE
+        AND    D.CODE = E.ADMSITE_CODE
+        AND    E.CODE = H.FINSL_OU_CODE
+        AND    UPPER(F.NAME) = 'LOCAL'
+        AND    UPPER(coalesce(A.SALE_FORM_NAME,CASE WHEN H.SALFORMCODE::varchar='0' THEN  'NONE'  ELSE 'XX' END )) <> 'NONE'
+        AND    coalesce(B.EXT,'N') = 'N'
+        AND    a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ORGUNMGTAG', userid, 'Data Validation', A.SALE_FORM_NAME||': Sale form, is not valid or extinct.', clock_timestamp()
+        FROM  int$stg_orgunmgtag a
+		LEFT OUTER JOIN finform b ON (UPPER(A.SALE_FORM_NAME) = UPPER(B.FORMNAME ))
+		WHERE (b.FORMNAME IS NULL OR coalesce(B.EXT,'N') = 'Y') AND a.SALE_FORM_NAME IS NOT NULL AND a.userid = p_userid;
+		
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ORGUNMGTAG', userid, 'Data Validation', A.SALE_FORM_NAME||': Sale from, all Sale details are required.', clock_timestamp()
+        FROM int$stg_orgunmgtag a, finsl_ou b
+		LEFT OUTER JOIN finsl_ou_site c ON (b.code = c.finsl_ou_code)
+		WHERE a.organization_site_code = b.admsite_code and a.slcode = b.slcode  and a.sale_form_name is not null and (
+		                    coalesce(a.sale_pricelist_name,c.pricelistcode::varchar) is null
+		                    or
+		                    coalesce(a.sale_term_name,c.termcode::varchar) is null
+		                ) AND a.userid = p_userid;
+		
+        -- OUT_PERMIT_APPL
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ORGUNMGTAG', userid, 'Data Validation', a.OUT_PERMIT_APPL||': Outward permit applicable, is not valid.', clock_timestamp()
+        from   int$stg_orgunmgtag a
+        where  a.out_permit_appl is not null 
+        and    upper(out_permit_appl) not in ('YES','NO')
+        and    a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ORGUNMGTAG', userid, 'Data Validation', A.out_permit_appl||': Outward permit applicable, is allowed only if Outward logistics applicable is - ''Yes''.', clock_timestamp()
+        FROM int$stg_orgunmgtag a, finsl_ou b
+LEFT OUTER JOIN finsl_ou_site c ON (b.code = c.finsl_ou_code)
+WHERE a.organization_site_code = b.admsite_code and a.slcode = b.slcode  and a.out_permit_appl is not null and (
+                    substr(upper(a.out_permit_appl),1,1) = 'Y'
+                    and 
+                    upper(substr(coalesce(coalesce(a.out_lgt_appl,c.out_lgt_appl::varchar),'XX'),1,1)) <> 'Y'
+                ) and a.userid = p_userid;
+
+        update int$stg_orgunmgtag
+        set    pricelistcode = (SELECT b.pricelistcode 
+                                  from   salpricelistmain b
+                                  where  upper(pricelistname) = upper(sale_pricelist_name))
+        where  userid = p_userid;
+
+        update int$stg_orgunmgtag
+        set (saltermcode, fintradegrp_code) = (SELECT b.saltermcode, b.fintradegrp_code
+                                                    from   saltermmain b
+                                                    where  upper(b.saltermname) = upper(ltrim(rtrim(sale_term_name))))
+        where  userid = p_userid;
+
+        update int$stg_orgunmgtag
+        set    salformcode = (SELECT b.formcode
+                                from   finform b
+                                where  upper(b.formname) = upper(sale_form_name))
+        where  userid = p_userid;
+        -- END REV : 002
+        
+
+      -- Check whether records are valid or not
+      BEGIN
+         SELECT 'S'
+           INTO STRICT v_status
+           
+          WHERE EXISTS (SELECT 'S'
+                          FROM int$error_log
+                         WHERE userid = p_userid);
+
+         RETURN('0');
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            RETURN('1');
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code, lineno, classname,
+                      userid, errortype, errordesc, createdon
+                     )
+              VALUES (nextval('int$error_log_code'), 0, 'ORGUNMGTAG',
+                      p_userid, errcode, errmsg, clock_timestamp()
+                     );
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

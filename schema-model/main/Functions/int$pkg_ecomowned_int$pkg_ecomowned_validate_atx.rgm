@@ -1,0 +1,2510 @@
+function "main"."int$pkg_ecomowned_int$pkg_ecomowned_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status                  char(1);
+      errmsg                    varchar(200);
+      errcode                   TEXT;
+      v_item_batch_separator    char(1);V_CNT_GST_ITEM   numeric(20) := 0;
+      -- REV : 006
+BEGIN
+        -- START REV : 036
+      
+        select item_batch_separator into STRICT v_item_batch_separator from admcmpprof;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ECOMOWNED', userid, 'Data Validation', 'Please remove value from batch/serial column and try again.', clock_timestamp()
+        from   int$stg_ecomowned a
+        where  a.item_barcode is not null
+        and    a.batch_serial_no is not null
+        and    coalesce((position(v_item_batch_separator in a.item_barcode)),0) <> 0
+        and    a.userid = p_userid;
+
+      IF v_item_batch_separator IS NOT NULL
+      THEN
+        declare 
+         v_count                     bigint;
+         c_separator CURSOR FOR
+                    SELECT *
+                    from   int$stg_ecomowned
+                    where  userid = p_userid
+                    order by lineno;
+         begin
+           for c1 in c_separator loop
+                   select count(*) into STRICT v_count from int$stg_ecomowned  where item_barcode like '%'||v_item_batch_separator||'%'
+                   and lineno = c1.lineno
+                   and    userid = p_userid;
+                   if v_count > 0 then
+
+                   update int$stg_ecomowned
+                   set    batch_serial_no = SUBSTR(item_barcode, INSTR(item_barcode,v_item_batch_separator, -1) + 1),
+                   item_barcode = SUBSTR(item_barcode, 1, position(v_item_batch_separator in item_barcode)-1)
+                   where  lineno = c1.lineno
+                   and    item_barcode like '%'||v_item_batch_separator||'%'
+                   and    userid = p_userid;
+
+                   end if;
+           end loop;
+         end;
+		 end if;
+
+        --COMMIT;
+
+      -- END REV : 036
+        
+      -- START REV : 028
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ECOMOWNED',
+                userid,
+                'Data Validation',
+                'Cannot supply shipping detail if IsBillingShippingSame is Yes',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE     UPPER(a.ISBILLINGSHIPPINGSAME) = 'YES'
+                AND (   S_CUSTOMER_MOBILENO IS NOT NULL
+                     OR S_CUSTOMER_FIRSTNAME IS NOT NULL
+                     OR S_CUSTOMER_MIDDLENAME IS NOT NULL
+                     OR S_CUSTOMER_LASTNAME IS NOT NULL
+                     OR S_CUSTOMER_EMAIL IS NOT NULL
+                     OR S_CUSTOMER_GENDER IS NOT NULL
+                     OR S_CUSTOMER_ADDRESSLINE1 IS NOT NULL
+                     OR S_CUSTOMER_ADDRESSLINE2 IS NOT NULL
+                     OR S_CUSTOMER_ADDRESSLINE3 IS NOT NULL
+                     OR S_CUSTOMER_CITY IS NOT NULL
+                     OR S_CUSTOMER_PIN IS NOT NULL
+                     OR S_CUSTOMER_DISTRICT IS NOT NULL
+                     OR S_CUSTOMER_STATE IS NOT NULL
+                     OR S_CUSTOMER_COUNTRY IS NOT NULL
+                     OR S_CUST_GST_ID_NO IS NOT NULL
+                     OR S_CUST_GST_REG_DATE IS NOT NULL
+                     OR S_CUST_GST_STATE_NAME IS NOT NULL
+                     OR S_ISDCODE IS NOT NULL          --OR S_DATE IS NOT NULL
+                                             )
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ECOMOWNED',
+                userid,
+                'Data Validation',
+                'IsBillingShippingSame should be Yes/No',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE     LTRIM(RTRIM(UPPER(a.ISBILLINGSHIPPINGSAME))) NOT IN ('YES', 'NO')
+                AND a.userid = p_userid;
+
+      -- END REV : 028
+      -- START REV : 019
+      -- scheme_doc_format checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ECOMOWNED',
+                p_userid,
+                'Data Validation',
+                'Scheme_doc format is not applicable for site or it is extinct or it is not tagged at Fulfilled by seller menu',
+                clock_timestamp()
+           FROM int$stg_ecomowned x
+          WHERE     UPPER(scheme_doc_format) NOT IN (SELECT UPPER(docname)
+                          FROM admdocscheme
+                         WHERE     coalesce(ext,
+                                        'N') = 'N'
+                               AND doccode IN (SELECT doccode
+                                         FROM admmenu_docscheme
+                                        WHERE     mdmenushortcode =
+                                                     'MCSEComOrganization'
+                                              AND NOT EXISTS (SELECT 1
+                                                        FROM admou_docscheme
+                                                       WHERE admsite_code =
+                                                                p_connect_site)
+
+UNION ALL
+
+                                       SELECT a.doccode
+                                         FROM admmenu_docscheme a,
+                                              admou_docscheme   b
+                                        WHERE     a.doccode = b.doccode
+                                              AND a.mdmenushortcode =
+                                                     'MCSEComOrganization'
+                                              AND b.admsite_code =
+                                                     p_connect_site))
+                AND x.userid = p_userid;
+
+      -- scheme_docno chking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ECOMOWNED',
+                userid,
+                'Data Validation',
+                'SCHEME_DOCNO, can not be blank if SCHEME_DOC_FORMAT is manual.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE (    UPPER(a.scheme_doc_format) IN ('MANUAL (GENERAL)', 'MANUAL (EXCISE)')
+                     AND a.scheme_docno IS NULL)
+                AND a.userid = p_userid;
+
+      -- scheme_docno chking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ECOMOWNED',
+                userid,
+                'Data Validation',
+                'Scheme Docno should be null, as it would be auto generated',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE (    UPPER(a.scheme_doc_format) NOT IN ('MANUAL (GENERAL)', 'MANUAL (EXCISE)')
+                     AND a.scheme_docno IS NOT NULL)
+                AND a.userid = p_userid;
+
+      -- scheme_docno chking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ECOMOWNED',
+                p_userid,
+                'Data Validation',
+                'Scheme Docno already exists (' || x.scheme_docno || ')',
+                clock_timestamp()
+           FROM int$stg_ecomowned x
+          WHERE x.scheme_docno IN
+                   (  SELECT scheme_docno
+                        FROM (  SELECT a.scheme_docno
+                                  FROM int$stg_ecomowned a, SALCSMAIN b
+                                 WHERE     UPPER(a.scheme_docno) =
+                                              UPPER(b.scheme_docno)
+                                       AND userid = p_userid
+                                       AND ycode =
+                                              (SELECT ycode
+                                                 FROM admyear
+                                                WHERE p_logging_date BETWEEN dtfr
+                                                                         AND dtto)
+                                GROUP BY a.scheme_docno
+                                --HAVING COUNT(DISTINCT a.scheme_docno) > 1
+							 HAVING COUNT (DISTINCT a.scheme_docno) > 0) a
+					  GROUP BY a.scheme_docno
+                      --HAVING COUNT(a.scheme_docno) > 1
+					HAVING COUNT (DISTINCT a.scheme_docno) > 0
+				   );
+
+      -- duplicate scheme_docno chking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ECOMOWNED',
+                p_userid,
+                'Data Validation',
+                'Scheme Docno already exists (' || x.scheme_docno || ')',
+                clock_timestamp()
+           FROM int$stg_ecomowned x
+          WHERE x.scheme_docno IN (  SELECT scheme_docno
+                        FROM int$stg_storunmown
+                       WHERE userid = p_userid AND scheme_docno IS NOT NULL
+					  GROUP BY scheme_docno, saledt, channel_id
+                      HAVING COUNT(scheme_docno) > 1);
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ECOMOWNED',
+                userid,
+                'Data Validation',
+                   '<'
+                || a.CHANNEL_ID
+                || '>'
+                || 'CHANNEL_ID, should be valid and non-extinct.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE (    a.CHANNEL_ID IS NOT NULL
+                     AND a.CHANNEL_ID NOT IN (SELECT f.slID
+                               FROM finsl f, admcls c
+                              WHERE     f.clscode = c.clscode
+                                    AND c.clstype = 'H'
+                                    AND f.ext = 'N'
+                                    AND c.ext = 'N'))
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ECOMOWNED',
+                userid,
+                'Data Validation',
+                'Length of Channel ID can''t be greater than 100 character.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE LENGTH(a.CHANNEL_ID) > 100 AND a.userid = p_userid;
+
+      -- Checking transporter name
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ECOMOWNED',
+                userid,
+                'Data Validation',
+                'Transporter ID should be valid and non extinct.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE (a.TRANSPORTER_ID NOT IN (SELECT f.slID
+                           FROM finsl f, admcls c
+                          WHERE     f.clscode = c.clscode
+                                AND UPPER(c.clstype) = 'T'
+                                AND f.ext = 'N'
+                                AND c.ext = 'N'))
+                AND a.TRANSPORTER_ID IS NOT NULL
+                AND a.userid = p_userid;
+
+      -- Checking POD amount
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ECOMOWNED',
+                userid,
+                'Data Validation',
+                'POD_amount: Any value between 0 to 99999999999.99 is allowed.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE     (    (a.POD_AMOUNT < 0 OR a.pod_amount > 99999999999.99)
+                     AND a.POD_AMOUNT IS NOT NULL)
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ECOMOWNED',
+                userid,
+                'Data Validation',
+                'POD_amount: POD Amount should be null in case of a return item.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE (A.ITEM_QTY < 0 AND a.POD_AMOUNT IS NOT NULL)
+                AND a.userid = p_userid;
+
+      -- start rev :019
+      --POD Amount should be null if tagged channel is Marketplace.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'POD_AMOUNT : POD Amount should be null if tagged channel is Marketplace.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a, finsl s
+          WHERE     a.channel_id = s.SLID
+                AND (a.POD_AMOUNT IS NOT NULL AND s.IS_MARKETPLACE = '1')
+                AND userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ECOMOWNED',
+                userid,
+                'Data Validation',
+                'BILLING_CUSTOMER_GENDER, is not valid. Please provide from the accepted list of values (Male, Female, Transgender and Undisclosed).',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE     UPPER(a.B_CUSTOMER_GENDER) NOT IN ('MALE',
+                                                        'FEMALE',
+                                                        'TRANSGENDER',
+                                                        'UNDISCLOSED')
+                AND a.B_CUSTOMER_GENDER IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Date Validation',
+                'Future date transaction is not allowed.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE date_trunc('day', saledt) > date_trunc('day', clock_timestamp()) AND a.userid = p_userid;
+
+      --User lock days setting getting violated
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Date Validation',
+                'User lock days setting getting violated.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a, hrdemp b
+          WHERE     a.userid = b.ecode
+                AND date_trunc('day', a.saledt) NOT BETWEEN (CURRENT_DATE - locdays::INTEGER)
+                                             AND CURRENT_DATE
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Date Validation',
+                'Customer City PIN can not exceed more than 6 caracter.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE LENGTH(B_CUSTOMER_PIN) > 6 AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Date Validation',
+                'B Customer City PIN can not be negative.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE position('-' in B_CUSTOMER_PIN) <> 0 AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Date Validation',
+                'Month / Year is not in open state.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a, ADMMONTH m, ADMOU_MONTH b
+          WHERE     date_trunc('day', a.saledt) BETWEEN date_trunc('day', m.dtfr)
+                                         AND date_trunc('day', m.dtto)
+                AND B.ADMMONTH_CODE = M.MCODE
+                AND B.ADMOU_CODE = P_CONNECT_OU
+                AND b.INV_MONTH_STATUS <> 'O'
+                AND a.userid = p_userid;
+
+      -- END REV : 003
+      --Tradegroup is mandatory.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Mandatory Validation',
+                'Tradegroup is mandatory.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE tradegroup_name IS NULL AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'ecomowned',
+                userid,
+                'Mandatory Validation',
+                'Tradegroup Local is mandatory.',
+                clock_timestamp()
+           FROM (SELECT A.LINENO, B.CODE CP_GSTIN_STATE_CODE
+                   FROM int$stg_ecomowned A, ADMGSTSTATE B
+                  WHERE     A.USERID = p_userid
+                        AND UPPER(A.B_CUST_GST_STATE_NAME) = UPPER(B.NAME)) c, int$stg_ecomowned a, admsite s
+LEFT OUTER JOIN admgstin g ON (S.ADMGSTIN_CODE = G.CODE)
+WHERE UPPER(tradegroup_name) <> 'LOCAL' AND C.LINENO = A.LINENO  AND G.ADMGSTSTATE_CODE IS NOT NULL AND C.CP_GSTIN_STATE_CODE IS NOT NULL AND C.CP_GSTIN_STATE_CODE = G.ADMGSTSTATE_CODE AND S.CODE = P_CONNECT_SITE AND a.userid = p_userid;
+
+      -- end rev : 032
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Mandatory Validation',
+                'Tradegroup Interstate is mandatory.',
+                clock_timestamp()
+           FROM fintradegrp t, (SELECT UPPER(GT.NAME) NAME
+                   FROM ADMGSTSTATE GT, ADMSITE S, ADMGSTIN G
+                  WHERE     S.ADMGSTIN_CODE = G.CODE
+                        AND G.ADMGSTSTATE_CODE = GT.CODE
+                        AND G.ADMGSTSTATE_CODE IS NOT NULL
+                        AND S.CODE = P_CONNECT_SITE) st, int$stg_ecomowned a
+WHERE UPPER(TRADEGROUP_NAME) <> 'INTER STATE'  AND T.CODE <> 2 AND (    A.B_CUST_GST_STATE_NAME IS NOT NULL
+                     AND ST.NAME IS NOT NULL
+                     AND UPPER(A.B_CUST_GST_STATE_NAME) <> UPPER(ST.NAME)) AND a.userid = p_userid;
+
+      -- END REV : 005
+      -- END REV : 025
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Mandatory Validation',
+                'Tradegroup is extinct.',
+                clock_timestamp()
+           FROM fintradegrp t, int$stg_ecomowned a
+WHERE tradegroup_name IS NOT NULL  AND (T.NAME IS NULL OR coalesce(T.EXT, 'N') = 'Y') AND a.userid = p_userid;
+
+      --Tax region is not defined for the connected site.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'ecomowned',
+                p_userid,
+                'Connect Site Validation',
+                'Tax region is not defined for the connected site.',
+                clock_timestamp()
+           FROM admsite b
+          WHERE b.code = p_connect_site AND b.psite_admcmptax_code IS NULL;
+
+      --Consignment sale ledger is mandatory for the customer.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'ecomowned',
+                p_userid,
+                'Connect Site Validation',
+                'Consignment Sale GL in Organization Unit is not provided.',
+                clock_timestamp()
+           FROM admOU
+          WHERE CONSIGNMENTSALE_GLCODE IS NULL AND CODE = P_CONNECT_OU; -- REV : 002;
+      -- Multiple sub-ledgers found for this name, unable to proceed.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'Multiple sub-ledgers found for this name, unable to proceed.',
+                clock_timestamp()
+           FROM int$stg_storunmown a,
+                (  SELECT lineno, UPPER(b.slname), COUNT(1)
+                     FROM int$stg_ecomowned a, finsl b
+                    WHERE     UPPER(a.CHANNEL_ID) = UPPER(b.SLID)
+                          AND a.userid = p_userid
+                 GROUP BY lineno, UPPER(b.slname)
+                   HAVING COUNT(1) > 1) b
+          WHERE a.lineno = b.lineno AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Mandatory Validation',
+                'Stock point is mandatory.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE a.stock_point_name IS NULL AND a.userid = p_userid;
+
+      --Stock point should be valid null-extinct.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'Stock point should be valid null-extinct.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a LEFT OUTER JOIN invloc l ON (UPPER(a.stock_point_name) = UPPER(l.locname))
+WHERE (coalesce(l.ext, 'N') = 'Y' OR l.locname IS NULL) AND UPPER(a.stock_point_name) IS NOT NULL AND a.userid = p_userid;
+
+      --Stock point should belong to the connected site.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'Stock point should belong to the connected site.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a, invloc l
+          WHERE     UPPER(a.stock_point_name) = UPPER(l.locname)
+                AND l.admsite_code NOT IN (SELECT code
+                                             FROM admsite
+                                            WHERE code = p_connect_site)
+                AND a.userid = p_userid;
+
+      -- Multiple stock points are found for this name, unable to proceed.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'Multiple stock points are found for this name, unable to proceed.',
+                clock_timestamp()
+           FROM int$stg_storunmown a,
+                (  SELECT lineno, UPPER(b.locname), COUNT(1)
+                     FROM int$stg_ecomowned a, invloc b
+                    WHERE     UPPER(a.stock_point_name) = UPPER(b.locname)
+                          AND a.userid = p_userid
+                 GROUP BY lineno, UPPER(b.locname)
+                   HAVING COUNT(1) > 1) b
+          WHERE a.lineno = b.lineno AND a.userid = p_userid;
+
+      --Only other class type sub-ledgers allowed here.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'Only warehouse type stock points are allowed.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a, invloc p
+          WHERE     UPPER(a.stock_point_name) = UPPER(p.locname)
+                AND p.loctype <> 'W'
+                AND a.userid = p_userid;
+
+      -- START REV : 014
+      --Stock points are mandatory when Quantity is greater than 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'Stock points are mandatory when Quantity is greater than 0.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE     a.item_qty > 0
+                AND a.stock_point_name IS NULL
+                AND a.userid = p_userid;
+
+      -- end rev : 019
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                p_userid,
+                'Data Validation',
+                'Sales ledger is either invalid or extinct.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE     NOT EXISTS (SELECT NULL
+                          FROM FINGL
+                         WHERE     FINGL.EXT = 'N'
+                               AND UPPER(FINGL.GLNAME) = UPPER(a.GLNAME) -- AND      SRCTYPE   = 'G'
+                                                                          )
+                AND a.glname IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                p_userid,
+                'Data Validation',
+                'Nature of Sales ledger should be General.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE     NOT EXISTS (SELECT NULL
+                          FROM FINGL
+                         WHERE     UPPER(FINGL.GLNAME) = UPPER(a.GLNAME)
+                               AND SRCTYPE = 'G')
+                AND a.glname IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                p_userid,
+                'Data Validation',
+                'Sales Leder should be either Income or Expense type of ledger. ',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE     NOT EXISTS (SELECT NULL
+                          FROM FINGL
+                         WHERE     UPPER(FINGL.GLNAME) = UPPER(a.GLNAME)
+                               AND TYPE IN ('I', 'E'))
+                AND a.glname IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                p_userid,
+                'Data Validation',
+                'Sales Ledger is not tagged to the connected site.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a, FINGL GL
+          WHERE     UPPER(GL.GLNAME) = UPPER(a.GLNAME)
+                AND GL.COSTAPP = 'Y'
+                AND NOT EXISTS (SELECT NULL
+                          FROM FINGL_SITE SGL
+                         WHERE     GL.GLCODE = SGL.GLCODE
+                               AND SGL.ADMSITE_CODE = P_CONNECT_SITE)
+                AND a.glname IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                p_userid,
+                'Data Validation',
+                'Sub-Ledger Can not be null for given ledger',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE     EXISTS (SELECT NULL
+                          FROM FINGL
+                         WHERE     FINGL.EXT = 'N'
+                               AND UPPER(FINGL.GLNAME) = UPPER(a.GLNAME)
+                               AND SLAPP = 'Y')
+                AND a.slid IS NULL
+                AND a.GLNAME IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                p_userid,
+                'Data Validation',
+                'Sub-Ledger should be null for given ledger',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE     EXISTS (SELECT NULL
+                          FROM FINGL
+                         WHERE     FINGL.EXT = 'N'
+                               AND UPPER(FINGL.GLNAME) = UPPER(a.GLNAME)
+                               AND coalesce(SLAPP, 'N') = 'N')
+                AND a.slid IS NOT NULL
+                AND a.GLNAME IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                p_userid,
+                'Data Validation',
+                'Sales sub-ledger is not tagged with the selected Sales ledger',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE     NOT EXISTS
+                       (SELECT NULL
+                          FROM FINSL, FINGL, FINSL_GL FGL
+                         WHERE     UPPER(FINSL.slid) = UPPER(a.slid)
+                               AND FINGL.GLCODE = FGL.GLCODE
+                               AND FGL.SLCODE = FINSL.SLCODE
+                               AND FGL.EXT = 'N'
+                               --  AND      FINSL.EXT      = 'N'
+                               AND FINGL.GLCODE =
+                                      (SELECT GLCODE
+                                         FROM FINGL
+                                        WHERE UPPER(GLNAME) =
+                                                 UPPER(A.GLNAME)))
+                AND a.slid IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                p_userid,
+                'Data Validation',
+                'Sales sub-ledger is either invalid or extinct.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE     NOT EXISTS (SELECT NULL
+                          FROM FINSL
+                         WHERE     UPPER(FINSL.slid) = UPPER(a.slid)
+                               AND FINSL.EXT = 'N')
+                AND a.slid IS NOT NULL
+                AND a.userid = p_userid;
+
+      UPDATE int$stg_ecomowned a
+         SET SLCODE =
+                (SELECT slcode
+                   FROM finsl b
+                  WHERE UPPER(b.slid) = UPPER(a.SLID))
+       WHERE a.SLID IS NOT NULL AND a.userid = p_userid;
+
+      UPDATE int$stg_ecomowned a
+         SET GLCODE =
+                (SELECT GLCODE
+                   FROM FINGL b
+                  WHERE UPPER(b.GLNAME) = UPPER(a.GLNAME))
+       WHERE a.GLNAME IS NOT NULL AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Ledger Validation',
+                'Round off GL in Organization Unit is not provided.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a, admou b
+          WHERE (a.roundoff IS NOT NULL AND b.roundoff_glcode IS NULL)
+                AND B.CODE = P_CONNECT_OU                         -- REV : 002
+                AND a.userid = p_userid;
+
+     /* INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Item Data Validation',
+                'Item doesn''t exist or is extinct.',
+                clock_timestamp()
+           FROM (SELECT icode, ext FROM invitem
+
+UNION
+SELECT barcode, ext FROM invitem) b
+LEFT OUTER JOIN int$stg_ecomowned a ON (UPPER(a.item_barcode) = UPPER(b.icode))
+WHERE (b.icode IS NULL OR coalesce(b.ext, 'N') = 'Y') AND a.userid = p_userid;*/
+
+INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Item Data Validation',
+                'Item doesn''t exist or is extinct.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a LEFT OUTER JOIN 
+                (SELECT icode FROM invitem
+                 UNION
+                 SELECT barcode FROM invitem) b
+          ON upper (a.item_barcode) = upper (b.icode)
+          WHERE   b.icode is null 
+          AND   a.userid = p_userid;
+
+      -- Tax ledger is not defined.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                p_userid,
+                'Ledger Validation',
+                'Tax ledger is not defined.',
+                clock_timestamp()
+           FROM (SELECT lineno,
+                        -- START REV : 002
+                        --  int$pkg_ecomowned_db_fun_taxdetcode(i.icode, saledt, l.admsite_code, t.code) taxdetcode
+                        int$pkg_ecomowned_db_fun_taxdetcode(i.icode,
+                                           saledt,
+                                           l.admsite_code,
+                                           t.code,
+                                           P_CONNECT_OU)
+                           taxdetcode                         -- END REV : 002
+                                     -- START REV : 004
+                        ,
+                        ICODE,
+                        SALEDT,
+                        INVHSNSACMAIN_CODE
+                   -- END REV : 004
+                   FROM int$stg_ecomowned a,
+                        invloc            l,
+                        invitem           i,
+                        fintradegrp       t
+                  WHERE     UPPER(a.stock_point_name) = UPPER(l.locname)
+                        AND a.userid = p_userid
+                        AND (   UPPER(a.item_barcode) = UPPER(i.icode)
+                             OR UPPER(a.item_barcode) = UPPER(i.barcode))
+                        AND a.tradegroup_name = t.name) t1, admsite s, fintaxdet t2
+LEFT OUTER JOIN (SELECT tr.taxdetcode, tr.SALTAX_GLCODE, tr.SALTAX_SLCODE
+                   FROM fintax_range tr) td ON (t2.TAXDETCODE = td.TAXDETCODE)
+WHERE t1.taxdetcode = t2.taxdetcode AND S.CODE = p_connect_site AND S.psite_admcmptax_code = t2.admcmptax_code  AND coalesce(td.saltax_glcode, t2.saltax_glcode) IS NULL AND t2.taxcode <> 0 -- START REV : 004
+  AND (   (T1.ICODE NOT IN
+                            (SELECT ICODE
+                               FROM INVHSNSACDET D, INVITEM IT
+                              WHERE     D.INVHSNSACMAIN_CODE =
+                                           IT.INVHSNSACMAIN_CODE
+                                    AND D.INVHSNSACMAIN_CODE =
+                                           T1.INVHSNSACMAIN_CODE
+                                    AND D.CODE =
+                                           (SELECT DISTINCT D1.CODE
+                                              FROM INVHSNSACDET D1,
+                                                   INVITEM      IT1
+                                             WHERE     D1.INVHSNSACMAIN_CODE =
+                                                          IT1.INVHSNSACMAIN_CODE
+                                                   AND D1.INVHSNSACMAIN_CODE =
+                                                          T1.INVHSNSACMAIN_CODE
+                                                   AND EFFECTIVE_DATE =
+                                                          (SELECT MAX(
+                                                                     EFFECTIVE_DATE)
+                                                             FROM INVHSNSACDET
+                                                                  D3,
+                                                                  INVITEM IT3
+                                                            WHERE     D3.INVHSNSACMAIN_CODE =
+                                                                         IT3.INVHSNSACMAIN_CODE
+                                                                  AND D3.INVHSNSACMAIN_CODE =
+                                                                         T1.INVHSNSACMAIN_CODE
+                                                                  AND D3.EFFECTIVE_DATE <=
+                                                                         T1.SALEDT))))
+                     OR S.ADMGSTIN_CODE IS NULL) -- END REV : 004
+  AND t2.fintradegrp_code = (SELECT code
+                                             FROM fintradegrp
+                                            WHERE UPPER(NAME) = 'LOCAL') AND coalesce(t2.formcode, 0) = 0;
+
+      -- START REV : 006
+      -- Docscheme wise check.
+      BEGIN
+         SELECT COUNT(*)
+           INTO STRICT V_CNT_GST_ITEM
+           FROM int$stg_ecomowned a, invitem i, admsite S
+          WHERE     S.CODE = P_CONNECT_SITE
+                AND (   UPPER(a.item_barcode) = UPPER(i.icode)
+                     OR UPPER(a.item_barcode) = UPPER(i.barcode))
+                AND (    (I.ICODE IN
+                             (SELECT ICODE
+                                FROM INVHSNSACDET D, INVITEM IT
+                               WHERE     D.INVHSNSACMAIN_CODE =
+                                            IT.INVHSNSACMAIN_CODE
+                                     AND D.INVHSNSACMAIN_CODE =
+                                            I.INVHSNSACMAIN_CODE
+                                     AND D.CODE =
+                                            (SELECT DISTINCT D1.CODE
+                                               FROM INVHSNSACDET D1,
+                                                    INVITEM      IT1
+                                              WHERE     D1.INVHSNSACMAIN_CODE =
+                                                           IT1.INVHSNSACMAIN_CODE
+                                                    AND D1.INVHSNSACMAIN_CODE =
+                                                           I.INVHSNSACMAIN_CODE
+                                                    AND D1.EFFECTIVE_DATE =
+                                                           (SELECT MAX(
+                                                                      EFFECTIVE_DATE)
+                                                              FROM INVHSNSACDET
+                                                                   D3,
+                                                                   INVITEM
+                                                                   IT3
+                                                             WHERE     D3.INVHSNSACMAIN_CODE =
+                                                                          IT3.INVHSNSACMAIN_CODE
+                                                                   AND D3.INVHSNSACMAIN_CODE =
+                                                                          I.INVHSNSACMAIN_CODE
+                                                                   AND D3.EFFECTIVE_DATE <=
+                                                                          A.SALEDT))))
+                     AND S.ADMGSTIN_CODE IS NOT NULL);
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            V_CNT_GST_ITEM := 0;
+      END;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Item Data Validation',
+                'Item''s Net Amount cannot be negative.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE     (    coalesce(item_qty, 0) > 0
+                     AND (  (coalesce(item_rate, 0) * coalesce(item_qty, 0))
+                          - coalesce(item_discountamt, 0)
+                          + coalesce(item_extra_taxamt, 0)
+                          + +coalesce(item_shipment_charges, 0)
+                          + coalesce(item_cod_charges, 0)
+                          + coalesce(item_gw_charges, 0)) < 0)
+                AND a.userid = p_userid;
+
+      --Item''s Net Amount cannot be positive
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Item Data Validation',
+                'Item''s Net Amount cannot be positive.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE     (    coalesce(item_qty, 0) < 0
+                     AND (  (coalesce(item_rate, 0) * coalesce(item_qty, 0))
+                          - coalesce(item_discountamt, 0)
+                          + coalesce(item_extra_taxamt, 0)
+                          + +coalesce(item_shipment_charges, 0)
+                          + coalesce(item_cod_charges, 0)
+                          + coalesce(item_gw_charges, 0)) > 0)
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Mandatory Validation',
+                'Item quantity cannot be 0.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE a.item_qty = 0 AND a.userid = p_userid;
+
+      --Item quantity should be in multiples of scan unit.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Item Data Validation',
+                'Item quantity should be in multiples of scan unit.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a, invitem b
+          WHERE (   UPPER(a.item_barcode) = UPPER(b.icode)
+                     OR UPPER(a.item_barcode) = UPPER(b.barcode))
+                AND MOD(a.item_qty, b.barunit) <> 0
+                AND b.item_management_mode  <> 'S'
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Item Data Validation',
+                'RSP must be >= 0.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE a.item_rsp < 0 AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Item Data Validation',
+                'Rate must be >= 0.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE a.item_rate < 0 AND a.userid = p_userid;
+
+      --Extra Tax should be <= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Item Data Validation',
+                'Shipment Charge should be a negative value for return items.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE (    a.item_qty < 0
+                     AND a.item_shipment_charges IS NOT NULL
+                     AND a.item_shipment_charges > 0)
+                AND a.userid = p_userid;
+
+      --Extra Tax should be >= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Item Data Validation',
+                'Shipment Charge should be a positive value for sale items.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE (    a.item_qty > 0
+                     AND a.item_shipment_charges IS NOT NULL
+                     AND a.item_shipment_charges < 0)
+                AND a.userid = p_userid;
+
+      --Extra Tax should be <= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Item Data Validation',
+                'COD Charge should be a negative value for return items.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE (    a.item_qty < 0
+                     AND a.item_cod_charges IS NOT NULL
+                     AND a.item_cod_charges > 0)
+                AND a.userid = p_userid;
+
+      --Extra Tax should be >= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Item Data Validation',
+                'COD charge Tax should be a positive value for sale items.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE (    a.item_qty > 0
+                     AND a.item_cod_charges IS NOT NULL
+                     AND a.item_cod_charges < 0)
+                AND a.userid = p_userid;
+
+      --Extra Tax should be <= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Item Data Validation',
+                'Gift Voucher should be a negative value for return items.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE (    a.item_qty < 0
+                     AND a.item_gw_charges IS NOT NULL
+                     AND a.item_gw_charges > 0)
+                AND a.userid = p_userid;
+
+      --Extra Tax should be >= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Item Data Validation',
+                'Gift Voucher should be a positive value for sale items.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE (    a.item_qty > 0
+                     AND a.item_gw_charges IS NOT NULL
+                     AND a.item_gw_charges < 0)
+                AND a.userid = p_userid;
+
+      --Discount should be <= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Item Data Validation',
+                'Discount should be a negative value for return items.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE (    a.item_qty < 0
+                     AND a.item_discountamt IS NOT NULL
+                     AND a.item_discountamt > 0)
+                AND a.userid = p_userid;
+
+      --Discount should be >= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Item Data Validation',
+                'Discount should be a positive value for sale items.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE (    a.item_qty > 0
+                     AND a.item_discountamt IS NOT NULL
+                     AND a.item_discountamt < 0)
+                AND a.userid = p_userid;
+
+      --Discount should be between 0 and gross amount.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Item Data Validation',
+                'Discount should be between 0 and gross amount.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+
+          WHERE (    a.item_discountamt IS NOT NULL
+                     AND ABS(a.item_discountamt) NOT BETWEEN 0
+                                                          AND round((
+                                                                   coalesce(
+                                                                      item_rate,
+                                                                      0)
+                                                                 * coalesce(
+                                                                      ABS(
+                                                                         item_qty),
+                                                                      0))::numeric,
+                                                                 2))
+                AND a.userid = p_userid;
+
+      --Extra Tax should be <= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Item Data Validation',
+                'Extra Tax should be a negative value for return items.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE (    a.item_qty < 0
+                     AND a.item_extra_taxamt IS NOT NULL
+                     AND a.item_extra_taxamt > 0)
+                AND a.userid = p_userid;
+
+      --Extra Tax should be >= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Item Data Validation',
+                'Extra Tax should be a positive value for sale items.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE (    a.item_qty > 0
+                     AND a.item_extra_taxamt IS NOT NULL
+                     AND a.item_extra_taxamt < 0)
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Mandatory Validation',
+                'Gender is mandatory for customer.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE (    a.B_CUSTOMER_MOBILENO IS NOT NULL
+                     AND B_CUSTOMER_GENDER IS NULL)
+                AND a.userid = p_userid;
+
+      --S Gender is mandatory for customer.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Mandatory Validation',
+                'SHIPPING_CUSTOMER_GENDER, is not valid. Please provide from the accepted list of values (Male, Female, Transgender and Undisclosed).',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE (    a.S_CUSTOMER_MOBILENO IS NOT NULL
+                     AND S_CUSTOMER_GENDER IS NULL)
+                --START REV : 028
+                AND UPPER(a.ISBILLINGSHIPPINGSAME) = 'NO'
+                --END REV : 028
+                AND a.userid = p_userid;
+
+      --Gender chaecking.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Customer Data Validation',
+                'B customer Gender would be one of Male,Female,Transgender and Undisclosed.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE (    B_CUSTOMER_GENDER IS NOT NULL
+                     AND LOWER(B_CUSTOMER_GENDER) NOT IN ('male',
+                                                           'female',
+                                                           'transgender',
+                                                           'undisclosed'))
+                AND a.userid = p_userid;
+
+      -- start rev : 019
+      -- S Gender checking.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Customer Data Validation',
+                'S Gender would be one of Male,Female,Transgender and Undisclosed.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE (    S_CUSTOMER_GENDER IS NOT NULL
+                     AND LOWER(S_CUSTOMER_GENDER) NOT IN ('male',
+                                                           'female',
+                                                           'transgender',
+                                                           'undisclosed'))
+                --START REV : 028
+                AND UPPER(a.ISBILLINGSHIPPINGSAME) = 'NO'
+                --END REV : 028
+                AND a.userid = p_userid;
+
+      -- end rev : 019
+      -- Email Id is invalid.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'Email Id is invalid.',
+                clock_timestamp()
+           FROM int$stg_ecomowned
+          WHERE (    B_CUSTOMER_EMAIL IS NOT NULL
+                     AND (   B_CUSTOMER_EMAIL NOT LIKE '%@%'
+                          OR B_CUSTOMER_EMAIL NOT LIKE '%.%'))
+                AND userid = p_userid;
+
+      -- start rev :019
+      --S Email Id is invalid.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'S Email Id is invalid.',
+                clock_timestamp()
+           FROM int$stg_ecomowned
+          WHERE (    S_CUSTOMER_EMAIL IS NOT NULL
+                     AND (   S_CUSTOMER_EMAIL NOT LIKE '%@%'
+                          OR S_CUSTOMER_EMAIL NOT LIKE '%.%'))
+                --START REV : 028
+                AND UPPER(ISBILLINGSHIPPINGSAME) = 'NO'
+                --END REV : 028
+                AND userid = p_userid;
+
+      -- end rev :019
+      --START REV : 030
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'IsSecondarySupply should be Yes/No',
+                clock_timestamp()
+           FROM int$stg_ecomowned
+          WHERE     ISSECONDARYSUPPLY IS NOT NULL
+                AND LTRIM(RTRIM(UPPER(ISSECONDARYSUPPLY))) NOT IN ('YES', 'NO')
+                AND userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'SecondarySupplyTaxPolicy should be I/M/P',
+                clock_timestamp()
+           FROM int$stg_ecomowned
+          WHERE     SECONDARYSUPPLYTAXPOLICY IS NOT NULL
+                AND UPPER(SECONDARYSUPPLYTAXPOLICY) NOT IN ('I', 'P', 'M')
+                AND userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ECOMOWNED',
+                userid,
+                'Data Validation',
+                'IsSecondarySupply can only be set as Yes for non-inventory Items.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a, INVITEM I
+          WHERE (a.ITEM_BARCODE = I.BARCODE OR a.ITEM_BARCODE = I.ICODE)
+                AND (    LTRIM(RTRIM(UPPER(ISSECONDARYSUPPLY))) = 'YES'
+                     AND I.NONINVENTORY = 'N')
+                AND a.ITEM_BARCODE IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'SecondarySupplyTaxPolicy is mandatory when IsSecondarySupply is Yes',
+                clock_timestamp()
+           FROM int$stg_ecomowned
+          WHERE     LTRIM(RTRIM(UPPER(ISSECONDARYSUPPLY))) = 'YES'
+                AND SECONDARYSUPPLYTAXPOLICY IS NULL
+                AND userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'SecondarySupplyParentIcode is mandatory when IsSecondarySupply is ''Yes'' and SecondarySupplyTaxPolicy is ''P''',
+                clock_timestamp()
+           FROM int$stg_ecomowned
+          WHERE     LTRIM(RTRIM(UPPER(ISSECONDARYSUPPLY))) = 'YES'
+                AND UPPER(SECONDARYSUPPLYTAXPOLICY) = 'P'
+                AND SECONDARYSUPPLYPARENTICODE IS NULL
+                AND userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'SecondarySupplyParentIcode should be null when IsSecondarySupply is ''Yes'' and SecondarySupplyTaxPolicy is in ''M'' and ''I''',
+                clock_timestamp()
+           FROM int$stg_ecomowned
+          WHERE     LTRIM(RTRIM(UPPER(ISSECONDARYSUPPLY))) = 'YES'
+                AND UPPER(SECONDARYSUPPLYTAXPOLICY) IN ('M', 'I')
+                AND SECONDARYSUPPLYPARENTICODE IS NOT NULL
+                AND userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'IsSecondarySupply can not be yes for the Item''s taggeg as SecondarySupplyParentIcode',
+                clock_timestamp()
+           FROM int$stg_ecomowned
+          WHERE     SECONDARYSUPPLYPARENTICODE IN (SELECT ITEM_BARCODE
+                          FROM int$stg_ecomowned
+                         WHERE UPPER(
+                                  ISSECONDARYSUPPLY) = 'YES')
+                AND userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Item Data Validation',
+                'SecondarySupplyParentIcode doesn''t exist or is extinct or non inventory.',
+                clock_timestamp()
+           FROM (SELECT icode, ext, noninventory FROM invitem
+
+UNION
+
+SELECT barcode, ext, noninventory FROM invitem) b
+LEFT OUTER JOIN int$stg_ecomowned a ON (UPPER(A.SECONDARYSUPPLYPARENTICODE) = UPPER(B.ICODE))
+WHERE ICODE = 'NON2' AND (   B.ICODE IS NULL
+                     OR coalesce(B.EXT, 'N') = 'Y'
+                     OR b.NONINVENTORY = 'Y') AND LTRIM(RTRIM(UPPER(ISSECONDARYSUPPLY))) = 'YES' AND UPPER(SECONDARYSUPPLYTAXPOLICY) = 'P' AND a.userid = p_userid;
+
+      UPDATE int$stg_ecomowned
+         SET SECONDARYSUPPLYTAXPOLICY  = NULL,
+             SECONDARYSUPPLYPARENTICODE  = NULL
+       WHERE     LTRIM(RTRIM(UPPER(ISSECONDARYSUPPLY))) = 'NO'
+             AND userid = p_userid;
+
+      --END REV : 030
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'GST Identification No. should have exactly 15 characters.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          
+          WHERE     LENGTH(a.B_CUST_GST_ID_NO) <> 15
+                AND a.B_CUST_GST_ID_NO IS NOT NULL
+                AND a.B_CUSTOMER_MOBILENO IS NOT NULL
+                -- END REV : 011
+                AND a.userid = p_userid;
+
+      -- start rev  :019
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'S GST Identification No. should have exactly 15 characters.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE     LENGTH(a.S_CUST_GST_ID_NO) <> 15
+                AND a.S_CUST_GST_ID_NO IS NOT NULL
+                AND a.S_CUSTOMER_MOBILENO IS NOT NULL
+                --START REV : 028
+                AND UPPER(a.ISBILLINGSHIPPINGSAME) = 'NO'
+                --END REV : 028
+                AND a.userid = p_userid;
+
+      -- end rev  :019
+      --2
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'GST Identification No. is invalid as per Government prescribed format.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE     a.B_CUST_GST_ID_NO IS NOT NULL
+                AND db_fun_check_gstin_no(a.B_CUST_GST_ID_NO) = 'F'
+                AND a.B_CUSTOMER_MOBILENO IS NOT NULL
+                -- REV : 010
+                AND a.userid = p_userid;
+
+      -- start rev : 019
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                ' S GST Identification No. is invalid as per Government prescribed format.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE     a.S_CUST_GST_ID_NO IS NOT NULL
+                AND db_fun_check_gstin_no(a.S_CUST_GST_ID_NO) = 'F'
+                AND a.S_CUSTOMER_MOBILENO IS NOT NULL
+                --START REV : 028
+                AND UPPER(a.ISBILLINGSHIPPINGSAME) = 'NO'
+                --END REV : 028
+                -- REV : 010
+                AND a.userid = p_userid;
+
+      -- end rev : 019
+      --3
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'Unable to determine state as per inputted GST Identification No., State code is invalid.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+LEFT OUTER JOIN admgststate m ON (SUBSTR(a.B_CUST_GST_ID_NO, 1, 2) = m.code)
+WHERE a.userid = p_userid AND a.B_CUSTOMER_MOBILENO IS NOT NULL AND a.B_CUST_GST_ID_NO IS NOT NULL  AND M.code IS NULL;
+
+      -- start rev : 019
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'Unable to determine state as per inputted S GST Identification No., State code is invalid.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+LEFT OUTER JOIN admgststate m ON (SUBSTR(a.S_CUST_GST_ID_NO, 1, 2) = m.code)
+WHERE a.userid = p_userid AND a.S_CUSTOMER_MOBILENO IS NOT NULL AND a.S_CUST_GST_ID_NO IS NOT NULL  --START REV : 028
+  AND UPPER(a.ISBILLINGSHIPPINGSAME) = 'NO' --END REV : 028
+  AND M.code IS NULL;
+
+      -- end rev : 019
+      --Customer GST Registration Date
+      --1
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'GST Reg. Date cannot be provided without providing GST Identification No.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE     a.B_CUST_GST_REG_DATE IS NOT NULL
+                AND a.B_CUST_GST_ID_NO IS NULL
+                AND a.B_CUSTOMER_MOBILENO IS NOT NULL
+                AND a.userid = p_userid;
+
+      --start rev : 019
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'GST Reg. Date cannot be provided without providing S GST Identification No.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE     a.S_CUST_GST_REG_DATE IS NOT NULL
+                AND a.S_CUST_GST_ID_NO IS NULL
+                AND a.S_CUSTOMER_MOBILENO IS NOT NULL
+                --START REV : 028
+                AND UPPER(a.ISBILLINGSHIPPINGSAME) = 'NO'
+                --END REV : 028
+                AND a.userid = p_userid;
+
+      --end rev : 019
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'GST Reg. date is not in valid format.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE     a.B_CUST_GST_REG_DATE IS NOT NULL
+                AND a.B_CUSTOMER_MOBILENO IS NOT NULL
+                AND (   (TO_CHAR(a.B_CUST_GST_REG_DATE, 'yyyy'))::numeric  <
+                           4
+                     OR (TO_CHAR(a.B_CUST_GST_REG_DATE, 'yyyymmdd'))::numeric  < 8)
+                AND a.userid = p_userid;
+
+      -- start rev : 019
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'S GST Reg. date is not in valid format.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE     a.S_CUST_GST_REG_DATE IS NOT NULL
+                AND a.S_CUSTOMER_MOBILENO IS NOT NULL
+                AND (   (TO_CHAR(a.S_CUST_GST_REG_DATE, 'yyyy'))::numeric  <
+                           4
+                     OR (TO_CHAR(a.S_CUST_GST_REG_DATE, 'yyyymmdd'))::numeric  < 8)
+                --START REV : 028
+                AND UPPER(a.ISBILLINGSHIPPINGSAME) = 'NO'
+                --END REV : 028
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'GST State provided is invalid.',
+                clock_timestamp()
+           FROM admgststate gs
+LEFT OUTER JOIN int$stg_ecomowned a ON (UPPER(a.B_CUST_GST_STATE_NAME) = UPPER(gs.name))
+WHERE a.B_CUST_GST_STATE_NAME IS NOT NULL AND gs.name IS NULL AND a.B_CUSTOMER_MOBILENO IS NOT NULL AND a.userid = p_userid;
+
+      -- start rev : 019
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'S GST State provided is invalid.',
+                clock_timestamp()
+           FROM admgststate gs
+LEFT OUTER JOIN int$stg_ecomowned a ON (UPPER(a.S_CUST_GST_STATE_NAME) = UPPER(gs.name))
+WHERE a.S_CUST_GST_STATE_NAME IS NOT NULL AND gs.name IS NULL AND a.S_CUSTOMER_MOBILENO IS NOT NULL --START REV : 028
+  AND UPPER(a.ISBILLINGSHIPPINGSAME) = 'NO' --END REV : 028
+  AND a.userid = p_userid;
+
+      -- end rev : 019
+      -- CASE - II
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'GST State inputted is not at per with GST Identification No.''s state.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a, admgststate gs
+          WHERE     UPPER(a.B_CUST_GST_STATE_NAME) = UPPER(gs.name)
+                AND (SUBSTR(a.B_CUST_GST_ID_NO, 1, 2)) <> gs.code
+                AND a.B_CUST_GST_STATE_NAME IS NOT NULL
+                AND a.B_CUSTOMER_MOBILENO IS NOT NULL
+                AND a.userid = p_userid;
+
+      -- start rev : 019
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'SGST State inputted is not at per with GST Identification No.''s state.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a, admgststate gs
+          WHERE     UPPER(a.S_CUST_GST_STATE_NAME) = UPPER(gs.name)
+                AND (SUBSTR(a.S_CUST_GST_ID_NO, 1, 2)) <> gs.code
+                AND a.S_CUST_GST_STATE_NAME IS NOT NULL
+                AND a.S_CUSTOMER_MOBILENO IS NOT NULL
+                --START REV : 028
+                AND UPPER(a.ISBILLINGSHIPPINGSAME) = 'NO'
+                --END REV : 028
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'B Mobile number should contain digits.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE (    a.B_CUSTOMER_MOBILENO IS NOT NULL
+                     AND a.B_CUSTOMER_MOBILENO ~ '[^0-9]')
+                AND userid = p_userid;
+
+      -- start rev : 019
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'S Mobile number should contain digits.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+         WHERE (    a.S_CUSTOMER_MOBILENO IS NOT NULL
+                     AND a.S_CUSTOMER_MOBILENO ~ '[^0-9]')
+                --START REV : 028
+                AND UPPER(a.ISBILLINGSHIPPINGSAME) = 'NO'
+                --END REV : 028
+                AND userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'Length of B mobile number is not valid for the given ISD Code',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+LEFT OUTER JOIN admisd i ON (a.B_ISDCODE::TEXT = i.ISDCODE)
+WHERE i.ALLOW_MOBILENO_DIGIT IS NOT NULL AND LENGTH(a.B_CUSTOMER_MOBILENO)::TEXT <> i.ALLOW_MOBILENO_DIGIT AND a.B_CUSTOMER_MOBILENO IS NOT NULL AND a.userid = p_userid;
+
+      -- start rev : 016
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ecomowned',
+                userid,
+                'Data Validation',
+                'Length of S mobile number is not valid for the given ISD Code',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+LEFT OUTER JOIN admisd i ON (a.S_ISDCODE::TEXT = i.ISDCODE)
+WHERE i.ALLOW_MOBILENO_DIGIT IS NOT NULL AND LENGTH(a.S_CUSTOMER_MOBILENO)::TEXT <> i.ALLOW_MOBILENO_DIGIT AND a.S_CUSTOMER_MOBILENO IS NOT NULL --START REV : 028
+  AND UPPER(a.ISBILLINGSHIPPINGSAME) = 'NO' --END REV : 028
+  AND a.userid = p_userid;
+
+      -- start rev : 016
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ECOMOWNED',
+                userid,
+                'Data Validation',
+                'S date can''t be before invoice date.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE a.S_date < a.saledt AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ECOMOWNED',
+                userid,
+                'Data Validation',
+                'Delivery  date can''t be before invoice date.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          WHERE a.delivery_date < a.saledt AND a.userid = p_userid;
+		  
+		          INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'ECOMOWNED',
+                userid,
+                'Data Validation',
+                'Transporter Name is mandatory if POD amount is provided.',
+                clock_timestamp()
+           FROM int$stg_ecomowned a
+          where coalesce(a.pod_amount ,0) <> 0
+          and   a.transporter_id is null
+          and   a.userid = p_userid;
+
+        
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ECOMOWNED', userid, 'Data Validation', 'Batch/Serial information is not applicable for the item, Please delete batch/serial info and try again.', clock_timestamp()
+        from   int$stg_ecomowned a, invitem i
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        and    a.item_barcode is not null
+        and    a.batch_serial_no is not null
+        and    i.item_management_mode = 'I'
+        and    a.userid = p_userid;
+		
+		
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                SELECT nextval('int$error_log_code'), lineno, 'ECOMOWNED', userid, 'Data Validation', 'Serial No. can’t be duplicate.', clock_timestamp()
+        from   int$stg_ecomowned a, invitem i,
+               (    SELECT icode, batch_serial_no from (select i.icode, sum(abs(item_qty)) as qty, batch_serial_no from int$stg_ecomowned a, invitem i
+                                    where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+                                    and userid= p_userid group by i.icode, batch_serial_no) alias8
+                                    where qty <> 2
+                                    group by icode, batch_serial_no
+                    
+union
+
+                    select icode, batch_serial_no from (select i.icode, sum(item_qty) as qty, batch_serial_no from int$stg_ecomowned a, invitem i
+                                    where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+                                    and userid= p_userid group by i.icode, batch_serial_no) alias13
+                                    where qty <> 0
+                                    group by icode, batch_serial_no
+                    EXCEPT
+                    select icode, batch_serial_no from int$stg_ecomowned a, invitem i
+                    where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+                    and userid= p_userid
+                    GROUP BY icode, batch_serial_no
+                     HAVING count(*) = 1
+                    ) b
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        and    a.batch_serial_no is not null
+        and    i.item_management_mode = 'S'
+        and    i.icode = b.icode
+        and    UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no)
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ECOMOWNED', userid, 'Data Validation', 'Invalid Batch/Serial information or Batch/Serial No. not exists for this Item.', clock_timestamp()
+        FROM int$stg_ecomowned a 
+			INNER JOIN invitem i ON (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+			LEFT OUTER JOIN invbatch_serial b ON (i.icode = b.icode) 
+			LEFT OUTER JOIN invbatch_serial bs ON UPPER(a.batch_serial_no) = UPPER (bs.batch_serial_no)	
+			WHERE a.batch_serial_no is not null   
+			and (b.icode is null or b.batch_serial_no is null) and 
+			i.item_management_mode in ('B','S') and a.userid = p_userid;
+			
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ECOMOWNED', userid, 'Data Validation', 'Item Quantity for serial managed items must be equal to scan unit of item.', clock_timestamp()
+        from   int$stg_ecomowned a, invitem i
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        and    a.batch_serial_no is not null
+        and    i.item_management_mode = 'S'
+        and    coalesce(ABS(a.item_qty),0) <> coalesce(i.barunit,1)
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ECOMOWNED', userid, 'Data Validation', 'Invalid Batch/Serial information.', clock_timestamp()
+        FROM int$stg_ecomowned a 
+LEFT OUTER JOIN invbatch_serial b ON (UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no))
+WHERE a.batch_serial_no is not null and b.batch_serial_no is null and a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'ECOMOWNED', userid, 'Data Validation', 'Multi combination exist for the given batch/serial. Specify the icode to proceed.', clock_timestamp()
+        from   int$stg_ecomowned a
+        where  a.item_barcode is null
+        and    a.batch_serial_no is not null
+        and    a.batch_serial_no in (SELECT distinct batch_serial_no from int$stg_ecomowned where item_barcode is not null)
+        and    a.userid = p_userid;
+		
+        declare 
+         v_system_batch     varchar(50);
+         c_batch CURSOR FOR
+                    SELECT item_barcode, lineno
+                    from   int$stg_ecomowned a, invitem i
+                    where  userid = p_userid
+                    and (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+                    and    item_barcode is not null
+                    and    batch_serial_no is null
+                    and    item_management_mode in ('B','S')
+                    order by lineno;
+         begin
+           select batch_serial_no into STRICT v_system_batch from invbatch_serial where code = -99999;
+           for c1 in c_batch loop
+                   update int$stg_ecomowned
+                   set batch_serial_no = v_system_batch
+                   where  lineno = c1.lineno
+                   and    userid = p_userid;
+           end loop;
+         end;
+		 
+DECLARE
+    c_customer CURSOR FOR
+        SELECT DISTINCT reference_no
+        FROM int$stg_ecomowned
+        WHERE userid = p_userid;
+    c1 RECORD;
+BEGIN
+    FOR c1 IN c_customer LOOP
+        INSERT INTO int$error_log
+            (
+                code,
+                lineno,
+                classname,
+                userid,
+                errortype,
+                errordesc,
+                createdon
+            )
+            SELECT NEXTVAL('int$error_log_code'),
+                   lineno,
+                   'ECOMOWNED',
+                   userid,
+                   'Data Validation',
+                   'Multiple Customer information found against the reference no ' || c1.reference_no,
+                   CURRENT_TIMESTAMP
+            FROM int$stg_ecomowned
+            WHERE userid = p_userid
+              AND reference_no = c1.reference_no
+              AND lineno IN (
+                  SELECT MIN(lineno)
+                  FROM int$stg_ecomowned
+                  WHERE userid = p_userid AND reference_no = c1.reference_no
+                  GROUP BY reference_no
+                  HAVING (
+                      COUNT(DISTINCT b_customer_mobileno) > 1
+                      OR COUNT(DISTINCT b_customer_firstname) > 1
+                      OR COUNT(DISTINCT b_customer_lastname) > 1
+                      OR COUNT(DISTINCT b_customer_email) > 1
+                      OR COUNT(DISTINCT b_customer_gender) > 1
+                      OR COUNT(DISTINCT b_customer_addressline1) > 1
+                      OR COUNT(DISTINCT b_customer_addressline2) > 1
+                      OR COUNT(DISTINCT b_customer_addressline3) > 1
+                      OR COUNT(DISTINCT b_customer_city) > 1
+                      OR COUNT(DISTINCT b_customer_pin) > 1
+                      OR COUNT(DISTINCT b_customer_district) > 1
+                      OR COUNT(DISTINCT b_customer_state) > 1
+                      OR COUNT(DISTINCT b_customer_country) > 1
+                      OR COUNT(DISTINCT s_customer_mobileno) > 1
+                      OR COUNT(DISTINCT s_customer_firstname) > 1
+                      OR COUNT(DISTINCT s_customer_lastname) > 1
+                      OR COUNT(DISTINCT s_customer_email) > 1
+                      OR COUNT(DISTINCT s_customer_gender) > 1
+                      OR COUNT(DISTINCT s_customer_addressline1) > 1
+                      OR COUNT(DISTINCT s_customer_addressline2) > 1
+                      OR COUNT(DISTINCT s_customer_addressline3) > 1
+                      OR COUNT(DISTINCT s_customer_city) > 1
+                      OR COUNT(DISTINCT s_customer_pin) > 1
+                      OR COUNT(DISTINCT s_customer_district) > 1
+                      OR COUNT(DISTINCT s_customer_state) > 1
+                      OR COUNT(DISTINCT s_customer_country) > 1
+                  )
+              );
+    END LOOP;
+END; 
+
+--END REV : 036
+      --COMMIT;
+
+      BEGIN
+         SELECT 'S'
+           INTO STRICT v_status
+
+          WHERE EXISTS (SELECT 'S'
+                      FROM int$error_log
+                     WHERE userid = p_userid);
+
+         RETURN('0');
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            RETURN('1');
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'ecomowned',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+
+         RETURN('0');
+   END;
+
+   -- Create Store Franchise Consignment Sale after validation
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

@@ -1,0 +1,77 @@
+procedure "main"."db_pkg_multiselect_p_sitefetch(main.list_cods[], main.list_cods[], main.list_cods[], refcursor)" {
+  text = """
+
+DECLARE
+
+      v_citinameids              list_cods[];
+      v_citiname_first_element   varchar(100);
+	  
+      v_stnameids                list_cods[];
+      v_stname_first_element     varchar(100);
+	  
+      v_zoneids                  list_cods[];
+      v_zone_first_element       varchar(100);
+
+BEGIN
+
+      FOR i IN array_lower(p_citinamelist,1)..array_upper(p_citinamelist,1)
+      LOOP
+         v_citinameids[i].list_cods := p_citinamelist[i].list_cods;
+         v_citiname_first_element := p_citinamelist[i].list_cods;
+      END LOOP;
+	  FOR i IN array_lower(p_stnamelist,1)..array_upper(p_stnamelist,1)
+      LOOP
+         v_stnameids[i].list_cods := p_stnamelist[i].list_cods;
+         v_stname_first_element := p_stnamelist[i].list_cods;
+      END LOOP;
+	  FOR i IN array_lower(p_zonelist,1)..array_upper(p_zonelist,1)
+      LOOP
+         v_zoneids[i].list_cods := p_zonelist[i].list_cods;
+         v_zone_first_element := p_zonelist[i].list_cods;
+      END LOOP;
+
+      OPEN p_sitelist FOR
+         SELECT DISTINCT 0 AS "PERFORM", ads.NAME AS sitename,
+                         ads.code AS sitecode, ads.psite_initial AS cuid
+                    FROM admsite ads, admcity adc
+                   WHERE ads.ctname = adc.ctname
+                     AND (   v_citiname_first_element = 0::text
+                          OR ads.ctname IN (SELECT (v_citinameids[k]).list_cods from generate_series(1,array_length(v_citinameids,1)) as s(k))
+                         )
+                     AND (   v_stname_first_element = 0::text
+                          OR stname IN (SELECT (v_stnameids[k]).list_cods from generate_series(1,array_length(v_stnameids,1)) as s(k))
+                         )
+                     AND (   v_zone_first_element = 0::text
+                          OR ZONE IN (SELECT (v_zoneids[k]).list_cods from generate_series(1,array_length(v_zoneids,1)) as s(k))
+                         );
+   END;
+"""
+  arguments = <
+    {
+      name = p_citinamelist
+      type = main.list_cods[]
+      mode = IN
+    }
+
+    {
+      name = p_stnamelist
+      type = main.list_cods[]
+      mode = IN
+    }
+
+    {
+      name = p_zonelist
+      type = main.list_cods[]
+      mode = IN
+    }
+
+    {
+      name = p_sitelist
+      type = refcursor
+      mode = INOUT
+    }
+
+  >
+  language = plpgsql
+}
+

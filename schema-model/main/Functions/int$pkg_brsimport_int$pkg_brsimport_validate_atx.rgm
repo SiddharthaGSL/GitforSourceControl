@@ -1,0 +1,935 @@
+function "main"."int$pkg_brsimport_int$pkg_brsimport_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status   char(1);
+      errmsg     varchar(200);
+      errcode    bigint;
+      v_date     varchar(25);
+      v_cnt      bigint;c1_loop RECORD;
+
+BEGIN
+      -- bank_gl_name length
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Length Validation',
+                'Bank GL Name length is higher than it''s defined data length.',
+                clock_timestamp()
+           FROM int$stg_brsimport a
+          WHERE     LENGTH(a.bank_gl_name) > 100
+                AND a.bank_gl_name IS NOT NULL
+                AND a.userid = p_userid;
+
+      -- instrument_no length
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Length Validation',
+                'Instrument No length is higher than it''s defined data length.',
+                clock_timestamp()
+           FROM int$stg_brsimport a
+          WHERE     LENGTH(a.instrument_no) > 100
+                AND a.instrument_no IS NOT NULL
+                AND a.userid = p_userid;
+
+      -- amout length
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Length Validation',
+                'Amount length is higher than it''s defined data length.',
+                clock_timestamp()
+           FROM int$stg_brsimport a
+          WHERE     LENGTH(a.amount::TEXT) > 23
+                AND a.amount IS NOT NULL
+                AND a.userid = p_userid;
+
+      -- bank_gl_name is null
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Mandatory Validation',
+                'Column is Mandatory.',
+                clock_timestamp()
+           FROM int$stg_brsimport a
+          WHERE a.bank_gl_name IS NULL AND a.userid = p_userid;
+
+      -- instrument_no is null
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Mandatory Validation',
+                'Column is Mandatory.',
+                clock_timestamp()
+           FROM int$stg_brsimport a
+          WHERE a.instrument_no IS NULL AND a.userid = p_userid;
+
+      -- clearing_date is null
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Mandatory Validation',
+                'Column is Mandatory.',
+                clock_timestamp()
+           FROM int$stg_brsimport a
+          WHERE a.clearing_date IS NULL AND a.userid = p_userid;
+
+      -- bank_gl_name is invalid
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid GL Name.',
+                clock_timestamp()
+           FROM int$stg_brsimport a
+LEFT OUTER JOIN (SELECT UPPER(g.glname) glname
+                   FROM fingl g
+                  WHERE g.srctype = 'B') gl ON (UPPER(a.bank_gl_name) = gl.glname)
+WHERE gl.glname IS NULL AND a.userid = p_userid;
+
+      -- bank_gl_name is invalid
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Data Validation',
+                'This is not Bank or there is no transaction from this Bank.',
+                clock_timestamp()
+           FROM int$stg_brsimport a, (SELECT g.glcode, UPPER(g.glname) glname
+                   FROM fingl g
+                  WHERE g.srctype = 'B') gl
+LEFT OUTER JOIN finvchmain vm ON (gl.glcode = vm.glcode)
+WHERE UPPER(a.bank_gl_name) = gl.glname  AND vm.glcode IS NULL -- start rev : 006
+  AND vm.release_status = 'P' -- end rev : 006
+  AND a.userid = p_userid; -- instrument_no is invalid
+ INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Instrument No.',
+                clock_timestamp()
+            FROM int$stg_brsimport a LEFT OUTER JOIN
+                (SELECT                                     -- start rev : 001
+                        --upper(chqno)  refno_chqno,d.vchcode vchcode
+                        LTRIM(RTRIM(UPPER(chqno))) refno_chqno,
+                        d.vchcode                     vchcode
+                   -- end rev : 001
+                   FROM finvchdet d INNER JOIN finvchmain m
+                  ON d.vchcode = m.vchcode
+                        WHERE m.release_status = 'P'
+                        AND d.chqno IS NOT NULL) t
+			ON 	UPPER (LTRIM (RTRIM (a.instrument_no))) =
+                       (LTRIM (RTRIM (t.refno_chqno)))		
+			WHERE -- end rev : 001
+   			t.refno_chqno IS NULL AND t.vchcode IS NOT NULL AND a.userid = p_userid;
+
+      -- START REV : 007
+      -- instrument_no is invalid
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Data Validation',
+                'Instrument No. already available , can not be updated.',
+                clock_timestamp()
+           FROM int$stg_brsimport a, finvchdet d, finvchmain m
+          WHERE     d.vchcode = m.vchcode
+                AND m.release_status = 'P'
+                AND UPPER(M.SCHEME_DOCNO) = UPPER(A.VOUCHER_NO)
+                AND M.VCHDT = A.VOUCHER_DATE
+                AND (   (coalesce(D.DAMOUNT, 0) > 0 AND D.DAMOUNT = A.AMOUNT)
+                     OR (coalesce(D.CAMOUNT, 0) > 0 AND D.CAMOUNT = A.AMOUNT))
+                AND d.chqno IS NOT NULL
+                AND D.PAYMENT_MODE = 'R'
+                AND A.VOUCHER_NO IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Data Validation',
+                'Amount is mandatory when Voucher No. or date is provided.',
+                clock_timestamp()
+           FROM int$stg_brsimport a
+          WHERE     A.VOUCHER_NO IS NOT NULL
+                AND coalesce(A.AMOUNT, 0) = 0
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Data Validation',
+                'Voucher no. cannot be inputted for cheque payments.',
+                clock_timestamp()
+           FROM int$stg_brsimport a, finvchdet d, finvchmain m
+          WHERE     d.vchcode = m.vchcode
+                AND m.release_status = 'P'
+                AND UPPER(M.SCHEME_DOCNO) = UPPER(A.VOUCHER_NO)
+                AND M.VCHDT = A.VOUCHER_DATE
+                AND (   (coalesce(D.DAMOUNT, 0) > 0 AND D.DAMOUNT = A.AMOUNT)
+                     OR (coalesce(D.CAMOUNT, 0) > 0 AND D.CAMOUNT = A.AMOUNT))
+                AND d.payment_mode <> 'R'
+                AND A.VOUCHER_NO IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Data Validation',
+                'Multiple rows found with same voucher and amount combination.',
+                clock_timestamp()
+           FROM int$stg_brsimport a
+          WHERE     1 <
+                       (SELECT COUNT(*)
+                          FROM finvchdet d, finvchmain m
+                         WHERE     d.vchcode = m.vchcode
+                               AND m.release_status = 'P'
+                               AND UPPER(M.SCHEME_DOCNO) =
+                                      UPPER(A.VOUCHER_NO)
+                               AND M.VCHDT = A.VOUCHER_DATE
+                               AND (   (    coalesce(D.DAMOUNT, 0) > 0
+                                        AND D.DAMOUNT = A.AMOUNT)
+                                    OR (    coalesce(D.CAMOUNT, 0) > 0
+                                        AND D.CAMOUNT = A.AMOUNT)))
+                AND A.VOUCHER_NO IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Voucher Number.',
+                clock_timestamp()
+           FROM int$stg_brsimport a LEFT OUTER JOIN finvchmain m
+		   ON (UPPER(A.VOUCHER_NO) = UPPER(M.SCHEME_DOCNO))
+		   WHERE M.SCHEME_DOCNO IS NULL --  AND     M.VCHDT =  A.VOUCHER_DATE
+                --AND     A.VOUCHER_DATE IS NOT NULL
+  AND A.VOUCHER_NO IS NOT NULL AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Data Validation',
+                'Voucher Number not matching with the stated bank.',
+                clock_timestamp()
+           FROM int$stg_brsimport a, FINVCHMAIN M
+          WHERE     UPPER(A.VOUCHER_NO) = UPPER(M.SCHEME_DOCNO)
+                AND NOT EXISTS (SELECT NULL
+                          FROM FINGL GL
+                         WHERE     GL.GLCODE = M.GLCODE
+                               AND UPPER(a.bank_gl_name) = UPPER(gl.glname))
+                AND M.VCHDT = A.VOUCHER_DATE
+                AND A.VOUCHER_DATE IS NOT NULL
+                AND A.VOUCHER_NO IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Voucher No./ Voucher date.',
+                clock_timestamp()
+           FROM int$stg_brsimport a LEFT OUTER JOIN finvchmain m 
+		   ON (UPPER(A.VOUCHER_NO) = UPPER(M.SCHEME_DOCNO))
+		   WHERE M.SCHEME_DOCNO IS NULL AND M.VCHDT = A.VOUCHER_DATE AND A.VOUCHER_DATE IS NOT NULL AND A.VOUCHER_NO IS NOT NULL AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Data Validation',
+                'Voucher Number not found for the selected date.',
+                clock_timestamp()
+           FROM int$stg_brsimport a
+LEFT OUTER JOIN finvchmain m ON (A.VOUCHER_DATE = M.VCHDT)
+AND (UPPER(A.VOUCHER_NO) = UPPER(M.SCHEME_DOCNO))
+WHERE  --AND     NOT EXISTS ( SELECT NULL FROM FINGL GL WHERE GL.GLCODE = M.GLCODE AND upper(a.bank_gl_name) = UPPER(gl.glname))
+   A.VOUCHER_DATE IS NOT NULL AND M.VCHDT IS NULL AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Data Validation',
+                'Either both Voucher no. or date should be provided or both should be Null.',
+                clock_timestamp()
+           FROM int$stg_brsimport a
+          WHERE     (   (A.VOUCHER_DATE IS NOT NULL AND A.VOUCHER_NO IS NULL)
+                     OR (A.VOUCHER_DATE IS NULL AND A.VOUCHER_NO IS NOT NULL))
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Data Validation',
+                'Amount is mandatory when Voucher No. or date is provided.',
+                clock_timestamp()
+           FROM int$stg_brsimport a
+          WHERE     coalesce(AMOUNT, 0) = 0
+                AND A.VOUCHER_NO IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Data Validation',
+                'Clearing date cannot be less than Voucher date.',
+                clock_timestamp()
+           FROM int$stg_brsimport a
+          WHERE     CLEARING_DATE < VOUCHER_DATE
+                AND A.VOUCHER_DATE IS NOT NULL
+                AND a.userid = p_userid; -- END REV : 007
+      -- instrument_no is invalid
+ INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Instrument No.',
+                clock_timestamp()
+           FROM int$stg_brsimport a LEFT OUTER JOIN
+                (SELECT                                     -- start rev : 001
+                        --upper(d.refno)  refno_chqno,d.vchcode vchcode
+                        LTRIM(RTRIM(UPPER(d.refno))) refno_chqno,
+                        d.vchcode                       vchcode
+                   -- end rev : 001
+                   FROM finvchdet d INNER JOIN finvchmain m
+                  ON     d.vchcode = m.vchcode
+                        WHERE m.release_status = 'P'
+                        AND d.chqno IS NULL) t
+				ON UPPER (LTRIM (RTRIM (a.instrument_no))) =
+                       (LTRIM (RTRIM (t.refno_chqno)))			
+		WHERE -- end rev : 001
+   		t.refno_chqno IS NULL AND t.vchcode IS NOT NULL AND a.userid = p_userid;
+
+      -- invalid clearing_date
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Clearing Date.',
+                clock_timestamp()
+           FROM int$stg_brsimport a
+          WHERE (   (TO_CHAR(a.clearing_date, 'yyyy'))::numeric  < 4
+                     OR (TO_CHAR(a.clearing_date, 'yyyymmdd'))::numeric  < 8)
+                AND a.userid = p_userid;
+
+      -- invalid clearing_date
+      FOR c1_loop IN (SELECT a.clearing_date, lineno
+                        FROM int$stg_brsimport a
+                       WHERE a.userid = p_userid)
+      LOOP
+         BEGIN
+            v_date := c1_loop.clearing_date::varchar;
+         EXCEPTION
+            WHEN OTHERS
+            THEN
+               INSERT INTO int$error_log(code,
+                                          lineno,
+                                          classname,
+                                          userid,
+                                          errortype,
+                                          errordesc,
+                                          createdon)
+                    VALUES (nextval('int$error_log_code'),
+                            c1_loop.lineno,
+                            'BRSIMPORT',
+                            p_userid,
+                            'Data Validation',
+                            'Invalid Clearing Date.',
+                            clock_timestamp());
+         END;
+      END LOOP;
+
+      -- invalid clearing_date
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Data Validation',
+                'Clearing Date cannot be future date.',
+                clock_timestamp()
+           FROM int$stg_brsimport a
+          WHERE a.clearing_date > date_trunc('day', clock_timestamp()) AND a.userid = p_userid;
+
+      -- invalid amount
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Amount.',
+                clock_timestamp()
+           FROM int$stg_brsimport a
+          WHERE coalesce(a.amount, 0) <= 0 AND a.userid = p_userid;
+
+      -- record validation
+      ------- case I
+      FOR c1_loop
+         IN (SELECT bank_gl_name,
+                    instrument_no,
+                    clearing_date,
+                    amount,
+                    lineno
+               FROM int$stg_brsimport a
+              WHERE     a.userid = p_userid
+                    AND (A.VOUCHER_NO IS NULL AND A.VOUCHER_DATE IS NULL))
+      LOOP
+         v_cnt := 0;
+
+         SELECT coalesce(COUNT(1), 0)
+           INTO STRICT v_cnt
+           FROM fingl gl, finvchmain m, finvchdet d
+          WHERE     UPPER(gl.glname) = UPPER(c1_loop.bank_gl_name)
+                AND gl.glcode = m.glcode
+                AND m.vchcode = d.vchcode
+                --AND     D.PAYMENT_MODE   = 'C' -- REV : 007
+                AND (                                       -- start rev : 001
+                       (    UPPER(LTRIM(RTRIM(d.chqno))) =
+                               UPPER(LTRIM(RTRIM(c1_loop.instrument_no)))
+                        AND D.chqno IS NOT NULL)
+                    OR (    UPPER(LTRIM(RTRIM(d.refno))) =
+                               UPPER(LTRIM(RTRIM(c1_loop.instrument_no)))
+                        AND D.chqno IS NULL)                  -- end rev : 001
+                                            )
+                -- START REV : 006
+                --and     d.vchtype in ('P','R')
+                AND d.vchtype IN ('P',
+                                  'R',
+                                  'C',
+                                  'G')
+                -- END REV : 006
+                AND (   (                                   -- START REV : 006
+                                                             --d.vchtype = 'P'
+                            d.vchtype IN ('C', 'P')           -- END REV : 006
+                        AND d.damount = c1_loop.AMOUNT)
+                     OR (d.vchtype = 'R' AND d.camount = c1_loop.AMOUNT)
+                     -- START REV : 006
+                     OR (    d.vchtype = 'G'
+                         AND (   (    coalesce(D.DAMOUNT, 0) > 0
+                                  AND D.DAMOUNT = C1_LOOP.AMOUNT)
+                              OR (    coalesce(D.CAMOUNT, 0) > 0
+                                  AND D.CAMOUNT = C1_LOOP.AMOUNT))) -- END REV : 006
+                                                                   );
+
+         IF v_cnt = 0
+         THEN
+            INSERT INTO int$error_log(code,
+                                       lineno,
+                                       classname,
+                                       userid,
+                                       errortype,
+                                       errordesc,
+                                       createdon)
+                    VALUES (
+                              nextval('int$error_log_code'),
+                              c1_loop.lineno,
+                              'BRSIMPORT',
+                              p_userid,
+                              'Row Validation',
+                              'Transaction Details Not matched considering Bank Name,Instrument No. and Amount',
+                              clock_timestamp());
+         END IF;
+      END LOOP;
+
+      --------------
+      -------- case II
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Row Validation',
+                'Clearing Date is less than the Cheque Date.Invalid Clearing Date.',
+                clock_timestamp()
+           FROM int$stg_brsimport a,
+                (SELECT g.glcode, UPPER(g.glname) glname
+                   FROM fingl g
+                  WHERE g.srctype = 'B') gl,
+                finvchmain        m,
+                finvchdet         d
+          WHERE     UPPER(a.bank_gl_name) = gl.glname
+                AND gl.glcode = m.glcode
+                AND m.vchcode = d.vchcode
+                -- START REV : 008
+                AND m.scheme_docno = a.voucher_no
+                -- End Rev : 008
+                AND (                                       -- start rev : 001
+                       (    UPPER(LTRIM(RTRIM(d.chqno))) =
+                               UPPER(LTRIM(RTRIM(A.instrument_no)))
+                        AND D.chqno IS NOT NULL)
+                    OR (    UPPER(LTRIM(RTRIM(d.refno))) =
+                               UPPER(LTRIM(RTRIM(A.instrument_no)))
+                        AND D.chqno IS NULL)                  -- end rev : 001
+                                            )
+               AND a.clearing_date < d.chqdt                 
+                AND a.userid = p_userid;
+
+      ----------
+      ---------- case - III
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Row Validation',
+                'Clearing Date is more that Cheque Validity period i.e.90 days.Invalid Clearing Date.',
+                clock_timestamp()
+           FROM int$stg_brsimport a,
+                (SELECT g.glcode, UPPER(g.glname) glname
+                   FROM fingl g
+                  WHERE g.srctype = 'B') gl,
+                finvchmain        m,
+                finvchdet         d
+          WHERE     UPPER(a.bank_gl_name) = gl.glname
+                AND gl.glcode = m.glcode
+                AND m.vchcode = d.vchcode
+                AND (                                       -- start rev : 001
+                       (    UPPER(LTRIM(RTRIM(d.chqno))) =
+                               UPPER(LTRIM(RTRIM(a.instrument_no)))
+                        AND d.chqno IS NOT NULL)
+                    OR (    UPPER(LTRIM(RTRIM(d.refno))) =
+                               UPPER(LTRIM(RTRIM(a.instrument_no)))
+                        AND d.chqno IS NULL)                  -- end rev : 001
+                                            )
+                AND a.clearing_date > (d.chqdt + INTERVAL '90 days')
+                AND BRSDT IS NULL                                 -- REV : 007
+                AND a.userid = p_userid;
+
+      -------------
+      ----- case - IV
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Row Validation',
+                'BRS already done for this Bank Transaction.',
+                clock_timestamp()
+           FROM int$stg_brsimport a,
+                (SELECT g.glcode, UPPER(g.glname) glname
+                   FROM fingl g
+                  WHERE g.srctype = 'B') gl,
+                finvchmain        m,
+                finvchdet         d
+          WHERE     UPPER(a.bank_gl_name) = gl.glname
+                AND gl.glcode = m.glcode
+                AND m.vchcode = d.vchcode
+                AND (                                       -- start rev : 001
+                       (    UPPER(LTRIM(RTRIM(d.chqno))) =
+                               UPPER(LTRIM(RTRIM(a.instrument_no)))
+                        AND d.chqno IS NOT NULL)
+                    OR (    UPPER(LTRIM(RTRIM(d.refno))) =
+                               UPPER(LTRIM(RTRIM(a.instrument_no)))
+                        AND d.chqno IS NULL)                  -- end rev : 001
+                                            )
+                AND (   (d.vchtype IN ('C', 'P') AND d.damount = a.amount)
+                     OR (d.vchtype = 'R' AND d.camount = a.amount)
+                     OR (    d.vchtype = 'G'
+                         AND (   (    coalesce(D.DAMOUNT, 0) > 0
+                                  AND D.DAMOUNT = A.AMOUNT)
+                              OR (    coalesce(D.CAMOUNT, 0) > 0
+                                  AND D.CAMOUNT = A.AMOUNT))))
+                -- END REV : 006
+                AND d.brsdt IS NOT NULL
+                AND VOUCHER_NO IS NULL                            -- REV : 007
+                AND a.userid = p_userid;
+
+      ------------
+      -- START REV : 007
+      /*INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Row Validation',
+                'BRS already done for this Bank Transaction.',
+                clock_timestamp()
+           FROM finvchmain m, (SELECT g.glcode, UPPER(g.glname) glname
+                   FROM fingl g
+                  WHERE g.srctype = 'B') gl, finvchdet d, int$stg_brsimport a
+LEFT OUTER JOIN finvchmain m ON (UPPER(A.VOUCHER_NO) = UPPER(M.SCHEME_DOCNO))
+--WHERE UPPER(a.bank_gl_name) = gl.glname  AND gl.glcode = m.glcode AND m.vchcode = d.vchcode AND (                                       -- start rev : 001
+                       (    UPPER(LTRIM(RTRIM(d.chqno))) =
+                               UPPER(LTRIM(RTRIM(a.instrument_no)))
+                        AND d.chqno IS NOT NULL)
+                    OR (    UPPER(LTRIM(RTRIM(d.refno))) =
+                               UPPER(LTRIM(RTRIM(a.instrument_no)))
+                        AND d.chqno IS NULL)                  -- end rev : 001
+                                            ) -- START REV : 006
+                /*
+                and         (
+                                (d.vchtype = 'P' and d.damount = a.amount)
+                                 or
+                                (d.vchtype = 'R' and d.camount = a.amount)
+                            )
+                */
+  AND (   (d.vchtype IN ('C', 'P') AND d.damount = a.amount)
+                     OR (d.vchtype = 'R' AND d.camount = a.amount)
+                     OR (    d.vchtype = 'G'
+                         AND (   (    coalesce(D.DAMOUNT, 0) > 0
+                                  AND D.DAMOUNT = A.AMOUNT)
+                              OR (    coalesce(D.CAMOUNT, 0) > 0
+                                  AND D.CAMOUNT = A.AMOUNT)))) -- END REV : 006
+  AND d.brsdt IS NOT NULL AND VOUCHER_NO IS NOT NULL AND a.userid = p_userid;*/
+  	INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Row Validation',
+                'BRS already done for this Bank Transaction.',
+                clock_timestamp()
+           FROM int$stg_brsimport a INNER JOIN 
+                (SELECT g.glcode, UPPER (g.glname) glname
+                   FROM fingl g
+                  WHERE g.srctype = 'B') gl ON UPPER (a.bank_gl_name) = gl.glname
+				  LEFT OUTER JOIN  finvchmain m ON UPPER (A.VOUCHER_NO) = UPPER (M.SCHEME_DOCNO)
+				  INNER JOIN finvchmain fnvch ON gl.glcode = fnvch.glcode
+				  INNER JOIN finvchdet d ON fnvch.vchcode = d.vchcode WHERE (                                       -- start rev : 001
+                       (    UPPER(LTRIM(RTRIM(d.chqno))) =
+                               UPPER(LTRIM(RTRIM(a.instrument_no)))
+                        AND d.chqno IS NOT NULL)
+                    OR (    UPPER(LTRIM(RTRIM(d.refno))) =
+                               UPPER(LTRIM(RTRIM(a.instrument_no)))
+                        AND d.chqno IS NULL)                  -- end rev : 001
+                                            ) -- START REV : 006
+                /*
+                and         (
+                                (d.vchtype = 'P' and d.damount = a.amount)
+                                 or
+                                (d.vchtype = 'R' and d.camount = a.amount)
+                            )
+                */
+  AND (   (d.vchtype IN ('C', 'P') AND d.damount = a.amount)
+                     OR (d.vchtype = 'R' AND d.camount = a.amount)
+                     OR (    d.vchtype = 'G'
+                         AND (   (    coalesce(D.DAMOUNT, 0) > 0
+                                  AND D.DAMOUNT = A.AMOUNT)
+                              OR (    coalesce(D.CAMOUNT, 0) > 0
+                                  AND D.CAMOUNT = A.AMOUNT)))) -- END REV : 006
+  AND d.brsdt IS NOT NULL AND VOUCHER_NO IS NOT NULL AND a.userid = p_userid;
+
+      -- END REV : 007
+      -- row validation
+      -- unique chk
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'BRSIMPORT',
+                userid,
+                'Row Validation',
+                'Duplicate Instrument No for same Bank.',
+                clock_timestamp()
+           FROM int$stg_brsimport a
+          WHERE (a.bank_gl_name, a.instrument_no) IN (SELECT tmp.bank_gl_name, tmp.instrument_no
+                          FROM (SELECT b.bank_gl_name,
+                                       b.instrument_no,
+                                       ROW_NUMBER()
+                                       OVER (
+                                          PARTITION BY b.bank_gl_name,
+                                                       b.instrument_no
+                                          ORDER BY
+                                             b.bank_gl_name, b.instrument_no)
+                                          rec_cnt
+                                  FROM int$stg_brsimport b
+                                 WHERE b.userid = p_userid
+                                 AND b.instrument_no <> 'TRF') tmp
+                         WHERE tmp.rec_cnt > 1)
+                AND a.userid = p_userid;
+
+      -- check whether records are valid or not
+      BEGIN
+         SELECT 'S'
+           INTO STRICT v_status
+           
+          WHERE EXISTS (SELECT 'S'
+                      FROM int$error_log
+                     WHERE userid = p_userid);
+
+         RETURN('0');
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            RETURN('1');
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'BRSIMPORT',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

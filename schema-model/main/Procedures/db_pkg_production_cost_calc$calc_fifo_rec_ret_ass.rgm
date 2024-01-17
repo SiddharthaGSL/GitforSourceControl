@@ -1,0 +1,317 @@
+procedure "main"."db_pkg_production_cost_calc$calc_fifo_rec_ret_ass(bigint, bigint, character varying, bigint, character)" {
+  text = """
+
+DECLARE
+		i				record;
+		v_table_rec	 	db_pkg_production_cost_calc$v_rec[];
+		v_code			bigint;
+		v_count			bigint;
+	
+        v_app_qty   prdwiptrans.txn_qty%type := 0;
+        v_bal_qty   prdwiptrans.txn_qty%type := 0;
+        v_rate      prdwiptrans.rate%type    := 0;
+        v_amount    prdwiptrans.amount%type  := 0;
+        v_qty       prdwiptrans.txn_qty%type := 0;
+
+        c1 CURSOR FOR
+        SELECT  code,txn_type,det_code,lotcode,jobcode,jrccode,
+                assembly_icode,component_icode,item_type,
+                assembly_wip,txn_qty,rate,amount,wiptxn_code,
+                ass_saitem_code,com_saitem_code,job_assembly_icode,txn_date
+        from    prdwiptrans t
+        where   t.txn_type in ('REC','RET')
+        and     t.item_type = 'ASS'
+        and     t.jobcode         = p_jobcode
+        and     t.assembly_icode  = p_assembly_icode
+        and     coalesce(t.lotcode,0)  = coalesce(p_lotcode,coalesce(t.lotcode,0))
+        and     ((t.txn_type = 'RET' and t.wiptxn_code = p_tranmain_code) or t.jrccode = p_tranmain_code)
+        order by t.code;
+
+	BEGIN
+	
+	     
+        CREATE TEMPORARY TABLE IF NOT EXISTS db_pkg_production_cost_calc_gtt
+		(
+			code 		bigint,
+			txn_qty 	numeric(20,3),
+			txn_date 	timestamp without time zone,			
+			rate		numeric(20,6),
+			dummy_qty	numeric(20,3)
+		) ON COMMIT PRESERVE ROWS;
+
+        for c1_loop in c1
+        loop
+-- =======================================================================================================================
+-- initialisation of local varriables and delete from temporary tables
+-- =======================================================================================================================
+       Delete from db_pkg_production_cost_calc_gtt;v_app_qty   := 0;
+            v_bal_qty   := 0;
+            v_amount    := 0;
+            v_rate      := 0;
+            v_qty       := 0;
+
+            v_app_qty   := abs(coalesce(c1_loop.txn_qty,0));
+
+-- =======================================================================================================================
+-- get net qty before current entry
+-- =======================================================================================================================
+           	select  sum(txn_qty)
+            	into STRICT    v_bal_qty
+            from (
+                        SELECT  abs(coalesce(txn_qty,0)) txn_qty
+                        from    prdwiptrans t
+                        where   coalesce(t.lotcode,0)         = coalesce(c1_loop.lotcode,coalesce(t.lotcode,0))
+                        and     t.job_assembly_icode     = c1_loop.job_assembly_icode
+                        and     t.jobcode                = c1_loop.jobcode
+                        and     t.job_assembly_icode     = t.component_icode
+                        and     t.component_icode        = c1_loop.component_icode
+                        and     coalesce(t.ass_saitem_code,0) = coalesce(c1_loop.ass_saitem_code,coalesce(t.ass_saitem_code,0))
+                        and     coalesce(t.com_saitem_code,0) = coalesce(c1_loop.com_saitem_code,coalesce(t.com_saitem_code,0))
+                        and     t.item_type              = 'ASS'
+                        and     t.txn_type in ('ISS','RET', 'REC')
+                        and     t.code                   < c1_loop.code
+                        and     t.txn_date               <=c1_loop.txn_date
+						union all
+						SELECT  abs(coalesce(txn_qty,0)) txn_qty
+                        from    prdwiptrans t
+                        where   coalesce(t.lotcode,0)         = coalesce(c1_loop.lotcode,coalesce(t.lotcode,0))
+                        and     t.job_assembly_icode     = c1_loop.job_assembly_icode
+                        and     t.jobcode                = c1_loop.jobcode
+                        and     t.jrccode                = c1_loop.jrccode
+                        and     t.job_assembly_icode     = t.component_icode
+                        and     t.component_icode        = c1_loop.component_icode
+                        and     coalesce(t.ass_saitem_code,0) = coalesce(c1_loop.ass_saitem_code,coalesce(t.ass_saitem_code,0))
+                        and     coalesce(t.com_saitem_code,0) = coalesce(c1_loop.com_saitem_code,coalesce(t.com_saitem_code,0))
+                        and     t.item_type              = 'ASS'
+                        and     t.txn_type               = 'ISS'
+                    ) alias24;
+
+            v_qty := abs(coalesce(v_bal_qty,0));
+
+-- =======================================================================================================================
+-- populate temporary table
+-- =======================================================================================================================
+
+		INSERT into db_pkg_production_cost_calc_gtt (code,txn_qty,txn_date,rate,dummy_qty)
+		SELECT  code,txn_qty,txn_date,rate,0 AS dummy_qty
+			from (
+                        SELECT  code,txn_qty,txn_date,rate,0 dummy_qty
+                        from    prdwiptrans t
+                        where   coalesce(t.lotcode,0)         = coalesce(c1_loop.lotcode,coalesce(t.lotcode,0))
+                        and     t.job_assembly_icode     = c1_loop.job_assembly_icode
+                        and     t.jobcode                = c1_loop.jobcode
+                        and     t.assembly_icode         = t.component_icode
+                        and     t.component_icode        = c1_loop.component_icode
+                        and     coalesce(t.ass_saitem_code,0) = coalesce(c1_loop.ass_saitem_code,coalesce(t.ass_saitem_code,0))
+                        and     coalesce(t.com_saitem_code,0) = coalesce(c1_loop.com_saitem_code,coalesce(t.com_saitem_code,0))
+                        and     t.code                   < c1_loop.code
+                        and     t.txn_date               <=c1_loop.txn_date
+                        and     t.item_type              = 'ASS'
+                        and     t.txn_type               = 'ISS'
+						union all
+                        SELECT  code,txn_qty,txn_date,rate,0 dummy_qty
+                        from    prdwiptrans t
+                        where   coalesce(t.lotcode,0)         = coalesce(c1_loop.lotcode,coalesce(t.lotcode,0))
+                        and     t.job_assembly_icode     = c1_loop.job_assembly_icode
+                        and     t.jobcode                = c1_loop.jobcode
+                        and     t.assembly_icode         = t.component_icode
+                        and     t.component_icode        = c1_loop.component_icode
+                        and     coalesce(t.ass_saitem_code,0) = coalesce(c1_loop.ass_saitem_code,coalesce(t.ass_saitem_code,0))
+                        and     coalesce(t.com_saitem_code,0) = coalesce(c1_loop.com_saitem_code,coalesce(t.com_saitem_code,0))
+                        and     t.jrccode                = c1_loop.jrccode
+                        and     t.item_type              = 'ASS'
+                        and     t.txn_type               = 'ISS'
+                    ) t2
+              		order by t2.txn_date desc,t2.code desc;
+					
+-- =======================================================================================================================
+-- clear index by table
+-- =======================================================================================================================
+--current_setting('db_pkg_production_cost_calc.v_t1')::t1.delete;
+-- =======================================================================================================================
+-- get inpool
+-- =======================================================================================================================
+BEGIN
+		v_code := 0;
+		v_count := 0;
+		loop
+				--SELECT ARRAY_REMOVE(v_table_rec);
+				v_table_rec := '{}';
+				SELECT ARRAY_AGG(t)
+						STRICT INTO v_table_rec
+						FROM 
+							(
+							SELECT  code,txn_qty,txn_date,rate,dummy_qty
+							FROM db_pkg_production_cost_calc_gtt
+            				WHERE code > v_code
+							ORDER BY code ASC
+							LIMIT 100
+							) t;
+							
+			EXIT WHEN COALESCE(ARRAY_LENGTH(v_table_rec,1),0) = 0;
+			v_count := array_length(v_table_rec,1);
+
+-- =======================================================================================================================
+-- setoff net qty among all previous iss entry in fifo basis
+-- =======================================================================================================================
+			FOR var IN ARRAY_LOWER(v_table_rec, 1)..ARRAY_UPPER(v_table_rec, 1)
+			loop
+                if  v_qty > 0 then
+                    if  abs(coalesce(v_table_rec[var].txn_qty,0)) <= v_qty 
+						then
+							UPDATE db_pkg_production_cost_calc_gtt
+                       			set dummy_qty = abs(coalesce(v_table_rec[var].txn_qty,0))
+							WHERE code = v_table_rec[var].code;
+                       		v_qty := coalesce(v_qty - abs(v_table_rec[var].txn_qty),0);
+                    	else
+							UPDATE db_pkg_production_cost_calc_gtt
+                       			set dummy_qty = v_qty
+							WHERE code = v_table_rec[var].code;
+                       		--v_table_rec[var].dummy_qty := v_qty;
+                       		v_qty := 0;
+                    end if;
+						v_code := v_table_rec[var].code;
+				end if;
+			end loop;
+		end loop;
+
+            v_qty := v_app_qty;
+			v_code := 0;
+			v_count := 0;
+
+-- =======================================================================================================================
+-- setoff cur qty among all previous iss entry in reverse order
+-- =======================================================================================================================
+loop
+				--SELECT ARRAY_REMOVE(v_table_rec);
+				v_table_rec := '{}';
+				SELECT ARRAY_AGG(t1)
+					STRICT INTO v_table_rec
+					FROM 
+						(
+						SELECT  code,txn_qty,txn_date,rate,dummy_qty
+						FROM db_pkg_production_cost_calc_gtt
+            			WHERE code > v_code
+						ORDER BY code ASC
+						LIMIT 100
+						) t1;
+						
+			EXIT WHEN COALESCE(ARRAY_LENGTH(v_table_rec,1),0) = 0;
+			v_count := array_length(v_table_rec,1);
+			
+			FOR var IN ARRAY_LOWER(v_table_rec, 1)..ARRAY_UPPER(v_table_rec, 1)
+			loop
+                if  coalesce(v_qty,0) > 0 and coalesce(v_table_rec[v_count].dummy_qty,0) > 0
+					then
+                    	if  coalesce(v_table_rec[v_count].dummy_qty,0) < v_qty then
+                        	v_amount := coalesce(round(coalesce(v_amount,0) + (coalesce(v_table_rec[v_count].rate,0) * coalesce(v_table_rec[v_count].dummy_qty,0)),2),0);
+                        	v_qty := coalesce(v_qty,0) - coalesce(v_table_rec[v_count].dummy_qty,0);
+                    	else
+							UPDATE db_pkg_production_cost_calc_gtt
+                       			set dummy_qty = coalesce(v_qty,0)
+							WHERE code = v_table_rec[var].code;
+                        	--v_table_rec[v_count].dummy_qty := coalesce(v_qty,0);
+                        	v_amount := round(coalesce(v_amount,0) + (coalesce(v_table_rec[v_count].rate,0) * coalesce(v_qty,0)),2);
+                        	v_qty := 0;
+                    	end if;
+						v_code := v_table_rec[var].CODE;
+                end if;
+				v_count := v_count-1;
+            end loop;
+			
+		end loop;
+	END;
+
+-- =======================================================================================================================
+-- update all trasaction table as per txn_type
+-- =======================================================================================================================
+            if  coalesce(v_app_qty,0) <> 0 then
+                v_rate := round((v_amount/v_app_qty)::numeric,3);
+
+                update  prdwiptrans t1
+                set     amount   = round((0-v_amount)::numeric,2),
+                        rate     = v_rate,
+                        -- START REV : 004
+                        cogs_code   = case when p_cogs_state = 'R' then
+                                                0
+                                            else
+                                                null
+                                      end
+                        -- END REV : 004
+                where   code     = c1_loop.code
+                and     jobcode  = c1_loop.jobcode
+                and     txn_type   = c1_loop.txn_type
+                and     (
+                            (
+                               c1_loop.txn_type = 'RET'
+                               and
+                               wiptxn_code = c1_loop.wiptxn_code
+                            )
+                            or
+                            jrccode = c1_loop.jrccode
+                        )
+                and     item_type  = 'ASS';
+
+                if  c1_loop.txn_type = 'RET' then
+                    update  prdwiptrans t1
+                    set     amount   = round((0+v_amount)::numeric,2),
+                            rate     = v_rate,
+                            -- START REV : 004
+                            cogs_code   = case when p_cogs_state = 'R' then
+                                                    0
+                                                else
+                                                    null
+                                          end
+                            -- END REV : 004
+                    where   txn_type        = c1_loop.txn_type
+                    and     item_type       = 'PSD'
+                    and     jobcode         = c1_loop.jobcode
+                    and     coalesce(lotcode,0)  = coalesce(c1_loop.lotcode,coalesce(lotcode,0))
+                    and     wiptxn_code     = c1_loop.wiptxn_code
+                    and     assembly_icode  = c1_loop.assembly_icode
+                    and     det_code        = c1_loop.det_code;
+                end if;
+            end if;
+        end loop;
+    exception
+        when others then
+        CALL erraudit(user, 'db_pkg_production_cal_rate$calc_fifo_rec_ret_ass', SQLSTATE, sqlerrm);
+    end;
+
+"""
+  arguments = <
+    {
+      name = p_jobcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_lotcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_assembly_icode
+      type = character varying
+      mode = IN
+    }
+
+    {
+      name = p_tranmain_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_cogs_state
+      type = character
+      mode = IN
+      default = 'N'::bpchar
+    }
+
+  >
+  language = plpgsql
+}
+

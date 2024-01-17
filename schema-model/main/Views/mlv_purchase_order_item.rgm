@@ -1,0 +1,87 @@
+view "main"."mlv_purchase_order_item" {
+  text = """-
+SELECT purorddet.ordcode AS order_code,
+    purorddet.icode,
+    COALESCE(purorddet.ordqty, (0)::numeric) AS qty,
+    COALESCE(purorddet.rate, (0)::numeric) AS rate,
+    purorddet.code AS order_det_code,
+    COALESCE(purorddet.netamt, (0)::numeric) AS amount,
+    pd.duedate,
+    purorddet.rem AS remarks,
+    fintax_main.taxname AS input_tax,
+    chg.igst_rate,
+    chg.cgst_rate,
+    chg.sgst_rate,
+    chg.cess_rate
+   FROM ((((main.purorddet
+     LEFT JOIN main.purorddet_delivery pd ON ((purorddet.code = pd.purorddet_code)))
+     JOIN main.invitem inv_item ON (((purorddet.icode)::text = (inv_item.icode)::text)))
+     LEFT JOIN main.fintaxmain fintax_main ON ((inv_item.taxcode = fintax_main.taxcode)))
+     LEFT JOIN ( SELECT sum(
+                CASE
+                    WHEN (COALESCE(purordchg_item.gst_component, 'NA'::bpchar) = 'IGST'::bpchar) THEN COALESCE(purordchg_item.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS igst_rate,
+            sum(
+                CASE
+                    WHEN (COALESCE(purordchg_item.gst_component, 'NA'::bpchar) = 'CGST'::bpchar) THEN COALESCE(purordchg_item.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cgst_rate,
+            sum(
+                CASE
+                    WHEN (COALESCE(purordchg_item.gst_component, 'NA'::bpchar) = 'SGST'::bpchar) THEN COALESCE(purordchg_item.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS sgst_rate,
+            sum(
+                CASE
+                    WHEN (COALESCE(purordchg_item.gst_component, 'NA'::bpchar) = 'CESS'::bpchar) THEN COALESCE(purordchg_item.rate, (0)::numeric)
+                    ELSE (0)::numeric
+                END) AS cess_rate,
+            purordchg_item.purorddet_code
+           FROM main.purordchg_item
+          WHERE ((purordchg_item.source = 'G'::bpchar) AND (purordchg_item.isreverse = 'N'::bpchar))
+          GROUP BY purordchg_item.purorddet_code) chg ON ((purorddet.code = chg.purorddet_code)));
+"""
+  columns = (
+    column "order_code" {
+      type = "bigint"
+    }
+    column "icode" {
+      type = "character varying(9)"
+    }
+    column "qty" {
+      type = "numeric"
+    }
+    column "rate" {
+      type = "numeric"
+    }
+    column "order_det_code" {
+      type = "bigint"
+    }
+    column "amount" {
+      type = "numeric"
+    }
+    column "duedate" {
+      type = "timestamp(0) without time zone"
+    }
+    column "remarks" {
+      type = "character varying(500)"
+    }
+    column "input_tax" {
+      type = "character varying(100)"
+    }
+    column "igst_rate" {
+      type = "numeric"
+    }
+    column "cgst_rate" {
+      type = "numeric"
+    }
+    column "sgst_rate" {
+      type = "numeric"
+    }
+    column "cess_rate" {
+      type = "numeric"
+    }
+  )
+}
+

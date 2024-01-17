@@ -1,0 +1,229 @@
+function "main"."trigger_fct_t_invstfmain()" {
+  text = """
+
+DECLARE
+-- START REV : 003
+       
+    V_SID                           bigint;
+    V_PROGRAM                       varchar(50);
+-- END REV : 003
+/*******************************************************************************************************************
+ NO.           DATE  A    UTHOR                   DESCRIPTION
+ ---------    ----------  ----------------------  ---------------------------------------------------------
+ REV : 001    30/09/2011    MANASH                  (BUG ID : 034)  Multiple OU creation.
+ REV : 002    06/02/2012    DIPTIMAN                 (BUG ID : 216)  Site related changes.
+ REV : 003    20/JAN/2020   MOUSUMI                 (TFS ID : 37704)  Migration
+********************************************************************************************************************/
+BEGIN
+  BEGIN
+   /*
+      SUBSEQUENT CHANGE IN ANY COLUMN IN MAIN TABLE WILL BE UPDATED IN DETAIL TABLE AND STOCK TABLE.
+   */
+   IF TG_OP = 'UPDATE'
+   THEN
+
+      -- START REV : 001
+      IF    coalesce(NEW.ADMOU_CODE, coalesce(OLD.ADMOU_CODE, 0)) <> coalesce(NEW.ADMOU_CODE_IN, coalesce(OLD.ADMOU_CODE_IN, 0)) THEN
+              /* STOCK AND COSTING REFLECTION */
+
+              CALL Db_Pkg_Stock$reflect(NEW.stfcode,
+                                    NEW.stfno,
+                                    NEW.stfdt,
+                                    'OUO',
+                                    NEW.outloccode,
+                                    NEW.ycode,
+                                    NULL,
+                                    NEW.inloccode,
+                                    NULL,
+                                    NULL,
+                                    NULL,
+                                    NULL,
+                                    NEW.docno,
+                                    NULL,
+                                    NEW.SCHEME_DOCNO,
+                                    -- START REV : 002
+                                    NULL,
+                                    NEW.ADMOU_CODE,
+                                    NEW.ADMSITE_CODE
+                                    -- END REV : 002
+                                   );
+
+              CALL Db_Pkg_Stock$reflect(NEW.stfcode,
+                                    NEW.stfno,
+                                    NEW.stfdt,
+                                    'OUI',
+                                    NEW.inloccode,
+                                    NEW.ycode,
+                                    NULL,
+                                    NEW.outloccode,
+                                    NULL,
+                                    NULL,
+                                    NULL,
+                                    NULL,
+                                    NEW.docno,
+                                    NULL,
+                                    NEW.SCHEME_DOCNO,
+                                    -- START REV : 002
+                                    NULL,
+                                    NEW.ADMOU_CODE,
+                                    NEW.ADMSITE_CODE
+                                    -- END REV : 002
+                                   );
+      ELSE
+            CALL Db_Pkg_Stock$reflect(NEW.stfcode,
+                                    NEW.stfno,
+                                    NEW.stfdt,
+                                    'WTO',
+                                    NEW.outloccode,
+                                    NEW.ycode,
+                                    NULL,
+                                    NEW.inloccode,
+                                    NULL,
+                                    NULL,
+                                    NULL,
+                                    NULL,
+                                    NEW.docno,
+                                    NULL,
+                                    NEW.SCHEME_DOCNO,
+                                    -- START REV : 002
+                                    NULL,
+                                    NEW.ADMOU_CODE,
+                                    NEW.ADMSITE_CODE
+                                    -- END REV : 002
+                                   );
+
+              CALL Db_Pkg_Stock$reflect(NEW.stfcode,
+                                    NEW.stfno,
+                                    NEW.stfdt,
+                                    'WTI',
+                                    NEW.inloccode,
+                                    NEW.ycode,
+                                    NULL,
+                                    NEW.outloccode,
+                                    NULL,
+                                    NULL,
+                                    NULL,
+                                    NULL,
+                                    NEW.docno,
+                                    NULL,
+                                    NEW.SCHEME_DOCNO,
+                                    -- START REV : 002
+                                    NULL,
+                                    NEW.ADMOU_CODE,
+                                    NEW.ADMSITE_CODE
+                                    -- END REV : 002
+                                   );
+      END IF;
+      -- START REV : 001
+   END IF;
+
+-- LOGISTIC TAGGING START
+   IF TG_OP = 'INSERT'
+   THEN
+      --FOR INLGT
+      
+      -- START REV : 003
+     IF coalesce(NEW.ENTRY_SOURCE, 'XX') <> 'WEB' THEN
+     -- END REV : 003
+      IF NEW.inlgtcode IS NOT NULL
+      THEN
+          UPDATE INVLGTNOTE
+            SET lgtrecqty = coalesce(lgtrecqty,0) + coalesce(NEW.lgtrecqty,0),
+                completion_time = CASE WHEN coalesce(qty1,0) <> 0 AND qty1 = (coalesce(lgtrecqty,0) + coalesce(NEW.lgtrecqty,0)) THEN
+                                         statement_timestamp()
+                                  ELSE
+                                       completion_time
+                                  END
+          WHERE lgtcode = NEW.inlgtcode;
+      END IF;
+
+      IF NEW.INVGATEIN_CODE IS NOT NULL
+      THEN
+          UPDATE INVGATEIN
+          SET TAGQTY = coalesce(TAGQTY,0) + coalesce(NEW.lgtrecqty,0)
+          WHERE code = NEW.INVGATEIN_CODE;
+      END IF;
+   END IF; -- REV : 003
+END IF;
+
+   IF TG_OP = 'UPDATE'
+   THEN
+   
+   -- START REV : 003
+     IF coalesce(NEW.ENTRY_SOURCE, 'XX') <> 'WEB' THEN
+    -- END REV : 003
+      --FOR INLGT
+      IF OLD.inlgtcode IS NOT NULL
+      THEN
+            UPDATE INVLGTNOTE
+             SET lgtrecqty = coalesce(lgtrecqty,0) - coalesce(OLD.lgtrecqty,0),
+                 completion_time = CASE WHEN coalesce(qty1,0) <> 0 AND qty1 = (coalesce(lgtrecqty,0) - coalesce(OLD.lgtrecqty,0)) THEN
+                                                statement_timestamp()
+                                       ELSE
+                                           NULL
+                                       END
+           WHERE lgtcode = OLD.inlgtcode;
+      END IF;
+
+      IF NEW.inlgtcode IS NOT NULL
+      THEN
+            UPDATE INVLGTNOTE
+                SET lgtrecqty = coalesce(lgtrecqty,0) + coalesce(NEW.lgtrecqty,0),
+                      completion_time = CASE WHEN coalesce(qty1,0) <> 0 AND qty1 = (coalesce(lgtrecqty,0) + coalesce(NEW.lgtrecqty,0)) THEN
+                                                statement_timestamp()
+                                       ELSE
+                                           completion_time
+                                       END
+                WHERE lgtcode = NEW.inlgtcode;
+       END IF;
+
+      IF OLD.INVGATEIN_CODE IS NOT NULL
+      THEN
+          UPDATE    INVGATEIN
+          SET       TAGQTY  = coalesce(TAGQTY,0) - coalesce(OLD.lgtrecqty,0)
+          WHERE     code    = OLD.INVGATEIN_CODE;
+      END IF;
+
+      IF NEW.INVGATEIN_CODE IS NOT NULL
+      THEN
+          UPDATE INVGATEIN
+          SET TAGQTY = coalesce(TAGQTY,0) + coalesce(NEW.lgtrecqty,0)
+          WHERE code = NEW.INVGATEIN_CODE;
+      END IF;
+   END IF; -- REV : 003
+END IF;
+
+   IF TG_OP = 'DELETE'
+   THEN
+   
+      -- START REV  : 003
+	    SELECT PG_BACKEND_PID() INTO STRICT V_SID;
+        SELECT APPLICATION_NAME INTO STRICT V_PROGRAM FROM PG_STAT_ACTIVITY WHERE PID=V_SID;
+
+
+IF not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+       THEN
+          RAISE EXCEPTION 'del_from_wrong_application' USING ERRCODE = '50001';
+       END IF;
+
+      --FOR INLGT
+   END IF;
+-- LOGISTIC TAGGING END
+EXCEPTION
+   WHEN SQLSTATE '50001' THEN
+      RAISE EXCEPTION '%', 'T_INVSTFMAIN == >> Deletion from other application except GINESYS WEB not allowed.' USING ERRCODE = '45112';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

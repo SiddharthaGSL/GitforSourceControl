@@ -1,0 +1,75 @@
+procedure "main"."int$pkg_sal_srv_inv_loc_pro_amtchg_roundoff(bigint, bigint)" {
+  text = """
+
+DECLARE
+
+      c1 CURSOR FOR
+         SELECT chgcode,
+                istax,
+                SIGN,
+                rate,
+                tot
+           FROM (  SELECT si.chgcode,
+                          si.istax,
+                          si.rate,
+                          si.SIGN,
+                          ABS(SUM(si.chgamt)) tot
+                     FROM salsrvchg_item si
+                    WHERE     si.srvcode = p_srvcode
+                          AND si.basis = 'A'
+                          AND si.source <> 'E'
+                 GROUP BY si.chgcode,
+                          si.istax,
+                          si.rate,
+                          si.SIGN) t
+          WHERE coalesce(t.rate, 0) <> coalesce(t.tot, 0);
+
+      v_code   salsrvchg_item.code%TYPE;
+      v_sign   salsrvchg_item.SIGN%TYPE;
+
+BEGIN
+      FOR c1_loop IN c1
+      LOOP
+         SELECT MAX(si.code)
+           INTO STRICT v_code
+           FROM salsrvchg_item si
+          WHERE     si.srvcode = p_srvcode
+                AND si.SIGN = c1_loop.SIGN
+                AND si.chgcode = c1_loop.chgcode
+                AND coalesce(si.rate, 0) = coalesce(c1_loop.rate, 0)
+                AND ABS(si.chgamt) > ABS(c1_loop.rate - c1_loop.tot);
+
+         v_sign := c1_loop.SIGN;
+
+         UPDATE salsrvchg_item si
+            SET chgamt =
+                   CASE WHEN v_sign='-' THEN  chgamt - c1_loop.rate + c1_loop.tot  ELSE chgamt + c1_loop.rate - c1_loop.tot END ,
+                roundoff_adj_amt =
+                   ROUND (
+                      (  coalesce(roundoff_adj_amt, 0)
+                       + CASE WHEN v_sign='-' THEN (chgamt - c1_loop.rate + c1_loop.tot)  ELSE (chgamt + c1_loop.rate - c1_loop.tot) END
+                       - coalesce(chgamt, 0)),
+                      2)
+          WHERE code = v_code;
+      END LOOP;
+   END;
+
+
+"""
+  arguments = <
+    {
+      name = p_srvcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_chgcode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

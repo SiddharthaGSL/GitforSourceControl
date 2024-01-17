@@ -1,0 +1,82 @@
+procedure "main"."db_pro_upd_release_status_atx(bigint, numeric, timestamp without time zone, timestamp without time zone)" {
+  text = """
+
+DECLARE
+
+   v_sql                  varchar(2000);
+   errcode                varchar(50);
+   errmsg                 varchar(2000);c1 CURSOR FOR
+      SELECT    distinct
+                a.code, a.entno, a.entdt, a.table_name, a.pk_code_name
+      from      v_fin_doc_post a, finpost f
+      where     a.code::varchar = f.entcode
+      and       a.release_status <> f.release_status
+      and       a.release_status = 'P'
+      and       f.ycode = p_ycode
+      -- start rev : 001
+      and       coalesce(f.admou_code,0) = coalesce(p_admou_code,coalesce(f.admou_code,0))
+      and (
+                    p_dtfr is null
+                    or
+                    f.entdt between p_dtfr and p_dtto
+                );
+      -- end rev : 001;
+-- Procedure to synchronize release information of finpost table with the base table
+-- Related workings -
+-- Run the patch of v_yearend_gl and v_yearend_sl with release status
+-- Run db_pro_ledger_bal_transfer with release status
+-- Now from S/W run year ending prorocess.
+-- N.B. Now this would transfer only posted balances...
+/*************************************************************************************************************************************
+   No.                Date                Author                        Description
+   ---------        ----------           ----------------------     ------------------------------------------------------------------
+   REV : 000        05/05/2015           DIPTIMAN                   (TFS ID : 17025) Created.
+   REV : 001	    21/04/2017	         MANASH                     (TFS ID : 21200) Inventory Valuation Revamp.
+*************************************************************************************************************************************/
+BEGIN
+   FOR i IN c1 LOOP
+      v_sql := 'UPDATE '||i.table_name||' '||
+               'SET release_status = release_status '||
+               'WHERE '||i.pk_code_name||' = '||i.code;
+      EXECUTE v_sql;
+   END LOOP;
+   commit;
+EXCEPTION
+   WHEN OTHERS THEN
+        errcode := SQLSTATE;
+        errmsg  := SQLERRM;
+        CALL erraudit(USER, 'DB_PRO_UPD_RELEASE_STATUS', errcode, errmsg);
+END;
+"""
+  arguments = <
+    {
+      name = p_ycode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_admou_code
+      type = numeric
+      mode = IN
+      default = NULL::numeric
+    }
+
+    {
+      name = p_dtfr
+      type = timestamp without time zone
+      mode = IN
+      default = NULL::timestamp without time zone
+    }
+
+    {
+      name = p_dtto
+      type = timestamp without time zone
+      mode = IN
+      default = NULL::timestamp without time zone
+    }
+
+  >
+  language = plpgsql
+}
+

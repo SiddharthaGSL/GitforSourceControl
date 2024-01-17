@@ -1,0 +1,88 @@
+function "main"."trigger_fct_t_invgrcmain_gds2()" {
+  text = """
+
+DECLARE
+   SUB_COUNT     smallint;
+   V_SITETYPE      varchar(20);
+
+   SUB_COUNT_GRC_ADD        smallint;
+   SUB_COUNT_GRC_UPD        smallint;
+   SUB_COUNT_GRC_REL        smallint;
+   SUB_COUNT_GRC_POST_REL   smallint;
+
+BEGIN
+    SELECT COUNT(1)
+    INTO STRICT   SUB_COUNT
+    FROM  GDS2_SUBSCR_EVENT
+    WHERE  EVENT_ID = 'HOGRC';
+
+    SELECT SITETYPE
+    INTO STRICT   V_SITETYPE
+    FROM   ADMSITE
+    WHERE CODE = NEW.ADMSITE_CODE_IN;
+
+   
+    IF coalesce(SUB_COUNT,0) > 0 AND (V_SITETYPE LIKE 'OS-%' OR (V_SITETYPE = 'MS-%' AND NEW.AUTH_ECODE IS NOT NULL))
+    THEN
+
+         CALL DB_PKG_GDS2_EVENT$TRACK(
+            'HOGRC', NEW.GRCCODE);
+    END IF;
+    
+    -- start Logic change for GDS3 (Webhook)
+    IF  TG_OP = 'INSERT'
+    THEN
+        SELECT COUNT(1)
+        INTO STRICT   SUB_COUNT_GRC_ADD
+        FROM  GDS2_SUBSCR_EVENT
+        WHERE  EVENT_ID = 'procurement.grc.added';
+
+        IF coalesce(SUB_COUNT_GRC_ADD,0) > 0
+        THEN
+            CALL DB_PKG_GDS2_EVENT$TRACK('procurement.grc.added', NEW.GRCCODE);
+        END IF;
+
+    END IF;
+
+    IF  TG_OP = 'UPDATE'
+    THEN
+        SELECT COUNT(1)
+        INTO STRICT   SUB_COUNT_GRC_UPD
+        FROM  GDS2_SUBSCR_EVENT
+        WHERE  EVENT_ID = 'procurement.grc.updated';
+
+        SELECT COUNT(1)
+        INTO STRICT   SUB_COUNT_GRC_REL
+        FROM  GDS2_SUBSCR_EVENT
+        WHERE  EVENT_ID = 'procurement.grc.released';
+
+        SELECT COUNT(1)
+        INTO STRICT   SUB_COUNT_GRC_POST_REL
+        FROM  GDS2_SUBSCR_EVENT
+        WHERE  EVENT_ID = 'procurement.grc.updated_after_release';
+
+        IF coalesce(OLD.AUTH_ECODE,0)  = coalesce(NEW.AUTH_ECODE,0) AND NEW.AUTH_ECODE IS NULL AND coalesce(SUB_COUNT_GRC_UPD,0) > 0 
+        THEN
+            CALL DB_PKG_GDS2_EVENT$TRACK('procurement.grc.updated', NEW.GRCCODE);
+        END IF;
+
+        IF coalesce(OLD.AUTH_ECODE,0) = coalesce(NEW.AUTH_ECODE,0) AND NEW.AUTH_ECODE IS NOT NULL AND coalesce(SUB_COUNT_GRC_POST_REL,0) > 0 
+        THEN
+            CALL DB_PKG_GDS2_EVENT$TRACK('procurement.grc.updated_after_release', NEW.GRCCODE);
+        END IF;
+
+        IF OLD.AUTH_ECODE IS NULL AND NEW.AUTH_ECODE IS NOT NULL AND coalesce(SUB_COUNT_GRC_REL,0) > 0 
+        THEN
+            CALL DB_PKG_GDS2_EVENT$TRACK('procurement.grc.released', NEW.GRCCODE);
+        END IF;
+    END IF;
+    -- end Logic change for GDS3 (Webhook)  
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

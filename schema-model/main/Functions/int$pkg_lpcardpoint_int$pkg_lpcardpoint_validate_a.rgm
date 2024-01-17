@@ -1,0 +1,111 @@
+function "main"."int$pkg_lpcardpoint_int$pkg_lpcardpoint_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        v_status    char(1);
+        errmsg      varchar(200);
+        errcode     bigint;
+BEGIN
+        -- Card No shouldn't be null.
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'LPCARDPOINT', userid, 'Mandatory Validation','Card No is mandatory.', clock_timestamp()
+        from    int$stg_lpcardpoint    a
+        where   a.cardno is null
+        and     userid = p_userid;
+
+        -- Card No should be valid.
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'LPCARDPOINT', userid, 'Mandatory Validation','Not a valid Card No.', clock_timestamp()
+        from    int$stg_lpcardpoint    a
+        where   a.cardno is not null
+        and     a.cardno not in (SELECT cardno from lpcard)
+        and     userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'LPCARDPOINT', userid, 'Mandatory Validation',
+        a.cardno||'Opening Points, Earned Points and Redeemed Points cannot be negative', clock_timestamp()
+        from    int$stg_lpcardpoint    a
+        where   a.cardno is not null
+        and (coalesce(a.opening,0) < 0 or coalesce(a.earned,0) < 0 or  coalesce(a.redeemed,0) < 0)
+        and     userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'LPCARDPOINT', userid, 'Mandatory Validation',
+        a.cardno||'Redeemed Points cannot be greater than the summation of Opening Points and Earned Points', clock_timestamp()
+        from    int$stg_lpcardpoint    a
+        where   a.cardno is not null
+        --and     ((coalesce(a.opening,0) + coalesce(a.earned,0)) < coalesce(a.redeemed,0))
+        and     ((a.opening + a.earned) < coalesce(a.redeemed,0))
+        and     (a.opening is not null or a.earned is not null)
+		and     userid = p_userid;
+
+        /*
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        select  int$error_log_code.nextval, lineno, 'LPCARDPOINT', userid, 'Mandatory Validation',
+        a.cardno||'Summation of Opening Points, Earned Points and Redeemed cannot be greater than Closing Points', sysdate
+        from    int$stg_lpcardpoint    a
+        where   a.cardno is not null
+        and     (((a.opening + a.earned) - a.redeemed) < a.closing)
+        and     userid = p_userid;
+        */
+        --COMMIT;
+
+        -- check whether records are valid or not
+        begin
+            select  'S'
+            into STRICT    v_status
+
+            where   exists (
+                            SELECT  'S'
+                            from    int$error_log
+                            where   userid = p_userid
+                            );
+            return('0');
+        exception
+            when no_data_found then
+            return('1');
+        end;
+    exception
+        when others then
+            errcode := SQLSTATE;
+            errmsg := sqlerrm;
+
+            insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            values (nextval('int$error_log_code'), 0, 'LPCARDPOINT', p_userid, errcode, errmsg, clock_timestamp());
+            --COMMIT;
+
+            return('0');
+    end;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

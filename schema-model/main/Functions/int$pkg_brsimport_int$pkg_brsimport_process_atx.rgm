@@ -1,0 +1,185 @@
+function "main"."int$pkg_brsimport_int$pkg_brsimport_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      errmsg       varchar(500);
+      vsession     varchar(100);
+      vdetailtbl   varchar(1000);
+      vdetailrec   varchar(500);
+      errcode      bigint;
+      vcount       bigint;
+BEGIN
+
+         UPDATE finvchdet d SET brsdt = clearing_date
+		 FROM (SELECT a.clearing_date,
+                         a.instrument_no,
+                         a.amount,
+                         m.vchcode
+                    FROM int$stg_brsimport a, fingl gl, finvchmain m
+                   WHERE     UPPER(a.bank_gl_name) = UPPER(gl.glname)
+                         AND gl.glcode = m.glcode
+                         -- START REV ; 006
+                         --and     m.vchtype in ('P','R')
+                         AND m.vchtype IN ('P',
+                                           'R',
+                                           'C',
+                                           'G')
+                         AND m.release_status = 'P'
+                         -- END REV : 066
+                         AND a.userid = p_userid) t
+	  WHERE  (    d.vchcode = t.vchcode
+                  AND (                                     -- start rev : 001
+                         (    UPPER(LTRIM(RTRIM(d.chqno))) =
+                                 UPPER(LTRIM(RTRIM(t.instrument_no)))
+                          AND D.chqno IS NOT NULL)
+                      OR (    UPPER(LTRIM(RTRIM(d.refno))) =
+                                 UPPER(LTRIM(RTRIM(t.instrument_no)))
+                          AND D.chqno IS NULL)                -- end rev : 001
+                                              )
+                  AND (   (d.vchtype IN ('C', 'P') AND d.damount = t.amount)
+                       OR (d.vchtype = 'R' AND d.camount = t.amount)
+                       OR (    d.vchtype = 'G'
+                           AND (   (    coalesce(D.DAMOUNT, 0) > 0
+                                    AND D.DAMOUNT = T.AMOUNT)
+                                OR (    coalesce(D.CAMOUNT, 0) > 0
+                                    AND D.CAMOUNT = T.AMOUNT)))) -- END REV : 006
+                                                                );
+
+      -- start rev : 007
+			UPDATE finvchdet d SET chqno = CASE WHEN chqno = NULL THEN  instrument_no END ,
+            CHQDT = CASE WHEN CHQDT = NULL THEN  VOUCHER_DATE END ,
+            brsdt = CASE WHEN brsdt = NULL THEN  clearing_date END
+			FROM(SELECT a.clearing_date,
+                         a.instrument_no,
+                         a.amount,
+                         m.vchcode,
+                         a.voucher_no,
+                         a.voucher_date
+                    FROM int$stg_brsimport a, fingl gl, finvchmain m
+                   WHERE     UPPER(a.bank_gl_name) = UPPER(gl.glname)
+                         AND UPPER(a.voucher_no) = UPPER(m.scheme_docno)
+                         AND A.VOUCHER_DATE = M.VCHDT
+                         AND gl.glcode = m.glcode
+                         AND m.vchtype IN ('P',
+                                           'R',
+                                           'C',
+                                           'G')
+                         AND m.release_status = 'P'
+                         -- END REV : 066
+                         AND a.userid = p_userid) t
+						 WHERE (    d.vchcode = t.vchcode
+                  -- and  D.chqno IS NULL
+                  AND d.payment_mode = 'R'
+                  AND (   (d.vchtype IN ('C', 'P') AND d.damount = t.amount)
+                       OR (d.vchtype = 'R' AND d.camount = t.amount)
+                       OR (    d.vchtype = 'G'
+                           AND (   (    coalesce(D.DAMOUNT, 0) > 0
+                                    AND D.DAMOUNT = T.AMOUNT)
+                                OR (    coalesce(D.CAMOUNT, 0) > 0
+                                    AND D.CAMOUNT = T.AMOUNT)))));
+
+      -- end rev : 007
+      -- log to be added in history table
+      SELECT nextval('int$error_log_code') INTO STRICT vsession;
+
+      -- START REV : 004
+      --vdetailtbl := 'create table brsimport_'||vsession||' as select distinct bank_gl_name,instrument_no,amount from int$stg_brsimport where userid ='|| p_userid::text;
+      vdetailtbl :=
+            'create table ginarchive.brsimport_'
+         || vsession
+         || ' as select distinct bank_gl_name,instrument_no,amount from int$stg_brsimport where userid ='
+         || p_userid::text;
+
+      -- END REV : 004
+      EXECUTE vdetailtbl;
+
+      -- START REV : 004
+      --vdetailrec := 'select count(1) from brsimport_'||vsession;
+      vdetailrec := 'select count(1) from ginarchive.brsimport_' || vsession::text;
+
+      -- END REV : 004
+      EXECUTE vdetailrec INTO STRICT vcount;
+
+      INSERT INTO int$history(code,
+                               importedby,
+                               importedon,
+                               classname,
+                               summary,
+                               history_detail_tablename,
+                               history_detail_row_count)
+           -- START REV : 003
+           -- values (int$history_code.nextval, p_userid, sysdate, 'BRSIMPORT', vcount::TEXT||' Rate updated successfully.', 'brsimport_'||vsession, vcount);
+           -- START REV : 004
+           --values (int$history_code.nextval, p_userid, sysdate, 'BRSIMPORT', vcount::TEXT||' Date updated successfully.', 'brsimport_'||vsession, vcount);
+           VALUES (nextval('int$history_code'),
+                   p_userid,
+                   clock_timestamp(),
+                   'BRSIMPORT',
+                   vcount::TEXT || ' Date updated successfully.',
+                   'ginarchive.brsimport_' || vsession,
+                   vcount);
+
+      -- END REV : 004
+      -- END REV : 003
+      --COMMIT;
+
+      RETURN('1');
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         -- error log for oracle internal error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'BRSIMPORT',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

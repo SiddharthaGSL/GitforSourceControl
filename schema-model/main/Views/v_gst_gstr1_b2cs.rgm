@@ -1,0 +1,128 @@
+view "main"."v_gst_gstr1_b2cs" {
+  text = """-
+SELECT gv.document_gstin,
+    gv.document_gst_state_code,
+    COALESCE(gv.cp_gst_state_code, gv.document_gst_state_code) AS pos_gst_state_code,
+        CASE
+            WHEN (gv.enttype = 'POS'::text) THEN gv.refentno
+            ELSE gv.entno
+        END AS invoice_no,
+    gv.entdt AS invoice_date,
+    gv.etin,
+    dense_rank() OVER (PARTITION BY gv.document_gstin, COALESCE(gv.cp_gst_state_code, gv.document_gst_state_code),
+        CASE
+            WHEN (gv.enttype = 'POS'::text) THEN gv.refentno
+            ELSE gv.entno
+        END, gv.entdt ORDER BY gv.etin, COALESCE(gv.cp_gst_state_code, gv.document_gst_state_code), (replace((gv.hsn_sac_code)::text, ' '::text, ''::text)), gv.uom, gv.totaltaxrate) AS slno,
+    replace((gv.hsn_sac_code)::text, ' '::text, ''::text) AS hsn_sac_code,
+    gv.hsn_sac_description,
+    gv.uom,
+    sum(
+        CASE
+            WHEN (gv.enttype = 'SRT'::text) THEN (gv.qty * ('-1'::integer)::numeric)
+            ELSE gv.qty
+        END) AS qty,
+    sum(
+        CASE
+            WHEN (gv.enttype = 'SRT'::text) THEN (gv.taxableamt * ('-1'::integer)::numeric)
+            ELSE gv.taxableamt
+        END) AS taxableamt,
+    gv.totaltaxrate,
+    sum(
+        CASE
+            WHEN (gv.enttype = 'SRT'::text) THEN (gv.igstamt * ('-1'::integer)::numeric)
+            ELSE gv.igstamt
+        END) AS igstamt,
+    sum(
+        CASE
+            WHEN (gv.enttype = 'SRT'::text) THEN (gv.cgstamt * ('-1'::integer)::numeric)
+            ELSE gv.cgstamt
+        END) AS cgstamt,
+    sum(
+        CASE
+            WHEN (gv.enttype = 'SRT'::text) THEN (gv.sgstamt * ('-1'::integer)::numeric)
+            ELSE gv.sgstamt
+        END) AS sgstamt,
+    sum(
+        CASE
+            WHEN (gv.enttype = 'SRT'::text) THEN (gv.cessamt * ('-1'::integer)::numeric)
+            ELSE gv.cessamt
+        END) AS cessamt,
+    to_char(gv.entdt, 'MM-YYYY'::text) AS month_year,
+        CASE
+            WHEN (COALESCE(gv.etin, ''::text) = ''::text) THEN 'OE'::text
+            ELSE 'E'::text
+        END AS ecom_type
+   FROM main.v_gst_ent_hsn gv
+  WHERE (((gv.document_gstin)::text <> ''::text) AND (gv.totaltaxrate <> (0)::numeric) AND (gv.taxableamt <> (0)::numeric) AND ((gv.document_netamt < (250000)::numeric) OR ((gv.document_netamt >= (250000)::numeric) AND (COALESCE((gv.tradegroupcode)::numeric, (1)::numeric) <> (2)::numeric))) AND (COALESCE((gv.tradegroupcode)::numeric, (1)::numeric) <> (3)::numeric) AND (gv.enttype = ANY (ARRAY['SIM'::text, 'SGO'::text, 'PRM'::text, 'CSM'::text, 'POS'::text, 'SRT'::text])) AND (((gv.enttype = ANY (ARRAY['SIM'::text, 'PRM'::text, 'CSM'::text])) AND (COALESCE(gv.document_gstappl_flag, 'N'::bpchar) = 'Y'::bpchar)) OR (gv.enttype = ANY (ARRAY['SGO'::text, 'POS'::text, 'SRT'::text]))) AND (((gv.enttype = 'POS'::text) AND ((COALESCE((gv.cp_gstin)::text, ''::text) = ''::text) OR (gv.qty < (0)::numeric))) OR ((gv.enttype <> 'POS'::text) AND (COALESCE((gv.cp_gstin)::text, ''::text) = ''::text))))
+  GROUP BY gv.document_gstin, gv.document_gst_state_code, COALESCE(gv.cp_gst_state_code, gv.document_gst_state_code),
+        CASE
+            WHEN (gv.enttype = 'POS'::text) THEN gv.refentno
+            ELSE gv.entno
+        END, gv.entdt, gv.etin, (replace((gv.hsn_sac_code)::text, ' '::text, ''::text)), gv.hsn_sac_description, gv.uom, gv.totaltaxrate, (to_char(gv.entdt, 'MM-YYYY'::text)),
+        CASE
+            WHEN (COALESCE(gv.etin, ''::text) = ''::text) THEN 'OE'::text
+            ELSE 'E'::text
+        END;
+"""
+  columns = (
+    column "document_gstin" {
+      type = "character varying(15)"
+    }
+    column "document_gst_state_code" {
+      type = "character(2)"
+    }
+    column "pos_gst_state_code" {
+      type = "character(2)"
+    }
+    column "invoice_no" {
+      type = "character varying"
+    }
+    column "invoice_date" {
+      type = "timestamp without time zone"
+    }
+    column "etin" {
+      type = text
+    }
+    column "slno" {
+      type = "bigint"
+    }
+    column "hsn_sac_code" {
+      type = text
+    }
+    column "hsn_sac_description" {
+      type = "character varying(100)"
+    }
+    column "uom" {
+      type = "character varying"
+    }
+    column "qty" {
+      type = "numeric"
+    }
+    column "taxableamt" {
+      type = "numeric"
+    }
+    column "totaltaxrate" {
+      type = "numeric"
+    }
+    column "igstamt" {
+      type = "numeric"
+    }
+    column "cgstamt" {
+      type = "numeric"
+    }
+    column "sgstamt" {
+      type = "numeric"
+    }
+    column "cessamt" {
+      type = "numeric"
+    }
+    column "month_year" {
+      type = text
+    }
+    column "ecom_type" {
+      type = text
+    }
+  )
+}
+

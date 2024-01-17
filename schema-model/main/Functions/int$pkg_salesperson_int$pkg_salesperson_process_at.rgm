@@ -1,0 +1,202 @@
+function "main"."int$pkg_salesperson_int$pkg_salesperson_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      errmsg             varchar(500);
+      vsession           varchar(100);
+      vdetailtbl         varchar(1000);
+      vdetailrec         varchar(500);
+      errcode            TEXT;
+      vcount             bigint;  stg_rec RECORD;
+
+BEGIN
+
+  FOR stg_rec IN (SELECT    salesperson_no,
+                            first_name,
+                            middle_name,
+                            last_name,
+                            dob,
+                            gender,
+                            address1,
+                            address2,
+                            address3,
+                            c.ctname city_name,
+                            pin_code,
+                            mobile,
+                            email_address,
+                            phone1,
+                            phone2,
+                            extinct_salesperson,
+                            userid,
+                            lineno
+                FROM int$stg_salesperson a LEFT OUTER JOIN admcity c
+				  ON upper(a.city_name) = upper(c.ctname)
+WHERE USERID = p_userid)
+  LOOP
+  DECLARE       v_exists 				bigint;
+    -- Check if salesperson number already exists in the entity table
+
+    BEGIN
+      SELECT COUNT(*) INTO STRICT v_exists
+      FROM psite_global_salesperson
+      WHERE UPPER(SPNO) = UPPER(stg_rec.SALESPERSON_NO);
+
+      IF v_exists = 0 THEN
+        -- Salesperson number doesn't exist, create a new entity
+        INSERT INTO psite_global_salesperson(
+          SPNO,
+          FNAME,
+          MNAME,
+          LNAME,
+          ADDRESS1,
+          ADDRESS2,
+          ADDRESS3,
+          CTNAME,
+          PIN,
+          PHONE1,
+          PHONE2,
+          MOBILE,
+          EMAIL,
+          DOB,
+          GENDER,
+          ISEXTINCT,
+          CREATEDON,
+          CREATEDBY,
+          LASTMODIFIEDON,
+          LASTMODIFIEDBY
+        ) VALUES (
+          stg_rec.SALESPERSON_NO,
+          stg_rec.FIRST_NAME,
+          stg_rec.MIDDLE_NAME,
+          stg_rec.LAST_NAME,
+          stg_rec.ADDRESS1,
+          stg_rec.ADDRESS2,
+          stg_rec.ADDRESS3,
+          stg_rec.CITY_NAME,
+          stg_rec.PIN_CODE,
+          stg_rec.PHONE1,
+          stg_rec.PHONE2,
+          stg_rec.MOBILE,
+          stg_rec.EMAIL_ADDRESS,
+          date_trunc('day', stg_rec.DOB),
+          stg_rec.GENDER,
+          coalesce(CASE WHEN stg_rec.EXTINCT_SALESPERSON='Y' THEN  1 WHEN stg_rec.EXTINCT_SALESPERSON='N' THEN  0 END , 0),
+          clock_timestamp(),
+          p_userid,
+          clock_timestamp(),
+          p_userid
+        );
+      ELSE
+        -- Salesperson number already exists, update the existing entity
+        UPDATE psite_global_salesperson
+        SET FNAME = stg_rec.FIRST_NAME,
+            MNAME = stg_rec.MIDDLE_NAME,
+            LNAME = stg_rec.LAST_NAME,
+            ADDRESS1 = stg_rec.ADDRESS1,
+            ADDRESS2 = stg_rec.ADDRESS2,
+            ADDRESS3 = stg_rec.ADDRESS3,
+            CTNAME = stg_rec.CITY_NAME,
+            PIN = stg_rec.PIN_CODE,
+            PHONE1 = stg_rec.PHONE1,
+            PHONE2 = stg_rec.PHONE2,
+            MOBILE = stg_rec.MOBILE,
+            EMAIL = stg_rec.EMAIL_ADDRESS,
+            DOB = date_trunc('day', stg_rec.DOB),
+            GENDER = stg_rec.GENDER,
+            ISEXTINCT = coalesce(CASE WHEN stg_rec.EXTINCT_SALESPERSON='Y' THEN  1 WHEN stg_rec.EXTINCT_SALESPERSON='N' THEN  0 END , ISEXTINCT),
+			LASTMODIFIEDON = clock_timestamp(),
+            LASTMODIFIEDBY = p_userid
+        WHERE UPPER(SPNO) = UPPER(stg_rec.SALESPERSON_NO);
+      END IF;
+    END;
+  END LOOP;
+
+      -- log to be added in history table
+      SELECT nextval('int$error_log_code') INTO STRICT vsession;
+
+      vdetailtbl :=
+            'create table ginarchive.SALESPERSON_'
+         || vsession
+         || ' as select SALESPERSON_NO, FIRST_NAME, LAST_NAME from int$stg_SALESPERSON where userid ='
+         || p_userid::text;
+
+      EXECUTE vdetailtbl;
+
+      vdetailrec := 'select count(1) from ginarchive.SALESPERSON_' || vsession;
+		
+      EXECUTE vdetailrec INTO STRICT vcount;
+
+      INSERT INTO int$history(code,
+                               importedby,
+                               importedon,
+                               classname,
+                               summary,
+                               history_detail_tablename,
+                               history_detail_row_count)
+           VALUES (nextval('INT$history_code'),
+                   p_userid,
+                   clock_timestamp(),
+                   'SALESPERSON',
+                   vcount::TEXT || ' sales person created/updated successfully.',
+                   'ginarchive.SALESPERSON_' || vsession,
+                   vcount);
+
+      RETURN('1');
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         -- error log for oracle internal error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'SALESPERSON',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

@@ -1,0 +1,574 @@
+procedure "main"."int$pkg_sal_srv_inv_calculate_term_item(bigint, timestamp without time zone, bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+      c2 CURSOR FOR
+           SELECT saltermdet.saltermcode                     saltermcode,
+                  coalesce(saltermdet.rate, 0)                   rate,
+                  saltermdet.chgcode,
+                  saltermdet.formulae,
+                  LENGTH(saltermdet.formulae)               formlen,
+                  saltermdet.SIGN,
+                  salchg.formcode,
+                  salchg.roundoff,
+                  saltermdet.seq,
+                  salchg.basis,
+                  saltermdet.operation_level,
+                  salchg.istax,
+                  salchg.source,
+                  coalesce(salchg.glcode, p_salsrvmain_chg_glcode) glcode,
+                  CASE WHEN salchg.glcode IS NULL THEN  coalesce(salchg.slcode, p_salsrvmain_chg_slcode)  ELSE salchg.slcode END
+                     slcode,
+                  gst_component
+             FROM saltermdet, salchg
+            WHERE     saltermdet.chgcode = salchg.salchgcode
+                  AND saltermcode = p_saltermcode
+                  AND saltermdet.operation_level = 'L'
+         ORDER BY saltermdet.seq;
+
+      c1 CURSOR FOR
+         SELECT code,
+                salsrvdet.servicecode,
+                srvamt                                    ordamt,
+                salsrvdet.taxcode,
+                CASE WHEN coalesce(qty, 0)=0 THEN  1  ELSE coalesce(qty, 0) END  qty,
+                glcode,
+                slcode
+           FROM salsrvdet
+          WHERE srvcode = p_srvcode;
+
+      dummy_appamt            double precision;
+      dummy_totchgamt         double precision;
+      dummy_chkchgamt         double precision;
+      dummy_chk               char(1);
+      dummy_prvchk            char(1);
+      dummy_sign              char(1);
+      v_rate                  double precision;
+      v_taxcode               bigint;
+      v_tax_status            char(1);
+      v_item_chg              double precision := 0;
+      v_rtamt                 double precision;
+      v_code                  bigint;
+      v_sign                  char(1);
+
+      v_max_code              bigint;
+      v_totappamt             double precision;
+      v_totchgamt             double precision;
+      v_diffamt               double precision;
+      v_cal_rate              double precision;
+
+      v_glcode                bigint;
+      v_slcode                bigint;
+
+      v_range_appl            fintaxdet.range_appl%TYPE;
+      v_tax_basis             fintaxdet.tax_basis%TYPE;
+      v_taxdetcode            fintaxdet.taxdetcode%TYPE;
+      dup_rate                fintaxdet.rate%TYPE;
+      v_rangefrom             fintax_range.rangefrom%TYPE;
+      v_appamt                salordchg.appamt%TYPE;
+
+      v_fintax_range_glcode   fintax_range.saltax_glcode%TYPE := NULL;
+      v_fintax_range_slcode   fintax_range.saltax_slcode%TYPE := NULL;
+      v_final_glcode          bigint;
+      v_final_slcode          bigint;
+
+      v_roundoff_adj_amt      salsrvchg_item.roundoff_adj_amt%TYPE := 0;
+      v_chg_rate              salsrvchg_item.rate%TYPE;
+
+      v_ou_admcmptax_code     bigint;
+
+BEGIN
+      DELETE FROM salsrvchg
+       WHERE srvcode = p_srvcode;
+
+      SELECT psite_admcmptax_code
+        INTO STRICT v_ou_admcmptax_code
+        FROM admsite
+       WHERE code = p_admsite_code_owner;
+
+      SELECT round((SUM(srvamt))::numeric, 2)
+        INTO STRICT v_rtamt
+        FROM salsrvdet
+       WHERE srvcode = p_srvcode;
+
+      IF coalesce(v_rtamt, 0) = 0
+      THEN
+         v_rtamt := 1;
+      END IF;
+
+      FOR C2REC IN C2
+      LOOP
+         FOR C1REC IN C1
+         LOOP
+            IF C2REC.SOURCE = 'V'
+            THEN
+               V_TAXCODE := C1REC.TAXCODE;
+
+               IF V_TAXCODE IS NOT NULL AND C2REC.ISTAX = 'Y'
+               THEN
+                  BEGIN
+                     SELECT coalesce(T2.RATE, 0),
+                            SALTAX_GLCODE,
+                            SALTAX_SLCODE,
+                            T2.RANGE_APPL RANGE_APPL,
+                            T2.TAX_BASIS  TAX_BASIS,
+                            T2.TAXDETCODE TAXDETCODE
+                       INTO STRICT V_RATE,
+                            V_GLCODE,
+                            V_SLCODE,
+                            V_RANGE_APPL,
+                            V_TAX_BASIS,
+                            V_TAXDETCODE
+                       FROM purservice t1
+LEFT OUTER JOIN fintaxdet t2 ON (T1.TAXCODE = T2.TAXCODE)
+WHERE T1.SERVICECODE = C1REC.SERVICECODE  AND T2.ADMCMPTAX_CODE = v_ou_admcmptax_code AND (    T2.FINTRADEGRP_CODE = p_fintradegrp_code
+                                 AND (   (    coalesce(p_FORMCODE, 0) = 0
+                                          AND coalesce(T2.FORMCODE, 0) = 0)
+                                      OR T2.FORMCODE = p_FORMCODE)) AND (   T1.TAXCODE IS NULL
+                                 OR T2.TAXDETCODE =
+                                       (SELECT TAXDETCODE
+                                          FROM FINTAXDET B
+                                         WHERE     T2.TAXCODE = B.TAXCODE
+                                               AND B.ADMCMPTAX_CODE =
+                                                      v_ou_admcmptax_code
+                                               AND (    B.FINTRADEGRP_CODE =
+                                                           p_fintradegrp_code
+                                                    AND (   (    coalesce(
+                                                                    p_FORMCODE,
+                                                                    0) = 0
+                                                             AND coalesce(
+                                                                    B.FORMCODE,
+                                                                    0) = 0)
+                                                         OR B.FORMCODE =
+                                                               p_FORMCODE))
+                                               AND B.DTFR =
+                                                      (SELECT MAX(C.DTFR)
+                                                         FROM FINTAXDET C
+                                                        WHERE     C.DTFR <=
+                                                                     p_SRVDT
+                                                              AND (   C.DTTO >=
+                                                                         p_srvdt
+                                                                   OR C.DTTO
+                                                                         IS NULL)
+                                                              AND C.ADMCMPTAX_CODE =
+                                                                     v_ou_admcmptax_code
+                                                              AND (    C.FINTRADEGRP_CODE =
+                                                                          p_fintradegrp_code
+                                                                   AND (   (    coalesce(
+                                                                                   p_formcode,
+                                                                                   0) =
+                                                                                   0
+                                                                            AND coalesce(
+                                                                                   C.FORMCODE,
+                                                                                   0) =
+                                                                                   0)
+                                                                        OR C.FORMCODE =
+                                                                              p_formcode))
+                                                              AND C.TAXCODE =
+                                                                     T2.TAXCODE)));
+
+                     V_TAX_STATUS := 'I';                         -- FROM ITEM
+                  EXCEPTION
+                     WHEN no_data_found
+                     THEN
+                        V_TAX_STATUS := 'C';                    -- FROM CHARGE
+                  END;
+               ELSE
+                  V_TAX_STATUS := 'N';                          -- NON TAXABLE
+               END IF;
+            ELSIF C2REC.SOURCE = 'G'
+            THEN
+               V_FINTAX_RANGE_GLCODE := NULL;
+               V_FINTAX_RANGE_SLCODE := NULL;
+               V_TAX_STATUS := 'I';
+
+               V_FINTAX_RANGE_GLCODE :=
+                  DB_FUNC_GET_GST_GL_SL(C2REC.GST_COMPONENT,
+                                         p_admsite_code_owner,
+                                         C2REC.ISTAX,
+                                         'OGL',
+                                         NULL);
+               V_FINTAX_RANGE_SLCODE :=
+                  DB_FUNC_GET_GST_GL_SL(C2REC.GST_COMPONENT,
+                                         p_admsite_code_owner,
+                                         C2REC.ISTAX,
+                                         'OSL',
+                                         NULL);
+
+               V_RANGE_APPL := 'N';
+            ELSE
+               IF C2REC.SOURCE = 'E'
+               THEN
+                  V_TAX_STATUS := 'N';               -- Not applicable for tax
+               ELSE
+                  V_TAX_STATUS := 'C';                          -- FROM CHARGE
+               END IF;
+            END IF;
+
+            IF V_TAX_STATUS <> 'N'
+            THEN
+               DUMMY_TOTCHGAMT := 0;
+
+               FOR I IN 1 .. C2REC.FORMLEN
+               LOOP
+                  IF MOD(I, 2) != 0
+                  THEN
+                     DUMMY_CHK := SUBSTR(C2REC.FORMULAE, I, 1);
+                     DUMMY_CHKCHGAMT := 0;
+
+                     IF DUMMY_CHK = 'B'
+                     THEN
+                        DUMMY_CHKCHGAMT := coalesce(C1REC.ORDAMT, 0);
+                     ELSE
+                        BEGIN
+                           SELECT CASE WHEN SALCHG.ROUNDOFF='Y' THEN  ROUND(SALSRVCHG_ITEM.CHGAMT)  ELSE SALSRVCHG_ITEM.CHGAMT END
+                             INTO STRICT DUMMY_CHKCHGAMT
+                             FROM SALTERMDET, SALSRVCHG_ITEM, SALCHG
+                            WHERE     SALTERMDET.CHGCODE =
+                                         SALSRVCHG_ITEM.CHGCODE
+                                  AND SALTERMDET.CHGCODE = SALCHG.SALCHGCODE
+                                  AND SALSRVCHG_ITEM.SALSRVDET_CODE =
+                                         C1REC.CODE
+                                  AND SALTERMDET.SALTERMCODE =
+                                         C2REC.SALTERMCODE
+                                  AND SALTERMDET.OPERATION_LEVEL = 'L'
+                                  AND SALTERMDET.SEQ = (DUMMY_CHK)::numeric;
+                        EXCEPTION
+                           WHEN no_data_found
+                           THEN
+                              DUMMY_CHKCHGAMT := 0;
+                        END;
+                     END IF;
+
+                     DUMMY_PRVCHK := SUBSTR(C2REC.FORMULAE, I - 1, 1);
+
+                     IF DUMMY_PRVCHK = '+'
+                     THEN
+                        DUMMY_TOTCHGAMT :=
+                           DUMMY_TOTCHGAMT + coalesce(DUMMY_CHKCHGAMT, 0);
+                     ELSIF DUMMY_PRVCHK = '-'
+                     THEN
+                        DUMMY_TOTCHGAMT :=
+                           DUMMY_TOTCHGAMT - coalesce(DUMMY_CHKCHGAMT, 0);
+                     ELSE
+                        DUMMY_TOTCHGAMT := coalesce(DUMMY_CHKCHGAMT, 0);
+                     END IF;
+                  END IF;
+               END LOOP;
+
+               DUMMY_APPAMT := DUMMY_TOTCHGAMT;
+
+               IF C2REC.SOURCE = 'G'
+               THEN
+                  V_RATE :=
+                     DB_FUNC_GET_GST_TAX_RATE(NULL,                  -- ICODE
+                                               C2REC.GST_COMPONENT, -- GST_COMPONENT
+                                               p_srvdt,       -- DOCUMENT DATE
+                                               C2REC.ISTAX,           -- ISTAX
+                                               NULL,               -- FORMNAME
+                                               C1REC.SERVICECODE, -- SERVICECODE
+                                               NULL,                    -- RSP
+                                               DUMMY_APPAMT,         -- APPAMT
+                                               C1REC.QTY,               -- QTY
+                                               p_admsite_code_owner, -- CONN_DOC_SITE_CODE
+                                               p_admsite_code, -- CP_SITE_CODE
+                                               p_pcode            -- CP_SLCODE
+                                                      );
+                  V_RANGE_APPL := 'N';
+               END IF;
+
+               IF coalesce(V_RANGE_APPL, 'N') = 'Y' AND V_TAX_BASIS = 'N'
+               THEN
+                  V_RANGEFROM := 0;
+                  V_FINTAX_RANGE_GLCODE := NULL;
+                  V_FINTAX_RANGE_SLCODE := NULL;
+
+                  SELECT coalesce(MIN(RANGEFROM), 0)
+                    INTO STRICT V_RANGEFROM
+                    FROM FINTAX_RANGE R
+                   WHERE TAXDETCODE = V_TAXDETCODE;
+
+                  IF V_RANGEFROM = 0
+                  THEN
+                     V_RATE := 0;
+                     V_FINTAX_RANGE_GLCODE := NULL;
+                     V_FINTAX_RANGE_SLCODE := NULL;
+                  ELSE
+                     V_APPAMT := 0;
+                     V_APPAMT := round((DUMMY_APPAMT / C1REC.QTY)::numeric, 2);
+
+                     IF V_APPAMT >= V_RANGEFROM
+                     THEN
+                        BEGIN
+                           SELECT coalesce(RATE, 0), SALTAX_GLCODE, SALTAX_SLCODE
+                             INTO STRICT DUP_RATE,
+                                  V_FINTAX_RANGE_GLCODE,
+                                  V_FINTAX_RANGE_SLCODE
+                             FROM FINTAX_RANGE R
+                            WHERE     TAXDETCODE = V_TAXDETCODE
+                                  AND V_APPAMT BETWEEN coalesce(RANGEFROM, 0)
+                                                   AND coalesce(
+                                                          RANGETO,
+                                                          999999999999999999);
+
+                           V_RATE := DUP_RATE;
+                        EXCEPTION
+                           WHEN no_data_found
+                           THEN
+                              V_RATE := 0;
+                              V_FINTAX_RANGE_GLCODE := NULL;
+                              V_FINTAX_RANGE_SLCODE := NULL;
+                           WHEN OTHERS
+                           THEN
+                              V_RATE := 0;
+                              V_FINTAX_RANGE_GLCODE := NULL;
+                              V_FINTAX_RANGE_SLCODE := NULL;
+                        END;
+                     ELSE
+                        V_RATE := 0;
+                        V_FINTAX_RANGE_GLCODE := NULL;
+                        V_FINTAX_RANGE_SLCODE := NULL;
+                     END IF;
+                  END IF;
+               END IF;
+
+               IF V_TAX_STATUS = 'C'
+               THEN
+                  V_CAL_RATE := coalesce(C2REC.RATE, 0);
+               ELSE
+                  V_CAL_RATE := coalesce(V_RATE, 0);
+               END IF;
+
+               IF C2REC.BASIS = 'P'
+               THEN
+                  DUMMY_TOTCHGAMT :=
+                     ROUND ( (V_CAL_RATE / 100) * coalesce(DUMMY_TOTCHGAMT, 0),
+                            2);
+
+                  SELECT MAX(CODE_2)
+                    INTO STRICT V_MAX_CODE
+                    FROM GLOBAL_TEMP_STORAGE
+                   WHERE     CODE_1 = p_srvcode
+                         AND CODE_3 = C2REC.CHGCODE
+                         AND VALUE_1 = V_CAL_RATE
+                         AND VALUE_1 <> 0
+                         AND CHAR_1 = 'P';
+
+                  IF C1REC.CODE = V_MAX_CODE
+                  THEN
+                     -- ROUND OFF ADJUSTED IN MAIN CHARGE TABLE
+                     IF V_CAL_RATE <> 0
+                     THEN
+                        SELECT SUM(coalesce(APPAMT, 0)) + DUMMY_APPAMT TOTAPPAMT,
+                                 SUM(ABS(coalesce(CHGAMT, 0)))
+                               + ABS(DUMMY_TOTCHGAMT)
+                                  TOTCHGAMT
+                          INTO STRICT V_TOTAPPAMT, V_TOTCHGAMT
+                          FROM SALSRVCHG_ITEM
+                         WHERE     SRVCODE = p_srvcode
+                               AND CHGCODE = C2REC.CHGCODE
+                               AND BASIS = 'P'
+                               AND RATE = V_CAL_RATE
+                               AND SOURCE <> 'E';
+
+                        V_DIFFAMT :=
+                           ROUND (
+                              (V_TOTAPPAMT * V_CAL_RATE / 100) - V_TOTCHGAMT,
+                              2);
+
+                        IF coalesce(V_DIFFAMT, 0) <> 0
+                        THEN
+                           DUMMY_TOTCHGAMT := DUMMY_TOTCHGAMT + V_DIFFAMT;
+                        END IF;
+                     END IF;
+                  END IF;
+               ELSIF C2REC.BASIS = 'A'
+               THEN
+                  DUMMY_TOTCHGAMT :=
+                     ROUND ( (coalesce(C1REC.ORDAMT, 0) * C2REC.RATE / V_RTAMT),
+                            2);
+               END IF;
+
+               IF C2REC.SIGN = '-' AND DUMMY_TOTCHGAMT >= 0
+               THEN
+                  DUMMY_TOTCHGAMT := -1 * coalesce(DUMMY_TOTCHGAMT, 0);
+               END IF;
+
+               DUMMY_SIGN := C2REC.SIGN;
+               V_ROUNDOFF_ADJ_AMT := 0;
+
+               IF C2REC.ROUNDOFF = 'Y'
+               THEN
+                  V_ROUNDOFF_ADJ_AMT :=
+                       ROUND(coalesce(DUMMY_TOTCHGAMT, 0))
+                     - coalesce(DUMMY_TOTCHGAMT, 0);
+                  DUMMY_TOTCHGAMT := ROUND(DUMMY_TOTCHGAMT);
+               END IF;
+
+               IF V_TAX_STATUS = 'I'
+               THEN
+                  IF V_FINTAX_RANGE_GLCODE IS NULL
+                  THEN
+                     IF C2REC.SOURCE <> 'G'
+                     THEN
+                        IF V_GLCODE IS NULL
+                        THEN
+                           V_FINAL_GLCODE := C2REC.GLCODE;
+                           V_FINAL_SLCODE := C2REC.SLCODE;
+                        ELSE
+                           V_FINAL_GLCODE := V_GLCODE;
+                           V_FINAL_SLCODE := V_SLCODE;
+                        END IF;
+                     ELSE
+                        V_FINAL_GLCODE := NULL;
+                        V_FINAL_SLCODE := NULL;
+                     END IF;
+                  ELSE
+                     V_FINAL_GLCODE := V_FINTAX_RANGE_GLCODE;
+                     V_FINAL_SLCODE := V_FINTAX_RANGE_SLCODE;
+                  END IF;
+               ELSE
+                  V_FINAL_GLCODE := C2REC.GLCODE;
+                  V_FINAL_SLCODE := C2REC.SLCODE;
+               END IF;
+
+               INSERT INTO SALSRVCHG_ITEM(SRVCODE,
+                                           SALSRVDET_CODE,
+                                           SEQ,
+                                           CHGCODE,
+                                           RATE,
+                                           BASIS,
+                                           SIGN,
+                                           CHGAMT,
+                                           APPAMT,
+                                           FORMULAE,
+                                           ISTAX,
+                                           SOURCE,
+                                           GLCODE,
+                                           SLCODE,
+                                           GST_COMPONENT,
+                                           ROUNDOFF_ADJ_AMT)
+                       VALUES (
+                                 p_srvcode,
+                                 C1REC.CODE,
+                                 C2REC.SEQ,
+                                 C2REC.CHGCODE,
+                                 CASE WHEN                                     C2REC.BASIS='A' THEN  ABS(DUMMY_TOTCHGAMT)  ELSE CASE WHEN V_TAX_STATUS='C' THEN  C2REC.RATE  ELSE V_RATE END  END ,
+                                 C2REC.BASIS,
+                                 DUMMY_SIGN,
+                                 DUMMY_TOTCHGAMT,
+                                 DUMMY_APPAMT,
+                                 C2REC.FORMULAE,
+                                 C2REC.ISTAX,
+                                 C2REC.SOURCE,
+                                 V_FINAL_GLCODE,
+                                 V_FINAL_SLCODE,
+                                 C2REC.GST_COMPONENT,
+                                 V_ROUNDOFF_ADJ_AMT);
+
+               V_FINTAX_RANGE_GLCODE := NULL;
+               V_FINTAX_RANGE_SLCODE := NULL;
+            END IF;
+         END LOOP;
+
+         --------------------------------------------- round off logic
+         IF C2REC.BASIS = 'A'
+         THEN
+            CALL int$pkg_sal_srv_inv_loc_pro_amtchg_roundoff(p_srvcode, c2rec.chgcode);
+         ELSIF C2REC.BASIS = 'P'
+         THEN
+            IF V_TAX_STATUS = 'C'
+            THEN
+               V_CHG_RATE := C2REC.RATE;
+            ELSE
+               V_CHG_RATE := V_RATE;
+            END IF;
+
+            CALL int$pkg_sal_srv_inv_loc_pro_perchg_roundoff(p_srvcode,
+                                     C2REC.CHGCODE,
+                                     V_CHG_RATE,
+                                     C2REC.SIGN,
+                                     C2REC.GLCODE,
+                                     C2REC.SLCODE,
+                                     C2REC.BASIS,
+                                     C2REC.ISTAX,
+                                     C2REC.SOURCE,
+                                     C2REC.FORMULAE,
+                                     C2REC.GST_COMPONENT);
+         END IF;
+      END LOOP;
+
+      CALL int$pkg_sal_srv_inv_sumup_line_lvl_salsrvchg(p_srvcode);
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         NULL;
+   END;
+
+"""
+  arguments = <
+    {
+      name = p_srvcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_srvdt
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_fintradegrp_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_saltermcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_formcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_pcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_salsrvmain_chg_glcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_salsrvmain_chg_slcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_admsite_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_admsite_code_owner
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

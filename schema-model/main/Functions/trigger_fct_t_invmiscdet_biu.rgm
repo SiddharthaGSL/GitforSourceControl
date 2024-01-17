@@ -1,0 +1,51 @@
+function "main"."trigger_fct_t_invmiscdet_biu()" {
+  text = """
+
+
+DECLARE
+   V_ENTDT          INVSTOCK.ENTDT%TYPE;
+   V_ADMSITE_CODE   INVSTOCK.ADMSITE_CODE%TYPE;
+BEGIN
+   /*******************************************************************************************************************
+     REVISIONS:
+     No.        Date        Author                   Description
+     ---------  ----------  ----------------------   ------------------------------------------------------------------
+     REV : 000  13/11/2017  DIPTIMAN                    (TFS ID : 32259) COGS costrate related changes, CREATED.
+     REV : 001  08/02/2019  DIPTIMAN                    (TFS ID : 14009) Change the trigger for insert or update and
+                                                                          costrate for every entry.
+     REV : 002  06/01/2022  SIDDHARTHA                  (TFS ID : XXXXX) Batch Serial Related Changes.
+   *********************************************************************************************************************/
+   -- START REV : 001
+   -- IF  INSERTING THEN
+   IF  TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
+   -- END REV : 001   
+    SELECT MISCDT, ADMSITE_CODE
+       INTO STRICT   V_ENTDT, V_ADMSITE_CODE
+       FROM   INVMISCMAIN
+       WHERE  MISCCODE = coalesce(NEW.MISCCODE, OLD.MISCCODE);
+
+       IF  NEW.QTY > 0 THEN
+           -- START REV : 001
+           -- For third party WMS transaction following portion have been changed. If costrate comes null or 0 
+           -- from web application it would calculate again
+           -- :NEW.COSTRATE := NVL(DB_PKG_COGS.GET_ITEM_LAST_IN_RATE(V_ADMSITE_CODE, :NEW.ICODE, V_ENTDT),0);
+           IF coalesce(NEW.COSTRATE, 0) = 0 THEN
+           -- START REV : 002
+              --:NEW.COSTRATE := NVL(DB_PKG_COGS.GET_ITEM_LAST_IN_RATE(V_ADMSITE_CODE, :NEW.ICODE, V_ENTDT),0);
+              NEW.COSTRATE := coalesce(DB_PKG_COGS$GET_ITEM_LAST_IN_RATE(V_ADMSITE_CODE, NEW.ICODE, V_ENTDT, NULL, NEW.INVBATCH_SERIAL_CODE),0);
+           -- END REV : 002
+           END IF;
+           -- END REV : 001
+       ELSE
+           NEW.COSTRATE := NEW.RATE;
+       END IF;
+   END IF;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

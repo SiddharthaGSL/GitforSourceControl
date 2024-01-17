@@ -1,0 +1,202 @@
+function "main"."trigger_fct_t_finopdoc()" {
+  text = """
+
+/********************************************************************************************************************
+   REVISIONS:
+   No.       Date        Author                   Description
+   --------- ----------  ----------------------   -------------------------------------------------------------------
+   REV : 001 06/04/2010  SHANKAR                  (BUG ID : 1813)   Scheme Document number field added
+   REV : 002 19/12/2012  DIPTIMAN                 (BUG ID : 476)    Type change in finpost.
+   REV : 003 08/06/2014  PRASANTA                 (BUG ID : 1324)   GL - SL - CC related changes.
+   REV : 004 18/12/2014  DIPTIMAN                 (BUG ID : 1983)   Release status and time related changes.
+   REV : 005 29/06/2014  MOUSUMI                  (BUG ID : 715 )   SL Site wise Document Outstanding.
+   REV : 006 04/08/2016  MANASH                   (TFS ID : 19509)  Excel Import option required in opening Finance Outstanding.
+   REV : 007 28/04/2017  DIPTIMAN                 (TFS ID : 27001) Multi OU related changes.
+********************************************************************************************************************/
+BEGIN
+  BEGIN
+    IF  TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
+        UPDATE FINPOST
+        SET    -- START REV : 002
+               ENTNO        =   OLD.ENTNO::varchar,
+               -- END REV : 002
+               ENTDT        =   OLD.ENTDT,
+               DOCNO        =   OLD.DOCNO,
+               DOCDT        =   OLD.DOCDT,
+               DUEDT        =   OLD.DUEDT,
+               GLCODE       =   OLD.GLCODE,
+               SLCODE       =   OLD.SLCODE,
+               DAMOUNT      =   DAMOUNT - OLD.DAMOUNT,
+               CAMOUNT      =   CAMOUNT - OLD.CAMOUNT,
+               YCODE        =   OLD.YCODE,
+               NARTEXT      =   OLD.NARTEXT,
+               -- START REV : 001
+               SCHEME_DOCNO =   OLD.SCHEME_DOCNO,
+               -- END REV : 001
+               -- START REV : 003
+               ADMSITE_CODE_OWNER = OLD.ADMSITE_CODE_OWNER,
+               -- END REV : 003
+               -- START REV : 007
+               ADMOU_CODE = OLD.ADMOU_CODE,
+               -- END REV : 007
+               -- START REV : 005
+               REF_ADMSITE_CODE = OLD.REF_ADMSITE_CODE,
+               -- END REV : 005
+               -- START REV : 006
+               CHQNO = OLD.CHQNO,
+               CHQDT = OLD.CHQDT,
+               DRAWNON = OLD.DRAWNON,
+               CHQLABEL = OLD.CHQLABEL,
+               CASH_DISCOUNT_APPLICABLE = OLD.CASH_DISCOUNT_APPLICABLE,
+               CASH_DISCOUNT_PERCENTAGE = OLD.CASH_DISCOUNT_PERCENTAGE,
+               CASH_DISCOUNT_PERIOD     = OLD.CASH_DISCOUNT_PERIOD
+               -- START REV : 006
+        WHERE  ENTCODE      =   OLD.ENTCODE::varchar -- REV : 002
+        AND    ENTTYPE      =   OLD.ENTTYPE;
+
+        IF  FOUND THEN
+            -- START REV : 004
+            /*
+            DELETE FINPOST
+            WHERE  ENTCODE        = TO_CHAR(:OLD.ENTCODE)   -- REV : 002
+            AND    ENTTYPE        = :OLD.ENTTYPE
+            AND    NVL(DAMOUNT,0) = 0
+            AND    NVL(CAMOUNT,0) = 0;
+            */
+            BEGIN
+                DELETE FROM FINPOST
+                WHERE  ENTCODE        = OLD.ENTCODE::varchar   -- REV : 002
+                AND    ENTTYPE        = OLD.ENTTYPE
+                AND    coalesce(DAMOUNT,0) = 0
+                AND    coalesce(CAMOUNT,0) = 0;
+            EXCEPTION
+                WHEN OTHERS THEN
+                     -- If the document is adjusted with another document.
+                     NULL;
+            END;
+            -- END REV : 004
+        END IF;
+
+        UPDATE FINPOST
+        SET    ENTNO        =   NEW.ENTNO::varchar,  -- REV : 002
+               ENTDT        =   NEW.ENTDT,
+               DOCNO        =   NEW.DOCNO,
+               DOCDT        =   NEW.DOCDT,
+               DUEDT        =   NEW.DUEDT,
+               GLCODE       =   NEW.GLCODE,
+               SLCODE       =   NEW.SLCODE,
+               DAMOUNT      =   DAMOUNT + NEW.DAMOUNT,
+               CAMOUNT      =   CAMOUNT + NEW.CAMOUNT,
+               YCODE        =   NEW.YCODE,
+               NARTEXT      =   NEW.NARTEXT,
+               -- START REV : 001
+               SCHEME_DOCNO =   NEW.SCHEME_DOCNO,
+               -- END REV : 001
+               -- START REV : 003
+               ADMSITE_CODE_OWNER = NEW.ADMSITE_CODE_OWNER,
+               -- END REV : 003
+               -- START REV : 007
+               ADMOU_CODE = NEW.ADMOU_CODE,
+               -- END REV : 007
+               -- START REV : 006
+               -- START REV : 005
+               --REF_ADMSITE_CODE = :OLD.REF_ADMSITE_CODE,
+               -- END REV : 005
+               REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE
+               -- START REV : 006
+        WHERE  ENTCODE      =   NEW.ENTCODE::varchar      -- REV : 002
+        AND    ENTTYPE      =   NEW.ENTTYPE;
+
+        IF  NOT FOUND THEN
+            INSERT INTO FINPOST(POSTCODE, ENTCODE, ENTNO,
+                     ENTDT, ENTTYPE, DOCNO, DOCDT, DUEDT,
+                     GLCODE, SLCODE, DAMOUNT,CAMOUNT, YCODE, NARTEXT,
+                     -- START REV : 001
+                     SCHEME_DOCNO,
+                     -- END REV : 001
+                     -- START REV : 003
+                     ADMSITE_CODE_OWNER,
+                     -- END REV : 003
+                     -- START REV : 005
+                     REF_ADMSITE_CODE,
+                     -- END REV : 005
+                     -- START REV : 006
+                     CHQNO,CHQDT,DRAWNON,CHQLABEL,CASH_DISCOUNT_APPLICABLE,CASH_DISCOUNT_PERCENTAGE,CASH_DISCOUNT_PERIOD
+                     -- END REV : 006
+                     -- START REV : 007
+                     ,ADMOU_CODE
+                     -- END REV : 007
+                    )
+                    VALUES (nextval('erp01'), NEW.ENTCODE::varchar, NEW.ENTNO::varchar,  -- REV : 002
+                           NEW.ENTDT, NEW.ENTTYPE, NEW.DOCNO, NEW.DOCDT, NEW.DUEDT,
+                           NEW.GLCODE, NEW.SLCODE, NEW.DAMOUNT, NEW.CAMOUNT, NEW.YCODE,
+                           NEW.NARTEXT, NEW.SCHEME_DOCNO,
+                           -- START REV : 003
+                           NEW.ADMSITE_CODE_OWNER,
+                           -- END REV : 003
+                           -- START REV : 005
+                           NEW.REF_ADMSITE_CODE,
+                           -- END REV : 005
+                           -- START REV : 006
+                            NEW.CHQNO,NEW.CHQDT,NEW.DRAWNON,NEW.CHQLABEL,NEW.CASH_DISCOUNT_APPLICABLE,
+                            NEW.CASH_DISCOUNT_PERCENTAGE,NEW.CASH_DISCOUNT_PERIOD
+                            -- END REV : 006
+                            -- START REV : 007
+                            ,NEW.ADMOU_CODE
+                            -- END REV : 007
+                          );
+        END IF;
+
+        -- START REV : 004
+        UPDATE FINPOST
+        SET    ECODE               = NEW.ECODE
+              ,TIME                = NEW.TIME
+              ,LAST_ACCESS_ECODE   = NEW.LAST_ACCESS_ECODE
+              ,LAST_ACCESS_TIME    = NEW.LAST_ACCESS_TIME
+              ,RELEASE_STATUS      = 'P'
+              ,RELEASE_ECODE       = coalesce(NEW.LAST_ACCESS_ECODE, NEW.ECODE)
+              ,RELEASE_TIME        = coalesce(NEW.LAST_ACCESS_TIME, NEW.TIME)
+              -- START REV : 005
+              ,REF_ADMSITE_CODE   = NEW.REF_ADMSITE_CODE
+              -- END REV : 005
+              -- START REV : 007
+              ,ADMOU_CODE = NEW.ADMOU_CODE
+              -- END REV : 007
+              -- START REV : 006
+               ,CHQNO = NEW.CHQNO
+               ,CHQDT = NEW.CHQDT
+               ,DRAWNON = NEW.DRAWNON
+               ,CHQLABEL = NEW.CHQLABEL
+               ,CASH_DISCOUNT_APPLICABLE = NEW.CASH_DISCOUNT_APPLICABLE
+               ,CASH_DISCOUNT_PERCENTAGE = NEW.CASH_DISCOUNT_PERCENTAGE
+               ,CASH_DISCOUNT_PERIOD     = NEW.CASH_DISCOUNT_PERIOD
+               -- START REV : 006
+        WHERE  ENTCODE             = NEW.ENTCODE::varchar
+        AND    ENTTYPE             = NEW.ENTTYPE;
+        -- END REV : 004
+    END IF;
+
+    IF  TG_OP = 'DELETE' THEN
+        DELETE FROM FINPOST
+        WHERE  ENTCODE = OLD.ENTCODE::varchar   -- REV : 002
+        AND    ENTTYPE = OLD.ENTTYPE;
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN
+         CALL ERRAUDIT(USER,'T_FINOPDOC',SQLSTATE::varchar,SQLERRM);
+         RAISE EXCEPTION '%', 'ERROR ENCOUNTERED  ' || SQLSTATE::varchar || '  '|| SQLERRM USING ERRCODE = '45001';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

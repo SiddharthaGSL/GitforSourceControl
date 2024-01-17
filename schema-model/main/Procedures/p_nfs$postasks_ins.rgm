@@ -1,0 +1,117 @@
+procedure "main"."p_nfs$postasks_ins(bigint, bigint, text, text, text, text, text)" {
+  text = """
+
+DECLARE
+
+   v_eventcode       bigint;
+   v_eventname       varchar(100);
+   v_eventshrtname   varchar(10);
+   v_activeyn        smallint;
+   v_smsquery        varchar(32767);
+   v_from            varchar(32767);
+   v_body            varchar(32767);
+   v_table           varchar(100);
+   v_and             varchar(32767);
+   v_recipient       varchar(32767);
+
+BEGIN
+   DELETE FROM nfs$postasks
+         WHERE nfs$tasks_code = p_task_code;
+   SELECT evn.code,
+          evn.NAME,
+          evn.short_name,
+          evn.query_text,
+          CASE WHEN p_task_state = 'I' THEN 0 ELSE 1 END activeyn
+     INTO STRICT v_eventcode,
+          v_eventname,
+          v_eventshrtname,
+          v_smsquery,
+          v_activeyn
+     FROM nfs$events evn
+    WHERE evn.code = p_event_code;
+   IF p_task_filter = 'Y'
+   THEN
+      CALL db_pkg_notification.parse_task_filter(p_task_code);
+   END IF;
+   v_from := ' FROM ( ';
+   v_table := ' ) Y WHERE 1 = 1 ';
+   v_body :=
+      RTRIM(v_smsquery || ' ' || db_pkg_notification.pv_where_clause);
+   SELECT refvariable
+     INTO STRICT v_and
+     FROM nfs$event_refvariable
+    WHERE nfs$events_code = p_event_code;
+   IF v_and IS NOT NULL
+   THEN
+      v_and := ' AND ' || v_and || ' = ' || ' <' || v_and || '>';
+   END IF;
+   v_smsquery :=
+      'SELECT ' || p_sql_smstext || v_from || v_body || v_and || v_table;
+   SELECT getsmsrecipient(p_task_code) INTO STRICT v_recipient;
+   INSERT INTO nfs$postasks(nfs$tasks_code,
+                             nfs$events_code,
+                             eventname,
+                             eventshortname,
+                             NAME,
+                             smstext,
+                             smsrecipient,
+                             smsquery,
+                             active)
+        VALUES (p_task_code,
+                v_eventcode,
+                v_eventname,
+                v_eventshrtname,
+                p_task_name,
+                p_text,
+                v_recipient,
+                v_smsquery,
+                v_activeyn);
+END;
+"""
+  arguments = <
+    {
+      name = p_task_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_event_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_task_name
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_text
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_task_filter
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_task_state
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_sql_smstext
+      type = text
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

@@ -1,0 +1,135 @@
+function "main"."db_pkg_production$calc_available_to_foroward_qty(bigint, character varying, numeric, bigint, character, bigint, numeric)" {
+  text = """
+
+DECLARE
+
+
+        V_FIRST_SEQ         PRDLOTOPERATION.OPERATION_SEQ%TYPE;
+        V_CUR_COMPLETED_QTY PRDLOTOPERATION.COMPLETED_QTY%TYPE;
+        V_NONSTD_QTY        PRDLOTOPERATION.COMPLETED_QTY%TYPE;
+        V_NEXT_STD_QTY      PRDLOTOPERATION.COMPLETED_QTY%TYPE;
+        V_WIPCLR_QTY        PRDLOTOPERATION.WIPCLR_QTY%TYPE;
+        V_ALTERNATE_QTY     PRDLOTOPERATION.ALTERNATE_QTY%TYPE;
+        V_BOM_QTY           PRDLOTBOM.BOM_QTY%TYPE;
+
+BEGIN
+        IF  P_COM_SAITEM_CODE IS NOT NULL AND P_ENTTYPE  IN ('ORD','CNL') THEN
+            BEGIN
+                SELECT  COMPLETED_QTY,
+                        coalesce(WIPCLR_QTY,0),
+                        coalesce(ALTERNATE_QTY,0)
+                INTO STRICT    V_CUR_COMPLETED_QTY,
+                        V_WIPCLR_QTY,
+                        V_ALTERNATE_QTY
+                FROM    PRDLOTOPERATION
+                WHERE   LOTCODE         =   P_LOTCODE
+                AND     ASSEMBLY_ICODE  =   P_AICODE
+                AND     coalesce(ASS_SAITEM_CODE,0) = coalesce(P_COM_SAITEM_CODE,coalesce(ASS_SAITEM_CODE,0))
+                AND     IS_STANDARD     =   'Y'
+                AND     OPERATION_SEQ   =   date_trunc('day', P_OP_SEQ);
+            EXCEPTION
+                WHEN no_data_found THEN
+                V_CUR_COMPLETED_QTY := 0;
+                V_WIPCLR_QTY := 0;
+                V_ALTERNATE_QTY := 0;
+            END;
+
+            SELECT  SUM(coalesce(ORD_QTY,0)-coalesce(COMPLETED_QTY,0)-coalesce(CNL_QTY,0) - coalesce(ALTERNATE_CNL_QTY,0))
+            INTO STRICT    V_NONSTD_QTY
+            FROM    PRDLOTOPERATION
+            WHERE   LOTCODE             =   P_LOTCODE
+            AND     ASSEMBLY_ICODE      =   P_AICODE
+            AND     coalesce(ASS_SAITEM_CODE,0) = coalesce(P_COM_SAITEM_CODE,coalesce(ASS_SAITEM_CODE,0))
+            AND     IS_STANDARD         =   'N'
+            AND     date_trunc('day', OPERATION_SEQ)=   date_trunc('day', P_OP_SEQ);
+
+            V_NEXT_STD_QTY := coalesce(P_ORD_QTY,0);
+        ELSE
+            BEGIN
+                SELECT  COMPLETED_QTY,
+                        coalesce(WIPCLR_QTY,0),
+                        coalesce(ALTERNATE_QTY,0)
+                INTO STRICT    V_CUR_COMPLETED_QTY,
+                        V_WIPCLR_QTY,
+                        V_ALTERNATE_QTY
+                FROM    PRDLOTOPERATION
+                WHERE   LOTCODE         =   P_LOTCODE
+                AND     ASSEMBLY_ICODE  =   P_AICODE
+                AND     coalesce(ASS_SAITEM_CODE,0) = coalesce(P_SAICODE,coalesce(ASS_SAITEM_CODE,0))
+                AND     IS_STANDARD     =   'Y'
+                AND     OPERATION_SEQ   =   date_trunc('day', P_OP_SEQ);
+            EXCEPTION
+                WHEN no_data_found THEN
+                V_CUR_COMPLETED_QTY := 0;
+                V_WIPCLR_QTY := 0;
+                V_ALTERNATE_QTY := 0;
+            END;
+
+            SELECT  SUM(coalesce(ORD_QTY,0)-coalesce(COMPLETED_QTY,0)-coalesce(CNL_QTY,0)-coalesce(ALTERNATE_CNL_QTY,0))
+            INTO STRICT    V_NONSTD_QTY
+            FROM    PRDLOTOPERATION
+            WHERE   LOTCODE             =   P_LOTCODE
+            AND     ASSEMBLY_ICODE      =   P_AICODE
+            AND     coalesce(ASS_SAITEM_CODE,0) = coalesce(P_SAICODE,coalesce(ASS_SAITEM_CODE,0))
+            AND     IS_STANDARD         =   'N'
+            AND     date_trunc('day', OPERATION_SEQ)=   date_trunc('day', P_OP_SEQ);
+        END IF;
+
+        RETURN(coalesce(V_CUR_COMPLETED_QTY,0)-coalesce(V_NONSTD_QTY,0)-coalesce(V_NEXT_STD_QTY,0)-V_WIPCLR_QTY)+V_ALTERNATE_QTY;
+        -- end rev : 014
+    EXCEPTION
+        WHEN OTHERS THEN
+        RETURN 0;
+    END;
+
+
+"""
+  returnType = bigint
+  arguments = <
+    {
+      name = p_lotcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_aicode
+      type = character varying
+      mode = IN
+    }
+
+    {
+      name = p_op_seq
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_saicode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_enttype
+      type = character
+      mode = IN
+    }
+
+    {
+      name = p_com_saitem_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_ord_qty
+      type = numeric
+      mode = IN
+      default = 0
+    }
+
+  >
+  language = plpgsql
+}
+

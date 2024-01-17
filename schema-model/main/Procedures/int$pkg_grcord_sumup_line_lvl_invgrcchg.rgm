@@ -1,0 +1,131 @@
+procedure "main"."int$pkg_grcord_sumup_line_lvl_invgrcchg(bigint)" {
+  text = """
+
+DECLARE
+
+      c3 CURSOR FOR
+         SELECT   i.grccode, i.chgcode, i.rate, i.forgn_curr_rate, i.SIGN,
+                  i.basis, i.istax, i.SOURCE, i.formulae,
+                  round((SUM(i.chgamt))::numeric, 2) chgamt,
+                  round((SUM(i.appamt))::numeric, 2) appamt, SUM(i.seq),
+                  -- START REV : 006
+                  i.gst_component, i.isreverse
+                  -- END REV : 006
+             FROM invgrcchg_item i
+            WHERE i.grccode = p_grccode AND i.basis <> 'A'
+         GROUP BY i.grccode,
+                  i.chgcode,
+                  i.rate,
+                  i.forgn_curr_rate,
+                  i.SIGN,
+                  i.basis,
+                  i.istax,
+                  i.SOURCE,
+                  i.formulae,
+                  -- START REV : 006
+                  i.gst_component, i.isreverse
+                  -- END REV : 006
+UNION ALL
+
+         SELECT   i.grccode, i.chgcode, SUM(i.rate) rate,
+                  SUM(i.forgn_curr_rate) forgn_curr_rate, i.SIGN, i.basis,
+                  i.istax, i.SOURCE, i.formulae,
+                  round((SUM(i.chgamt))::numeric, 2) chgamt,
+                  round((SUM(i.appamt))::numeric, 2) appamt, SUM(i.seq),
+                  -- START REV : 006
+                  i.gst_component, i.isreverse
+                  -- END REV : 006
+             FROM invgrcchg_item i
+            WHERE i.grccode = p_grccode AND i.basis = 'A'
+         GROUP BY i.grccode,
+                  i.chgcode,
+                  i.SIGN,
+                  i.basis,
+                  i.istax,
+                  i.SOURCE,
+                  i.formulae,
+                  -- START REV : 006
+                  i.gst_component, i.isreverse
+                  -- END REV : 006
+         ORDER BY 12;
+
+      -- END REV : 016
+      v_seq            bigint     := 1;
+      v_item_lvl_seq   bigint     := 1;
+      v_cnt            smallint := 0;
+
+BEGIN
+      DELETE FROM invgrcchg
+            WHERE grccode = p_grccode;
+
+      FOR c3rec IN c3
+      LOOP
+         IF c3rec.basis = 'A'
+         THEN
+            SELECT MIN(seq)
+              INTO STRICT v_seq
+              FROM invgrcchg_item
+             WHERE grccode = p_grccode
+               AND chgcode = c3rec.chgcode
+               AND operation_level = 'L';
+         ELSE
+            SELECT MIN(seq)
+              INTO STRICT v_seq
+              FROM invgrcchg_item
+             WHERE grccode = p_grccode
+               AND chgcode = c3rec.chgcode
+               AND coalesce(rate, 0) = coalesce(c3rec.rate, 0)
+               AND operation_level = 'L';
+         END IF;
+
+         IF coalesce(v_seq, 0) = 0
+         THEN
+            SELECT coalesce(MAX(seq), 0) + v_item_lvl_seq
+              INTO STRICT v_seq
+              FROM invgrcchg_item
+             WHERE grccode = p_grccode
+               AND chgcode = c3rec.chgcode
+               AND rate = c3rec.rate
+               AND operation_level = 'I';
+
+            v_item_lvl_seq := v_item_lvl_seq + 1;
+         END IF;
+
+         INSERT INTO invgrcchg(grccode, seq, chgcode, rate,
+                      forgn_curr_rate, SIGN, basis,
+                      istax, SOURCE, formulae,
+                      chgamt, appamt, operation_level,
+                      -- START REV : 006
+                      gst_component, isreverse
+                      -- END REV : 006
+                     )
+              VALUES (c3rec.grccode, v_seq, c3rec.chgcode, c3rec.rate,
+                      c3rec.forgn_curr_rate, c3rec.SIGN, c3rec.basis,
+                      c3rec.istax, c3rec.SOURCE, c3rec.formulae,
+                      c3rec.chgamt, c3rec.appamt, 'L',
+                      -- START REV : 006
+                      c3rec.gst_component, c3rec.isreverse
+                      -- END REV : 006
+                     );
+
+         v_seq := v_seq + 1;
+      END LOOP;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         NULL;
+   END;
+
+
+"""
+  arguments = <
+    {
+      name = p_grccode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

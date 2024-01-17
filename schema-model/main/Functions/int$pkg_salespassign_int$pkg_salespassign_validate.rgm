@@ -1,0 +1,246 @@
+function "main"."int$pkg_salespassign_int$pkg_salespassign_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status      char(1);
+      errmsg        varchar(200);
+      errcode       text;
+BEGIN
+
+    -- SALESPERSON_NO Validation
+       
+	insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+    SELECT nextval('int$error_log_code'), lineno, 'SALESPASSIGN', userid, 'Input Validation',
+        a.SALESPERSON_NO||': Invalid SALESPERSON_NO. Should be a valid sales person.', clock_timestamp()
+    from int$stg_SALESPASSIGN a
+    where not exists (
+        SELECT 1
+        from PSITE_GLOBAL_SALESPERSON s
+        where upper(s.SPNO) = upper(a.SALESPERSON_NO)
+    )
+    and userid = p_userid;
+	
+	insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+    SELECT nextval('int$error_log_code'), lineno, 'SALESPASSIGN', userid, 'Input Validation',
+        a.SALESPERSON_NO||': Invalid SALESPERSON_NO. Should be a non-extinct sales person for assignment.', clock_timestamp()
+    from int$stg_SALESPASSIGN a, (SELECT SPNO
+                                    from PSITE_GLOBAL_SALESPERSON
+                                  where ISEXTINCT = 1) s
+    where upper(s.SPNO) = upper(a.SALESPERSON_NO)
+    and upper(a.ACTION) = 'ASSIGN'
+    and userid = p_userid;
+
+	insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+    SELECT nextval('int$error_log_code'), lineno, 'SALESPASSIGN', userid, 'Input Validation',
+        'Data length (20) exceeded in column SALESPERSON_NO.', clock_timestamp()
+    from int$stg_SALESPASSIGN a
+    where LENGTH(a.SALESPERSON_NO) > 20;
+
+	insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+    SELECT nextval('int$error_log_code'), lineno, 'SALESPASSIGN', userid, 'Input Validation',
+        'Value is missing in mandatory column SALESPERSON_NO.', clock_timestamp()
+    from int$stg_SALESPASSIGN a
+    where a.SALESPERSON_NO is null;
+
+	-- SITE_SHORT_CODE Validation
+	
+   insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+    SELECT nextval('int$error_log_code'), lineno, 'SALESPASSIGN', userid, 'Input Validation',
+        'Value is missing in mandatory column SITE_SHORT_CODE.', clock_timestamp()
+    from int$stg_SALESPASSIGN a
+    where a.site_short_code is null
+    and userid = p_userid;
+	
+	insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+    SELECT nextval('int$error_log_code'), lineno, 'SALESPASSIGN', userid, 'Input Validation',
+        'Invalid SITE_SHORT_CODE. Should be a valid and non-extinct Ginesys POS site.', clock_timestamp()
+    from int$stg_SALESPASSIGN a, (SELECT s.shrtname
+                                    from admsite s
+                                  where s.sitetype LIKE 'MS%'
+                                  and coalesce(s.ext, 'N') = 'Y'
+                                  and coalesce(s.INSTALLATION_TYPE, 'DPOS') = 'DPOS') s
+    where upper(s.shrtname) = upper(a.site_short_code)
+    and userid = p_userid;
+	
+   insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+    SELECT nextval('int$error_log_code'), lineno, 'SALESPASSIGN', userid, 'Input Validation',
+        'Data length (25) exceeded in column SITE_SHORT_CODE.', clock_timestamp()
+    from int$stg_SALESPASSIGN a
+    where LENGTH(a.site_short_code) > 25
+    and a.site_short_code is not null
+    and userid = p_userid;
+
+   insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+    SELECT nextval('int$error_log_code'), lineno, 'SALESPASSIGN', userid, 'Duplicate Validation',
+        'Duplicate SALESPERSON_NO-SITE_SHORT_CODE found in the Excel.', clock_timestamp()
+    from int$stg_SALESPASSIGN a
+    where a.salesperson_no in (SELECT b.salesperson_no
+                                    from int$stg_SALESPASSIGN b
+                               group by b.salesperson_no, b.site_short_code
+                               having count(*) > 1)
+    and userid = p_userid;
+
+    -- ACTION Validation
+    insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+    SELECT nextval('int$error_log_code'), lineno, 'SALESPASSIGN', userid, 'Input Validation',
+        'Value is missing in mandatory column ACTION.', clock_timestamp()
+    from int$stg_SALESPASSIGN a
+    where a.ACTION is null
+    and userid = p_userid;
+
+    insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+    SELECT nextval('int$error_log_code'), lineno, 'SALESPASSIGN', userid, 'Input Validation',
+        'Data length (10) exceeded in column ACTION.', clock_timestamp()
+    from int$stg_SALESPASSIGN a
+    where LENGTH(a.ACTION) > 10
+    and userid = p_userid;
+
+    insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+    SELECT nextval('int$error_log_code'), lineno, 'SALESPASSIGN', userid, 'Input Validation',
+        'Invalid ACTION. Only "ASSIGN" or "DELETE" are allowed.', clock_timestamp()
+    from int$stg_SALESPASSIGN a
+    where UPPER(a.ACTION) NOT IN ('ASSIGN', 'DELETE')
+    and userid = p_userid;
+
+      -- Check whether records are valid or not
+      BEGIN
+         SELECT 'S'
+           INTO STRICT v_status
+           
+          WHERE EXISTS (SELECT 'S'
+                      FROM int$error_log
+                     WHERE userid = p_userid);
+
+         RETURN('0');
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            RETURN('1');
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'SALESPASSIGN',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+
+function "main"."int$pkg_salespassign_int$pkg_salespassign_validate(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+ 
+DECLARE
+	 -- Change this to reflect the dblink connection string
+    --v_conn_str  text := format('port=%s dbname=%s user=%s', current_setting('port'), current_database(), current_user);
+    v_srvname       name;
+    v_connname      text;
+    v_connstr       text;
+    v_conn_result   text;
+    v_query         text;
+
+    v_ret    text;
+BEGIN
+
+    v_srvname := 'foreign_pgbase';
+    v_connname := replace(uuid_generate_v4()::text,'-','');
+    v_connstr  := v_srvname;
+    
+    --Open the connection  
+    SELECT dblink_connect(v_connname,v_connstr) 
+    INTO v_conn_result;
+	
+	v_query := 'SELECT * FROM int$pkg_salespassign_int$pkg_salespassign_validate_atx ( ' || quote_nullable(p_userid::text) || '::bigint,' || quote_nullable(p_connect_site::text) || '::bigint,' || quote_nullable(p_logging_date::text) || '::timestamp without time zone,' || quote_nullable(p_connect_ou::text) || '::bigint )';
+	SELECT * INTO v_ret FROM dblink(v_connname, v_query) AS p (ret text);
+
+	
+	    SELECT dblink_disconnect(v_connname) 
+    INTO v_conn_result;
+	
+	RETURN v_ret;
+EXCEPTION 
+   WHEN OTHERS THEN
+        SELECT dblink_disconnect(v_connname) 
+        INTO v_conn_result;
+
+END;
+"""
+  returnType = text
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

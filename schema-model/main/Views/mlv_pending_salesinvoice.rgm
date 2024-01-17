@@ -1,0 +1,66 @@
+view "main"."mlv_pending_salesinvoice" {
+  text = """-
+SELECT inv.scheme_docno AS invno,
+    inv.invdt,
+    inv.netamt AS invoiceamt,
+    COALESCE(inv.adjamt, (0)::numeric) AS adjamt,
+    (COALESCE(inv.netamt, (0)::numeric) - COALESCE(inv.adjamt, (0)::numeric)) AS dueamt,
+        CASE
+            WHEN (inv.duedt IS NOT NULL) THEN inv.duedt
+            ELSE
+            CASE
+                WHEN (s.due_date_basis = 'D'::bpchar) THEN
+                CASE
+                    WHEN (inv.docdt IS NULL) THEN NULL::timestamp without time zone
+                    ELSE (date_trunc('day'::text, inv.docdt) + ('1 day'::interval * (COALESCE((s.crdays)::numeric, (0)::numeric))::double precision))
+                END
+                WHEN (s.due_date_basis = 'E'::bpchar) THEN (inv.invdt + ('1 day'::interval * (COALESCE((s.crdays)::numeric, (0)::numeric))::double precision))
+                ELSE NULL::timestamp without time zone
+            END
+        END AS duedt,
+        CASE
+            WHEN (inv.duedt IS NOT NULL) THEN (date_trunc('day'::text, statement_timestamp()) - (inv.duedt)::timestamp with time zone)
+            ELSE
+            CASE
+                WHEN (s.due_date_basis = 'D'::bpchar) THEN
+                CASE
+                    WHEN (inv.docdt IS NULL) THEN NULL::interval
+                    ELSE (date_trunc('day'::text, statement_timestamp()) - ((date_trunc('day'::text, inv.docdt) + ('1 day'::interval * (COALESCE((s.crdays)::numeric, (0)::numeric))::double precision)))::timestamp with time zone)
+                END
+                WHEN (s.due_date_basis = 'E'::bpchar) THEN (date_trunc('day'::text, statement_timestamp()) - ((date_trunc('day'::text, inv.invdt) + ('1 day'::interval * (COALESCE((s.crdays)::numeric, (0)::numeric))::double precision)))::timestamp with time zone)
+                ELSE NULL::interval
+            END
+        END AS overduedays,
+    inv.pcode AS partycode
+   FROM main.salinvmain inv,
+    main.finsl s
+  WHERE ((inv.pcode = s.slcode) AND ((COALESCE(inv.netamt, (0)::numeric) - COALESCE(inv.adjamt, (0)::numeric)) > (0)::numeric));
+"""
+  columns = (
+    column "invno" {
+      type = "character varying(25)"
+    }
+    column "invdt" {
+      type = "timestamp(0) without time zone"
+    }
+    column "invoiceamt" {
+      type = "numeric(20,2)"
+    }
+    column "adjamt" {
+      type = "numeric"
+    }
+    column "dueamt" {
+      type = "numeric"
+    }
+    column "duedt" {
+      type = "timestamp without time zone"
+    }
+    column "overduedays" {
+      type = "interval"
+    }
+    column "partycode" {
+      type = "bigint"
+    }
+  )
+}
+

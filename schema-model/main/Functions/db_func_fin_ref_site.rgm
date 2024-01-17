@@ -1,0 +1,105 @@
+function "main"."db_func_fin_ref_site(bigint, bigint)" {
+  text = """
+
+DECLARE
+
+    V_CLSTYPE   char(1)    :=NULL;
+    V_CNT       numeric(20) :=0;
+    V_SITE_CODE bigint :=0;
+    ERRCODE     varchar(50);
+    ERRMSG      varchar(2000);
+/*****************************************************************************************************************************************
+  REVISIONS:
+  No         Date         Author                  Description
+  ---------  ------------ ---------------------   -----------------------------------------------------------------------------------------
+  REV : 001  21-AUG-2015  MOUSUMI                 (TFS ID : 12228)  FIFO Auto Setoff Ref. Site wise in AR Voucher
+  REV : 003  19-APR-2017  DIPTIMAN                (TFS ID : 27001) Multi OU related changes.
+*****************************************************************************************************************************************/
+BEGIN
+    BEGIN
+        SELECT CLSTYPE
+        INTO STRICT   V_CLSTYPE
+        FROM finsl
+LEFT OUTER JOIN admcls ON (FINSL.CLSCODE = ADMCLS.CLSCODE)
+WHERE FINSL.SLCODE  = P_SLCODE;
+    EXCEPTION
+        WHEN no_data_found THEN
+            V_CLSTYPE := NULL;
+    END;
+    IF coalesce(V_CLSTYPE,'@') = 'C' THEN
+       BEGIN
+       --- REV : 001
+           /*SELECT MIN(CODE)
+           INTO   V_SITE_CODE
+           FROM   ADMSITE A
+           WHERE  SLCODE        = P_SLCODE
+           AND    NVL(EXT,'N')  = 'N'
+           AND    UPPER(NAME)   = (     SELECT MIN(UPPER(NAME))
+                                        FROM   ADMSITE AM
+                                        WHERE  NVL(EXT,'N')  = 'N'
+                                        AND    AM.SLCODE    = P_SLCODE
+                                );
+       EXCEPTION WHEN NO_DATA_FOUND THEN
+        V_SITE_CODE := NULL;
+       END;*/
+           SELECT COUNT(DISTINCT CODE)
+           INTO STRICT   V_CNT
+           FROM   ADMSITE A
+           WHERE  SLCODE        =  P_SLCODE
+           AND    coalesce(EXT,'N')  = 'N';
+       EXCEPTION
+            WHEN no_data_found THEN
+                V_CNT := 0;
+       END;
+       IF coalesce(V_CNT,0) = 1 THEN
+            SELECT MIN(CODE)
+            INTO STRICT   V_SITE_CODE
+            FROM   ADMSITE A
+            WHERE  SLCODE        = P_SLCODE
+            AND    coalesce(EXT,'N')  = 'N'
+            AND    UPPER(NAME)   = (    SELECT MIN(UPPER(NAME))
+                                        FROM   ADMSITE AM
+                                        WHERE  coalesce(EXT,'N')  = 'N'
+                                        AND    AM.SLCODE    = P_SLCODE
+                                );
+       ELSIF coalesce(V_CNT,0) > 1 OR coalesce(V_CNT,0) = 0 THEN
+            SELECT DEFAULT_HO_SITE
+            INTO STRICT   V_SITE_CODE
+            FROM   ADMOU
+
+            WHERE  CODE = (SELECT ADMOU_CODE
+                           FROM   ADMSITE
+                           WHERE  CODE = P_SITE_CODE);
+            -- END REV : 002
+       END IF;
+       -- END REV : 001
+    ELSE
+       V_SITE_CODE := P_SITE_CODE;
+    END IF;
+    RETURN(V_SITE_CODE);
+-- START REV : 002
+EXCEPTION
+    WHEN OTHERS THEN
+       CALL Erraudit(USER, 'DB_FUNC_FIN_REF_SITE', SQLSTATE, SQLERRM);
+-- END REV : 002
+END;
+"""
+  returnType = bigint
+  arguments = <
+    {
+      name = p_slcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_site_code
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+  volatility = STABLE
+}
+

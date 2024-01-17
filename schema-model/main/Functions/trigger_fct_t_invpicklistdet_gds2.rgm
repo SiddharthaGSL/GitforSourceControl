@@ -1,0 +1,60 @@
+function "main"."trigger_fct_t_invpicklistdet_gds2()" {
+  text = """
+
+DECLARE
+   V_CONNECTED_APP_ID bigint;
+   V_REATIL_ORDER_CODE  bigint;
+   V_OLD_SUB_CNT  bigint;
+   V_NEW_SUB_CNT  bigint;
+BEGIN
+
+    IF NEW.INTGBATCHDETID IS NOT NULL AND coalesce(NEW.CONFIRM_QTY,0) > coalesce(OLD.CONFIRM_QTY,0)
+    THEN
+        SELECT COUNT(1)
+        INTO STRICT V_OLD_SUB_CNT
+        FROM GDS2_SUBSCR_EVENT
+        WHERE EVENT_ID IN ('wms.retail.pick.confirmed');
+
+        IF  coalesce(V_OLD_SUB_CNT,0) > 0 
+        THEN
+            SELECT  CONNECTED_APP_ID
+            INTO STRICT    V_CONNECTED_APP_ID 
+            FROM    APPUSER
+            WHERE   ID = (SELECT   CREATEDBY
+                            FROM   INVPICKLISTMAIN
+                            WHERE   CODE =  NEW.INVPICKLISTMAIN_CODE);
+
+            CALL DB_PKG_GDS2_EVENT$TRACK(
+                    'wms.pick.confirmed', NEW.INTGBATCHDETID, V_CONNECTED_APP_ID);
+        END IF;
+    END IF;
+    
+    IF coalesce(NEW.CONFIRM_QTY,0) > coalesce(OLD.CONFIRM_QTY,0) AND NEW.RETAILORDDET_CODE IS NOT NULL
+    THEN
+        
+        SELECT COUNT(1)
+          INTO STRICT V_NEW_SUB_CNT
+          FROM GDS2_SUBSCR_EVENT
+         WHERE EVENT_ID IN ('wms.retail.pick.confirmed');
+        
+        IF coalesce(V_NEW_SUB_CNT,0) > 0 
+        THEN                    
+            SELECT ORDCODE
+            INTO STRICT V_REATIL_ORDER_CODE
+            FROM RETAILORDDET
+            WHERE CODE = NEW.RETAILORDDET_CODE;
+
+            CALL DB_PKG_GDS2_EVENT$TRACK(
+                    'wms.retail.pick.confirmed', V_REATIL_ORDER_CODE);
+        END IF;
+
+    END IF;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

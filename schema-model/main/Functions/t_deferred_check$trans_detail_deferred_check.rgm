@@ -1,0 +1,145 @@
+function "main"."t_deferred_check$trans_detail_deferred_check()" {
+  text = """
+
+
+DECLARE
+  v_damount NUMERIC(20,2);
+  v_camount NUMERIC(20,2);
+  v_fincosttag_damount NUMERIC(20,3);
+  v_fincosttag_camount NUMERIC(20,3);
+  v_finpost_damount NUMERIC(20,3);
+  v_finpost_camount NUMERIC(20,3);
+  v_adjamt	NUMERIC(20,2);
+  v_grpcode	bigint;
+  v_glcode	bigint;
+  v_count	numeric;
+  v_p_qty	numeric(20,3);
+  v_qty		numeric(20,3);
+  v_completed_qty 	numeric(20,3);
+  v_alternate_qty 	numeric(20,3);
+  v_cnl_qty			numeric(20,3);
+  v_issued_qty 		numeric(20,3);
+  v_return_qty 		numeric(20,3);
+  v_wastage_qty 	numeric(20,3);
+  v_consumed_qty 	numeric(20,3);
+BEGIN
+   IF new.MODULE_NAME = 'FINPOST'
+   THEN
+   		SELECT damount, camount, glcode, adjamt
+   		INTO   STRICT v_damount, v_camount, v_glcode, v_adjamt
+   		FROM   FINPOST
+   		WHERE  postcode::text = new.refcode;
+   
+   IF (COALESCE(v_camount,0)=0 AND COALESCE(v_adjamt,0) > COALESCE(v_damount,0)) 
+			OR (COALESCE(v_damount,0)=0 AND COALESCE(v_adjamt,0) > COALESCE(v_camount,0))
+	  	THEN 
+	  	   RAISE EXCEPTION 'FINPOST : (COALESCE(CAMOUNT,0)=0 AND COALESCE(ADJAMT,0) <=COALESCE(DAMOUNT,0)) OR (COALESCE(DAMOUNT,0)=0 AND COALESCE(ADJAMT,0) <=COALESCE(CAMOUNT,0)) is violated';
+		ELSEIF (COALESCE(v_damount,0) = 0 AND COALESCE(v_camount,0)=0)
+		THEN 
+	  	   RAISE EXCEPTION 'FINPOST : ((COALESCE(DAMOUNT,0) >= 0 AND COALESCE(CAMOUNT,0)=0)OR(COALESCE(DAMOUNT,0)=0 AND COALESCE(CAMOUNT,0) >= 0)) is violated';
+		ELSEIF v_GLCODE IS NULL
+		THEN 
+	  	   RAISE EXCEPTION 'FINPOST : GLCODE can not be NULL';
+        END IF;
+   END IF;
+   
+   IF new.MODULE_NAME = 'FINCOSTTAG'
+   THEN
+   		SELECT SUM(damount), SUM(camount)
+   		INTO   STRICT v_damount, v_camount
+   		FROM   FINCOSTTAG
+   		WHERE  entcode = new.refcode;
+   
+   		IF ((COALESCE(v_damount,0) < 0 AND COALESCE(v_camount,0)<>0)OR(COALESCE(v_damount,0)<>0 AND COALESCE(v_camount,0) < 0))
+	  	THEN 
+	  	   RAISE EXCEPTION 'FINCOSTTAG : ((COALESCE(DAMOUNT,0) >= 0 AND COALESCE(CAMOUNT,0)=0)OR(COALESCE(DAMOUNT,0)=0 AND COALESCE(CAMOUNT,0) >= 0)) is violated';
+        END IF;	  
+   END IF;
+   
+   IF new.MODULE_NAME = 'FINCOSTTAG_CHECK'
+   THEN
+   		SELECT fincosttag_damount, fincosttag_camount, finpost_damount, finpost_camount
+   		INTO   STRICT v_fincosttag_damount, v_fincosttag_camount, v_finpost_damount, v_finpost_camount
+   		FROM   FINCOSTTAG_CHECK
+   		WHERE  entcode = new.refcode;
+   
+   		IF (COALESCE(v_finpost_damount,0) - COALESCE(v_finpost_camount,0)) <> (COALESCE(v_fincosttag_damount,0) - COALESCE(v_fincosttag_camount,0))
+	  	THEN 
+	  	   RAISE EXCEPTION 'FINCOSTTAG_CHECK : (COALESCE(FINPOST_DAMOUNT,0) - COALESCE(FINPOST_CAMOUNT,0)) = (COALESCE(FINCOSTTAG_DAMOUNT,0) - COALESCE(FINCOSTTAG_CAMOUNT,0)) is violated';
+        END IF;	  
+   END IF;
+  
+  IF new.MODULE_NAME = 'FINPOST_CHECK'
+  THEN
+  		SELECT damount, camount
+  		INTO   STRICT v_damount, v_camount
+  		FROM   FINPOST_CHECK
+  		WHERE  entcode = new.refcode;
+  
+  		IF (COALESCE(v_damount,0) <>  COALESCE(v_camount,0))
+	  	THEN 
+	  	   RAISE EXCEPTION 'FINPOST_CHECK : COALESCE(DAMOUNT,0) = COALESCE(CAMOUNT,0)) is violated';
+       END IF;	  
+  END IF;
+   
+   IF new.MODULE_NAME = 'INVARTICLE'
+   THEN
+   		SELECT grpcode
+   		INTO   STRICT v_grpcode
+   		FROM   INVARTICLE
+   		WHERE  code::text = new.refcode;
+		
+		SELECT COUNT(*)
+		INTO v_count
+		FROM INVGRP
+		WHERE GRPCODE = v_grpcode;
+   
+   		IF v_count = 0
+	  	THEN 
+	  	   RAISE EXCEPTION 'INVARTICLE : Group Code is not present in Group Master';
+        END IF;	  
+   END IF;
+   
+   IF new.MODULE_NAME = 'PRDJOBDET'
+   THEN
+   		SELECT COALESCE(p_qty,0), COALESCE(qty,0), COALESCE(completed_qty,0), COALESCE(alternate_qty,0), COALESCE(cnl_qty,0)
+   		INTO   STRICT v_p_qty, v_qty, v_completed_qty, v_alternate_qty, v_cnl_qty
+		FROM   PRDJOBDET
+   		WHERE  code::text = new.refcode;
+   
+   		IF v_p_qty <> (v_qty-v_completed_qty-v_alternate_qty-v_cnl_qty)
+	  	THEN 
+	  	   RAISE EXCEPTION 'PRDJOBDET : (COALESCE(P_QTY,0)=(COALESCE(QTY,0)-COALESCE(COMPLETED_QTY,0)-COALESCE(ALTERNATE_QTY,0)-COALESCE(CNL_QTY,0)))';
+        END IF;	  
+   END IF;
+   
+   IF new.MODULE_NAME = 'PRDJOBBOM'
+   THEN
+   		SELECT COALESCE(issued_qty,0), COALESCE(return_qty,0), COALESCE(wastage_qty,0), COALESCE(consumed_qty,0)
+   		INTO   STRICT v_issued_qty, v_return_qty, v_wastage_qty, v_consumed_qty
+		FROM   PRDJOBBOM
+   		WHERE  code::text = new.refcode;
+   
+   		IF v_issued_qty < (v_return_qty+v_wastage_qty+v_consumed_qty)
+	  	THEN 
+	  	   RAISE EXCEPTION 'PRDJOBBOM : (COALESCE(ISSUED_QTY,0)>=COALESCE(RETURN_QTY,0) + COALESCE(WASTAGE_QTY,0) + COALESCE(CONSUMED_QTY,0))';
+        END IF;	  
+   END IF;
+   
+   IF TG_OP = 'INSERT' THEN
+        RETURN NEW;
+    ELSIF TG_OP = 'UPDATE' THEN
+        RETURN NEW;
+    END IF;
+EXCEPTION
+    WHEN NO_DATA_FOUND
+	THEN
+	   RETURN NEW;
+END;
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

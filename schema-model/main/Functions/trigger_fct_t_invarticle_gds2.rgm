@@ -1,0 +1,68 @@
+function "main"."trigger_fct_t_invarticle_gds2()" {
+  text = """
+
+DECLARE
+   V_SUB_COUNT   bigint;
+BEGIN
+   SELECT COUNT(1)
+     INTO STRICT V_SUB_COUNT
+     FROM GDS2_SUBSCR_EVENT
+    WHERE EVENT_ID IN ('article.added',
+                       'article.updated',
+                       'article.extinct.marked',
+                       'article.extinct.unmarked',
+                       'article.all.refresh',
+                       'article.deleted');
+
+   IF TG_OP = 'INSERT'
+   THEN
+      IF coalesce(V_SUB_COUNT, 0) > 0
+      THEN
+         CALL DB_PKG_GDS2_EVENT$TRACK('article.added', NEW.CODE);
+      END IF;
+   END IF;
+
+   IF TG_OP = 'UPDATE'
+   THEN
+      IF coalesce(V_SUB_COUNT, 0) > 0
+      THEN
+         CALL DB_PKG_GDS2_EVENT$TRACK('article.updated', NEW.CODE);
+      END IF;
+
+      IF     coalesce(V_SUB_COUNT, 0) > 0
+         AND coalesce(OLD.EXT, 'N') = 'N'
+         AND coalesce(NEW.EXT, 'N') = 'Y'
+      THEN
+         CALL DB_PKG_GDS2_EVENT$TRACK('article.extinct.marked', NEW.CODE);
+      END IF;
+
+      IF     coalesce(V_SUB_COUNT, 0) > 0
+         AND coalesce(OLD.EXT, 'N') = 'Y'
+         AND coalesce(NEW.EXT, 'N') = 'N'
+      THEN
+         CALL DB_PKG_GDS2_EVENT$TRACK('article.extinct.unmarked', NEW.CODE);
+      END IF;
+    END IF;
+     
+   IF TG_OP = 'DELETE'
+   THEN
+      IF coalesce(V_SUB_COUNT, 0) > 0
+      THEN
+         CALL DB_PKG_GDS2_EVENT$TRACK('article.deleted', OLD.CODE);
+      END IF;
+   END IF;
+
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

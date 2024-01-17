@@ -1,0 +1,202 @@
+function "main"."db_pkg_promotion_is_combo_buy_get_satisfy(bigint, character, bigint, character varying, character varying, bigint)" {
+  text = """
+
+DECLARE
+		
+		V_T_ICODE_ASSORTMENT T_ICODE[];
+		V_T_ICODE_POOL T_ICODE[];
+		V_T_QTY_ASSORTMENT T_QTY[];
+		V_T_QTY_POOL T_QTY[];
+		V_RES T_ICODE[];
+		
+		V_SEQ bigint;
+		V_POS bigint;
+		
+		V_COUNT BIGINT;
+			
+BEGIN
+		PERFORM set_config('db_pkg_promotion.g_mark', 'Checking Combo satisfy buy/get '||P_TYPE||' for promotion '||P_PROMONO, false);
+			
+		V_COUNT := 0;
+		LOOP
+			SELECT ARRAY_AGG(T)
+			STRICT INTO V_T_ICODE_ASSORTMENT
+			FROM (
+				  SELECT ICODE
+				  FROM (  SELECT ICODE, ROW_NUMBER() OVER() RN 
+						  FROM PROMO_ASSORTMENT_INCLUDE 
+						  WHERE ASSORTMENT_CODE=P_ASSORTMENTCODE
+						  )T1
+				  WHERE T1.RN>V_COUNT
+				  LIMIT 100
+				 )T;
+		    EXIT WHEN ARRAY_LOWER(V_T_ICODE_ASSORTMENT,1) IS NULL;
+			FOR I IN ARRAY_LOWER(V_T_ICODE_ASSORTMENT,1)..ARRAY_UPPER(V_T_ICODE_ASSORTMENT,1) 
+			LOOP
+				V_COUNT := V_COUNT + 1;
+			END LOOP;
+		END LOOP;
+		V_COUNT := 0;
+		LOOP
+			SELECT ARRAY_AGG(T)
+			STRICT INTO V_T_QTY_ASSORTMENT
+			FROM (
+				  SELECT QTY
+				  FROM (  SELECT coalesce(QTY,0) QTY, ROW_NUMBER() OVER() RN 
+						  FROM PROMO_ASSORTMENT_INCLUDE 
+						  WHERE ASSORTMENT_CODE=P_ASSORTMENTCODE
+					      )T1
+				  WHERE T1.RN>V_COUNT
+				  LIMIT 100
+				 )T;
+		    EXIT WHEN ARRAY_LOWER(V_T_QTY_ASSORTMENT,1) IS NULL;
+			FOR I IN ARRAY_LOWER(V_T_QTY_ASSORTMENT,1)..ARRAY_UPPER(V_T_QTY_ASSORTMENT,1) 
+			LOOP
+				V_COUNT := V_COUNT + 1;
+			END LOOP;
+		END LOOP;
+		
+		V_COUNT := 0;
+		LOOP
+			SELECT ARRAY_AGG(T)
+			STRICT INTO V_T_ICODE_ASSORTMENT
+			FROM (
+				  SELECT ICODE
+				  FROM (
+						 SELECT ICODE, ROW_NUMBER() OVER() RN 
+						 FROM GLOBAL_PROMO_RESOLVE 
+						 WHERE ((P_TYPE='B' AND PROMO_CODE=P_PROMOCODE) OR (P_TYPE='G' AND PROMO_CODE IS NULL))
+						 AND STATUS = 'N'
+						 AND	ICODE IN (SELECT ICODE FROM GLOBAL_PROMO_INVITEM WHERE IS_PROMO_APPLICABLE='Y')
+						 GROUP BY ICODE
+						 ORDER BY ICODE
+						 )T1
+				  WHERE RN>V_COUNT
+				  LIMIT 100
+				 )T;
+		    EXIT WHEN ARRAY_LOWER(V_T_ICODE_ASSORTMENT,1) IS NULL;
+			FOR I IN ARRAY_LOWER(V_T_ICODE_ASSORTMENT,1)..ARRAY_UPPER(V_T_ICODE_ASSORTMENT,1) 
+			LOOP
+				V_COUNT := V_COUNT + 1;
+			END LOOP;
+		END LOOP;
+		V_COUNT := 0;
+		LOOP
+			SELECT ARRAY_AGG(T)
+			STRICT INTO V_T_QTY_POOL
+			FROM (
+				  SELECT QTY
+				  FROM ( SELECT SUM(QTY) QTY, ROW_NUMBER() OVER() RN 
+						 FROM GLOBAL_PROMO_RESOLVE 
+						 WHERE ((P_TYPE='B' AND PROMO_CODE=P_PROMOCODE) OR (P_TYPE='G' AND PROMO_CODE IS NULL))
+						 AND STATUS = 'N'
+						 AND	ICODE IN (SELECT ICODE FROM GLOBAL_PROMO_INVITEM WHERE IS_PROMO_APPLICABLE='Y')
+						 GROUP BY ICODE
+						 ORDER BY ICODE
+						 )T1
+				  WHERE RN>V_COUNT
+				  LIMIT 100
+				 )T;
+		    EXIT WHEN ARRAY_LOWER(V_T_QTY_POOL,1) IS NULL;
+			--FOR I IN ARRAY_LOWER(V_T_QTY_POOL,1)..ARRAY_UPPER(V_T_QTY_POOL,1) 
+			LOOP
+				V_COUNT := V_COUNT + 1;
+				EXIT WHEN V_COUNT IS NOT NULL;
+			END LOOP;
+		END LOOP;
+		
+        PERFORM set_config('db_pkg_promotion.g_mark', 'Checking all Combo items are exists or not for promotion '||P_PROMONO, false);
+		
+		V_RES := ARRAY( SELECT unnest(V_T_ICODE_ASSORTMENT) EXCEPT SELECT unnest(V_T_ICODE_POOL));
+		IF V_RES IS NULL OR array_length(V_RES, 1) = 0  THEN
+			RETURN 'N';
+		ELSE
+			PERFORM set_config('db_pkg_promotion.g_mark', 'Checking all Combo items qty matched or not for promotion '||P_PROMONO, false);
+			IF ARRAY_LOWER(V_T_ICODE_ASSORTMENT,1) IS NOT NULL THEN
+				FOR I IN ARRAY_LOWER(V_T_ICODE_ASSORTMENT,1)..ARRAY_UPPER(V_T_ICODE_ASSORTMENT,1) LOOP
+					PERFORM set_config('db_pkg_promotion.g_mark', 'Getting array position while checking combo for promotion '||P_PROMONO, false);
+					V_POS := DB_PKG_PROMOTION_GET_ARRAY_POSITION(V_T_ICODE_ASSORTMENT[I].ICODE, V_T_ICODE_POOL);
+					IF coalesce(V_T_QTY_POOL[V_POS].QTY,0)>=V_T_QTY_ASSORTMENT[V_POS].QTY*P_SIMPLE_FACTOR THEN
+						SELECT	MIN(SEQ) INTO STRICT V_SEQ
+						FROM	GLOBAL_PROMO_RESOLVE
+						WHERE	ICODE=V_T_ICODE_ASSORTMENT(I)
+						AND	STATUS='N'
+						AND	((P_TYPE='B' AND PROMO_CODE=P_PROMOCODE) OR (P_TYPE='G' AND PROMO_CODE IS NULL));
+
+						PERFORM set_config('db_pkg_promotion.g_mark', 'Updating status for items which satisy qty while checking combo', false);
+
+						UPDATE	GLOBAL_PROMO_RESOLVE
+						SET	STATUS='T',
+							BUY_GET_STATUS=P_TYPE,
+							CURRENTLY_PROCESSING='Y',
+							SALPROMO_ITEM_STATUS=CASE WHEN P_TYPE='G' THEN 'G' ELSE NULL END,
+							PROMO_CODE=P_PROMOCODE,
+							SALPROMO_NO=P_PROMONO,
+							SALPROMO_NAME=P_PROMONAME
+						WHERE	STATUS='N'
+						AND	ICODE=V_T_ICODE_ASSORTMENT(I)
+						AND	((P_TYPE='B' AND PROMO_CODE=P_PROMOCODE) OR (P_TYPE='G' AND PROMO_CODE IS NULL))
+						AND	SEQ BETWEEN V_SEQ AND V_SEQ+(V_T_QTY_ASSORTMENT(I)*P_SIMPLE_FACTOR)-1;
+					ELSE
+						PERFORM set_config('db_pkg_promotion.g_mark', 'Updating reset for those items while checking combo.', false);
+						UPDATE	GLOBAL_PROMO_RESOLVE
+						SET	STATUS='N',
+							BUY_GET_STATUS = NULL,
+							CURRENTLY_PROCESSING='N',
+							SALPROMO_ITEM_STATUS = NULL,
+							PROMO_CODE=CASE WHEN P_TYPE='B' THEN P_PROMOCODE ELSE NULL END,
+							SALPROMO_NO=CASE WHEN P_TYPE='B' THEN P_PROMONO ELSE NULL END,
+							SALPROMO_NAME=CASE WHEN P_TYPE='B' THEN P_PROMONAME ELSE NULL END
+						WHERE	STATUS='T'
+						AND	BUY_GET_STATUS=P_TYPE
+						AND	PROMO_CODE=P_PROMOCODE;
+						RETURN 'N';
+					END IF;
+				END LOOP;
+			END IF;
+			RETURN 'Y';
+		END IF;
+	END;
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_assortmentcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_type
+      type = character
+      mode = IN
+    }
+
+    {
+      name = p_promocode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_promono
+      type = character varying
+      mode = IN
+    }
+
+    {
+      name = p_promoname
+      type = character varying
+      mode = IN
+    }
+
+    {
+      name = p_simple_factor
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

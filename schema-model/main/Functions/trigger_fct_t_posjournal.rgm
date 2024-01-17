@@ -1,0 +1,219 @@
+function "main"."trigger_fct_t_posjournal()" {
+  text = """
+
+DECLARE
+  c1 RECORD;
+   v_cccode                fincosttag.code%TYPE;
+   v_mop_amt               double precision;
+   v_mop_glcode_postcode   finpost.postcode%TYPE;
+   v_debtor_amt            double precision;
+   v_admsite_code_owner    finpost.admsite_code_owner%TYPE;
+   v_sum_diffamt                      double precision;
+   v_gl_code                          bigint;
+   --START REV : 001
+   v_entcount                         bigint;
+   v_ent_chk_count                    bigint;
+  --END REV : 001
+BEGIN
+  BEGIN
+
+/********************************************************************************************************************************
+     REV NO     OWNER           DATE         DESCRIPTION
+     ---------  ----------      -----------  ---------------------------------------------------------------------
+     REV : 001  ANINDYA         19/05/2017   (TFS ID : ) Multi OU related changes
+     REV : 003  MOUSUMI         06/05/2018   (TFS ID : ) AUTO SETTLEMENT
+     REV : 004  ANINDYA         10/03/2022   (TFS ID : ZWING Coonnected App Integration) 
+**********************************************************************************************************************************/
+   IF coalesce(NEW.status, 'O') = 'C'
+   THEN
+
+      SELECT default_ho_site
+           INTO STRICT v_admsite_code_owner
+           FROM admou
+          WHERE code = NEW.admou_code;
+
+      -- Debtor Ledger Posting
+      IF NEW.debtor_glcode IS NOT NULL
+      THEN
+         SELECT SUM(coalesce(pd.amount, 0)) amount
+           INTO STRICT v_debtor_amt
+           FROM posjournal_detail pd, psite_mop m
+          WHERE pd.psite_mop_code = m.code
+            --  START REV : 003 
+            --AND (m.TYPE IN ('CSH', 'EDC', 'VCH') or (m.TYPE IN ('CNI', 'CNR') AND pd.glcode IS NULL))
+            -- END REV :  003
+            AND pd.posjournal_code = NEW.code
+            AND glcode IS NULL;
+         INSERT INTO finpost(postcode, entcode,
+                      entno, entdt, enttype,
+                      glcode, slcode,
+                      damount,
+                      camount,
+                      ycode, scheme_docno, nartext, release_status,
+                      admsite_code_owner, ref_admsite_code, chgappamt,
+                      chgamt, ecode, TIME, last_access_ecode,
+                      last_access_time, release_ecode, release_time,admou_code
+                     )
+              VALUES (nextval('erp01'), NEW.code::varchar,
+                      --NEW.scheme_docno::varchar, 
+					  COALESCE(NEW.INTGREFNO, (NEW.scheme_docno::varchar)),
+					  NEW.docdate, 'PJN',
+                      NEW.debtor_glcode, NEW.customer_slcode,
+                      CASE
+                         WHEN coalesce(v_debtor_amt, 0) > 0
+                            THEN coalesce(v_debtor_amt, 0)
+                         ELSE NULL
+                      END,
+                      CASE
+                         WHEN coalesce(v_debtor_amt, 0) < 0
+                            THEN ABS(coalesce(v_debtor_amt, 0))
+                         ELSE NULL
+                      END,
+                      NEW.ycode, NEW.scheme_docno, NEW.remarks, 'P',
+                      v_admsite_code_owner, NEW.admsite_code, NULL,
+                      NULL, 1, statement_timestamp(), NULL,
+                      NULL, 1, statement_timestamp(),NEW.admou_code
+                     );
+      END IF;
+
+      -- MOP Related Posting
+      FOR c1 IN (SELECT   glcode, slcode, SUM(coalesce(amount, 0)) amount,
+                          coalesce(gl_cc_appl, 'N') costapp
+                     FROM posjournal_detail
+                    WHERE posjournal_code = NEW.code AND glcode IS NOT NULL
+                 GROUP BY glcode, slcode, coalesce(gl_cc_appl, 'N'))
+      LOOP
+         INSERT INTO finpost(postcode, entcode,
+                      entno, entdt, enttype,
+                      glcode, slcode,
+                      damount,
+                      camount,
+                      ycode, scheme_docno, nartext, release_status,
+                      admsite_code_owner, ref_admsite_code, chgappamt,
+                      chgamt, ecode, TIME, last_access_ecode,
+                      last_access_time, release_ecode, release_time,admou_code
+                     )
+              VALUES (nextval('erp01'), NEW.code::varchar,
+                      --NEW.scheme_docno::varchar, 
+					  COALESCE(NEW.INTGREFNO, (NEW.scheme_docno::varchar)),
+					  NEW.docdate, 'PJN',
+                      c1.glcode, c1.slcode,
+                      CASE
+                         WHEN coalesce(c1.amount, 0) > 0
+                            THEN coalesce(ABS(c1.amount), 0)
+                         ELSE NULL
+                      END,
+                      CASE
+                         WHEN coalesce(c1.amount, 0) < 0
+                            THEN ABS(coalesce(ABS(c1.amount), 0))
+                         ELSE NULL
+                      END,
+                      NEW.ycode, NEW.scheme_docno, NEW.remarks, 'P',
+                      v_admsite_code_owner, NEW.admsite_code, NULL,
+                      NULL, 1, statement_timestamp(), NULL,
+                      NULL, 1, statement_timestamp(),NEW.admou_code
+                     )
+           RETURNING postcode
+                INTO v_mop_glcode_postcode;
+
+         IF v_mop_glcode_postcode IS NOT NULL AND coalesce(c1.costapp, 'N') = 'Y'
+         THEN
+            INSERT INTO fincosttag(entcode, entno,
+                         entdt, enttype, glcode, slcode, costcode,
+                         damount,
+                         camount,
+                         ycode, code, postcode,
+                         admsite_code, ref_admsite_code,admou_code
+                        )
+                 VALUES (NEW.code::varchar, NEW.scheme_docno::varchar,
+                         NEW.docdate, 'PJN', c1.glcode, c1.slcode, NULL,
+                         CASE
+                            WHEN coalesce(c1.amount, 0) > 0
+                               THEN coalesce(ABS(c1.amount), 0)
+                            ELSE NULL
+                         END,
+                         CASE
+                            WHEN coalesce(c1.amount, 0) < 0
+                               THEN coalesce(ABS(c1.amount), 0)
+                            ELSE NULL
+                         END,
+                         NEW.ycode, v_cccode, v_mop_glcode_postcode,
+                         NEW.admsite_code, NEW.admsite_code,NEW.admou_code
+                        );
+         END IF;
+      END LOOP;
+
+      DELETE      FROM fincosttag
+            WHERE entcode = OLD.code::varchar
+              AND enttype = 'PJN'
+              AND coalesce(damount, 0) = 0
+              AND coalesce(camount, 0) = 0;
+
+      DELETE FROM finpost
+            WHERE entcode = OLD.code::varchar
+              AND enttype = 'PJN'
+              AND coalesce(damount, 0) = 0
+              AND coalesce(camount, 0) = 0;
+
+          --STARt REV 001
+    SELECT   count(1)
+        INTO STRICT v_entcount
+        FROM finpost
+       WHERE enttype = 'PJN' AND entcode = NEW.CODE::varchar;
+
+    IF v_entcount = 2  THEN
+        Select count(1) into STRICT v_ent_chk_count from (
+        SELECT glcode,slcode,count(1)
+        FROM finpost
+       WHERE enttype = 'PJN' AND entcode = NEW.CODE::varchar
+       group by glcode,slcode
+       ) alias2;
+
+       if v_ent_chk_count = 1 Then
+        DELETE FROM FINCOSTTAG
+         WHERE  ENTCODE = NEW.CODE::varchar AND ENTTYPE = 'PJN';
+         -- END REV : 004
+         DELETE FROM finpost
+               WHERE entcode = NEW.code::varchar AND enttype = 'PJN';
+       end if;
+
+    END IF;
+
+  --END REV 001
+   END IF;
+
+      -- START REV : 002
+        IF TG_OP = 'DELETE' THEN
+
+         DELETE FROM FINCOSTTAG
+         WHERE  ENTCODE = coalesce(OLD.CODE::varchar,NEW.CODE::varchar) AND ENTTYPE = 'PJN';
+
+         DELETE FROM finpost
+               WHERE entcode = coalesce(OLD.CODE::varchar,NEW.CODE::varchar) AND enttype = 'PJN';
+
+        END IF;
+   -- END REV : 002
+EXCEPTION
+   WHEN OTHERS
+   THEN
+      CALL erraudit(USER, 'T_POSJOURNAL', SQLSTATE::varchar, SQLERRM);
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED'
+                               || SQLSTATE::varchar
+                               || '-'
+                               || SQLERRM
+                               USING ERRCODE = '45001';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

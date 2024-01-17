@@ -1,0 +1,640 @@
+procedure "main"."p_psite_grt_ins(text, bigint, bigint, bigint, bigint, text, timestamp without time zone, text, text, double, double, double, bigint, bigint, text, bigint, text, text, text, text, bigint, bigint, text, text, text, text, text, text, text, bigint, bigint, bigint, text, timestamp without time zone, timestamp without time zone, text, text, text, text, text, text, text, text, text, text, bigint, bigint, bigint, bigint, bigint, timestamp without time zone, timestamp without time zone, timestamp without time zone, timestamp without time zone, timestamp without time zone, timestamp without time zone, text, timestamp without time zone, text, timestamp without time zone, text)" {
+  text = """
+
+DECLARE
+
+   /********************************************************************************************************************************
+       REV NO         OWNER         DATE           DESCRIPTION
+       ---------     -----------    -----------    ---------------------------------------------------------------------
+       REV : 001     ANINDYA        28-APR-2017    (TFS ID : 26844) Populate ADMOU_CODE and REPLN_ADMOU_CODE against specific ADMSITE_CODE
+                                                                     and REPLN_ADMSITE_CODE respectively instead of hard coded 1
+       REV : 002     Siddhartha     09-JUN-2017    (TFS ID : 29779) GST Related Changes
+       REV : 003     SIDDHARTHA     16-MAY-2019    (TFS ID : 15950) Changes in Store GRT & GRC at HO
+     *********************************************************************************************************************************/
+   v_slcode                      bigint;    -- (Customer) (SLCODE OF ADMSITE )
+   v_admou_code                  bigint;
+   -- OU LOCAL VALUE ( OU CODE AGAINST STORE_LOCCODE OF ADMSITE)
+   v_psite_transit_loccode       bigint;         -- LOCAL VALUE (FROM ADMSITE)
+   v_store_loccode               bigint;         -- LOCAL VALUE (FROM ADMSITE)
+   v_issecondary                 CHAR;           -- LOCAL VALUE (FROM ADMSITE)
+   v_ycode                       bigint;
+   --LOCAL VALUE (YCODE FROM ADMYEAR AGAINST DOCDT
+   v_doc                         timestamp;            -- LOCAL VALUE (SYSTEM DATE)
+   v_fromsitetype                varchar(15);
+   v_tositetype                  varchar(15);
+   v_consignment_trnsfr_glcode   bigint;
+   v_consignment_trnsfr_slcode   bigint;
+   v_finsl_transit_glcode        bigint;
+   v_finsl_transit_slcode        bigint;
+   v_admou_transit_glcode        bigint;
+   v_admou_transit_slcode        bigint;
+   v_transit_glcode              bigint;
+   v_transit_slcode              bigint;
+   v_transferout_glcode          bigint;
+   v_transferout_slcode          bigint;
+   v_ou_transferout_glcode       bigint;
+   v_ou_transferout_slcode       bigint;
+   -- START REV : 001
+   v_repln_admou_code            bigint;
+
+BEGIN
+   v_doc := clock_timestamp();
+   SELECT ycode
+     INTO STRICT v_ycode
+     FROM admyear
+    WHERE p_docdt BETWEEN dtfr AND dtto;
+   -- START REV : 001
+   SELECT admou_code
+     INTO STRICT v_admou_code
+     FROM ADMSITE
+    WHERE code = p_admsite_code;
+   SELECT admou_code
+     INTO STRICT v_repln_admou_code
+     FROM ADMSITE
+    WHERE code = p_repln_admsite_code;
+   --END REV : 001
+   SELECT s.slcode,
+          s.store_loccode,
+          s.psite_transit_loccode,
+          s.issecondary
+     INTO STRICT v_slcode,
+          v_store_loccode,
+          v_psite_transit_loccode,
+          v_issecondary
+     FROM admsite s
+    WHERE s.code = p_admsite_code;
+   SELECT s.sitetype,
+          f.consignment_trnsfr_glcode,
+          f.consignment_trnsfr_slcode,
+          ou.transferout_glcode,
+          ou.transferout_slcode
+     INTO STRICT v_fromsitetype,
+          v_consignment_trnsfr_glcode,
+          v_consignment_trnsfr_slcode,
+          v_ou_transferout_glcode,
+          v_ou_transferout_slcode
+     FROM admsite s
+LEFT OUTER JOIN finsl f ON (s.slcode = f.slcode)
+LEFT OUTER JOIN admou ou ON (s.admou_code = ou.code)
+WHERE s.code = p_admsite_code;
+   SELECT s.sitetype,
+          f.transit_glcode,
+          f.transit_slcode,
+          ou.transit_glcode,
+          ou.transit_slcode
+     INTO STRICT v_tositetype,
+          v_finsl_transit_glcode,
+          v_finsl_transit_slcode,
+          v_admou_transit_glcode,
+          v_admou_transit_slcode
+     FROM admsite s
+LEFT OUTER JOIN finsl f ON (s.slcode = f.slcode)
+LEFT OUTER JOIN admou ou ON (s.admou_code = ou.code)
+WHERE s.code = p_repln_admsite_code;
+   IF v_fromsitetype IN ('MS-CO-CM')
+   THEN
+      v_transferout_glcode := v_consignment_trnsfr_glcode;
+      v_transferout_slcode := v_consignment_trnsfr_slcode;
+   ELSIF v_fromsitetype IN ('MS-OO-CM')
+   THEN
+      v_transferout_glcode := v_ou_transferout_glcode;
+      v_transferout_slcode := v_ou_transferout_slcode;
+   END IF;
+   IF v_tositetype IN ('MS-CO-CM')
+   THEN
+      v_transit_glcode := v_finsl_transit_glcode;
+      v_transit_slcode := v_finsl_transit_slcode;
+   ELSIF v_tositetype IN ('OS-OO-CM', 'MS-OO-CM')
+   THEN
+      v_transit_glcode := v_admou_transit_glcode;
+      v_transit_slcode := v_admou_transit_slcode;
+   END IF;
+   INSERT INTO psite_grt(code,
+                          slcode,
+                          admsite_code,
+                          admou_code,
+                          repln_admou_code,
+                          docno,
+                          docdt,
+                          store_loccode,
+                          psite_intransit_loccode,
+                          psite_stockpoint_code,
+                          reason,
+                          remarks,
+                          basicamt,
+                          grsamt,
+                          netamt,
+                          issecondary,
+                          ycode,
+                          doc,
+                          transferout_glcode,
+                          transferout_slcode,
+                          transit_glcode,
+                          transit_slcode,
+                          repln_admsite_code,
+                          formapplicable,
+                          fintradegrp_code,
+                          return_rate_basis,
+                          return_pricelist_code,
+                          pricetype,
+                          discountmode,
+                          includetaxindiscount,
+                          discountbasis,
+                          discountfactor,
+                          multiplesof,
+                          roundlimit,
+                          tax_rate_basis,
+                          owner_gstin_no,
+                          owner_gstin_state_code,
+                          cp_gstin_no,
+                          cp_gstin_state_code,
+                          gstdocno,
+                          gstdocseq,
+                          terminalid,
+                          psite_docscheme_code,
+                          ewaybillno,
+                          ewaybillgeneratedon,
+                          ewaybillvalidupto,
+                          udfstring1,
+                          udfstring2,
+                          udfstring3,
+                          udfstring4,
+                          udfstring5,
+                          udfstring6,
+                          udfstring7,
+                          udfstring8,
+                          udfstring9,
+                          udfstring10,
+                          udfnum01,
+                          udfnum02,
+                          udfnum03,
+                          udfnum04,
+                          udfnum05,
+                          udfdate01,
+                          udfdate02,
+                          udfdate03,
+                          udfdate04,
+                          udfdate05,
+                          createdon,
+                          createdby,
+                          lastmodifiedon,
+                          lastmodifiedby,
+                          closedon,
+                          closedby
+                          )
+        VALUES (p_sitecuid || '-' || p_grtdocid :: text,
+                v_slcode,
+                p_admsite_code,
+                -- START REV : 001
+                --1,
+                v_admou_code,
+                --1,
+                v_repln_admou_code,
+                -- END REV : 001
+                p_docno,
+                p_docdt,
+                v_store_loccode,
+                v_psite_transit_loccode,
+                p_sitecuid || '-' || p_stockpointid :: text,
+                p_reason,
+                p_remarks,
+                p_basicamt,
+                p_grossamt,
+                p_netamt,
+                v_issecondary,
+                v_ycode,
+                v_doc,
+                v_transferout_glcode,
+                v_transferout_slcode,
+                v_transit_glcode,
+                v_transit_slcode,
+                p_repln_admsite_code,
+                p_formapplicable,
+                p_tradegroupid,
+                p_returnratebasis,
+                p_returnpricelistcode,
+                p_pricetype,
+                p_discountmode,
+                p_includetaxindiscount,
+                p_discountbasis,
+                p_discountfactor,
+                p_multiplesof,
+                p_roundlimit,
+                p_taxratebasis,
+                p_ownergstinno,
+                p_ownergstinstatecode,
+                p_cpgstinno,
+                p_cpgstinstatecode,
+                p_gstdocno,
+                p_gstdocseq,
+                p_terminalid,
+                p_docschemeid,
+                p_ewaybillno,
+                p_ewaybillgeneratedon,
+                p_ewaybillvalidupto,
+                p_udfstring1,
+                p_udfstring2,
+                p_udfstring3,
+                p_udfstring4,
+                p_udfstring5,
+                p_udfstring6,
+                p_udfstring7,
+                p_udfstring8,
+                p_udfstring9,
+                p_udfstring10,
+                p_udfnum01,
+                p_udfnum02,
+                p_udfnum03,
+                p_udfnum04,
+                p_udfnum05,
+                p_udfdate01,
+                p_udfdate02,
+                p_udfdate03,
+                p_udfdate04,
+                p_udfdate05,
+                p_createdon,
+                p_createdby,
+                p_lastmodifiedon,
+                p_lastmodifiedby,
+                p_closedon,
+                p_closedby
+                );
+   IF v_tositetype LIKE 'MS%'
+   THEN
+     CALL db_pkg_npos_event.track(p_repln_admsite_code,
+                               'AUTOTRANSFER',
+                               p_sitecuid || '-' || p_grtdocid :: text);
+   END IF;
+END;
+"""
+  arguments = <
+    {
+      name = p_sitecuid
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_grtdocid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_admsite_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_repln_admsite_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_stockpointid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_docno
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_docdt
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_reason
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_remarks
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_basicamt
+      type = double precision
+      mode = IN
+    }
+
+    {
+      name = p_grossamt
+      type = double precision
+      mode = IN
+    }
+
+    {
+      name = p_netamt
+      type = double precision
+      mode = IN
+    }
+
+    {
+      name = p_formapplicable
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_tradegroupid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_returnratebasis
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_returnpricelistcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_pricetype
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_discountmode
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_includetaxindiscount
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_discountbasis
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_discountfactor
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_multiplesof
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_roundlimit
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_taxratebasis
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_ownergstinno
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_ownergstinstatecode
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_cpgstinno
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_cpgstinstatecode
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_gstdocno
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_gstdocseq
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_terminalid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_docschemeid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_ewaybillno
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_ewaybillgeneratedon
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_ewaybillvalidupto
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_udfstring1
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_udfstring2
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_udfstring3
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_udfstring4
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_udfstring5
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_udfstring6
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_udfstring7
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_udfstring8
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_udfstring9
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_udfstring10
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_udfnum01
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_udfnum02
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_udfnum03
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_udfnum04
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_udfnum05
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_udfdate01
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_udfdate02
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_udfdate03
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_udfdate04
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_udfdate05
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_createdon
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_createdby
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_lastmodifiedon
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_lastmodifiedby
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_closedon
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_closedby
+      type = text
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

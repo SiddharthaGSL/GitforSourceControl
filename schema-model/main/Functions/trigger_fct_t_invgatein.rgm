@@ -1,0 +1,109 @@
+function "main"."trigger_fct_t_invgatein()" {
+  text = """
+
+-- START REV : 002
+DECLARE
+   
+   V_SID                        bigint;
+   V_PROGRAM                    varchar(50);
+-- END REV : 002
+BEGIN
+  BEGIN
+   /*********************************************************************************
+   REV : 002   MOUSUMI    16/06/2020     MIGRATION RELATED CHANGES
+   *******************************************************************************/
+   -- START REV : 002
+   SELECT PG_BACKEND_PID() INTO STRICT V_SID;
+    SELECT APPLICATION_NAME INTO STRICT V_PROGRAM FROM PG_STAT_ACTIVITY WHERE PID=V_SID;
+    
+
+   -- END REV : 002
+   IF TG_OP = 'INSERT'
+   THEN
+      IF coalesce(NEW.ENTRY_SOURCE, 'XX') <> 'WEB'
+      THEN                                                        -- REV : 002
+         IF NEW.LGTCODE IS NOT NULL
+         THEN
+            UPDATE INVLGTNOTE
+               SET GATEINQTY = coalesce(GATEINQTY, 0) + coalesce(NEW.GATEINQTY, 0),
+                   COMPLETION_TIME =
+                      CASE
+                         WHEN coalesce(QTY1, 0) <> 0 AND QTY1 = GATEINQTY
+                         THEN
+                            statement_timestamp()
+                         ELSE
+                            COMPLETION_TIME
+                      END
+             WHERE LGTCODE = NEW.LGTCODE;
+         END IF;
+      END IF;
+   END IF;
+
+   IF TG_OP = 'UPDATE'
+   THEN
+      IF     coalesce(NEW.ENTRY_SOURCE, 'XX') <> 'WEB'
+AND not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+      THEN                                                        -- REV : 002
+         IF OLD.lgtcode IS NOT NULL
+         THEN
+            UPDATE INVLGTNOTE
+               SET GATEINQTY = coalesce(GATEINQTY, 0) - coalesce(OLD.GATEINQTY, 0),
+                   completion_time =
+                      CASE
+                         WHEN     coalesce(qty1, 0) <> 0
+                              AND qty1 =
+                                     (GATEINQTY - coalesce(OLD.GATEINQTY, 0))
+                         THEN
+                            statement_timestamp()
+                         ELSE
+                            NULL
+                      END
+             WHERE lgtcode = OLD.lgtcode;
+         END IF;
+
+         IF NEW.lgtcode IS NOT NULL
+         THEN
+            UPDATE INVLGTNOTE
+               SET GATEINQTY = coalesce(GATEINQTY, 0) + coalesce(NEW.GATEINQTY, 0),
+                   completion_time =
+                      CASE
+                         WHEN     coalesce(qty1, 0) <> 0
+                              AND qty1 =
+                                     (GATEINQTY + coalesce(NEW.GATEINQTY, 0))
+                         THEN
+                            statement_timestamp()
+                         ELSE
+                            completion_time
+                      END
+             WHERE lgtcode = NEW.lgtcode;
+         END IF;
+      END IF;
+   END IF;
+
+   IF TG_OP = 'DELETE'
+   THEN
+      -- STRTA REV : 002
+IF not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+      THEN
+         RAISE EXCEPTION 'del_from_wrong_application' USING ERRCODE = '50001';
+      END IF;
+   -- END REV : 002
+   END IF;
+EXCEPTION
+   WHEN SQLSTATE '50001' THEN
+      RAISE EXCEPTION '%', 'T_INVGATEIN == >> Deletion from other application except GINESYS WEB not allowed.' USING ERRCODE = '45112';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

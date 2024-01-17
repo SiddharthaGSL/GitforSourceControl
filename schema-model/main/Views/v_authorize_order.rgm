@@ -1,0 +1,265 @@
+view "main"."v_authorize_order" {
+  text = """-
+SELECT m.ordcode,
+    m.ordno,
+    m.scheme_docno,
+    m.orddt,
+    m.pcode,
+    v.slname AS vendor,
+    v.bctname AS vendor_city,
+    m.whether_consignment,
+        CASE
+            WHEN (m.whether_consignment = 'Y'::bpchar) THEN 'Consignment'::text
+            ELSE 'Non-consignment'::text
+        END AS order_type,
+        CASE
+            WHEN (m.ordcmpcode IS NULL) THEN NULL::text
+            ELSE (((ocmp.shrtname)::text || ' - '::text) || (ocmp.cmpinit)::text)
+        END AS ord_company_name,
+    m.ordcmpcode,
+        CASE
+            WHEN (m.desccmpcode IS NULL) THEN NULL::text
+            ELSE (((dcmp.shrtname)::text || ' - '::text) || (dcmp.cmpinit)::text)
+        END AS des_company_name,
+    m.desccmpcode,
+    sum(COALESCE(d.ordqty, (0)::numeric)) AS tot_ordqty,
+    sum((COALESCE(d.ordqty, (0)::numeric) * COALESCE(d.rate, (0)::numeric))) AS order_value,
+    m.authorcode,
+        CASE
+            WHEN (m.authorcode IS NULL) THEN 'Pending'::text
+            ELSE 'Authorized'::text
+        END AS "authorization",
+        CASE
+            WHEN (m.template_flg = 'Y'::bpchar) THEN 'Template'::text
+            ELSE 'General'::text
+        END AS template_flg,
+    m.dtfr AS valid_from,
+    m.dtto AS valid_till,
+    m.ecode,
+    m.admou_code,
+    m.netamt,
+    m.mrchndsrcode,
+    mr.fname AS mrchndsrname,
+    sum((COALESCE(i.mrp, (0)::numeric) * COALESCE(d.ordqty, (0)::numeric))) AS mrpvalue,
+    (((sum((COALESCE(i.mrp, (0)::numeric) * COALESCE(d.ordqty, (0)::numeric))) /
+        CASE
+            WHEN (COALESCE(m.netamt, (0)::numeric) = (0)::numeric) THEN (1)::numeric
+            ELSE COALESCE(m.netamt, (0)::numeric)
+        END) - (1)::numeric) * (100)::numeric) AS markup_perc,
+    (((1)::numeric - (
+        CASE
+            WHEN (COALESCE(m.netamt, (0)::numeric) = (0)::numeric) THEN (1)::numeric
+            ELSE COALESCE(m.netamt, (0)::numeric)
+        END /
+        CASE
+            WHEN (sum((COALESCE(i.mrp, (0)::numeric) * COALESCE(d.ordqty, (0)::numeric))) = (0)::numeric) THEN (1)::numeric
+            ELSE sum((COALESCE(i.mrp, (0)::numeric) * COALESCE(d.ordqty, (0)::numeric)))
+        END)) * (100)::numeric) AS markdown_perc,
+    (sum((COALESCE(d.rate, (0)::numeric) * COALESCE(d.ordqty, (0)::numeric))) / sum(COALESCE(d.ordqty, (0)::numeric))) AS avg_cost,
+    (sum((COALESCE(i.mrp, (0)::numeric) * COALESCE(d.ordqty, (0)::numeric))) / sum(COALESCE(d.ordqty, (0)::numeric))) AS avg_rsp,
+        CASE
+            WHEN (m.dtfr IS NULL) THEN NULL::interval
+            ELSE (date_trunc('day'::text, m.dtfr) - date_trunc('day'::text, m.orddt))
+        END AS lead_days,
+    m.admsite_code,
+    'P'::text AS seq,
+    m.stat AS status,
+    m.enable_lgt_track,
+    m.shipstatus,
+    m.set_applicable
+   FROM main.finsl v,
+    main.invitem i,
+    main.purorddet d,
+    (((main.purordmain m
+     LEFT JOIN main.admcmp ocmp ON ((m.ordcmpcode = ocmp.cmpcode)))
+     LEFT JOIN main.admcmp dcmp ON ((m.desccmpcode = dcmp.cmpcode)))
+     LEFT JOIN main.hrdemp mr ON ((m.mrchndsrcode = mr.ecode)))
+  WHERE ((m.ordcode = d.ordcode) AND (m.pcode = v.slcode) AND ((d.icode)::text = (i.icode)::text) AND (COALESCE(d.rcqty, (0)::numeric) = (0)::numeric) AND (COALESCE(d.ordqty, (0)::numeric) > COALESCE(d.cnlqty, (0)::numeric)))
+  GROUP BY m.ordcode, m.ordno, m.scheme_docno, m.orddt, m.pcode, v.slname, v.bctname, m.whether_consignment,
+        CASE
+            WHEN (m.whether_consignment = 'Y'::bpchar) THEN 'Consignment'::text
+            ELSE 'Non-consignment'::text
+        END,
+        CASE
+            WHEN (m.ordcmpcode IS NULL) THEN NULL::text
+            ELSE (((ocmp.shrtname)::text || ' - '::text) || (ocmp.cmpinit)::text)
+        END, m.ordcmpcode,
+        CASE
+            WHEN (m.desccmpcode IS NULL) THEN NULL::text
+            ELSE (((dcmp.shrtname)::text || ' - '::text) || (dcmp.cmpinit)::text)
+        END, m.desccmpcode, m.authorcode,
+        CASE
+            WHEN (m.authorcode IS NULL) THEN 'Pending'::text
+            ELSE 'Authorized'::text
+        END,
+        CASE
+            WHEN (m.template_flg = 'Y'::bpchar) THEN 'Template'::text
+            ELSE 'General'::text
+        END, m.dtfr, m.dtto, m.ecode, m.admou_code, m.netamt, m.mrchndsrcode, mr.fname, m.admsite_code, m.stat, m.enable_lgt_track, m.shipstatus, m.set_applicable
+UNION ALL
+ SELECT m.ordcode,
+    m.ordno,
+    m.scheme_docno,
+    m.orddate AS orddt,
+    m.pcode,
+    v.slname AS vendor,
+    v.bctname AS vendor_city,
+    NULL::bpchar AS whether_consignment,
+    NULL::text AS order_type,
+    NULL::text AS ord_company_name,
+    0 AS ordcmpcode,
+    NULL::text AS des_company_name,
+    0 AS desccmpcode,
+    NULL::numeric AS tot_ordqty,
+    sum(COALESCE(d.amount, (0)::numeric)) AS order_value,
+    m.authorcode,
+        CASE
+            WHEN (m.authorcode IS NULL) THEN 'Pending'::text
+            ELSE 'Authorized'::text
+        END AS "authorization",
+    NULL::text AS template_flg,
+    NULL::timestamp without time zone AS valid_from,
+    NULL::timestamp without time zone AS valid_till,
+    m.ecode,
+    m.admou_code,
+    m.netamt,
+    0 AS mrchndsrcode,
+    NULL::character varying AS mrchndsrname,
+    0 AS mrpvalue,
+    0 AS markup_perc,
+    0 AS markdown_perc,
+    NULL::numeric AS avg_cost,
+    NULL::numeric AS avg_rsp,
+    NULL::interval AS lead_days,
+    m.admsite_code_owner AS admsite_code,
+    'S'::text AS seq,
+    m.status,
+    NULL::numeric AS enable_lgt_track,
+    NULL::numeric AS shipstatus,
+    NULL::bpchar AS set_applicable
+   FROM main.pursrvordmain m,
+    main.pursrvorddet d,
+    main.finsl v,
+    main.purservice i
+  WHERE ((m.ordcode = d.pursrvordmain_code) AND (m.pcode = v.slcode) AND (d.servicecode = i.servicecode))
+  GROUP BY m.ordcode, m.ordno, m.scheme_docno, m.orddate, m.pcode, v.slname, v.bctname, m.authorcode,
+        CASE
+            WHEN (m.authorcode IS NULL) THEN 'Pending'::text
+            ELSE 'Authorized'::text
+        END, m.ecode, m.admou_code, m.netamt, m.admsite_code_owner, m.status;
+"""
+  columns = (
+    column "ordcode" {
+      type = "bigint"
+    }
+    column "ordno" {
+      type = "bigint"
+    }
+    column "scheme_docno" {
+      type = "character varying(25)"
+    }
+    column "orddt" {
+      type = "timestamp(0) without time zone"
+    }
+    column "pcode" {
+      type = "bigint"
+    }
+    column "vendor" {
+      type = "character varying(100)"
+    }
+    column "vendor_city" {
+      type = "character varying(100)"
+    }
+    column "whether_consignment" {
+      type = bpchar
+    }
+    column "order_type" {
+      type = text
+    }
+    column "ord_company_name" {
+      type = text
+    }
+    column "ordcmpcode" {
+      type = "bigint"
+    }
+    column "des_company_name" {
+      type = text
+    }
+    column "desccmpcode" {
+      type = "bigint"
+    }
+    column "tot_ordqty" {
+      type = "numeric"
+    }
+    column "order_value" {
+      type = "numeric"
+    }
+    column "authorcode" {
+      type = "bigint"
+    }
+    column "authorization" {
+      type = text
+    }
+    column "template_flg" {
+      type = text
+    }
+    column "valid_from" {
+      type = "timestamp without time zone"
+    }
+    column "valid_till" {
+      type = "timestamp without time zone"
+    }
+    column "ecode" {
+      type = "bigint"
+    }
+    column "admou_code" {
+      type = "bigint"
+    }
+    column "netamt" {
+      type = "numeric(20,2)"
+    }
+    column "mrchndsrcode" {
+      type = "bigint"
+    }
+    column "mrchndsrname" {
+      type = "character varying"
+    }
+    column "mrpvalue" {
+      type = "numeric"
+    }
+    column "markup_perc" {
+      type = "numeric"
+    }
+    column "markdown_perc" {
+      type = "numeric"
+    }
+    column "avg_cost" {
+      type = "numeric"
+    }
+    column "avg_rsp" {
+      type = "numeric"
+    }
+    column "lead_days" {
+      type = "interval"
+    }
+    column "admsite_code" {
+      type = "bigint"
+    }
+    column "seq" {
+      type = text
+    }
+    column "status" {
+      type = "character(1)"
+    }
+    column "enable_lgt_track" {
+      type = "numeric"
+    }
+    column "shipstatus" {
+      type = "numeric"
+    }
+    column "set_applicable" {
+      type = bpchar
+    }
+  )
+}
+

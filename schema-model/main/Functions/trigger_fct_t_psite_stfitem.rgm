@@ -1,0 +1,123 @@
+function "main"."trigger_fct_t_psite_stfitem()" {
+  text = """
+
+DECLARE
+   v_type                      varchar(100);
+    v_detail_code               invstock_intra.detail_code%TYPE;
+    v_entcode                   invstock_intra.entcode%TYPE;
+    v_entdt                     invstock_intra.entdt%TYPE;
+    v_enttype                   invstock_intra.enttype%TYPE;
+    v_loccode                   invstock_intra.loccode%type;
+    v_ycode                     invstock.ycode%TYPE;
+    v_new_icode                 invstock_intra.icode%TYPE;
+    v_old_icode                 invstock_intra.icode%TYPE;
+    v_new_qty                   invstock_intra.qty%TYPE;
+    v_old_qty                   invstock_intra.qty%TYPE;
+    v_new_rate                  invstock_intra.rate%TYPE;
+    v_old_rate                  invstock_intra.rate%TYPE;
+    v_scheme_docno              invstock_intra.scheme_docno%TYPE;
+    v_subenttype                invstock_intra.subenttype%TYPE;
+    v_refsitecode               invstock_intra.admsite_code%TYPE;
+    v_in_psite_stockpoint_code  invstock_intra.psite_stockpoint_code%type;
+    v_out_psite_stockpoint_code invstock_intra.psite_stockpoint_code%type;
+    /*******************************************************************************************************************
+     REV NO      DATE           OWNER            DESCRIPTION
+     ---------   -----------    -----------      ---------------------------------------------------------------------
+     REV : 001   08-MAR-2018    DEBNATH          (TFS ID : 38960) View Stockpoint wise Stock of POS Store in HO.
+     REV : 002   19-AUG-2022    ANINDYA          (TFS ID : BATCH SERIAL) Batch serial related changes.
+   *******************************************************************************************************************/
+BEGIN
+        SELECT  loccode
+        INTO STRICT    v_loccode
+        FROM    invloc
+        WHERE loctype = 'S';
+
+        SELECT  m.docdate,
+                y.ycode,
+                m.admsite_code,
+                m.out_psite_stockpoint_code,
+                m.in_psite_stockpoint_code,
+                m.docno
+        INTO STRICT    v_entdt,
+                v_ycode,
+                v_refsitecode,
+                v_out_psite_stockpoint_code,
+                v_in_psite_stockpoint_code,
+                v_scheme_docno
+        FROM    psite_stfdoc m,
+                admyear y,
+                admsite s
+        WHERE   m.code = NEW.psite_stfdoc_code
+        AND     m.admsite_code = s.code
+        AND     m.docdate BETWEEN y.dtfr AND y.dtto;
+
+        v_detail_code := NEW.CODE;
+        v_entcode := NEW.psite_stfdoc_code;
+        v_enttype := 'STF';
+        v_type := 'INSERTING';
+        v_new_qty := NEW.qty;
+        v_old_qty := NEW.qty;
+        v_new_icode := NEW.icode;
+        v_old_icode := OLD.icode;
+        v_new_rate := 0;
+        v_old_rate := 0;
+        v_subenttype:= 'ISO';
+        
+        --  For Outward Posting
+        CALL db_pkg_stock_intra$reflect(v_detail_code,
+                                    v_type,
+                                    v_entcode,
+                                    v_entdt,
+                                    v_enttype,
+                                    v_loccode,
+                                    v_ycode,
+                                    v_new_icode,
+                                    v_old_icode,
+                                    v_new_qty,
+                                    v_old_qty,
+                                    v_new_rate,
+                                    v_old_rate,
+                                    v_scheme_docno,
+                                    v_subenttype,
+                                    v_out_psite_stockpoint_code, 
+                                    v_refsitecode,
+                                    -- start rev : 002
+                                    coalesce(NEW.invbatch_serial_code, OLD.invbatch_serial_code)
+                                    -- end rev: 002
+                            );
+
+        --  For Inward Posting
+        v_new_qty := NEW.qty;
+        v_old_qty := NEW.qty;
+        v_subenttype:= 'ISI';
+
+        CALL db_pkg_stock_intra$reflect(v_detail_code,
+                                    v_type,
+                                    v_entcode,
+                                    v_entdt,
+                                    v_enttype,
+                                    v_loccode,
+                                    v_ycode,
+                                    v_new_icode,
+                                    v_old_icode,
+                                    v_new_qty,
+                                    v_old_qty,
+                                    v_new_rate,
+                                    v_old_rate,
+                                    v_scheme_docno,
+                                    v_subenttype,
+                                    v_in_psite_stockpoint_code,
+                                    v_refsitecode,
+                                    -- start rev : 002
+                                    coalesce(NEW.invbatch_serial_code, OLD.invbatch_serial_code)
+                                    -- end rev: 002
+                            );
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

@@ -1,0 +1,134 @@
+procedure "main"."db_pkg_production_cost_calc$calc_rec_psd(bigint, bigint, character varying, bigint, character)" {
+  text = """
+
+DECLARE
+
+        c1 CURSOR FOR
+        SELECT  code,txn_type,det_code,lotcode,jobcode,jrccode,
+                assembly_icode,component_icode,item_type,
+                assembly_wip,txn_qty,rate,amount,ass_saitem_code,
+                com_saitem_code,operation_seq,prcode,job_assembly_icode
+        from    prdwiptrans t
+        where   jobcode         = p_jobcode
+        and     assembly_icode  = p_assembly_icode
+        and     txn_type        = 'REC'
+        and     item_type       = 'PSD'
+        and     coalesce(lotcode,0)  = coalesce(p_lotcode,coalesce(lotcode,0))
+        and     jrccode         = p_tranmain_code
+        order by
+                code;
+
+        v_rec_com_ass_amt   prdwiptrans.amount%type;
+        v_rec_serv_amt      prdwiptrans.amount%type;
+        v_rec_psd_amt       prdwiptrans.amount%type;
+        v_rec_psd_rate      prdwiptrans.rate%type;
+        v_txn_qty           prdwiptrans.txn_qty%type;
+
+BEGIN
+        for c1_loop in c1
+        loop
+            -- =======================================================================================================================
+            -- initialisation of local varriables
+            -- =======================================================================================================================
+            v_rec_com_ass_amt := 0;
+            v_rec_serv_amt    := 0;
+            v_rec_psd_amt     := 0;
+            v_rec_psd_rate    := 0;
+            v_txn_qty         := 0;
+            v_txn_qty         := c1_loop.txn_qty;
+
+            -- =======================================================================================================================
+            -- get com and ass amount
+            -- =======================================================================================================================
+            select  coalesce(sum(abs(coalesce(amount,0))),0)
+            into STRICT    v_rec_com_ass_amt
+            from    prdwiptrans t1
+            where   jobcode                 = c1_loop.jobcode
+            and     assembly_icode          = c1_loop.assembly_icode
+            and     job_assembly_icode      = c1_loop.job_assembly_icode
+            and     coalesce(lotcode,0)          = coalesce(c1_loop.lotcode,coalesce(lotcode,0))
+            and     coalesce(ass_saitem_code,0)  = coalesce(c1_loop.ass_saitem_code,coalesce(ass_saitem_code,0))
+            and     jrccode                 = c1_loop.jrccode
+            and     txn_type                = 'REC'
+            and     item_type in ('COM','ASS');
+
+            -- =======================================================================================================================
+            -- get service amount
+            -- =======================================================================================================================
+            select  coalesce(sum(abs(coalesce(srv_amount,0))),0)
+            into STRICT    v_rec_serv_amt
+            from    prdwiptrans t1
+            where   jobcode                 = c1_loop.jobcode
+            and     det_code                = c1_loop.det_code
+            and     jrccode                 = c1_loop.jrccode
+            and     txn_type                = 'REC'
+            and     item_type               = 'SER';
+
+            v_rec_psd_amt := round((v_rec_com_ass_amt + v_rec_serv_amt)::numeric,2);
+
+            -- =======================================================================================================================
+            -- calculating rec-psd rate
+            -- update rec-psd rate
+            -- =======================================================================================================================
+            if  coalesce(v_txn_qty,0) <> 0 then
+                v_rec_psd_rate := round((v_rec_psd_amt/v_txn_qty)::numeric,3);
+
+                update  prdwiptrans t1
+                set     amount   = round((0+v_rec_psd_amt)::numeric,2),
+                        rate     = v_rec_psd_rate,
+                        -- START REV : 004
+                        cogs_code   = case when p_cogs_state = 'R' then
+                                                0
+                                            else
+                                                null
+                                      end
+                        -- END REV : 004
+                where   code     = c1_loop.code
+                and     jobcode  = c1_loop.jobcode
+                and     jrccode  = c1_loop.jrccode
+                and     txn_type = 'REC'
+                and     item_type= 'PSD';
+            end if;
+        end loop;
+    exception
+        when others then
+        CALL erraudit(user, 'db_pkg_production_cal_rate$calc_rec_psd', SQLSTATE, sqlerrm);
+    end;
+
+"""
+  arguments = <
+    {
+      name = p_jobcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_lotcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_assembly_icode
+      type = character varying
+      mode = IN
+    }
+
+    {
+      name = p_tranmain_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_cogs_state
+      type = character
+      mode = IN
+      default = 'N'::bpchar
+    }
+
+  >
+  language = plpgsql
+}
+

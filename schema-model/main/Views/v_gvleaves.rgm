@@ -1,0 +1,213 @@
+view "main"."v_gvleaves" {
+  text = """-
+SELECT gvl.code AS gvleavescode,
+    gvl.gvcategory_code AS gvcategorycode,
+    COALESCE(gvl.gvno_udf, gvl.gvno) AS gvno,
+    gvl.seq,
+    gvl.gvno_udf AS gvnoudf,
+    gvl.gvbooklet_code AS gvbookletcode,
+    gvb.bookletno,
+    gvl.value,
+    gvl.validity_days AS validitydays,
+    gvl.validupto,
+    gvl.expireson,
+        CASE
+            WHEN ((gvl.expireson IS NULL) AND (gvl.validupto IS NULL)) THEN 'Perpetual'::text
+            WHEN ((gvl.expireson IS NOT NULL) AND (gvl.validupto IS NOT NULL)) THEN
+            CASE
+                WHEN (gvl.expireson > gvl.validupto) THEN
+                CASE
+                    WHEN (date_trunc('day'::text, statement_timestamp()) > gvl.validupto) THEN 'Expired'::text
+                    WHEN (date_trunc('day'::text, statement_timestamp()) = gvl.validupto) THEN '1 Day Left'::text
+                    ELSE (date_part('days'::text, (((gvl.validupto)::timestamp with time zone - date_trunc('day'::text, statement_timestamp())) + '1 day'::interval)) || ' Days Left'::text)
+                END
+                WHEN (gvl.validupto >= gvl.expireson) THEN
+                CASE
+                    WHEN (date_trunc('day'::text, statement_timestamp()) > gvl.expireson) THEN 'Expired'::text
+                    WHEN (date_trunc('day'::text, statement_timestamp()) = gvl.expireson) THEN '1 Day Left'::text
+                    ELSE (date_part('days'::text, (((gvl.expireson)::timestamp with time zone - date_trunc('day'::text, statement_timestamp())) + '1 day'::interval)) || ' Days Left'::text)
+                END
+                ELSE NULL::text
+            END
+            ELSE
+            CASE
+                WHEN (date_trunc('day'::text, statement_timestamp()) > COALESCE(gvl.expireson, gvl.validupto)) THEN 'Expired'::text
+                WHEN (date_trunc('day'::text, statement_timestamp()) = COALESCE(gvl.expireson, gvl.validupto)) THEN '1 Day Left'::text
+                ELSE ((date_part('days'::text, ((COALESCE(gvl.expireson, gvl.validupto))::timestamp with time zone - date_trunc('day'::text, statement_timestamp()))) + (1)::double precision) || ' Days Left'::text)
+            END
+        END AS validitystatus,
+    gvl.status,
+        CASE
+            WHEN (gvl.status = 'N'::bpchar) THEN 'New'::text
+            WHEN (gvl.status = 'A'::bpchar) THEN 'Allocated'::text
+            WHEN (gvl.status = 'I'::bpchar) THEN 'Issued'::text
+            WHEN (gvl.status = 'R'::bpchar) THEN 'Redeemed'::text
+            WHEN (gvl.status = 'C'::bpchar) THEN 'Cancelled'::text
+            ELSE NULL::text
+        END AS statusdisplay,
+    gvl.createdby AS createdbyid,
+    u1.fname AS createdby,
+    gvl.createdon,
+    gvl.allocate_admsite_code AS allocatesitecode,
+    s1.name AS allocatesitename,
+    gvl.allocateon,
+    gvl.issued_admsite_code AS issuedsitecode,
+    s2.name AS issuedsitename,
+    gvl.issuedon,
+    gvl.issued_psite_posgvbill_code AS issuedposgvbillid,
+    pgvb.billno AS issuedposgvbillno,
+    gvl.gvissue_journal_code AS gvissuejournalid,
+    gvj.scheme_docno AS gvissuejournalno,
+    gvl.redeemed_admsite_code AS redeemedsitecode,
+    s3.name AS redeemedsitename,
+    gvl.redeemedon,
+    gvl.redeemed_billtype AS redeemedbilltype,
+    gvl.redeemed_billcode AS redeemedbillid,
+    gvl.redeemed_billno AS redeemedbillno,
+    gvl.cancelledon,
+    gvl.cancelledby AS cancelledbyid,
+    u2.fname AS cancelledby,
+    gvl.lastmodifiedon,
+    gvl.lastmodifiedby AS lastmodifiedbyid,
+    u3.fname AS lastmodifiedby,
+    gvl.dataversion,
+    gvl.cancellationremarks
+   FROM main.hrdemp u3,
+    main.hrdemp u1,
+    (((((((main.gvleaves gvl
+     LEFT JOIN main.gvbooklet gvb ON ((gvl.gvbooklet_code = gvb.code)))
+     LEFT JOIN main.psite_posgvbill pgvb ON (((gvl.issued_psite_posgvbill_code)::text = (pgvb.code)::text)))
+     LEFT JOIN main.gvissue_journal gvj ON ((gvl.gvissue_journal_code = gvj.code)))
+     LEFT JOIN main.hrdemp u2 ON ((gvl.cancelledby = u2.ecode)))
+     LEFT JOIN main.admsite s1 ON ((gvl.allocate_admsite_code = s1.code)))
+     LEFT JOIN main.admsite s2 ON ((gvl.issued_admsite_code = s2.code)))
+     LEFT JOIN main.admsite s3 ON ((gvl.redeemed_admsite_code = s3.code)))
+  WHERE ((gvl.createdby = u1.ecode) AND (gvl.lastmodifiedby = u3.ecode));
+"""
+  columns = (
+    column "gvleavescode" {
+      type = "bigint"
+    }
+    column "gvcategorycode" {
+      type = "bigint"
+    }
+    column "gvno" {
+      type = "character varying(25)"
+    }
+    column "seq" {
+      type = "bigint"
+    }
+    column "gvnoudf" {
+      type = "character varying(25)"
+    }
+    column "gvbookletcode" {
+      type = "bigint"
+    }
+    column "bookletno" {
+      type = "character varying(25)"
+    }
+    column "value" {
+      type = "bigint"
+    }
+    column "validitydays" {
+      type = "bigint"
+    }
+    column "validupto" {
+      type = "timestamp(0) without time zone"
+    }
+    column "expireson" {
+      type = "timestamp(0) without time zone"
+    }
+    column "validitystatus" {
+      type = text
+    }
+    column "status" {
+      type = "character(1)"
+    }
+    column "statusdisplay" {
+      type = text
+    }
+    column "createdbyid" {
+      type = "bigint"
+    }
+    column "createdby" {
+      type = "character varying(100)"
+    }
+    column "createdon" {
+      type = "timestamp(0) without time zone"
+    }
+    column "allocatesitecode" {
+      type = "bigint"
+    }
+    column "allocatesitename" {
+      type = "character varying(100)"
+    }
+    column "allocateon" {
+      type = "timestamp(0) without time zone"
+    }
+    column "issuedsitecode" {
+      type = "bigint"
+    }
+    column "issuedsitename" {
+      type = "character varying(100)"
+    }
+    column "issuedon" {
+      type = "timestamp(0) without time zone"
+    }
+    column "issuedposgvbillid" {
+      type = "character varying(50)"
+    }
+    column "issuedposgvbillno" {
+      type = "character varying(25)"
+    }
+    column "gvissuejournalid" {
+      type = "bigint"
+    }
+    column "gvissuejournalno" {
+      type = "character varying(25)"
+    }
+    column "redeemedsitecode" {
+      type = "bigint"
+    }
+    column "redeemedsitename" {
+      type = "character varying(100)"
+    }
+    column "redeemedon" {
+      type = "timestamp(0) without time zone"
+    }
+    column "redeemedbilltype" {
+      type = "character varying(25)"
+    }
+    column "redeemedbillid" {
+      type = "character varying(50)"
+    }
+    column "redeemedbillno" {
+      type = "character varying(25)"
+    }
+    column "cancelledon" {
+      type = "timestamp(0) without time zone"
+    }
+    column "cancelledbyid" {
+      type = "bigint"
+    }
+    column "cancelledby" {
+      type = "character varying(100)"
+    }
+    column "lastmodifiedon" {
+      type = "timestamp(0) without time zone"
+    }
+    column "lastmodifiedbyid" {
+      type = "bigint"
+    }
+    column "lastmodifiedby" {
+      type = "character varying(100)"
+    }
+    column "dataversion" {
+      type = "bigint"
+    }
+    column "cancellationremarks" {
+      type = "character varying(500)"
+    }
+  )
+}
+

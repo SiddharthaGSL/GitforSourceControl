@@ -1,0 +1,49 @@
+function "main"."trigger_fct_t_invsitestfdet_bi()" {
+  text = """
+
+DECLARE
+   vnCmpCode bigint;
+   -- START REV : 001
+   V_ADMSITE_CODE_OUT       INVSITESTFMAIN.ADMSITE_CODE_OUT%TYPE;
+   V_ADMSITE_CODE_IN        INVSITESTFMAIN.ADMSITE_CODE_IN%TYPE;
+   V_ENTDT                  INVSTOCK.ENTDT%TYPE;
+   -- END REV : 001
+BEGIN
+   /*******************************************************************************************************************
+     REV NO      DATE           OWNER            DESCRIPTION
+     ---------   -----------    -----------      ---------------------------------------------------------------------
+     REV : 001   14-NOV-2017    DIPTIMAN         (TFS ID : 32259) COGS costrate related changes.
+     REV : 002   06-JAN-2022    SIDDHARTHA       (TFS ID : XXXXX) Batch Serial Related Changes.
+   *******************************************************************************************************************/
+   IF TG_OP = 'INSERT'
+   THEN
+       IF  NEW.CODE IS NULL THEN
+           SELECT  nextval('invsitestfdet_code')
+           INTO STRICT    NEW.CODE
+;
+       END IF;
+
+       -- START REV : 001
+       SELECT ADMSITE_CODE_OUT, ADMSITE_CODE_IN, STFDT
+       INTO STRICT   V_ADMSITE_CODE_OUT, V_ADMSITE_CODE_IN, V_ENTDT
+       FROM   INVSITESTFMAIN
+       WHERE  STFCODE = NEW.STFCODE;
+
+       -- If not "Inter Stock Point Transfer" then calculate
+       IF  V_ADMSITE_CODE_OUT <> V_ADMSITE_CODE_IN THEN
+           -- START REV : 002  
+           --:NEW.COSTRATE := NVL(DB_PKG_COGS.GET_ITEM_LAST_IN_RATE(V_ADMSITE_CODE_OUT, :NEW.ICODE, V_ENTDT),0);
+           NEW.COSTRATE := coalesce(DB_PKG_COGS$GET_ITEM_LAST_IN_RATE(V_ADMSITE_CODE_OUT, NEW.ICODE, V_ENTDT, NULL, NEW.INVBATCH_SERIAL_CODE),0);
+           -- END REV : 002 
+       END IF;
+       -- END REV : 001
+   END IF;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

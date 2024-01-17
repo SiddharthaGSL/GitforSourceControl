@@ -1,0 +1,441 @@
+function "main"."trigger_fct_t_psite_grcchg()" {
+  text = """
+
+DECLARE
+   v_postcode             finpost.postcode%TYPE;
+   v_sitetype             admsite.sitetype%TYPE;
+   v_admsite_code_owner   finpost.admsite_code_owner%TYPE;
+   v_igst_glcode          FINPOST.GLCODE%TYPE;
+   v_cgst_glcode          FINPOST.GLCODE%TYPE;
+   v_sgst_glcode          FINPOST.GLCODE%TYPE;
+   v_cess_glcode          FINPOST.GLCODE%TYPE;
+   v_igst_slcode          FINPOST.SLCODE%TYPE;
+   v_cgst_slcode          FINPOST.SLCODE%TYPE;
+   v_sgst_slcode          FINPOST.SLCODE%TYPE;
+   v_cess_slcode          FINPOST.SLCODE%TYPE;
+   v_igst_gl_costapp      char(1);
+   v_cgst_gl_costapp      char(1);
+   v_sgst_gl_costapp      char(1);
+   v_cess_gl_costapp      char(1);
+    V_DOCNO               PSITE_GRC.DOCNO%TYPE;
+    V_DOCDT               PSITE_GRC.DOCDT%TYPE;
+    V_YCODE               PSITE_GRC.YCODE%TYPE;
+    V_REMARKS             PSITE_GRC.REMARKS%TYPE;
+    V_OUCODE              PSITE_GRC.ADMOU_CODE%TYPE;
+BEGIN
+   /********************************************************************************************************************************
+       REV NO         OWNER         DATE           DESCRIPTION
+       ---------     -----------    -----------    ---------------------------------------------------------------------
+       REV : 001     ANINDYA        15-JUN-2017    (TFS ID : 29634) GST Related changes.
+     *********************************************************************************************************************************/
+   SELECT sitetype
+     INTO STRICT v_sitetype
+     FROM admsite
+    WHERE code = NEW.admsite_code;
+
+   IF v_sitetype <> 'MS-CO-OM-TS'
+   THEN
+      SELECT  docno,
+              docdt,
+              ycode,
+              remarks,
+              admou_code
+      INTO STRICT   V_DOCNO
+            ,V_DOCDT
+            ,V_YCODE
+            ,V_REMARKS
+            ,V_OUCODE
+      FROM   PSITE_GRC
+      WHERE  CODE = NEW.PSITE_GRC_CODE;
+
+      SELECT default_ho_site
+        INTO STRICT v_admsite_code_owner
+        FROM admou
+       WHERE code = (SELECT admou_code
+                       FROM psite_grc
+                      WHERE code = NEW.psite_grc_code);
+
+      SELECT M.IGST_INPUT_GLCODE,
+             IG.COSTAPP,
+             M.IGST_INPUT_SLCODE,
+             M.CGST_INPUT_GLCODE,
+             CG.COSTAPP,
+             M.CGST_INPUT_SLCODE,
+             M.SGST_INPUT_GLCODE,
+             SG.COSTAPP,
+             M.SGST_INPUT_SLCODE,
+             M.CESS_INPUT_GLCODE,
+             EG.COSTAPP,
+             M.CESS_INPUT_SLCODE
+        INTO STRICT v_igst_glcode,
+             v_igst_gl_costapp,
+             v_igst_slcode,
+             v_cgst_glcode,
+             v_cgst_gl_costapp,
+             v_cgst_slcode,
+             v_sgst_glcode,
+             v_sgst_gl_costapp,
+             v_sgst_slcode,
+             v_cess_glcode,
+             v_cess_gl_costapp,
+             v_cess_slcode
+        FROM admgstin m
+LEFT OUTER JOIN fingl ig ON (M.IGST_INPUT_GLCODE = IG.GLCODE)
+LEFT OUTER JOIN fingl cg ON (M.CGST_INPUT_GLCODE = CG.GLCODE)
+LEFT OUTER JOIN fingl sg ON (M.SGST_INPUT_GLCODE = SG.GLCODE)
+LEFT OUTER JOIN fingl eg ON (M.CESS_INPUT_GLCODE = EG.GLCODE)
+WHERE M.CODE = (SELECT ADMGSTIN_CODE
+                             FROM ADMSITE
+                            WHERE CODE = NEW.ADMSITE_CODE);
+
+IF NEW.GSTCOMPONENT = 'IGST' AND coalesce(NEW.chargeamt,0) <> 0
+      THEN
+         INSERT INTO finpost(postcode,
+                              entcode,
+                              entno,
+                              entdt,
+                              enttype,
+                              glcode,
+                              slcode,
+                              damount,
+                              ycode,
+                              nartext,
+                              scheme_docno,
+                              release_status,
+                              admsite_code_owner,
+                              ref_admsite_code,
+                              chgappamt,
+                              chgamt,
+                              ecode,
+                              TIME,
+                              last_access_ecode,
+                              last_access_time,
+                              release_ecode,
+                              release_time,
+                              admou_code)
+              VALUES (nextval('erp01'),
+                      NEW.psite_grc_code,
+                      v_docno,
+                      v_docdt,
+                      'TIA',
+                      v_igst_glcode,
+                      v_igst_slcode,
+                      NEW.chargeamt,
+                      v_ycode,
+                      v_remarks,
+                      v_docno,
+                      'P',
+                      v_admsite_code_owner,
+                      NEW.admsite_code,
+                      NULL,
+                      NULL,
+                      1,
+                      statement_timestamp(),
+                      NULL,
+                      NULL,
+                      1,
+                      statement_timestamp(),
+                      v_oucode)
+           RETURNING postcode
+                INTO v_postcode;
+
+         IF v_igst_gl_costapp = 'Y'  AND coalesce(NEW.chargeamt,0) <> 0
+         THEN
+            INSERT INTO fincosttag(entcode,
+                                    entno,
+                                    entdt,
+                                    enttype,
+                                    glcode,
+                                    ycode,
+                                    costcode,
+                                    slcode,
+                                    damount,
+                                    camount,
+                                    postcode,
+                                    admsite_code,
+                                    ref_admsite_code,
+                                    admou_code)
+                 VALUES (NEW.psite_grc_code,
+                         v_docno,
+                         v_docdt,
+                         'TIA',
+                         v_igst_glcode,
+                         v_ycode,
+                         NULL,
+                         v_igst_slcode,
+                         NEW.chargeamt,
+                         0,
+                         v_postcode,
+                         NEW.admsite_code,
+                         NEW.admsite_code,
+                         v_oucode);
+         END IF;
+      END IF;
+	
+	  IF NEW.GSTCOMPONENT = 'CGST' AND coalesce(NEW.chargeamt,0) <> 0
+      THEN
+         INSERT INTO finpost(postcode,
+                              entcode,
+                              entno,
+                              entdt,
+                              enttype,
+                              glcode,
+                              slcode,
+                              damount,
+                              ycode,
+                              nartext,
+                              scheme_docno,
+                              release_status,
+                              admsite_code_owner,
+                              ref_admsite_code,
+                              chgappamt,
+                              chgamt,
+                              ecode,
+                              TIME,
+                              last_access_ecode,
+                              last_access_time,
+                              release_ecode,
+                              release_time,
+                              admou_code)
+              VALUES (nextval('erp01'),
+                      NEW.psite_grc_code,
+                      v_docno,
+                      v_docdt,
+                      'TIA',
+                      v_cgst_glcode,
+                      v_cgst_slcode,
+                      NEW.chargeamt,
+                      v_ycode,
+                      v_remarks,
+                      v_docno,
+                      'P',
+                      v_admsite_code_owner,
+                      NEW.admsite_code,
+                      NULL,
+                      NULL,
+                      1,
+                      statement_timestamp(),
+                      NULL,
+                      NULL,
+                      1,
+                      statement_timestamp(),
+                      v_oucode)
+           RETURNING postcode
+                INTO v_postcode;
+
+         IF v_cgst_gl_costapp = 'Y'
+         THEN
+            INSERT INTO fincosttag(entcode,
+                                    entno,
+                                    entdt,
+                                    enttype,
+                                    glcode,
+                                    ycode,
+                                    costcode,
+                                    slcode,
+                                    damount,
+                                    camount,
+                                    postcode,
+                                    admsite_code,
+                                    ref_admsite_code,
+                                    admou_code)
+                 VALUES (NEW.psite_grc_code,
+                         v_docno,
+                         v_docdt,
+                         'TIA',
+                         v_cgst_glcode,
+                         v_ycode,
+                         NULL,
+                         v_cgst_slcode,
+                         NEW.chargeamt,
+                         0,
+                         v_postcode,
+                         NEW.admsite_code,
+                         NEW.admsite_code,
+                         v_oucode);
+         END IF;
+      END IF;
+	
+	  IF NEW.GSTCOMPONENT = 'SGST' AND coalesce(NEW.chargeamt,0) <> 0
+      THEN
+         INSERT INTO finpost(postcode,
+                              entcode,
+                              entno,
+                              entdt,
+                              enttype,
+                              glcode,
+                              slcode,
+                              damount,
+                              ycode,
+                              nartext,
+                              scheme_docno,
+                              release_status,
+                              admsite_code_owner,
+                              ref_admsite_code,
+                              chgappamt,
+                              chgamt,
+                              ecode,
+                              TIME,
+                              last_access_ecode,
+                              last_access_time,
+                              release_ecode,
+                              release_time,
+                              admou_code)
+              VALUES (nextval('erp01'),
+                      NEW.psite_grc_code,
+                      v_docno,
+                      v_docdt,
+                      'TIA',
+                      v_sgst_glcode,
+                      v_sgst_slcode,
+                      NEW.chargeamt,
+                      v_ycode,
+                      v_remarks,
+                      v_docno,
+                      'P',
+                      v_admsite_code_owner,
+                      NEW.admsite_code,
+                      NULL,
+                      NULL,
+                      1,
+                      statement_timestamp(),
+                      NULL,
+                      NULL,
+                      1,
+                      statement_timestamp(),
+                      v_oucode)
+           RETURNING postcode
+                INTO v_postcode;
+
+         IF v_sgst_gl_costapp = 'Y'
+         THEN
+            INSERT INTO fincosttag(entcode,
+                                    entno,
+                                    entdt,
+                                    enttype,
+                                    glcode,
+                                    ycode,
+                                    costcode,
+                                    slcode,
+                                    damount,
+                                    camount,
+                                    postcode,
+                                    admsite_code,
+                                    ref_admsite_code,
+                                    admou_code)
+                 VALUES (NEW.psite_grc_code,
+                         v_docno,
+                         v_docdt,
+                         'TIA',
+                         v_sgst_glcode,
+                         v_ycode,
+                         NULL,
+                         v_sgst_slcode,
+                         NEW.chargeamt,
+                         0,
+                         v_postcode,
+                         NEW.admsite_code,
+                         NEW.admsite_code,
+                         v_oucode);
+         END IF;
+      END IF;
+      
+      IF NEW.GSTCOMPONENT = 'CESS' AND COALESCE(new.chargeamt,0) <> 0
+      THEN
+         INSERT INTO finpost (postcode,
+                              entcode,
+                              entno,
+                              entdt,
+                              enttype,
+                              glcode,
+                              slcode,
+                              damount,
+                              ycode,
+                              nartext,
+                              scheme_docno,
+                              release_status,
+                              admsite_code_owner,
+                              ref_admsite_code,
+                              chgappamt,
+                              chgamt,
+                              ecode,
+                              TIME,
+                              last_access_ecode,
+                              last_access_time,
+                              release_ecode,
+                              release_time,
+                              admou_code)
+              VALUES (nextval('erp01'),
+                      NEW.psite_grc_code,
+                      v_docno,
+                      v_docdt,
+                      'TIA',
+                      v_cess_glcode,
+                      v_cess_slcode,
+                      new.chargeamt,
+                      v_ycode,
+                      v_remarks,
+                      v_docno,
+                      'P',
+                      v_admsite_code_owner,
+                      NEW.admsite_code,
+                      NULL,
+                      NULL,
+                      1,
+                      CURRENT_DATE,/*SYSDATE,*/
+                      NULL,
+                      NULL,
+                      1,
+                      CURRENT_DATE,/*SYSDATE,*/
+                      v_oucode)
+           RETURNING postcode
+                INTO v_postcode;
+
+         IF v_cess_gl_costapp = 'Y'
+         THEN
+            INSERT INTO fincosttag (entcode,
+                                    entno,
+                                    entdt,
+                                    enttype,
+                                    glcode,
+                                    ycode,
+                                    costcode,
+                                    slcode,
+                                    damount,
+                                    camount,
+                                    postcode,
+                                    admsite_code,
+                                    ref_admsite_code,
+                                    admou_code)
+                 VALUES (NEW.psite_grc_code,
+                         v_docno,
+                         v_docdt,
+                         'TIA',
+                         v_cess_glcode,
+                         v_ycode,
+                         NULL,
+                         v_cess_slcode,
+                         new.chargeamt,
+                         0,
+                         v_postcode,
+                         NEW.admsite_code,
+                         NEW.admsite_code,
+                         v_oucode);
+         END IF;
+      END IF;
+	
+	END IF;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

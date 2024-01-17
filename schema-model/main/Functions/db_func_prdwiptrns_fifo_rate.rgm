@@ -1,0 +1,117 @@
+function "main"."db_func_prdwiptrns_fifo_rate(bigint, numeric, bigint, bigint, numeric, text, bigint)" {
+  text = """
+
+DECLARE
+
+    V_TXN_QTY    PRDWIPTRANS.TXN_QTY%TYPE:=0;
+    V_RATE       PRDWIPTRANS.RATE%TYPE   :=0;
+    V_AMOUNT     PRDWIPTRANS.AMOUNT%TYPE :=0;
+    V_CALC_QTY   PRDWIPTRANS.TXN_QTY%TYPE := ABS(coalesce(N_QTY,0));
+    C1 CURSOR FOR
+        SELECT  TXN_QTY,RATE,CODE
+        FROM    PRDWIPTRANS
+        WHERE   ADMSITE_CODE           =  N_ADMSITE_CODE
+        AND     coalesce(LOTCODE,0)         =  coalesce(N_LOTCODE,coalesce(LOTCODE,0))
+		-- start rev : 001
+        AND     assembly_icode         =  N_ASSEMBLY_ICODE
+        -- end rev : 001
+        --AND     NVL(ASS_SAITEM_CODE,0) =  NVL(N_ASS_SAITEM_CODE,NVL(ASS_SAITEM_CODE,0))
+        AND     (
+                     (
+                       N_ASS_SAITEM_CODE IS NULL
+                       AND
+                       COM_SAITEM_CODE IS NULL
+                       AND
+                       ASS_SAITEM_CODE IS NULL
+                     )
+                   OR (
+                       N_ASS_SAITEM_CODE IS NOT NULL
+                       AND
+                       coalesce(COM_SAITEM_CODE,ASS_SAITEM_CODE) = N_ASS_SAITEM_CODE
+                     )
+                )
+        AND     PRCODE                 =  N_PRCODE
+        AND     OPERATION_SEQ          =  N_OPERATION_SEQ
+        AND     TXN_TYPE               =  'REC'
+        AND     ITEM_TYPE              =  'PSD'
+        ORDER BY 3;
+BEGIN
+/*******************************************************************************************************************************************
+   No.            Date          Author              Description
+   ---------   ----------       --------------      -----------------------------------------------------------------------
+   REV : 001   10-AUG-2023      MANASH              (DEVOPS : 30799) While tying to pass WIP Clearance entry, 
+                                                                     the system is taking too much time.
+ *******************************************************************************************************************************************/
+
+    FOR C2 IN C1 LOOP
+        IF coalesce(V_CALC_QTY,0) > coalesce(C2.TXN_QTY,0) THEN
+            V_AMOUNT :=   coalesce(V_AMOUNT,0) + (coalesce(C2.TXN_QTY,0)*coalesce(C2.RATE,0));
+            V_CALC_QTY := coalesce(V_CALC_QTY,0) - coalesce(C2.TXN_QTY,0);
+        ELSE
+            V_AMOUNT :=   coalesce(V_AMOUNT,0) + (coalesce(V_CALC_QTY,0)*coalesce(C2.RATE,0));
+            V_CALC_QTY := 0;
+        END IF;
+        EXIT WHEN coalesce(V_CALC_QTY,0) = 0;
+    END LOOP;
+    IF  coalesce(N_QTY,0) <> 0 AND coalesce(V_AMOUNT,0) <> 0 THEN
+        V_RATE := round((coalesce(V_AMOUNT,0)/coalesce(N_QTY,0))::numeric,6);
+    ELSE
+        V_RATE :=0;
+    END IF;
+    RETURN(V_RATE);
+EXCEPTION
+    WHEN OTHERS THEN
+         RETURN(SQLERRM);
+         CALL ERRAUDIT(USER, 'DB_FUNC_PRDWIPTRNS_FIFO_RATE', SQLSTATE::varchar, SQLERRM);
+         RAISE EXCEPTION '%', 'ERROR ENCOUNTERED  '|| SQLSTATE::varchar || '  ' || SQLERRM USING ERRCODE = '45100';
+END;
+"""
+  returnType = numeric
+  arguments = <
+    {
+      name = n_admsite_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = n_qty
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = n_lotcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = n_prcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = n_operation_seq
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = n_assembly_icode
+      type = text
+      mode = IN
+    }
+
+    {
+      name = n_ass_saitem_code
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+  volatility = STABLE
+}
+

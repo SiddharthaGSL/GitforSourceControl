@@ -1,0 +1,131 @@
+procedure "main"."db_pkg_si_update_si(character varying, timestamp without time zone, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+    V_BASIS             char(1);
+    V_FACTOR            double precision;
+    V_ASSORTMENT_CODE   PSITE_POSBILLITEM.SIASSORTMENTCODE%TYPE;
+    V_ASSORTMENT_NAME   PSITE_POSBILLITEM.SIASSORTMENTNAME%TYPE;
+    V_ENO               bigint;
+    V_STARTDATE         timestamp;
+    V_ENDDATE           timestamp;
+
+    C1 CURSOR FOR
+        SELECT  DISTINCT
+                ICODE,
+                MRP
+        FROM    GLOBAL_PROMO_INVITEM;
+
+BEGIN
+
+        -- Update the global table as SI not depends upon time.
+        UPDATE  GLOBAL_PROMO_INVITEM
+        SET     STOCKINDATE = date_trunc('day', STOCKINDATE);
+
+        SELECT  coalesce(COUNT(1),0)
+        INTO STRICT    V_ENO
+        FROM    PSITE_POSBILLITEM
+        WHERE   PSITE_POSBILL_CODE = PNPBCODE
+        AND     PSITE_SALESPERSON_ID IS NOT NULL;
+
+        IF  coalesce(V_ENO,0) > 0 THEN
+            FOR I IN C1 LOOP
+             --Fetch the basis and factor from SI_Applicable, attached with the
+             --assortment considering the login date
+              CALL db_pkg_si_get_si_resolve_info(I.ICODE,PDLOGINDT,I.MRP,PNADMSITECODE,V_BASIS,V_FACTOR,V_ASSORTMENT_CODE,V_STARTDATE,V_ENDDATE);
+
+             IF V_ASSORTMENT_CODE IS NOT NULL THEN
+                BEGIN
+                    SELECT  NAME
+                    INTO STRICT    V_ASSORTMENT_NAME
+                    FROM    SI_ASSORTMENT A
+                    WHERE   CODE = V_ASSORTMENT_CODE;
+                EXCEPTION
+                    WHEN OTHERS THEN
+                    V_ASSORTMENT_NAME := NULL;
+                END;
+             END IF;
+
+                -- Populate SI_PSITE_POSBILLITEM
+                IF  V_BASIS IS NOT NULL THEN
+                    INSERT INTO SI_PSITE_POSBILLITEM(ADMSITE_CODE,
+                                                              BILLDATE,
+                                                              PSITE_POSBILL_CODE,
+                                                              PSITE_POSBILLITEM_CODE,
+                                                              PSITE_SALESPERSON_ID,
+                                                              SALESPERSON_NAME,
+                                                              SIASSORTMENTCODE,
+                                                              SIASSORTMENTNAME,
+                                                              SIASSORTMENTSTARTDATE,
+                                                              SIASSORTMENTENDDATE,
+                                                              SIASSORTMENTBASIS,
+                                                              SIASSORTMENTFACTOR,
+                                                              SIAMOUNT,
+                                                              CREATEDON,
+                                                              CREATEDBY)
+
+                    SELECT PNADMSITECODE, PDLOGINDT, PNPBCODE,pbi.code, pbi.PSITE_SALESPERSON_ID, s.FNAME SALESPERSON_NAME,
+                           V_ASSORTMENT_CODE,
+                           V_ASSORTMENT_NAME,
+                           V_STARTDATE,
+                           V_ENDDATE,
+                           V_BASIS,
+                           coalesce(V_FACTOR, 0),
+                       CASE WHEN V_BASIS = 'P' THEN
+                                                 CASE WHEN ROUND(((ABS(coalesce(pbi.NETAMT,0)) * coalesce(V_FACTOR,0))/100),2) > ABS(pbi.NETAMT) THEN pbi.NETAMT
+                                                        ELSE
+                                                            ROUND(((coalesce(pbi.NETAMT,0) * coalesce(V_FACTOR,0))/100),2)
+                                                 END
+                                           ELSE
+                                                CASE WHEN ROUND((coalesce(V_FACTOR,0) * ABS(coalesce(pbi.QTY,0))),2) > ABS(pbi.NETAMT) THEN pbi.NETAMT
+                                                        ELSE
+                                                            ROUND((coalesce(V_FACTOR,0) * coalesce(pbi.QTY,0)),2)
+                                                END
+                                        END SIAMOUNT,
+                           clock_timestamp(), PNECODE
+                   FROM PSITE_POSBILLITEM pbi,PSITE_SALESPERSON s
+                   WHERE pbi.PSITE_POSBILL_CODE = PNPBCODE
+                   AND   pbi.PSITE_SALESPERSON_ID = s.ID
+                   AND   pbi.ADMSITE_CODE = s.ADMSITE_CODE
+                   AND   pbi.ADMSITE_CODE = PNADMSITECODE
+                   AND   pbi.icode = I.ICODE;
+
+               END IF;
+        END LOOP;
+    END IF;
+  EXCEPTION
+    WHEN OTHERS THEN
+    CALL ERRAUDIT(USER, 'DB_PKG_SI.UPDATE_SI_CM', SQLSTATE, SQLERRM);
+  END;
+
+"""
+  arguments = <
+    {
+      name = pnpbcode
+      type = character varying
+      mode = IN
+    }
+
+    {
+      name = pdlogindt
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = pnadmsitecode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = pnecode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

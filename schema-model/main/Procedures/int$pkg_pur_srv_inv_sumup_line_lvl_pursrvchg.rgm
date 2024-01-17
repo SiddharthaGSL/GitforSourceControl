@@ -1,0 +1,209 @@
+procedure "main"."int$pkg_pur_srv_inv_sumup_line_lvl_pursrvchg(bigint)" {
+  text = """
+
+DECLARE
+
+      v_srvno          pursrvmain.srvno%TYPE;
+      v_srvdt          timestamp;
+      v_ycode          pursrvmain.ycode%TYPE;
+
+      C3 CURSOR FOR
+           SELECT I.SRVCODE,
+                  I.CHGCODE,
+                  I.RATE,
+                  I.SIGN,
+                  I.BASIS,
+                  I.ISTAX,
+                  I.SOURCE,
+                  I.FORMULAE,
+                  round((SUM(I.CHGAMT))::numeric, 2) CHGAMT,
+                  round((SUM(I.APPAMT))::numeric, 2) APPAMT,
+                  SUM(I.SEQ),
+                  coalesce(I.INCLUDE_IN_TDS, 'N') INCLUDE_IN_TDS,
+                  I.GLCODE,
+                  coalesce(F.COSTAPP, 'N')      GL_CC_APPL,
+                  I.SLCODE,
+                  I.GST_COMPONENT,
+                  I.ISREVERSE
+             FROM pursrvchg_item i
+LEFT OUTER JOIN fingl f ON (I.GLCODE = F.GLCODE)
+WHERE I.SRVCODE = p_srvcode  AND I.BASIS <> 'A' GROUP BY I.SRVCODE,
+                  I.CHGCODE,
+                  I.RATE,
+                  I.SIGN,
+                  I.BASIS,
+                  I.ISTAX,
+                  I.SOURCE,
+                  I.FORMULAE,
+                  coalesce(INCLUDE_IN_TDS, 'N'),
+                  I.GLCODE,
+                  F.COSTAPP,
+                  I.SLCODE,
+                  GST_COMPONENT,
+                  ISREVERSE
+
+UNION ALL
+
+           SELECT I.SRVCODE,
+                  I.CHGCODE,
+                  SUM(I.RATE)            RATE,
+                  I.SIGN,
+                  I.BASIS,
+                  I.ISTAX,
+                  I.SOURCE,
+                  I.FORMULAE,
+                  round((SUM(I.CHGAMT))::numeric, 2) CHGAMT,
+                  round((SUM(I.APPAMT))::numeric, 2) APPAMT,
+                  SUM(I.SEQ),
+                  coalesce(INCLUDE_IN_TDS, 'N') INCLUDE_IN_TDS,
+                  I.GLCODE,
+                  coalesce(F.COSTAPP, 'N')    GL_CC_APPL,
+                  I.SLCODE,
+                  GST_COMPONENT,
+                  ISREVERSE
+             FROM pursrvchg_item i
+LEFT OUTER JOIN fingl f ON (I.GLCODE = F.GLCODE)
+WHERE I.SRVCODE = p_SRVCODE  AND I.BASIS = 'A' GROUP BY I.SRVCODE,
+                  I.CHGCODE,
+                  I.SIGN,
+                  I.BASIS,
+                  I.ISTAX,
+                  I.SOURCE,
+                  I.FORMULAE,
+                  coalesce(INCLUDE_IN_TDS, 'N'),
+                  I.GLCODE,
+                  I.SLCODE,
+                  F.COSTAPP,
+                  GST_COMPONENT,
+                  ISREVERSE
+         ORDER BY 11;
+
+      V_SEQ            bigint := 1;
+      V_ITEM_LVL_SEQ   bigint := 1;
+      V_TERMED         char(1);
+      V_CNT            smallint := 0;
+
+   
+BEGIN
+      SELECT srvno, srvdt, ycode
+        INTO STRICT v_srvno, v_srvdt, v_ycode
+        FROM pursrvmain
+       WHERE srvcode = p_srvcode;
+
+      /*
+      DELETE FINCOSTTAG
+      WHERE  ENTCODE = TO_CHAR(p_SRVCODE)
+      AND    ENTTYPE = 'PSC'
+      AND    GLCODE  = :PURSRVCHG.GLCODE
+      AND    (
+                  :PURSRVCHG.SLCODE IS NULL
+                  OR
+                  SLCODE = :PURSRVCHG.SLCODE
+             )
+      AND    POSTCODE = NVL(:PURSRVCHG.POSTCODE,0)
+      AND    0 < (SELECT COUNT(CHGCODE)
+                  FROM   PURSRVCHG
+                  WHERE  SRVCODE = p_SRVCODE
+                  AND    OPERATION_LEVEL = 'L'
+                  AND    TO_CHAR(SRVCODE)  = FINCOSTTAG.ENTCODE);
+      */
+      DELETE FROM pursrvchg
+       WHERE SRVCODE = p_srvcode AND OPERATION_LEVEL = 'L';
+
+      FOR C3REC IN C3
+      LOOP
+         IF C3REC.BASIS = 'A'
+         THEN
+            SELECT MIN(SEQ)
+              INTO STRICT V_SEQ
+              FROM PURSRVCHG_ITEM
+             WHERE     SRVCODE = p_SRVCODE
+                   AND CHGCODE = C3REC.CHGCODE
+                   AND OPERATION_LEVEL = 'L';
+         ELSE
+            SELECT MIN(SEQ)
+              INTO STRICT V_SEQ
+              FROM PURSRVCHG_ITEM
+             WHERE     SRVCODE = p_SRVCODE
+                   AND CHGCODE = C3REC.CHGCODE
+                   AND coalesce(RATE, 0) = coalesce(C3REC.RATE, 0)
+                   AND OPERATION_LEVEL = 'L';
+         END IF;
+
+         IF coalesce(V_SEQ, 0) = 0
+         THEN
+            V_SEQ := 800 + V_ITEM_LVL_SEQ;
+            V_ITEM_LVL_SEQ := V_ITEM_LVL_SEQ + 1;
+         END IF;
+
+         --erraudit('kj','1','2',C3REC.GLCODE);
+         INSERT INTO PURSRVCHG(SRVCODE,
+                                SEQ,
+                                CHGCODE,
+                                RATE,
+                                SIGN,
+                                BASIS,
+                                ISTAX,
+                                SOURCE,
+                                FORMULAE,
+                                CHGAMT,
+                                APPAMT,
+                                OPERATION_LEVEL,
+                                WITHOUT_TERM_FORMULA,
+                                INCLUDE_IN_TDS,
+                                GLCODE,
+                                SLCODE,
+                                GL_CC_APPL,
+                                SRVNO,
+                                SRVDT,
+                                YCODE,
+                                CODE,
+                                GST_COMPONENT,
+                                ISREVERSE)
+              VALUES (C3REC.SRVCODE,
+                      V_SEQ,
+                      C3REC.CHGCODE,
+                      C3REC.RATE,
+                      C3REC.SIGN,
+                      C3REC.BASIS,
+                      C3REC.ISTAX,
+                      C3REC.SOURCE,
+                      C3REC.FORMULAE,
+                      C3REC.CHGAMT,
+                      C3REC.APPAMT,
+                      'L',
+                      CASE WHEN V_TERMED='N' THEN  'Y'  ELSE 'N' END ,
+                      coalesce(C3REC.INCLUDE_IN_TDS, 'N'),
+                      C3REC.GLCODE,
+                      C3REC.SLCODE,
+                      coalesce(C3REC.GL_CC_APPL, 'N'),
+                      V_SRVNO,
+                      V_SRVDT,
+                      V_YCODE,
+                      nextval('pursrvchg_code'),
+                      C3REC.GST_COMPONENT,
+                      coalesce(C3REC.ISREVERSE, 'N'));
+
+         V_SEQ := coalesce(V_SEQ, 0) + 1;
+      END LOOP;
+   EXCEPTION
+      WHEN SQLSTATE '50003' THEN
+         CALL erraudit('x6',
+                   '11',
+                   '0',
+                   'error');
+         NULL;
+   END;
+
+"""
+  arguments = <
+    {
+      name = p_srvcode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

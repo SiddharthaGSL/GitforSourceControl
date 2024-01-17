@@ -1,0 +1,108 @@
+function "main"."int$pkg_gvallocation_int$pkg_gvallocation_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        errcode         text;
+        vrowcount       bigint := 0;
+
+        errmsg          varchar(200);
+        vdetailtbl      varchar(1000);
+        vsession        varchar(100);
+		V_SID			bigint;
+
+        c CURSOR FOR
+            SELECT  b.code allocate_admsite_code, trim(both gvno) gvno
+            FROM    int$stg_gvallocation a, admsite b
+            WHERE   trim(both a.allocated_site) = b.shrtname
+            AND     a.userid = p_userid;
+BEGIN
+        --Clear error log table before Allocate GV
+        DELETE FROM int$error_log WHERE userid = p_userid;
+
+        FOR r IN c LOOP
+
+            UPDATE  gvleaves
+            SET     status = 'A'
+                    ,allocate_admsite_code =r.allocate_admsite_code
+                    ,allocateon = clock_timestamp()
+                    ,lastmodifiedon = clock_timestamp()
+                    ,lastmodifiedby = p_userid
+            WHERE   coalesce(gvno_udf,gvno) = r.gvno;
+            vrowcount := vrowcount + 1;
+
+        END LOOP;
+
+        IF  vrowcount <> 0 THEN
+            -- log to be added in History table
+					
+				--SELECT PG_BACKEND_PID() INTO V_SID;
+				
+                --SELECT  V_SID||'_'||APPLICATION_NAME INTO vsession FROM PG_STAT_ACTIVITY WHERE PID=V_SID;
+				-- log to be added in History table
+      SELECT nextval('int$error_log_code') INTO STRICT vsession;
+
+            -- start rev : 001
+            --vdetailtbl := 'CREATE TABLE gvallocation_'||vsession||' AS SELECT  gvno "GV No.", allocated_site "Allocated Site" FROM int$stg_gvallocation WHERE userid ='|| p_userid::text;
+            vdetailtbl := 'CREATE TABLE ginarchive.gvallocation_'||vsession||' AS SELECT  gvno "GV No.", allocated_site "Allocated Site" FROM int$stg_gvallocation WHERE userid ='|| p_userid::text;
+            -- end rev : 001
+            EXECUTE vdetailtbl;
+
+            INSERT INTO int$history(code, importedby, importedon, classname, summary, history_detail_tablename, history_detail_row_count)
+            -- start rev : 001
+            --VALUES (int$history_code.NEXTVAL, p_userid, SYSDATE, 'GVALLOCATION', vrowcount||' GV has been allocated', 'gvallocation_'||vsession, vrowcount);
+            VALUES (nextval('int$history_code'), p_userid, clock_timestamp(), 'GVALLOCATION', vrowcount :: text||' GV has been allocated', 'ginarchive.gvallocation_'||vsession, vrowcount:: text);
+            -- end rev : 001
+            --COMMIT;
+
+            RETURN('1');
+
+        ELSE
+            RETURN('0');
+        END IF;
+
+    EXCEPTION
+        WHEN OTHERS THEN
+            errcode := SQLSTATE;
+            errmsg := SQLERRM;
+
+            --Error log for Oracle Internal Error
+            INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            VALUES (nextval('int$error_log_code'), 0, 'GIFTVOUCHER', p_userid, errcode, errmsg, clock_timestamp());
+            --COMMIT;
+
+            RETURN('0');
+    END;
+
+ -- clear gv allocation staging table
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

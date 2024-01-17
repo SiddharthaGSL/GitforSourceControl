@@ -1,0 +1,179 @@
+function "main"."t_hrdemp_aud$hrdemp()" {
+  text = """
+
+DECLARE
+    V_RECORD_OLD AUD_HRDEMP%ROWTYPE;
+	V_RECORD_NEW AUD_HRDEMP%ROWTYPE;
+    V_SID DOUBLE PRECISION;
+    V_TRNID CHARACTER VARYING(50);
+    V_ACTION CHARACTER VARYING(10);
+    I RECORD;    
+	V_AUDIT_USER CHARACTER VARYING (100);
+	V_LOGINUSER  CHARACTER VARYING (100);
+	V_PROGRAM    CHARACTER VARYING (100);
+	V_REC_COUNT  BIGINT; 
+   
+BEGIN
+       SELECT current_setting('audit.AUDIT_USER', true) INTO V_AUDIT_USER;
+	   IF NULLIF(V_AUDIT_USER,'') IS NOT NULL THEN  
+		   BEGIN
+				SELECT FULLNAME
+				INTO   STRICT V_LOGINUSER
+				FROM   APPUSER
+				WHERE  ID =  substring (V_AUDIT_USER,8,position(';' in V_AUDIT_USER)-8)::NUMERIC; 
+		   EXCEPTION
+				WHEN no_data_found
+				THEN
+					V_LOGINUSER := 'System';
+			END;			
+		ELSE
+			V_LOGINUSER := 'SYSTEM';
+		END IF;
+	   
+	   select application_name
+	   INTO   V_PROGRAM
+	   from pg_stat_activity where pid = pg_backend_pid();
+
+       V_ACTION:=TG_OP;
+	   
+       SELECT TXID_CURRENT() INTO V_TRNID;
+       
+        IF TG_OP = 'INSERT' OR  TG_OP = 'UPDATE' THEN 
+	   
+           V_RECORD_NEW.ACTION := V_ACTION;
+           V_RECORD_NEW.ACTION_SUBTYPE := 'NEW';
+           V_RECORD_NEW.TRANSACTION_ID := V_TRNID::TEXT;		   
+		   V_RECORD_NEW.ecode := NEW.ecode;
+            V_RECORD_NEW.fname := NEW.fname;
+            V_RECORD_NEW.eno := NEW.eno;
+            V_RECORD_NEW.abbre := NEW.abbre;
+            V_RECORD_NEW.deptcode := NEW.deptcode;
+            V_RECORD_NEW.rlcode := NEW.rlcode;
+            V_RECORD_NEW.pass := NEW.pass;
+            V_RECORD_NEW.locdays := NEW.locdays;
+            V_RECORD_NEW.rem := NEW.rem;
+            V_RECORD_NEW.ext := NEW.ext;
+            V_RECORD_NEW.flex_field_key := NEW.flex_field_key;
+            V_RECORD_NEW.profcode := NEW.profcode;
+            V_RECORD_NEW.salesman := NEW.salesman;
+            V_RECORD_NEW.usertype := NEW.usertype;
+            V_RECORD_NEW.allow_last_fy_day_mode := NEW.allow_last_fy_day_mode;
+            V_RECORD_NEW.reportrole := NEW.reportrole;
+            V_RECORD_NEW.is_apiuser := NEW.is_apiuser;
+            V_RECORD_NEW.apikey := NEW.apikey;
+          END IF;  
+            
+         IF TG_OP = 'UPDATE' OR TG_OP = 'DELETE' THEN 
+	   
+            V_RECORD_OLD.ACTION := V_ACTION;
+            V_RECORD_OLD.ACTION_SUBTYPE := 'OLD';
+            V_RECORD_OLD.TRANSACTION_ID := V_TRNID::TEXT;			
+			V_RECORD_OLD.ecode := OLD.ecode;
+            V_RECORD_OLD.fname := OLD.fname;
+            V_RECORD_OLD.eno := OLD.eno;
+            V_RECORD_OLD.abbre := OLD.abbre;
+            V_RECORD_OLD.deptcode := OLD.deptcode;
+            V_RECORD_OLD.rlcode := OLD.rlcode;
+            V_RECORD_OLD.pass := OLD.pass;
+            V_RECORD_OLD.locdays := OLD.locdays;
+            V_RECORD_OLD.rem := OLD.rem;
+            V_RECORD_OLD.ext := OLD.ext;
+            V_RECORD_OLD.flex_field_key := OLD.flex_field_key;
+            V_RECORD_OLD.profcode := OLD.profcode;
+            V_RECORD_OLD.salesman := OLD.salesman;
+            V_RECORD_OLD.usertype := OLD.usertype;
+            V_RECORD_OLD.allow_last_fy_day_mode := OLD.allow_last_fy_day_mode;
+            V_RECORD_OLD.reportrole := OLD.reportrole;
+            V_RECORD_OLD.is_apiuser := OLD.is_apiuser;
+            V_RECORD_OLD.apikey := OLD.apikey;
+          END IF;  
+
+    IF TG_OP = 'INSERT' THEN
+	    V_REC_COUNT := 1;
+        INSERT INTO AUD_HRDEMP SELECT V_RECORD_NEW.*;
+    END IF;
+
+    IF TG_OP = 'UPDATE' THEN
+	FOR I IN (
+		SELECT 
+		V_RECORD_OLD.apikey,
+                  V_RECORD_OLD.is_apiuser,
+                  V_RECORD_OLD.reportrole,
+                  V_RECORD_OLD.allow_last_fy_day_mode,
+                  V_RECORD_OLD.profcode,
+                  V_RECORD_OLD.ext,
+                  V_RECORD_OLD.rem,
+                  V_RECORD_OLD.locdays,
+                  V_RECORD_OLD.pass,
+                  V_RECORD_OLD.rlcode,
+                  V_RECORD_OLD.deptcode,
+                  V_RECORD_OLD.abbre,
+                  V_RECORD_OLD.eno,
+                  V_RECORD_OLD.fname
+		EXCEPT
+		SELECT 
+		V_RECORD_NEW.apikey,
+                  V_RECORD_NEW.is_apiuser,
+                  V_RECORD_NEW.reportrole,
+                  V_RECORD_NEW.allow_last_fy_day_mode,
+                  V_RECORD_NEW.profcode,
+                  V_RECORD_NEW.ext,
+                  V_RECORD_NEW.rem,
+                  V_RECORD_NEW.locdays,
+                  V_RECORD_NEW.pass,
+                  V_RECORD_NEW.rlcode,
+                  V_RECORD_NEW.deptcode,
+                  V_RECORD_NEW.abbre,
+                  V_RECORD_NEW.eno,
+                  V_RECORD_NEW.fname
+			 )
+	LOOP
+	  V_REC_COUNT := 1; 
+		INSERT INTO AUD_HRDEMP SELECT V_RECORD_OLD.*;
+       INSERT INTO AUD_HRDEMP SELECT V_RECORD_NEW.*;    
+	END LOOP;   
+    END IF;
+
+    IF TG_OP = 'DELETE' THEN
+		V_REC_COUNT := 1;
+		INSERT INTO AUD_HRDEMP SELECT V_RECORD_OLD.*;
+    END IF;
+	
+	IF V_REC_COUNT >  0
+	THEN
+	   BEGIN
+            INSERT INTO AUD_TRANSACTION (TRANSACTION_ID, TRANSACTION_DATE, LOGIN_USER, PROGRAM, MODULE_SHORTCODE, MODULE_TYPE)
+            VALUES (V_TRNID,   current_date,V_LOGINUSER, V_PROGRAM, 'UserSiteAssignment', 'User (with Site Assignment)');
+       EXCEPTION WHEN unique_violation THEN
+            NULL;
+       END;  
+
+       BEGIN  
+             INSERT INTO AUD_TRANSACTION_TABLE (TRANSACTION_ID, TABLE_NAME)
+             VALUES (V_TRNID,  'HRDEMP');
+       EXCEPTION WHEN unique_violation THEN
+             NULL;
+       END; 
+	END IF;   
+    
+
+    IF TG_OP = 'INSERT' THEN
+        RETURN NEW;
+    ELSIF TG_OP = 'UPDATE' THEN
+        RETURN NEW;
+    ELSIF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    EXCEPTION
+        WHEN others THEN
+            CALL main.erraudit(SESSION_USER::text, 'T_HRDEMP_AUD'::CHARACTER, SQLSTATE::text, SQLERRM);
+			RAISE;
+			RETURN NULL;
+END;
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

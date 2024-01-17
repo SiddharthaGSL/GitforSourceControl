@@ -1,0 +1,145 @@
+view "main"."v_psite_cardbenefitdetail" {
+  text = """-
+SELECT c.cardno,
+    c.lpcardtypecode AS lpcard_type_code,
+    lpct.name AS lpcard_type_name,
+    c.seq,
+    c.issuedon,
+    c.validityinmonths,
+    c.validupto AS cardvalidupto,
+    c.status AS cardstatus,
+    c.issuesitecode,
+    c.issuesitename,
+    c.allocatedsitecode,
+    c.allocatedsitename,
+    c.customerid,
+    c.customername,
+    c.createdon,
+    q.discbenefitid,
+    q.discbenefitname,
+    q.discbenefiteffectivefrom,
+    q.discbenefitvalidupto,
+    q.pointbenefitid,
+    q.pointbenefitname,
+    q.pointbenefiteffectivefrom,
+    q.pointbenefitvalidupto
+   FROM main.lpcard_type lpct,
+    (main.v_lpcard c
+     LEFT JOIN ( SELECT cb.cardno,
+            max(cb.discbenefitid) AS discbenefitid,
+            max((cb.discbenefitname)::text) AS discbenefitname,
+            max(cb.discbenefiteffectivefrom) AS discbenefiteffectivefrom,
+            max(cb.discbenefitvalidupto) AS discbenefitvalidupto,
+            max(cb.pointbenefitid) AS pointbenefitid,
+            max((cb.pointbenefitname)::text) AS pointbenefitname,
+            max(cb.pointbenefiteffectivefrom) AS pointbenefiteffectivefrom,
+            max(cb.pointbenefitvalidupto) AS pointbenefitvalidupto
+           FROM ( SELECT lpcbd.cardno,
+                    lpcbd.lpbenefit_code AS discbenefitid,
+                    lpb.benefit AS discbenefitname,
+                    lpcbd.effective_from AS discbenefiteffectivefrom,
+                    lpcbd.valid_upto AS discbenefitvalidupto,
+                    NULL::numeric AS pointbenefitid,
+                    NULL::character varying AS pointbenefitname,
+                    NULL::timestamp without time zone AS pointbenefiteffectivefrom,
+                    NULL::timestamp without time zone AS pointbenefitvalidupto
+                   FROM (main.lpcard_benefit_discount lpcbd
+                     LEFT JOIN main.lpbenefit lpb ON ((lpcbd.lpbenefit_code = lpb.code)))
+                  WHERE (((lpcbd.cardno)::text, lpcbd.effective_from) IN ( SELECT lpcbd_inner.cardno,
+                            max(lpcbd_inner.effective_from) AS max
+                           FROM main.lpcard_benefit_discount lpcbd_inner
+                          WHERE (lpcbd_inner.effective_from <= ( SELECT ((clock_timestamp() AT TIME ZONE COALESCE(current_setting('aws_oracle_ext.tz'::text, true), 'UTC'::text)))::timestamp(0) without time zone AS timezone))
+                          GROUP BY lpcbd_inner.cardno))
+                UNION ALL
+                 SELECT lpcbp.cardno,
+                    NULL::numeric AS discbenefitid,
+                    NULL::character varying AS discbenefitname,
+                    NULL::timestamp without time zone AS discebenefitffectivefrom,
+                    NULL::timestamp without time zone AS discbenefitvalidupto,
+                    lpcbp.lpbenefit_code AS pointbenefitid,
+                    lpb.benefit AS pointbenefitname,
+                    lpcbp.effective_from AS pointbenefiteffectivefrom,
+                    lpcbp.valid_upto AS pointbenefitvalidupto
+                   FROM (main.lpbenefit lpb
+                     RIGHT JOIN main.lpcard_benefit_point lpcbp ON ((lpcbp.lpbenefit_code = lpb.code)))
+                  WHERE (((lpcbp.cardno)::text, lpcbp.effective_from) IN ( SELECT lpcbp_inner.cardno,
+                            max(lpcbp_inner.effective_from) AS max
+                           FROM main.lpcard_benefit_point lpcbp_inner
+                          WHERE (lpcbp_inner.effective_from <= ( SELECT ((clock_timestamp() AT TIME ZONE COALESCE(current_setting('aws_oracle_ext.tz'::text, true), 'UTC'::text)))::timestamp(0) without time zone AS timezone))
+                          GROUP BY lpcbp_inner.cardno))) cb
+          GROUP BY cb.cardno) q ON (((c.cardno)::text = (q.cardno)::text)))
+  WHERE (c.lpcardtypecode = lpct.code);
+"""
+  columns = (
+    column "cardno" {
+      type = "character varying(30)"
+    }
+    column "lpcard_type_code" {
+      type = "bigint"
+    }
+    column "lpcard_type_name" {
+      type = "character varying(100)"
+    }
+    column "seq" {
+      type = "bigint"
+    }
+    column "issuedon" {
+      type = "timestamp(0) without time zone"
+    }
+    column "validityinmonths" {
+      type = "bigint"
+    }
+    column "cardvalidupto" {
+      type = "timestamp(0) without time zone"
+    }
+    column "cardstatus" {
+      type = "character(1)"
+    }
+    column "issuesitecode" {
+      type = "bigint"
+    }
+    column "issuesitename" {
+      type = "character varying(100)"
+    }
+    column "allocatedsitecode" {
+      type = "bigint"
+    }
+    column "allocatedsitename" {
+      type = "character varying(100)"
+    }
+    column "customerid" {
+      type = "character varying(50)"
+    }
+    column "customername" {
+      type = text
+    }
+    column "createdon" {
+      type = "timestamp(0) without time zone"
+    }
+    column "discbenefitid" {
+      type = "numeric"
+    }
+    column "discbenefitname" {
+      type = text
+    }
+    column "discbenefiteffectivefrom" {
+      type = "timestamp without time zone"
+    }
+    column "discbenefitvalidupto" {
+      type = "timestamp without time zone"
+    }
+    column "pointbenefitid" {
+      type = "numeric"
+    }
+    column "pointbenefitname" {
+      type = text
+    }
+    column "pointbenefiteffectivefrom" {
+      type = "timestamp without time zone"
+    }
+    column "pointbenefitvalidupto" {
+      type = "timestamp without time zone"
+    }
+  )
+}
+

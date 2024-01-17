@@ -1,0 +1,457 @@
+procedure "main"."db_pkg_cogs$p_get_item_last_in_rate(bigint, text, timestamp without time zone, text, double, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+      v_rate                     invstock.rate%TYPE;
+      v_admou_code               admou.code%TYPE;
+      v_sitetype                 admsite.sitetype%TYPE;
+      v_invitemlastinward_code   invitemlastinward.code%TYPE;
+      v_rate_hierarchy           integer;
+      -- start rev : 016
+      V_PRICE_MANAGEMENT         char(1);
+      v_record_exist_in_loop     smallint;
+	  i RECORD;
+
+      -- end rev : 016
+      -- START REV : 016
+      --cursor c1(p_admsite_code number, p_icode varchar2, p_entdt date, p_admou_code number, p_invbatch_serial_cod) is
+      c1 CURSOR(
+         p_admsite_code            bigint,
+         p_icode                   text,
+         p_entdt                   timestamp,
+         p_admou_code              bigint,
+         p_invbatch_serial_code    bigint)
+      FOR
+           SELECT coalesce(rate, 0) rate
+             FROM temp_fifo_in_stock
+            WHERE     admsite_code <> p_admsite_code
+                  AND icode = p_icode
+                  AND entdt <= p_entdt
+                  AND (admou_code IS NULL OR admou_code = p_admou_code)
+                  -- START REV : 016
+                  AND (   p_invbatch_serial_code IS NULL
+                       OR invbatch_serial_code = p_invbatch_serial_code)
+         -- END REV : 016
+         ORDER BY entdt DESC, stockcode DESC;
+
+      -- START REV : 016
+      c2 CURSOR(
+         p_admsite_code    bigint,
+         p_icode           text,
+         p_entdt           timestamp,
+         p_admou_code      bigint)
+      FOR
+           SELECT coalesce(rate, 0) rate
+             FROM temp_fifo_in_stock
+            WHERE     admsite_code <> p_admsite_code
+                  AND icode = p_icode
+                  AND entdt <= p_entdt
+                  AND (admou_code IS NULL OR admou_code = p_admou_code)
+         ORDER BY entdt DESC, stockcode DESC;
+   -- END REV : 016
+BEGIN
+      /*
+      inpool not found OR zero
+      --    check for inpool for other site (same ou) (not found or zero)
+              check inpool for same site > date (same ou) (not found or zero)
+      --            check inpool for other site > date (same ou) max rate (not found or zero)
+                      item master
+      -- ts skip
+      */
+      SELECT admou_code, sitetype
+        INTO STRICT v_admou_code, v_sitetype
+        FROM admsite
+       WHERE code = p_admsite_code;
+
+      -- start rev : 016
+      --v_invitemlastinward_code := p_admsite_code||'-'||p_icode;
+      IF p_batch_serial_code IS NOT NULL
+      THEN
+         v_invitemlastinward_code :=
+            p_admsite_code::text || '-' || p_batch_serial_code::text || '-' || p_icode;
+      ELSE
+         v_invitemlastinward_code := p_admsite_code::text || '-' || p_icode;
+      END IF;
+
+      -- end rev : 016
+      -- Check the item was received in other site before the transaction date
+      IF SUBSTR(v_sitetype, -2, 2) <> 'TS'
+      THEN
+         IF p_fm_cogs_pkg IS NOT NULL
+         THEN
+            -- START REV : 016
+            --for i in c1(p_admsite_code, p_icode, p_entdt, v_admou_code) loop
+            FOR i IN c1(p_admsite_code,
+                         p_icode,
+                         p_entdt,
+                         v_admou_code,
+                         p_batch_serial_code)
+            LOOP
+               v_record_exist_in_loop := 1;
+               -- END REV : 016
+               v_rate := i.rate;
+               v_rate_hierarchy := 2;
+               EXIT;
+            END LOOP;
+
+            -- START REV : 016
+            IF coalesce(v_record_exist_in_loop, 0) = 0
+            THEN
+               FOR i IN c2(p_admsite_code,
+                            p_icode,
+                            p_entdt,
+                            v_admou_code)
+               LOOP
+                  v_rate := i.rate;
+                  v_rate_hierarchy := 2;
+                  EXIT;
+               END LOOP;
+            END IF;
+         -- END REV : 016
+         END IF;
+      END IF;
+
+      -- start rev : 005
+      -- if  v_rate is null then
+      IF coalesce(v_rate, 0) = 0
+      THEN
+         -- end rev : 005
+         BEGIN
+            v_rate_hierarchy := 3;
+
+            SELECT a.rate
+              INTO STRICT v_rate
+              FROM invitemlastinward a
+             WHERE a.code = v_invitemlastinward_code;
+
+            -- start rev : 005
+            IF coalesce(v_rate, 0) = 0
+            THEN
+               SELECT 1
+                 INTO STRICT v_rate
+
+                WHERE 1 = 2;
+            END IF;
+         -- end rev : 005
+         EXCEPTION
+            WHEN no_data_found
+            THEN
+               BEGIN
+                  v_rate_hierarchy := 4;
+
+                  IF SUBSTR(v_sitetype, -2, 2) <> 'TS'
+                  THEN
+                     SELECT a.rate
+                       INTO STRICT v_rate
+                       FROM invitemlastinward a
+                      WHERE a.code =
+                               (SELECT code
+                                  FROM (  SELECT code
+                                            FROM invitemlastinward c
+                                           WHERE     c.icode = p_icode
+                                                 -- and    (c.admou_code is null or c.admou_code = v_admou_code)
+                                                 AND c.admou_code =
+                                                        v_admou_code
+                                                 -- start rev :  016
+                                                 AND (   p_batch_serial_code
+                                                            IS NULL
+                                                      OR c.invbatch_serial_code =
+                                                            p_batch_serial_code::bigint)
+                                        -- end rev : 016
+                                        ORDER BY c.transaction_date DESC,
+                                                 c.stockcode DESC) alias2 LIMIT 1);
+
+                     -- start rev : 005
+                     IF coalesce(v_rate, 0) = 0
+                     THEN
+                        SELECT 1
+                          INTO STRICT v_rate
+
+                         WHERE 1 = 2;
+                     END IF;
+                  -- end rev : 005
+                  ELSE
+                     -- dummy select to raise no_data_found
+                     SELECT 0
+                       INTO STRICT v_rate
+
+                      WHERE 1 = 2;
+                  END IF;
+               EXCEPTION
+                  WHEN no_data_found
+                  THEN
+                     v_rate_hierarchy := 5;
+
+                     BEGIN
+                        -- START REV : 016
+                        --select nvl(costrate,0) into v_rate
+                        --from   invitem
+                        --where  icode = p_icode;
+                        SELECT PRICE_MANAGEMENT
+                          INTO STRICT V_PRICE_MANAGEMENT
+                          FROM INVITEM
+                         WHERE ICODE = P_ICODE;
+
+                        IF V_PRICE_MANAGEMENT = 'I'
+                        THEN
+                           -- start
+                           BEGIN
+                              v_rate_hierarchy := 3;
+
+                              ------------------------------------------------------------------
+                              IF SUBSTR(v_sitetype, -2, 2) <> 'TS'
+                              THEN
+                                 SELECT a.rate
+                                   INTO STRICT v_rate
+                                   FROM invitemlastinward a
+                                  WHERE a.code =
+                                           (SELECT code
+                                              FROM (  SELECT code
+                                                        FROM invitemlastinward
+                                                             c
+                                                       WHERE     c.icode =
+                                                                    p_icode
+                                                             AND c.admsite_code =
+                                                                    p_admsite_code
+                                                             AND c.admou_code =
+                                                                    v_admou_code
+                                                    ORDER BY c.transaction_date DESC,
+                                                             c.stockcode DESC) alias1 LIMIT 1);
+
+                                 IF coalesce(v_rate, 0) = 0
+                                 THEN
+                                    SELECT 1
+                                      INTO STRICT v_rate
+
+                                     WHERE 1 = 2;
+                                 END IF;
+                              ELSE
+                                 -- dummy select to raise no_data_found
+                                 SELECT 0
+                                   INTO STRICT v_rate
+
+                                  WHERE 1 = 2;
+                              END IF;
+
+                              ------------------------------------------------------------------
+                              IF coalesce(v_rate, 0) = 0
+                              THEN
+                                 SELECT 1
+                                   INTO STRICT v_rate
+
+                                  WHERE 1 = 2;
+                              END IF;
+                           EXCEPTION
+                              WHEN no_data_found
+                              THEN
+                                 BEGIN
+                                    v_rate_hierarchy := 4;
+
+                                    IF SUBSTR(v_sitetype, -2, 2) <> 'TS'
+                                    THEN
+                                       SELECT a.rate
+                                         INTO STRICT v_rate
+                                         FROM invitemlastinward a
+                                        WHERE a.code =
+                                                 (SELECT code
+                                                    FROM (  SELECT code
+                                                              FROM invitemlastinward
+                                                                   c
+                                                             WHERE     c.icode =
+                                                                          p_icode
+                                                                   AND c.admou_code =
+                                                                          v_admou_code
+                                                          ORDER BY c.transaction_date DESC,
+                                                                   c.stockcode DESC) alias1 LIMIT 1);
+
+                                       IF coalesce(v_rate, 0) = 0
+                                       THEN
+                                          SELECT 1
+                                            INTO STRICT v_rate
+
+                                           WHERE 1 = 2;
+                                       END IF;
+                                    ELSE
+                                       -- dummy select to raise no_data_found
+                                       SELECT 0
+                                         INTO STRICT v_rate
+
+                                        WHERE 1 = 2;
+                                    END IF;
+                                 EXCEPTION
+                                    WHEN no_data_found
+                                    THEN
+                                       v_rate_hierarchy := 5;
+
+                                       BEGIN
+                                          SELECT coalesce(costrate, 0)
+                                            INTO STRICT v_rate
+                                            FROM invitem
+                                           WHERE icode = p_icode;
+                                       END;
+                                 END;
+                           END;
+                        ELSIF V_PRICE_MANAGEMENT = 'B'
+                        THEN
+                           BEGIN
+                              SELECT coalesce(costrate, 0)
+                                INTO STRICT v_rate
+                                FROM invbatch_serial
+                               WHERE     code = p_batch_serial_code
+                                     AND icode = p_icode;
+                           EXCEPTION
+                              WHEN no_data_found
+                              THEN
+                                 ------for system batch only------
+                                 --v_invitemlastinward_code := p_admsite_code||'-'||p_icode;
+                                 BEGIN
+                                    v_rate_hierarchy := 3;
+
+                                    IF SUBSTR(v_sitetype, -2, 2) <> 'TS'
+                                    THEN
+                                       SELECT a.rate
+                                         INTO STRICT v_rate
+                                         FROM invitemlastinward a
+                                        WHERE a.code =
+                                                 (SELECT code
+                                                    FROM (  SELECT code
+                                                              FROM invitemlastinward
+                                                                   c
+                                                             WHERE     c.icode =
+                                                                          p_icode
+                                                                   AND c.admsite_code =
+                                                                          p_admsite_code
+                                                                   AND c.admou_code =
+                                                                          v_admou_code
+                                                          ORDER BY c.transaction_date DESC,
+                                                                   c.stockcode DESC) alias1 LIMIT 1);
+                                    END IF;
+
+                                    IF coalesce(v_rate, 0) = 0
+                                    THEN
+                                       SELECT 1
+                                         INTO STRICT v_rate
+
+                                        WHERE 1 = 2;
+                                    END IF;
+                                 EXCEPTION
+                                    WHEN no_data_found
+                                    THEN
+                                       BEGIN
+                                          v_rate_hierarchy := 4;
+
+                                          IF SUBSTR(v_sitetype, -2, 2) <>
+                                                'TS'
+                                          THEN
+                                             SELECT a.rate
+                                               INTO STRICT v_rate
+                                               FROM invitemlastinward a
+                                              WHERE a.code =
+                                                       (SELECT code
+                                                          FROM (  SELECT code
+                                                                    FROM invitemlastinward
+                                                                         c
+                                                                   WHERE     c.icode =
+                                                                                p_icode
+                                                                         AND c.admou_code =
+                                                                                v_admou_code
+                                                                ORDER BY c.transaction_date DESC,
+                                                                         c.stockcode DESC) alias1 LIMIT 1);
+
+                                             IF coalesce(v_rate, 0) = 0
+                                             THEN
+                                                SELECT 1
+                                                  INTO STRICT v_rate
+
+                                                 WHERE 1 = 2;
+                                             END IF;
+                                          ELSE
+                                             -- dummy select to raise no_data_found
+                                             SELECT 0
+                                               INTO STRICT v_rate
+
+                                              WHERE 1 = 2;
+                                          END IF;
+                                       EXCEPTION
+                                          WHEN no_data_found
+                                          THEN
+                                             v_rate_hierarchy := 5;
+
+                                             BEGIN
+                                                SELECT coalesce(costrate, 0)
+                                                  INTO STRICT v_rate
+                                                  FROM invitem
+                                                 WHERE icode = p_icode;
+                                             END;
+                                       END;
+                                 END;
+                           -------for system batch only------------
+                           END;
+                        END IF;
+                     -- END REV : 016
+                     EXCEPTION
+                        WHEN no_data_found
+                        THEN
+                           v_rate := 0;
+                     END;
+               END;
+         END;
+      END IF;
+
+      p_rate := v_rate;
+      p_rate_hierarchy := v_rate_hierarchy;
+   END;
+
+"""
+  arguments = <
+    {
+      name = p_admsite_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_icode
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_entdt
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_fm_cogs_pkg
+      type = text
+      mode = IN
+      default = NULL::text
+    }
+
+    {
+      name = p_rate
+      type = double precision
+      mode = INOUT
+      default = NULL::double precision
+    }
+
+    {
+      name = p_rate_hierarchy
+      type = bigint
+      mode = INOUT
+      default = NULL::bigint
+    }
+
+    {
+      name = p_batch_serial_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+  >
+  language = plpgsql
+}
+

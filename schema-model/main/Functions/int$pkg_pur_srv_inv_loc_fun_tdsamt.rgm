@@ -1,0 +1,66 @@
+function "main"."int$pkg_pur_srv_inv_loc_fun_tdsamt(bigint, bigint)" {
+  text = """
+
+DECLARE
+
+      v_tdsamt       double precision;
+      v_act_tdsamt   double precision;
+      v_xeffnetamt   double precision;
+
+      c1_main CURSOR(p_srvcode bigint)
+      FOR
+         SELECT *
+           FROM pursrvmain
+          WHERE srvcode = p_srvcode;
+
+      c2_det CURSOR(p_srvcode bigint, p_pursrvdet_code bigint)
+      FOR
+           SELECT *
+             FROM pursrvdet
+            WHERE srvcode = p_srvcode AND code = p_pursrvdet_code
+         ORDER BY code;
+
+BEGIN
+      FOR i IN c1_main(p_srvcode)
+      LOOP
+         --for j in c2_det (p_srvcode, p_pursrvdet_code) loop
+         IF coalesce(i.tds_app, 'N') = 'Y'
+         THEN
+            v_xeffnetamt :=
+               int$pkg_pur_srv_inv_loc_fun_calc_tds_bill_amt(p_srvcode, p_pursrvdet_code);
+            v_act_tdsamt := coalesce(v_xeffnetamt, 0) * coalesce(i.tdsrate, 0) / 100;
+
+            IF coalesce(v_act_tdsamt, 0) < 1 AND coalesce(v_act_tdsamt, 0) <> 0
+            THEN
+               v_tdsamt := 1;
+            ELSE
+               v_tdsamt := ROUND(coalesce(v_act_tdsamt, 0));
+            END IF;
+         ELSE
+            v_tdsamt := 0;
+         END IF;
+      --end loop;
+      END LOOP;
+
+      RETURN v_tdsamt;
+   END;
+
+"""
+  returnType = bigint
+  arguments = <
+    {
+      name = p_srvcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_pursrvdet_code
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

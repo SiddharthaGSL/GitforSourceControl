@@ -1,0 +1,367 @@
+function "main"."db_pkg_promo_condition$display_benefits(bigint, bigint, bigint, bigint, bigint, bigint, bigint, character, character, bigint, character, character, bigint, character)" {
+  text = """
+
+DECLARE
+
+        V_STRING            varchar(2000);
+        V_EXCLUDE_DESC      varchar(100);
+        V_GET_ASSORT_NAME   varchar(150);
+        V_BUY_ASSORT_NAME   varchar(150);
+        V_SHORT_DESC        varchar(50);
+        V_ISCOMBO           char(1);
+
+BEGIN
+        IF  coalesce(V_BUY_ASSORT, 0) <> 0 THEN
+            BEGIN
+                SELECT  NAME, ISCOMBO
+                INTO STRICT    V_BUY_ASSORT_NAME, V_ISCOMBO
+                FROM    PROMO_ASSORTMENT
+                WHERE   CODE = V_BUY_ASSORT;
+            EXCEPTION WHEN no_data_found THEN
+                NULL;
+            END;
+        -- START REV 001
+        ELSIF V_BUY_ASSORT = 0 THEN
+            V_BUY_ASSORT_NAME := 'Multiple';
+            V_ISCOMBO         := 'N';
+        END IF;
+        -- END REV 001
+        IF  coalesce(V_GET_ASSORT, 0) <> 0 THEN
+            BEGIN
+                SELECT  NAME, EXCLUDE_DESC, ISCOMBO
+                INTO STRICT    V_GET_ASSORT_NAME, V_EXCLUDE_DESC, V_ISCOMBO
+                FROM    PROMO_ASSORTMENT
+                WHERE   CODE = V_GET_ASSORT;
+            EXCEPTION WHEN no_data_found THEN
+                NULL;
+            END;
+        END IF;
+
+        IF  coalesce(V_GET_VOUCHER_CODE, 0) <> 0 THEN
+            BEGIN
+                SELECT  SHORT_DESC
+                INTO STRICT    V_SHORT_DESC
+                FROM    PROMO_VOUCHER
+                WHERE   CODE = V_GET_VOUCHER_CODE;
+            EXCEPTION WHEN no_data_found THEN
+                NULL;
+            END;
+        END IF;
+
+        IF V_GET_BENEFIT_CODE = 1 THEN
+            -- START REV : 003
+            --IF V_DIS_TYPE = 'P' AND NVL (V_DIS_FACTOR, 0) < 100 AND NVL (V_DIS_PRICE_BASIS, 'M') <> 'R' THEN
+            IF V_DIS_TYPE = 'P' AND coalesce(V_DIS_PRICE_BASIS, 'M') <> 'R' THEN
+            -- END REV : 003
+                IF    V_DIS_PRICE_BASIS = 'M' THEN
+                    V_STRING := ' Get '||coalesce(V_DIS_FACTOR, 0) ||' % Off on RSP. ';
+                ELSIF V_DIS_PRICE_BASIS = 'W' THEN
+                    V_STRING := ' Get '||coalesce(V_DIS_FACTOR, 0) ||' % Off on WSP. ';
+                ELSIF V_DIS_PRICE_BASIS = 'L' THEN
+                    V_STRING := ' Get '||coalesce(V_DIS_FACTOR, 0) ||' % Off on MRP. ';
+                ELSE
+                    V_STRING := ' Get '||coalesce(V_DIS_FACTOR, 0) ||' % Off. ';
+                END IF;
+            ELSIF   V_DIS_TYPE = 'P' AND coalesce(V_DIS_FACTOR, 0) < 100 AND coalesce(V_DIS_PRICE_BASIS, 'M') = 'R' THEN
+                    V_STRING := ' @ '||coalesce(V_DIS_FACTOR, 0)||' % Markup on Effective Rate. ';
+            ELSIF  V_DIS_TYPE = 'A' AND coalesce(V_DIS_FACTOR, 0) <> 0 AND coalesce(V_DIS_PRICE_BASIS, 'M') <> 'R' THEN
+                IF V_DIS_PRICE_BASIS = 'M' THEN
+                    V_STRING := ' Get Rs. '||coalesce(V_DIS_FACTOR, 0) ||' Off on RSP. ';
+                ELSIF V_DIS_PRICE_BASIS = 'W' THEN
+                    V_STRING := ' Get Rs. '||coalesce(V_DIS_FACTOR, 0) ||' Off on WSP. ';
+                ELSIF V_DIS_PRICE_BASIS = 'L' THEN
+                    V_STRING := ' Get Rs. '||coalesce(V_DIS_FACTOR, 0) ||' Off on MRP. ';
+                ELSE
+                    V_STRING := ' Get Rs. '||coalesce(V_DIS_FACTOR, 0) ||' Off. ';
+                END IF;
+            ELSIF  V_DIS_TYPE = 'A' AND coalesce(V_DIS_FACTOR, 0) <> 0 AND coalesce(V_DIS_PRICE_BASIS, 'M') = 'R' THEN
+                V_STRING := ' @ Rs. '||coalesce(V_DIS_FACTOR, 0) ||' Markup on Effective Rate. ';
+            ELSIF  V_DIS_TYPE = 'F' THEN
+                -- START REV : 002
+                --V_STRING := ' @ Rs. '||NVL (V_DIS_FACTOR, 0) || '. ';
+                IF  coalesce(V_DIS_PRICE_BASIS, 'E') = 'E' THEN
+                    V_STRING := ' @ Rs. '||coalesce(V_DIS_FACTOR, 0) || ' each. ';
+                ELSE
+                    V_STRING := ' @ Rs. '||coalesce(V_DIS_FACTOR, 0) || '. ';
+                END IF;
+                -- END REV : 002
+            END IF;
+
+        ELSIF V_GET_BENEFIT_CODE = 2 THEN
+            -- START REV : 002
+            --IF  NVL (V_DIS_FACTOR, 0) = 100 THEN
+            IF  coalesce(V_DIS_FACTOR, 0) = 100 AND V_DIS_TYPE = 'P' THEN
+            -- END REV : 002
+                IF  coalesce(V_ISCOMBO, 'N') = 'Y' THEN
+                    V_STRING := ' Get '||coalesce(V_GET_FACTOR, 0)||' unit of Combo ['||V_BUY_ASSORT_NAME||'] Free. ';
+                ELSE
+                    V_STRING := ' Get '||coalesce(V_GET_FACTOR, 0)||' unit from Assortment ['||V_BUY_ASSORT_NAME||'] Free. ';
+                END IF;
+            ELSE
+                IF    V_DIS_TYPE = 'P' THEN
+                    IF  coalesce(V_DIS_PRICE_BASIS, 'M') = 'M' THEN
+                        -- START REV : 001
+                        -- V_STRING := ' Get '|| NVL (V_DIS_FACTOR, 0)||' % Discount on MRP. ';
+                        IF  coalesce(V_ISCOMBO, 'N') = 'Y' THEN
+                            V_STRING := ' Get '||coalesce(V_GET_FACTOR, 0)||' unit of Combo ['||V_BUY_ASSORT_NAME||'] '|| coalesce(V_DIS_FACTOR, 0)||' % Discount on RSP. ';
+                        ELSE
+                            V_STRING := ' Get '||coalesce(V_GET_FACTOR, 0)||' unit from Assortment ['||V_BUY_ASSORT_NAME||'] '|| coalesce(V_DIS_FACTOR, 0)||' % Discount on RSP. ';
+                        END IF;
+                        -- END REV : 001
+                    ELSE
+                        -- START REV : 001
+                        -- V_STRING := ' Get '|| NVL (V_DIS_FACTOR, 0)||' % Discount. ';
+                        IF  coalesce(V_ISCOMBO, 'N') = 'Y' THEN
+                            V_STRING := ' Get '||coalesce(V_GET_FACTOR, 0)||' unit of Combo ['||V_BUY_ASSORT_NAME||'] '|| coalesce(V_DIS_FACTOR, 0)||' % Discount. ';
+                        ELSE
+                            V_STRING := ' Get '||coalesce(V_GET_FACTOR, 0)||' unit from Assortment ['||V_BUY_ASSORT_NAME||'] '|| coalesce(V_DIS_FACTOR, 0)||' % Discount. ';
+                        END IF;
+                        -- END REV : 001
+                    END IF;
+                ELSIF V_DIS_TYPE = 'A' THEN
+                    IF  coalesce(V_DIS_PRICE_BASIS, 'M') = 'M' THEN
+                        -- START REV : 001
+                        -- V_STRING := ' Get Rs. '||NVL (V_DIS_FACTOR, 0) ||' Off MRP. ';
+                        IF  coalesce(V_ISCOMBO, 'N') = 'Y' THEN
+                            V_STRING := ' Get '||coalesce(V_GET_FACTOR, 0)||' unit of Combo ['||V_BUY_ASSORT_NAME||'] Rs. '||coalesce(V_DIS_FACTOR, 0) ||' Off RSP. ';
+                        ELSE
+                            V_STRING := ' Get '||coalesce(V_GET_FACTOR, 0)||' unit from Assortment ['||V_BUY_ASSORT_NAME||'] Rs. '||coalesce(V_DIS_FACTOR, 0) ||' Off RSP. ';
+                        END IF;
+                        -- END REV : 001
+                    ELSE
+                        -- START REV : 001
+                        -- V_STRING := ' Get Rs. '||NVL (V_DIS_FACTOR, 0) ||' Off. ';
+                        IF  coalesce(V_ISCOMBO, 'N') = 'Y' THEN
+                            V_STRING := ' Get '||coalesce(V_GET_FACTOR, 0)||' unit of Combo ['||V_BUY_ASSORT_NAME||'] Rs. '||coalesce(V_DIS_FACTOR, 0) ||' Off. ';
+                        ELSE
+                            V_STRING := ' Get '||coalesce(V_GET_FACTOR, 0)||' unit from Assortment ['||V_BUY_ASSORT_NAME||'] Rs. '||coalesce(V_DIS_FACTOR, 0) ||' Off. ';
+                        END IF;
+                        -- END REV : 001
+                    END IF;
+                ELSIF V_DIS_TYPE = 'F' THEN
+                    -- START REV : 001
+                    -- V_STRING := ' @ Rs.' ||NVL (V_DIS_FACTOR, 0) ||'. ';
+                    IF  coalesce(V_ISCOMBO, 'N') = 'Y' THEN
+                        -- START REV : 002
+                        --V_STRING := ' Get '||NVL (V_GET_FACTOR, 0)||' unit of Combo ['||V_BUY_ASSORT_NAME||'] @ Rs.' ||NVL (V_DIS_FACTOR, 0) ||'. ';
+                        IF  coalesce(V_DIS_PRICE_BASIS, 'E') = 'E' THEN
+                            V_STRING := ' Get '||coalesce(V_GET_FACTOR, 0)||' unit of Combo ['||V_BUY_ASSORT_NAME||'] @ Rs.' ||coalesce(V_DIS_FACTOR, 0) ||' each. ';
+                        ELSE
+                            V_STRING := ' Get '||coalesce(V_GET_FACTOR, 0)||' unit of Combo ['||V_BUY_ASSORT_NAME||'] @ Rs.' ||coalesce(V_DIS_FACTOR, 0) ||'. ';
+                        END IF;
+                       -- END REV : 002
+                    ELSE
+                        -- START REV : 002
+                        -- V_STRING := ' Get '||NVL (V_GET_FACTOR, 0)||' unit from Assortment ['||V_BUY_ASSORT_NAME||'] @ Rs.' ||NVL (V_DIS_FACTOR, 0) ||'. ';
+                        IF  coalesce(V_DIS_PRICE_BASIS, 'E') = 'E' THEN
+                            V_STRING := ' Get '||coalesce(V_GET_FACTOR, 0)||' unit from Assortment ['||V_BUY_ASSORT_NAME||'] @ Rs.' ||coalesce(V_DIS_FACTOR, 0) ||' each. ';
+                        ELSE
+                            V_STRING := ' Get '||coalesce(V_GET_FACTOR, 0)||' unit from Assortment ['||V_BUY_ASSORT_NAME||'] @ Rs.' ||coalesce(V_DIS_FACTOR, 0) ||'. ';
+                        END IF;
+                        -- END REV : 002
+                    END IF;
+                    -- END REV : 001
+                END IF;
+            END IF;
+        ELSIF V_GET_BENEFIT_CODE = 3 THEN
+            -- START REV : 002
+            --IF  NVL (V_DIS_FACTOR, 0) = 100 THEN
+            IF  coalesce(V_DIS_FACTOR, 0) = 100 AND V_DIS_TYPE = 'P' THEN
+            -- END REV : 002
+                IF  V_GET_POOL_TYPE = 'A' THEN
+                    V_STRING := ' Get '||coalesce(V_GET_FACTOR, 0)||' unit from Assortment ['|| V_GET_ASSORT_NAME||'] Free';
+                ELSE
+                    V_STRING := ' Get '||coalesce(V_GET_FACTOR, 0)||' unit of Combo ['|| V_GET_ASSORT_NAME||'] Free';
+                END IF;
+            ELSE
+                IF  V_GET_POOL_TYPE = 'A' THEN
+                    IF    V_DIS_TYPE = 'P' THEN
+                        IF coalesce(V_DIS_PRICE_BASIS, 'M') = 'M' THEN
+                            V_STRING := ' Get '||coalesce(V_DIS_FACTOR, 0)||' % Discount on RSP for any ' ||coalesce(V_GET_FACTOR, 0)||' unit from Assortment ['||V_GET_ASSORT_NAME||']';
+                        ELSIF coalesce(V_DIS_PRICE_BASIS, 'M') = 'W' THEN
+                            V_STRING := ' Get '||coalesce(V_DIS_FACTOR, 0)||' % Discount on WSP for any ' ||coalesce(V_GET_FACTOR, 0)||' unit from Assortment ['||V_GET_ASSORT_NAME||']';
+                        ELSIF coalesce(V_DIS_PRICE_BASIS, 'M') = 'L' THEN
+                            V_STRING := ' Get '||coalesce(V_DIS_FACTOR, 0)||' % Discount on MRP for any ' ||coalesce(V_GET_FACTOR, 0)||' unit from Assortment [ '||V_GET_ASSORT_NAME||']';
+                        ELSE
+                            V_STRING := ' Get '||coalesce(V_DIS_FACTOR, 0)||' % Discount on ' ||coalesce(V_GET_FACTOR, 0)||' unit from Assortment ['||V_GET_ASSORT_NAME||']';
+                        END IF;
+                    ELSIF V_DIS_TYPE = 'A' THEN
+                        IF coalesce(V_DIS_PRICE_BASIS, 'M') = 'M' THEN
+                            V_STRING := ' Get Rs.'||coalesce(V_DIS_FACTOR, 0)||' Off on RSP for any ' || coalesce(V_GET_FACTOR, 0)||' unit from Assortment ['||V_GET_ASSORT_NAME||']';
+                        ELSIF coalesce(V_DIS_PRICE_BASIS, 'M') = 'W' THEN
+                            V_STRING := ' Get Rs.'||coalesce(V_DIS_FACTOR, 0)||' Off on WSP for any ' || coalesce(V_GET_FACTOR, 0)||' unit from Assortment ['||V_GET_ASSORT_NAME||']';
+                        ELSIF coalesce(V_DIS_PRICE_BASIS, 'M') = 'L' THEN
+                            V_STRING := ' Get Rs.'||coalesce(V_DIS_FACTOR, 0)||' Off on MRP for any ' || coalesce(V_GET_FACTOR, 0)||' unit from Assortment ['||V_GET_ASSORT_NAME||']';
+                        ELSE
+                            V_STRING := ' Get Rs.'||coalesce(V_DIS_FACTOR, 0)||' Off on ' || coalesce(V_GET_FACTOR, 0)||' unit from Assortment ['||V_GET_ASSORT_NAME||']';
+                        END IF;
+                    ELSIF V_DIS_TYPE = 'F' THEN
+                        -- START REV : 002
+                        --V_STRING := ' Get '|| NVL (V_GET_FACTOR, 0)||' unit from Assortment ['||V_GET_ASSORT_NAME
+                                --||'] @ Rs.'|| NVL (V_DIS_FACTOR, 0);
+                        IF  coalesce(V_DIS_PRICE_BASIS, 'E') = 'E' THEN
+                            V_STRING := ' Get '|| coalesce(V_GET_FACTOR, 0)||' unit from Assortment ['||V_GET_ASSORT_NAME
+                                ||'] @ Rs.'|| coalesce(V_DIS_FACTOR, 0)||' each. ';
+                        ELSE
+                            V_STRING := ' Get '|| coalesce(V_GET_FACTOR, 0)||' unit from Assortment ['||V_GET_ASSORT_NAME
+                                ||'] @ Rs.'|| coalesce(V_DIS_FACTOR, 0)||'. ';
+                        END IF;
+                        -- END REV : 002
+                    END IF;
+                ELSE
+                    IF    V_DIS_TYPE = 'P' THEN
+                        IF coalesce(V_DIS_PRICE_BASIS, 'M') = 'M' THEN
+                            V_STRING := ' Get '|| coalesce(V_DIS_FACTOR, 0)||' % Discount on RSP for any ' || coalesce(V_GET_FACTOR, 0)||' unit of Combo ['||V_GET_ASSORT_NAME||']';
+                        ELSIF coalesce(V_DIS_PRICE_BASIS, 'M') = 'W' THEN
+                            V_STRING := ' Get '|| coalesce(V_DIS_FACTOR, 0)||' % Discount on WSP for any ' || coalesce(V_GET_FACTOR, 0)||' unit of Combo ['||V_GET_ASSORT_NAME||']';
+                        ELSIF coalesce(V_DIS_PRICE_BASIS, 'M') = 'L' THEN
+                            V_STRING := ' Get '|| coalesce(V_DIS_FACTOR, 0)||' % Discount on MRP for any ' || coalesce(V_GET_FACTOR, 0)||' unit of Combo ['||V_GET_ASSORT_NAME||']';
+                        ELSE
+                            V_STRING := ' Get '|| coalesce(V_DIS_FACTOR, 0)||' % Discount on ' || coalesce(V_GET_FACTOR, 0)||' unit of Combo ['||V_GET_ASSORT_NAME||']';
+                        END IF;
+                    ELSIF V_DIS_TYPE = 'A' THEN
+                        IF coalesce(V_DIS_PRICE_BASIS, 'M') = 'M' THEN
+                            V_STRING := ' Get Rs.'||coalesce(V_DIS_FACTOR, 0)|| ' Off on RSP for any '||coalesce(V_GET_FACTOR, 0) || ' unit of Combo ['|| V_GET_ASSORT_NAME||']';
+                        ELSIF coalesce(V_DIS_PRICE_BASIS, 'M') = 'W' THEN
+                            V_STRING := ' Get Rs.'||coalesce(V_DIS_FACTOR, 0)|| ' Off on WSP for any '||coalesce(V_GET_FACTOR, 0) || ' unit of Combo ['|| V_GET_ASSORT_NAME||']';
+                        ELSIF coalesce(V_DIS_PRICE_BASIS, 'M') = 'L' THEN
+                            V_STRING := ' Get Rs.'||coalesce(V_DIS_FACTOR, 0)|| ' Off on MRP for any '||coalesce(V_GET_FACTOR, 0) || ' unit of Combo ['|| V_GET_ASSORT_NAME||']';
+                        ELSE
+                            V_STRING := ' Get Rs.'||coalesce(V_DIS_FACTOR, 0)|| ' Off on '||coalesce(V_GET_FACTOR, 0) || ' unit of Combo ['|| V_GET_ASSORT_NAME||']';
+                        END IF;
+                    ELSIF V_DIS_TYPE = 'F' THEN
+                        -- START REV : 002
+                        --V_STRING := ' Get '|| NVL (V_GET_FACTOR, 0)||' unit of Combo ['|| V_GET_ASSORT_NAME|| '] @ Rs.'|| NVL (V_DIS_FACTOR, 0);
+                        IF  coalesce(V_DIS_PRICE_BASIS, 'E') = 'E' THEN
+                            V_STRING := ' Get '|| coalesce(V_GET_FACTOR, 0)||' unit of Combo ['|| V_GET_ASSORT_NAME|| '] @ Rs.'|| coalesce(V_DIS_FACTOR, 0)||' each. ';
+                        ELSE
+                            V_STRING := ' Get '|| coalesce(V_GET_FACTOR, 0)||' unit of Combo ['|| V_GET_ASSORT_NAME|| '] @ Rs.'|| coalesce(V_DIS_FACTOR, 0)||'. ';
+                        END IF;
+                        -- END REV : 002
+                    END IF;
+                END IF;
+            END IF;
+
+            IF  V_GET_POOL_TYPE = 'A' THEN
+                IF      V_EXCLUDE_DESC IS NOT NULL THEN
+                    V_STRING := V_STRING ||' [Excluding ' ||V_EXCLUDE_DESC||'] .';
+                ELSE
+                    V_STRING := V_STRING;
+                END IF;
+            ELSE
+                IF  coalesce(V_GET_AUTO, 'N') = 'Y' THEN
+                    V_STRING := V_STRING ||' [Include in POS automatically].';
+                ELSE
+                    V_STRING := V_STRING;
+                END IF;
+            END IF;
+        ELSIF V_GET_BENEFIT_CODE = 4 THEN
+            -- START REV : 009
+        --V_STRING := ' Get '|| NVL (V_GET_FACTOR, 0)||' '|| V_SHORT_DESC||'. ';
+        IF  V_DIS_TYPE = 'F' THEN
+        IF  coalesce(V_GET_FACTOR, 0) <> 0 THEN
+            V_STRING := ' Get '|| V_SHORT_DESC||' '||V_GET_FACTOR||' unit. ';
+        ELSE
+            V_STRING := ' Get '|| V_SHORT_DESC||'. ';
+        END IF;
+        ELSIF V_DIS_TYPE = 'P' THEN
+        V_STRING := ' Get '|| V_SHORT_DESC||' of '||coalesce(V_DIS_FACTOR, 0)||' percent on applicable value.';
+        ELSIF V_DIS_TYPE = 'A' THEN
+        V_STRING := ' Get '|| V_SHORT_DESC||' of '||coalesce(V_DIS_FACTOR, 0)||' rupee(s).';
+        END IF;
+        -- END REV : 009
+        END IF;
+        RETURN(V_STRING);
+    END;
+
+"""
+  returnType = character varying
+  arguments = <
+    {
+      name = v_range_fr
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = v_range_to
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = v_buy_assort
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = v_simple_factor
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = v_get_benefit_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = v_get_voucher_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = v_get_factor
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = v_get_method
+      type = character
+      mode = IN
+    }
+
+    {
+      name = v_get_pool_type
+      type = character
+      mode = IN
+    }
+
+    {
+      name = v_get_assort
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = v_get_auto
+      type = character
+      mode = IN
+    }
+
+    {
+      name = v_dis_type
+      type = character
+      mode = IN
+    }
+
+    {
+      name = v_dis_factor
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = v_dis_price_basis
+      type = character
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

@@ -1,0 +1,94 @@
+procedure "main"."int$pkg_sales_cr_note_pro_scn_amtchg_roundoff(bigint)" {
+  text = """
+
+DECLARE
+
+      C1 CURSOR FOR
+         SELECT CHGCODE,
+                ISTAX,
+                SIGN,
+                RATE,
+                TOT
+           FROM (  SELECT SI.CHGCODE,
+                          SI.ISTAX,
+                          SI.RATE,
+                          SI.SIGN,
+                          ABS(SUM(SI.CHGAMT)) TOT
+                     FROM SALINVJRNCHG_ITEM SI
+                    WHERE     SI.JRNCODE = ARGINVCODE
+                          AND SI.BASIS = 'A'
+                          AND SI.SOURCE <> 'E'
+                 GROUP BY SI.CHGCODE,
+                          SI.ISTAX,
+                          SI.RATE,
+                          SI.SIGN) T
+          WHERE coalesce(T.RATE, 0) <> coalesce(T.TOT, 0);
+
+      V_CODE   SALINVCHG_ITEM.CODE%TYPE;
+      V_SIGN   SALINVCHG_ITEM.SIGN%TYPE;
+
+BEGIN
+      FOR C1_LOOP IN C1
+      LOOP
+         SELECT MAX(SI.CODE)
+           INTO STRICT V_CODE
+           FROM SALINVJRNCHG_ITEM SI
+          WHERE     SI.JRNCODE = ARGINVCODE
+                AND SI.SIGN = C1_LOOP.SIGN
+                AND SI.CHGCODE = C1_LOOP.CHGCODE
+                AND coalesce(SI.RATE, 0) = coalesce(C1_LOOP.RATE, 0)
+                AND ABS(SI.CHGAMT) > ABS(C1_LOOP.RATE - C1_LOOP.TOT);
+
+         V_SIGN := C1_LOOP.SIGN;
+
+         UPDATE SALINVJRNCHG_ITEM SI
+            SET CHGAMT =
+                   CASE WHEN V_SIGN='-' THEN  CHGAMT - C1_LOOP.RATE + C1_LOOP.TOT  ELSE CHGAMT + C1_LOOP.RATE - C1_LOOP.TOT END ,
+                ROUNDOFF_ADJ_AMT =
+                   ROUND (
+                      (  coalesce(ROUNDOFF_ADJ_AMT, 0)
+                       + CASE WHEN V_SIGN='-' THEN (CHGAMT - C1_LOOP.RATE + C1_LOOP.TOT)  ELSE (CHGAMT + C1_LOOP.RATE - C1_LOOP.TOT) END
+                       - coalesce(CHGAMT, 0)),
+                      2)
+          WHERE CODE = V_CODE;
+
+         IF C1_LOOP.ISTAX = 'N'
+         THEN
+            UPDATE SALINVJRNDET
+               SET CHGAMT =
+                      CASE WHEN V_SIGN='-' THEN  CHGAMT - C1_LOOP.RATE + C1_LOOP.TOT  ELSE CHGAMT + C1_LOOP.RATE - C1_LOOP.TOT END
+             --EFFAMT = DECODE(V_SIGN,'-',EFFAMT - C1_LOOP.RATE + C1_LOOP.TOT,EFFAMT + C1_LOOP.RATE - C1_LOOP.TOT)
+             WHERE CODE = (SELECT SI.SALINVJRNDET_CODE
+                             FROM SALINVJRNCHG_ITEM SI
+                            WHERE SI.CODE = V_CODE);
+         ELSE
+            UPDATE SALINVJRNDET D
+               SET D.TAXAMT =
+                      CASE WHEN                          V_SIGN='-' THEN    coalesce(D.TAXAMT, 0)                              - coalesce(C1_LOOP.RATE, 0)                              + coalesce(C1_LOOP.TOT, 0)  ELSE coalesce(D.TAXAMT, 0)                         + coalesce(C1_LOOP.RATE, 0)                         - coalesce(C1_LOOP.TOT, 0) END
+             WHERE D.CODE = (SELECT SI.SALINVJRNDET_CODE
+                               FROM SALINVJRNCHG_ITEM SI
+                              WHERE SI.CODE = V_CODE);
+         END IF;
+      END LOOP;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         CALL ERRAUDIT(USER,
+                   'PRO_SCN_AMTCHG_ROUNDOFF',
+                   SQLSTATE::varchar,
+                   SQLERRM);
+         RAISE EXCEPTION '%', 'ERROR ENCOUNTERED ' || SQLSTATE::varchar || '  ' || SQLERRM USING ERRCODE = '45104';
+   END;
+
+"""
+  arguments = <
+    {
+      name = arginvcode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

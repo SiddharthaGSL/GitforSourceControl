@@ -1,0 +1,278 @@
+function "main"."int$pkg_pocnl_int$pkg_pocnl_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      errmsg             varchar(500);
+      vsession           varchar(100);
+      vdetailtbl         varchar(1000);
+      vdetailrec         varchar(500);
+      errcode            text;
+      vcount             bigint;
+      v_ycode            bigint;
+      v_doccode          bigint;
+      V_SCHEME_DOCNO     varchar(200);
+      V_MAIN_CNLCODE     bigint;
+BEGIN
+      DECLARE
+         C_CNL CURSOR FOR
+            SELECT CANCEL_DATE, SCHEME_DOC_FORMAT, CANCEL_MODE, CANCEL_REFDOCNO, CANCEL_REMARKS,
+                    UDFSTRING01, UDFSTRING02, UDFSTRING03, UDFSTRING04, UDFSTRING05,
+                    UDFSTRING06, UDFSTRING07, UDFSTRING08, UDFSTRING09, UDFSTRING10,
+                    UDFNUM01, UDFNUM02, UDFNUM03, UDFNUM04, UDFNUM05,
+                    UDFDATE01, UDFDATE02, UDFDATE03, UDFDATE04, UDFDATE05
+              FROM int$stg_POCNL a
+             WHERE  a.userid = p_userid
+             GROUP BY CANCEL_DATE, SCHEME_DOC_FORMAT, CANCEL_MODE, CANCEL_REFDOCNO, CANCEL_REMARKS,
+                        UDFSTRING01, UDFSTRING02, UDFSTRING03, UDFSTRING04, UDFSTRING05,
+                        UDFSTRING06, UDFSTRING07, UDFSTRING08, UDFSTRING09, UDFSTRING10,
+                        UDFNUM01, UDFNUM02, UDFNUM03, UDFNUM04, UDFNUM05,
+                        UDFDATE01, UDFDATE02, UDFDATE03, UDFDATE04, UDFDATE05;
+
+         
+         C_CSET CURSOR(p_CANCEL_DATE timestamp, p_SCHEME_DOC_FORMAT text, p_CANCEL_MODE text, p_CANCEL_REFDOCNO text, p_CANCEL_REMARKS text, 
+                            p_UDFSTRING01 text, p_UDFSTRING02 text, p_UDFSTRING03 text, p_UDFSTRING04 text, p_UDFSTRING05 text,
+                            p_UDFSTRING06 text, p_UDFSTRING07 text, p_UDFSTRING08 text, p_UDFSTRING09 text, p_UDFSTRING10 text,
+                            p_UDFNUM01 bigint, p_UDFNUM02 bigint, p_UDFNUM03 bigint, p_UDFNUM04 bigint, p_UDFNUM05 bigint,
+                            p_UDFDATE01 timestamp, p_UDFDATE02 timestamp, p_UDFDATE03 timestamp, p_UDFDATE04 timestamp, p_UDFDATE05 timestamp)
+         FOR 
+            SELECT s.*
+            FROM int$stg_POCNL s
+            WHERE s.userid = p_userid
+              AND s.CANCEL_DATE = p_CANCEL_DATE
+              AND s.SCHEME_DOC_FORMAT = p_SCHEME_DOC_FORMAT
+              AND s.CANCEL_MODE = p_CANCEL_MODE
+              AND coalesce(s.CANCEL_REFDOCNO, 'XX') = coalesce(p_CANCEL_REFDOCNO, 'XX')
+              AND coalesce(s.CANCEL_REMARKS, 'XX') = coalesce(p_CANCEL_REMARKS, 'XX')
+              AND coalesce(s.UDFSTRING01, 'XX') = coalesce(p_UDFSTRING01, 'XX')
+              AND coalesce(s.UDFSTRING02, 'XX') = coalesce(p_UDFSTRING02, 'XX')
+              AND coalesce(s.UDFSTRING03, 'XX') = coalesce(p_UDFSTRING03, 'XX')
+              AND coalesce(s.UDFSTRING04, 'XX') = coalesce(p_UDFSTRING04, 'XX')
+              AND coalesce(s.UDFSTRING05, 'XX') = coalesce(p_UDFSTRING05, 'XX')
+              AND coalesce(s.UDFSTRING06, 'XX') = coalesce(p_UDFSTRING06, 'XX')
+              AND coalesce(s.UDFSTRING07, 'XX') = coalesce(p_UDFSTRING07, 'XX')
+              AND coalesce(s.UDFSTRING08, 'XX') = coalesce(p_UDFSTRING08, 'XX')
+              AND coalesce(s.UDFSTRING09, 'XX') = coalesce(p_UDFSTRING09, 'XX')
+              AND coalesce(s.UDFSTRING10, 'XX') = coalesce(p_UDFSTRING10, 'XX')
+              AND coalesce(s.UDFNUM01, -9999) = coalesce(p_UDFNUM01, -9999)
+              AND coalesce(s.UDFNUM02, -9999) = coalesce(p_UDFNUM02, -9999)
+              AND coalesce(s.UDFNUM03, -9999) = coalesce(p_UDFNUM03, -9999)
+              AND coalesce(s.UDFNUM04, -9999) = coalesce(p_UDFNUM04, -9999)
+              AND coalesce(s.UDFNUM05, -9999) = coalesce(p_UDFNUM05, -9999)
+              AND coalesce(s.UDFDATE01, '1-JAN-2001') = coalesce(p_UDFDATE01, '1-JAN-2001')
+              AND coalesce(s.UDFDATE02, '1-JAN-2001') = coalesce(p_UDFDATE02, '1-JAN-2001')
+              AND coalesce(s.UDFDATE03, '1-JAN-2001') = coalesce(p_UDFDATE03, '1-JAN-2001')
+              AND coalesce(s.UDFDATE04, '1-JAN-2001') = coalesce(p_UDFDATE04, '1-JAN-2001')
+              AND coalesce(s.UDFDATE05, '1-JAN-2001') = coalesce(p_UDFDATE05, '1-JAN-2001');
+
+      BEGIN
+
+         FOR m IN C_CNL
+         LOOP
+         
+            SELECT DOCCODE INTO STRICT v_doccode FROM ADMDOCSCHEME d WHERE UPPER(d.DOCNAME) = UPPER(m.SCHEME_DOC_FORMAT);
+
+            SELECT YCODE INTO STRICT v_ycode FROM ADMYEAR y WHERE m.CANCEL_DATE between y.DTFR and y.DTTO;
+
+            SELECT nextval('erp01') INTO STRICT V_MAIN_CNLCODE;
+
+            V_SCHEME_DOCNO :=
+            db_fun_document_number_web(NULL,
+                                        v_doccode,
+                                        v_ycode,
+                                        to_char(m.CANCEL_DATE,'DD-MM-YYYY'),
+                                        NULL,
+                                        p_connect_site,
+                                        P_CONNECT_OU,
+                                        'ProcOrdCnl'
+                                       );
+
+            INSERT INTO PURORDCNLMAIN(CNLCODE, CNLNO, CNLDT, DOCNO, REM, 
+                                       YCODE, ECODE, TIME, LAST_ACCESS_ECODE, LAST_ACCESS_TIME, ADMOU_CODE, DOCCODE, 
+                                       SCHEME_DOCNO, ADMSITE_CODE, SET_APPLICABLE, 
+                                       UDFSTRING01, UDFSTRING02, UDFSTRING03, UDFSTRING04, UDFSTRING05, 
+                                       UDFSTRING06, UDFSTRING07, UDFSTRING08, UDFSTRING09, UDFSTRING10, 
+                                       UDFNUM01, UDFNUM02, UDFNUM03, UDFNUM04, UDFNUM05, 
+                                       UDFDATE01, UDFDATE02, UDFDATE03, UDFDATE04, UDFDATE05, 
+                                       ENTRY_SOURCE)
+            VALUES (V_MAIN_CNLCODE, 0, m.CANCEL_DATE, m.CANCEL_REFDOCNO, m.CANCEL_REMARKS,
+                        v_ycode, p_userid, clock_timestamp(), p_userid, clock_timestamp(), p_connect_ou, v_doccode,
+                        V_SCHEME_DOCNO, p_connect_site, CASE WHEN UPPER(m.CANCEL_MODE) = 'SET' THEN 'Y' ELSE 'N' END,
+                        m.UDFSTRING01, m.UDFSTRING02, m.UDFSTRING03, m.UDFSTRING04, m.UDFSTRING05,
+                        m.UDFSTRING06, m.UDFSTRING07, m.UDFSTRING08, m.UDFSTRING09, m.UDFSTRING10,
+                        m.UDFNUM01, m.UDFNUM02, m.UDFNUM03, m.UDFNUM04, m.UDFNUM05,
+                        m.UDFDATE01, m.UDFDATE02, m.UDFDATE03, m.UDFDATE04, m.UDFDATE05,
+                        'EXCEL');
+
+            IF UPPER(m.CANCEL_MODE) = 'ITEM'
+            THEN
+            
+                    INSERT INTO PURORDCNLDET(
+                              CNLCODE,
+                              PURORDDET_CODE,
+                              ORDCODE,
+                              ICODE,
+                              CNLQTY,
+                              RATE)
+                       SELECT V_MAIN_CNLCODE,
+                              s.DERIVED_ORDDET_CODE,
+                              s.DERIVED_ORDCODE,
+                              s.DERIVED_ICODE,
+                              s.CANCEL_QTY,
+                              s.DERIVED_ORDDET_RATE
+                         FROM int$stg_POCNL s
+                        WHERE     s.userid = p_userid
+                              AND s.CANCEL_DATE = m.CANCEL_DATE
+                              AND s.SCHEME_DOC_FORMAT = m.SCHEME_DOC_FORMAT
+                              AND s.CANCEL_MODE = m.CANCEL_MODE
+                              AND coalesce(s.CANCEL_REFDOCNO, 'XX') = coalesce(m.CANCEL_REFDOCNO, 'XX')
+                              AND coalesce(s.CANCEL_REMARKS, 'XX') = coalesce(m.CANCEL_REMARKS, 'XX')
+                              AND coalesce(s.UDFSTRING01, 'XX') = coalesce(m.UDFSTRING01, 'XX')
+                              AND coalesce(s.UDFSTRING02, 'XX') = coalesce(m.UDFSTRING02, 'XX')
+                              AND coalesce(s.UDFSTRING03, 'XX') = coalesce(m.UDFSTRING03, 'XX')
+                              AND coalesce(s.UDFSTRING04, 'XX') = coalesce(m.UDFSTRING04, 'XX')
+                              AND coalesce(s.UDFSTRING05, 'XX') = coalesce(m.UDFSTRING05, 'XX')
+                              AND coalesce(s.UDFSTRING06, 'XX') = coalesce(m.UDFSTRING06, 'XX')
+                              AND coalesce(s.UDFSTRING07, 'XX') = coalesce(m.UDFSTRING07, 'XX')
+                              AND coalesce(s.UDFSTRING08, 'XX') = coalesce(m.UDFSTRING08, 'XX')
+                              AND coalesce(s.UDFSTRING09, 'XX') = coalesce(m.UDFSTRING09, 'XX')
+                              AND coalesce(s.UDFSTRING10, 'XX') = coalesce(m.UDFSTRING10, 'XX')
+                              AND coalesce(s.UDFNUM01, -9999) = coalesce(m.UDFNUM01, -9999)
+                              AND coalesce(s.UDFNUM02, -9999) = coalesce(m.UDFNUM02, -9999)
+                              AND coalesce(s.UDFNUM03, -9999) = coalesce(m.UDFNUM03, -9999)
+                              AND coalesce(s.UDFNUM04, -9999) = coalesce(m.UDFNUM04, -9999)
+                              AND coalesce(s.UDFNUM05, -9999) = coalesce(m.UDFNUM05, -9999)
+                              AND coalesce(s.UDFDATE01, '1-JAN-2001') = coalesce(m.UDFDATE01, '1-JAN-2001')
+                              AND coalesce(s.UDFDATE02, '1-JAN-2001') = coalesce(m.UDFDATE02, '1-JAN-2001')
+                              AND coalesce(s.UDFDATE03, '1-JAN-2001') = coalesce(m.UDFDATE03, '1-JAN-2001')
+                              AND coalesce(s.UDFDATE04, '1-JAN-2001') = coalesce(m.UDFDATE04, '1-JAN-2001')
+                              AND coalesce(s.UDFDATE05, '1-JAN-2001') = coalesce(m.UDFDATE05, '1-JAN-2001');
+            END IF;
+
+            IF UPPER(m.CANCEL_MODE) = 'SET'
+            THEN
+                FOR s IN C_CSET(m.CANCEL_DATE, m.SCHEME_DOC_FORMAT, m.CANCEL_MODE, m.CANCEL_REFDOCNO, m.CANCEL_REMARKS, 
+                                    m.UDFSTRING01, m.UDFSTRING02, m.UDFSTRING03, m.UDFSTRING04, m.UDFSTRING05,
+                                    m.UDFSTRING06, m.UDFSTRING07, m.UDFSTRING08, m.UDFSTRING09, m.UDFSTRING10,
+                                    m.UDFNUM01, m.UDFNUM02, m.UDFNUM03, m.UDFNUM04, m.UDFNUM05,
+                                    m.UDFDATE01, m.UDFDATE02, m.UDFDATE03, m.UDFDATE04, m.UDFDATE05)
+                    LOOP
+                        
+                        UPDATE PURORDSET os SET os.CNLQTY = s.CANCEL_QTY WHERE os.CODE = s.DERIVED_ORDERSET_CODE;
+
+                        INSERT INTO PURORDCNLDET(CNLCODE,
+                              PURORDDET_CODE,
+                              ORDCODE,
+                              ICODE,
+                              CNLQTY,
+                              RATE,
+                              INVSETMAIN_CODE)
+                       SELECT V_MAIN_CNLCODE,
+                              d.CODE,
+                              d.ORDCODE,
+                              d.ICODE,
+                              (d.ORDQTY/s.DERIVED_ORDERSET_ORDQTY)*s.CANCEL_QTY,
+                              d.RATE,
+                              d.INVSETMAIN_CODE
+                         FROM purorddet d
+                        WHERE d.ORDCODE = s.DERIVED_ORDCODE
+                         AND  d.INVSETMAIN_CODE = s.DERIVED_SETCODE;
+
+                    END LOOP;
+            END IF;
+
+         END LOOP;
+      END;
+
+      -- log to be added in history table
+      SELECT nextval('int$error_log_code') INTO STRICT vsession;
+
+      vdetailtbl :=
+            'create table ginarchive.pocnl_'
+         || vsession
+         || ' as select distinct CANCEL_REFDOCNO, CANCEL_REMARKS, 
+                    UDFSTRING01, UDFSTRING02, UDFSTRING03, UDFSTRING04, UDFSTRING05,
+                    UDFSTRING06, UDFSTRING07, UDFSTRING08, UDFSTRING09, UDFSTRING10,
+                    UDFNUM01, UDFNUM02, UDFNUM03, UDFNUM04, UDFNUM05,
+                    UDFDATE01, UDFDATE02, UDFDATE03, UDFDATE04, UDFDATE05 from int$stg_pocnl where userid ='
+         || p_userid::text;
+
+      EXECUTE vdetailtbl;
+
+      vdetailrec := 'select count(1) from ginarchive.pocnl_' || vsession::text;
+
+      EXECUTE vdetailrec INTO STRICT vcount;
+
+      INSERT INTO int$history(code,
+                               importedby,
+                               importedon,
+                               classname,
+                               summary,
+                               history_detail_tablename,
+                               history_detail_row_count)
+           VALUES (nextval('int$history_code'),
+                   p_userid,
+                   clock_timestamp(),
+                   'POCNL',
+                   vcount::TEXT || ' cancellation documents created.',
+                   'ginarchive.pocnl_' || vsession,
+                   vcount);
+
+      RETURN('1');
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         -- error log for oracle internal error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'POCNL',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

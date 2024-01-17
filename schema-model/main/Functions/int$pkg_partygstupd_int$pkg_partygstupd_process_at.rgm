@@ -1,0 +1,114 @@
+function "main"."int$pkg_partygstupd_int$pkg_partygstupd_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      errmsg       varchar(500);
+      vsession     varchar(100);
+      vdetailtbl   varchar(1000);
+      vdetailrec   varchar(500);
+      errcode      bigint;
+      vcount              bigint;
+BEGIN
+
+       DECLARE C_PARTY CURSOR FOR
+       SELECT   b.SLCODE SLCODE
+               ,c.code CAT_CODE
+               ,UPPER(a.gst_identification_no) gst_identification_no
+               ,a.gst_registration_date gst_registration_date
+			   ,a.transporter_id
+          FROM int$stg_PARTYGSTUPD a
+               ,finsl b
+               ,admgstcategory c
+         WHERE upper(a.SLID) = upper(b.SLID)
+           AND UPPER(a.GST_CATEGORY) = UPPER(c.NAME)
+           AND a.userid = p_userid;
+
+      BEGIN
+       FOR C2 IN C_PARTY
+        LOOP
+            UPDATE          FINSL
+            SET             CP_CATEGORY_CODE = C2.CAT_CODE
+                           ,CP_GSTIN_NO = UPPER(C2.gst_identification_no)
+                           ,CP_GSTIN_DATE = C2.gst_registration_date
+                           ,CP_GSTIN_STATE_CODE = (substr(C2.gst_identification_no,1,2))
+						   ,TRANSPORTER_ID = C2.transporter_id
+             WHERE         SLCODE = C2.SLCODE;
+        END LOOP;
+      END;
+
+      -- log to be added in history table
+      SELECT nextval('int$error_log_code')
+        INTO STRICT vsession
+;
+
+      vdetailtbl :=
+            'create table ginarchive.PARTYGSTUPD_'
+         || vsession
+         || ' as select distinct SLID, GST_CATEGORY, GST_IDENTIFICATION_NO, GST_REGISTRATION_DATE from int$stg_PARTYGSTUPD where userid ='
+         || p_userid::text;
+
+      EXECUTE vdetailtbl;
+      vdetailrec := 'select count(1) from ginarchive.PARTYGSTUPD_' || vsession::text;
+      EXECUTE vdetailrec
+                   INTO STRICT vcount;
+
+      INSERT INTO int$history(code, importedby, importedon,
+                   classname, summary,
+                   history_detail_tablename, history_detail_row_count
+                  )
+           VALUES (nextval('int$history_code'), p_userid, clock_timestamp(),
+                   'PARTYGSTUPD', vcount::TEXT || ' party''s GSTIN updated successfully.',
+                   'ginarchive.PARTYGSTUPD_' || vsession, vcount
+                  );
+
+      RETURN('1');
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         -- error log for oracle internal error
+         INSERT INTO int$error_log(code, lineno, classname,
+                      userid, errortype, errordesc, createdon
+                     )
+              VALUES (nextval('int$error_log_code'), 0, 'PARTYGSTUPD',
+                      p_userid, errcode, errmsg, clock_timestamp()
+                     );
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

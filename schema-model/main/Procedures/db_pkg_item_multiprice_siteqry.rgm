@@ -1,0 +1,115 @@
+procedure "main"."db_pkg_item_multiprice_siteqry(refcursor, character, bigint, bigint)" {
+  text = """
+
+BEGIN
+
+       IF  coalesce(selection_admsite_code,0) = 0 THEN
+           OPEN block_data FOR
+   -- START REV : 008
+     SELECT  ADMSITE_CODE,SITENAME
+     FROM
+        (
+    -- END REV : 008
+       SELECT DISTINCT s.code  admsite_code,
+                         s.name
+                          || ' ('
+                           || (
+                   SELECT  COUNT(*)
+                               FROM    invitem_price
+                               WHERE   invitem_price.admsite_code = s.code
+                               AND     invitem_price.icode    = selection_icode
+                     -- START REV : 004
+                     --AND     invitem_price.cmpcode IS NULL
+                     -- END REV : 004
+                     AND     invitem_price.admsite_code IS NOT NULL
+
+                  )
+                           || ')' sitename
+       FROM   admsite s
+       WHERE    coalesce(s.ispos,'N') = 'Y'
+       -- START REV : 010
+       AND  (
+             ( ADMOU_CODE = selection_admou_code AND ADMOU_CODE IS NOT NULL)
+             OR (ADMOU_CODE IS NULL)
+             )
+       -- END REV : 010
+       -- START REV : 004
+      -- START REV: 008
+        -- ORDER BY s.code;
+       ) alias8
+        --ORDER BY s.name;
+       ORDER BY UPPER(SITENAME);
+      -- END REV : 008
+        -- END REV : 004
+       ELSE
+           OPEN block_data FOR
+     -- START REV : 004
+      SELECT ADMSITE_CODE,SITENAME
+      FROM
+      (
+     -- END REV : 004
+       SELECT  s.code  admsite_code,
+                   s.name
+                  || ' ('
+                   || (
+               SELECT  COUNT(*)
+                       FROM    invitem_price
+                       WHERE   invitem_price.admsite_code = coalesce(selection_admsite_code,0)
+                       AND     invitem_price.icode = selection_icode
+                  -- START REV : 004
+                  -- AND     invitem_price.cmpcode IS NULL
+                  -- END REV : 004
+                  AND     invitem_price.admsite_code IS NOT NULL
+
+              )
+                   || ')'  sitename
+       FROM   admsite s
+       WHERE  coalesce(s.ext, 'N') = 'N'
+       AND    coalesce(s.ispos,'N') = 'Y'
+       AND    s.code = coalesce(selection_admsite_code,0)
+       -- START REV : 010
+       AND  (
+             ( ADMOU_CODE = selection_admou_code AND ADMOU_CODE IS NOT NULL)
+             OR (ADMOU_CODE IS NULL)
+             )
+       -- END REV : 010
+       -- start rev : 004
+    -- START REV : 008
+       -- ORDER BY s.code;
+     ) alias9
+       ORDER BY upper(SITENAME);
+    -- END REV : 008
+       -- end rev : 004
+       END IF;
+   END;
+
+"""
+  arguments = <
+    {
+      name = block_data
+      type = refcursor
+      mode = INOUT
+    }
+
+    {
+      name = selection_icode
+      type = character
+      mode = IN
+    }
+
+    {
+      name = selection_admsite_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = selection_admou_code
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

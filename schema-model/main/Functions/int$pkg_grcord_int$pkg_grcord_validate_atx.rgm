@@ -1,0 +1,869 @@
+function "main"."int$pkg_grcord_int$pkg_grcord_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status                 char(1);
+      errmsg                   varchar(200);
+      errcode                  bigint;
+      -- v_ycode    NUMBER (20)    := 0;
+      v_grcdt                  timestamp;
+      v_icode                  varchar(9);
+      v_barcode                varchar(50);
+      v_pono                   varchar(25)  := NULL;
+      v_cnt                    bigint;
+      v_userid                 bigint;
+      v_profcode               bigint;
+      v_rlcode                 bigint;
+      v_doccode                bigint;
+      v_allow_grc_against_po   char(1);
+      -- START REV : 013
+      v_prof_rate_change_receipts    char(1);
+      v_prof_margin_rule_method      char(1);
+      v_item_batch_separator         char(1);
+      -- END REV : 013
+BEGIN
+
+    -- START REV : 014
+    
+       select item_batch_separator into STRICT v_item_batch_separator from admcmpprof;
+
+      insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+      SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid, 'Data Validation', 'Please remove value from batch/serial column and try again.', clock_timestamp()
+      from   int$stg_grcord a
+      where  a.item_barcode is not null
+      and    a.batch_serial_no is not null
+      and    coalesce((position(v_item_batch_separator in a.item_barcode)),0) <> 0
+      and    a.userid = p_userid;
+
+      declare 
+       v_count                     bigint;
+       c_separator CURSOR FOR
+                  SELECT *
+                  from   int$stg_grcord
+                  where  userid = p_userid
+                  order by lineno;
+       begin
+         for c1 in c_separator loop
+                 select count(*) into STRICT v_count from int$stg_grcord where item_barcode like '%'||v_item_batch_separator||'%'
+                 and lineno = c1.lineno
+                 and    userid = p_userid;
+                 if v_count > 0 then
+
+                 update int$stg_grcord
+                 set    batch_serial_no = substr(item_barcode, instr(item_barcode,v_item_batch_separator, -1) + 1),
+                 item_barcode = substr(item_barcode, 1, position(v_item_batch_separator in item_barcode)-1)
+                 where  lineno = c1.lineno
+                 and    item_barcode like '%'||v_item_batch_separator||'%'
+                 and    userid = p_userid;
+
+                 end if;
+         end loop;
+       end;
+
+      --COMMIT;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid, 'Data Validation', 'System Batch Serial is not allowed. Please remove and proceed.', clock_timestamp()
+        from   int$stg_grcord a
+        where  UPPER(a.batch_serial_no) = 'SYSTEM BATCH SERIAL'
+        and    a.batch_serial_no is not null
+        and    a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid,
+                'Date Validation', 'Future date transaction is not allowed.',
+                clock_timestamp()
+           FROM int$stg_grcord a
+          WHERE date_trunc('day', grcdt) > date_trunc('day', clock_timestamp()) AND a.userid = p_userid;
+
+      --User lock days setting getting violated
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid,
+                'Date Validation',
+                'User lock days setting getting violated.', clock_timestamp()
+           FROM int$stg_grcord a, hrdemp b
+          WHERE a.userid = b.ecode
+            AND date_trunc('day', a.grcdt) NOT BETWEEN (CURRENT_DATE - locdays ::integer)
+                                        AND (Current_date - locdays :: integer)
+            AND a.userid = p_userid;
+
+         INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GRCORD', userid, 'Date Validation','Month / Year is not in open state.' ,clock_timestamp()
+        FROM    int$stg_grcord a, ADMMONTH m,ADMOU_MONTH b
+        WHERE   date_trunc('day', a.GRCDT) between date_trunc('day', m.dtfr) and  date_trunc('day', m.dtto)
+        AND     B.ADMMONTH_CODE = M.MCODE
+        AND     B.ADMOU_CODE   = P_CONNECT_OU
+        AND     b.INV_MONTH_STATUS <> 'O'
+        AND     a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid,
+                'Data Validation', 'Stock Point is not valid.', clock_timestamp()
+           FROM int$stg_grcord a
+LEFT OUTER JOIN invloc b ON (UPPER(a.stock_point_name) = UPPER(b.locname))
+WHERE (   b.loccode IS NULL
+                 OR admsite_code <> p_connect_site
+                 OR coalesce(ext, 'N') = 'Y'
+                ) AND a.userid = p_userid;
+
+            INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), 1, 'GRCORD', p_userid,
+                'Data Validation', 'Import Excel ''MS-CO-OM-TS'' type is not allowed', clock_timestamp()
+           FROM  ADMSITE b
+          WHERE CODE = P_CONNECT_SITE
+          AND   SITETYPE = 'MS-CO-OM-TS';
+           -- AND a.userid = p_userid;
+       -- END REV : 004
+      --MULTIPLE PO NUMBERS IF FOUND SHOULD BE RESTRICTED
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), a.lineno, 'GRCORD', userid,
+                'Data Validation',
+                'Multiple Purchase Orders found against this number. Cannot proceed.',
+                clock_timestamp()
+           FROM int$stg_grcord a,
+                (SELECT   lineno, b.scheme_docno, COUNT(1)
+                     FROM int$stg_grcord a, purordmain b
+                    WHERE UPPER(a.purchase_order_no) = UPPER(b.scheme_docno)
+                      AND a.userid = p_userid
+                      -- START REV : 003
+                      AND  ADMOU_CODE = P_CONNECT_OU
+                      -- END REV : 003
+                 GROUP BY lineno, b.scheme_docno
+                   HAVING COUNT(1) > 1) b
+          WHERE a.lineno = b.lineno AND a.userid = p_userid;
+
+      --MISC. PO RELATED VALIDATIONS
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid,
+                'Data Validation',
+                CASE
+                   WHEN b.ordcode IS NULL
+                      THEN 'Purchase order no. is not valid.'
+                   WHEN b.admsite_code <> p_connect_site
+                      THEN 'Purchase order no. doesn''t belong to the connected site.'
+                   WHEN coalesce(b.stat, 'N') = 'T'
+                      THEN 'Purchase order is already marked as ''Total Received''.'
+                   WHEN b.authorcode IS NULL
+                      THEN 'Purchase Order is unauthorized.'
+                   WHEN coalesce(b.set_applicable, 'N') = 'Y'
+                      THEN 'Set applicable purchase orders are not allowed in excel import.'
+                   WHEN coalesce(b.enable_lgt_track, '0') = 1
+                      THEN 'Shipment tracking applicable orders are not allowed in excel import.'
+                END,
+                clock_timestamp()
+           FROM int$stg_grcord a
+LEFT OUTER JOIN purordmain b ON (UPPER(a.purchase_order_no) = UPPER(b.scheme_docno))
+WHERE (   b.ordcode IS NULL
+                 OR (    b.ordcode IS NOT NULL
+                     -- START REV : 003
+                      AND   ADMOU_CODE = P_CONNECT_OU
+                      -- END REV : 003
+                     AND (   b.admsite_code <> p_connect_site
+                          OR coalesce(b.stat, 'N') = 'T'
+                          OR b.authorcode IS NULL
+                          OR coalesce(b.set_applicable, 'N') = 'Y'
+                          OR coalesce(b.enable_lgt_track, '0') = 1
+                         )
+                    )
+                ) AND a.userid = p_userid;
+
+ -- excise appl
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), a.lineno, 'GRCORD', userid,
+                'Data Validation',
+                'Purchase order number is invalid w.r.t Excise Appl.', clock_timestamp()
+           FROM int$stg_grcord a,
+                (
+                 SELECT  DISTINCT purchase_order_no,ISEXCISE--,lineno
+                 from    int$stg_grcord a1  ,admdocscheme d
+                 where upper(a1.DOCUMENT_SCHEME) = upper(D.DOCNAME)
+                 and   a1.userid = p_userid
+                ) B
+                ,purordmain M,
+                ADMDOCSCHEME SCH
+          WHERE UPPER(a.purchase_order_no) = UPPER(b.purchase_order_no)
+            AND    M.DOCCODE = SCH.DOCCODE
+           -- and    a.lineno = b.lineno
+            and    upper(SCHEME_DOCNO) =  UPPER(a.purchase_order_no)
+            AND    SCH.ISEXCISE <> B.ISEXCISE
+            AND a.userid = p_userid;
+
+-- excise appl
+      --FUTURE DATE PO
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid,
+                'Data Validation',
+                'Future date purchase orders are not allowed.', clock_timestamp()
+           FROM int$stg_grcord a
+LEFT OUTER JOIN purordmain b ON (UPPER(a.purchase_order_no) = UPPER(b.scheme_docno))
+WHERE a.grcdt < b.orddt AND a.userid = p_userid;
+
+      --VALID FROM RELATED CHECK
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid,
+                'Data Validation',
+                'Future date purchase orders (as per the PO validity) are not allowed.',
+                clock_timestamp()
+           FROM int$stg_grcord a
+LEFT OUTER JOIN purordmain b ON (UPPER(a.purchase_order_no) = UPPER(b.scheme_docno))
+WHERE  -- START REV : 003
+   ADMOU_CODE = P_CONNECT_OU -- END REV : 003
+  AND a.grcdt < dtfr AND a.userid = p_userid;
+
+      --MS-OO-CM PO NOT allowed in excel import. Reason: PSITE_STOCKPOINT IS REQUIRED WHICH IS NOT AVAILABLE IN EXCEL
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid,
+                'Data Validation',
+                'Goods receive for local procurement is not allowed from Excel Import.',
+                clock_timestamp()
+           FROM int$stg_grcord a, purordmain m, admsite s
+          WHERE UPPER(a.purchase_order_no) = UPPER(m.scheme_docno)
+            -- START REV : 003
+            AND  M.ADMOU_CODE = P_CONNECT_OU
+            -- END REV : 003
+            AND m.admsite_code = s.code
+            AND s.sitetype <> 'OS-OO-CM'
+            AND a.userid = p_userid;
+
+      --PCODE WITH LGT_APPL/GATE_IN_APPL IS NOT ALLOWED
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid,
+                'Data Validation',
+                'Goods receive for logistics/gate entry applicable vendors are not allowed from Excel Import.',
+                clock_timestamp()
+           FROM purordmain m, int$stg_grcord a, finsl s
+LEFT OUTER JOIN (SELECT lgt_appl, gatein_appl, slcode slcode
+                   FROM finsl_ou
+
+                  WHERE ADMOU_CODE = P_CONNECT_OU
+                  -- END REV : 003
+                  AND admsite_code = p_connect_site) slou ON (s.slcode = slou.slcode)
+WHERE UPPER(a.purchase_order_no) = UPPER(m.scheme_docno) AND m.admsite_code = p_connect_site AND m.pcode = s.slcode  AND (   coalesce(slou.lgt_appl, s.lgt_appl) = 'Y'
+                 OR coalesce(slou.gatein_appl, s.gatein_appl) = 'Y'
+                ) AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid,
+                'Item Data Validation', 'Item doesn''t exist or is extinct.',
+                clock_timestamp()
+           FROM int$stg_grcord a
+LEFT OUTER JOIN (SELECT icode, ext FROM invitem
+				 UNION
+                 SELECT barcode, ext FROM invitem) b ON (UPPER(a.item_barcode) = UPPER(b.icode))
+WHERE (b.icode IS NULL OR coalesce(b.ext, 'N') = 'Y') AND a.userid = p_userid;
+
+      --Item doesn't belong to PO
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid,
+                'Item Data Validation',
+                'Item doesn''t exist in the specified order.', clock_timestamp()
+           FROM int$stg_grcord a
+LEFT OUTER JOIN (SELECT d.icode icode, d.icode icode1,
+                        UPPER(a1.purchase_order_no) purchase_order_no
+                   FROM purorddet d, purordmain m, int$stg_grcord a1
+                  WHERE d.ordcode = m.ordcode
+                    AND UPPER(m.scheme_docno) = UPPER(a1.purchase_order_no)
+                   -- START REV : 003
+                    AND  ADMOU_CODE = P_CONNECT_OU
+                    -- END REV : 003
+                    AND a1.userid = p_userid
+UNION ALL
+                 SELECT i.barcode icode, d.icode icode1,
+                        UPPER(a1.purchase_order_no)
+                   FROM purorddet d,
+                        purordmain m,
+                        int$stg_grcord a1,
+                        invitem i
+                  WHERE d.ordcode = m.ordcode
+                    AND UPPER(m.scheme_docno) = UPPER(a1.purchase_order_no)
+                    -- START REV : 003
+                    AND  ADMOU_CODE = P_CONNECT_OU
+                    -- END REV : 003
+                    AND a1.userid = p_userid
+                    AND i.icode = d.icode) i ON (UPPER(a.purchase_order_no) = UPPER(i.purchase_order_no) AND UPPER(a.item_barcode) = UPPER(i.icode))
+WHERE i.icode1 IS NULL AND a.userid = p_userid;
+
+      --Item quantity cannot be 0.
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid,
+                'Mandatory Validation',
+                'Item quantity cannot be negative or 0.', clock_timestamp()
+           FROM int$stg_grcord a
+          WHERE a.item_qty <= 0 AND a.userid = p_userid;
+
+      --Item quantity should be in multiples of scan unit.
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid,
+                'Item Data Validation',
+                'Item quantity should be in multiples of scan unit.', clock_timestamp()
+           FROM int$stg_grcord a, invitem b
+          WHERE (   UPPER(a.item_barcode) = UPPER(b.icode)
+                 OR UPPER(a.item_barcode) = UPPER(b.barcode)
+                )
+            AND MOD(a.item_qty, b.barunit) <> 0
+            AND b.item_management_mode  <> 'S'
+            AND a.userid = p_userid;
+
+      --same item in single PO NUMBER with multiple rate
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), a.lineno, 'GRCORD', userid,
+                'Data Validation',
+                'Same Item multiple time found in Single Purchase Orders.',
+                clock_timestamp()
+           FROM int$stg_grcord a,
+                (SELECT   a.lineno, b.scheme_docno, COUNT(1), d.icode,
+                          i.barcode
+                     FROM int$stg_grcord a,
+                          purordmain b,
+                          purorddet d,
+                          invitem i
+                    WHERE UPPER(a.purchase_order_no) = UPPER(b.scheme_docno)
+                      AND d.ordcode = b.ordcode
+                     -- START REV : 003
+                    AND  ADMOU_CODE = P_CONNECT_OU
+                    -- END REV : 003
+                      AND d.icode = i.icode
+                      AND a.userid = p_userid
+                      AND (   UPPER(a.item_barcode) = UPPER(i.icode)
+                           OR UPPER(a.item_barcode) = UPPER(i.barcode)
+                          )
+                 GROUP BY a.lineno, b.scheme_docno, d.icode, i.barcode
+                   HAVING COUNT(1) > 1) b
+          WHERE UPPER(a.purchase_order_no) = UPPER(b.scheme_docno)
+            AND (   UPPER(a.item_barcode) = UPPER(b.icode)
+                 OR UPPER(a.item_barcode) = UPPER(b.barcode)
+                )
+            AND a.lineno = b.lineno
+            AND a.userid = p_userid;
+
+      -- Pending Qty. Validation
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid,
+                'Item Data Validation',
+                'Item Qty. should be <= Pending qty. in PO.', clock_timestamp()
+           FROM int$stg_grcord a,
+                (SELECT   i.icode, m.scheme_docno, stg.item_qty, i.barcode
+                     FROM (SELECT   grcdt, i.icode, purchase_order_no,
+                                    SUM(coalesce(item_qty, 0)) item_qty, userid
+                               FROM int$stg_grcord stg, invitem i
+                              WHERE stg.userid = 1152
+                                AND (   UPPER(stg.item_barcode) =
+                                                               UPPER(i.icode)
+                                     OR UPPER(stg.item_barcode) =
+                                                             UPPER(i.barcode)
+                                    )
+                           GROUP BY grcdt,
+                                          i.icode, purchase_order_no, userid) stg, 
+				 						  finsl s, 
+				 							purordmain m, 
+				 							invitem i, 
+				 							purorddet d
+LEFT OUTER JOIN purorddet_delivery a ON (d.code = a.purorddet_code)
+WHERE d.ordcode = m.ordcode
+  AND ADMOU_CODE = 1
+  AND i.icode = d.icode 
+  AND m.pcode = s.slcode
+  AND (   a.duedate IS NULL
+                          -- OR (TO_CHAR(stg.grcdt, 'DD-MM-YYYY') 
+							OR  ( stg.grcdt <=
+                                  a.duedate
+                                  +  INTERVAL '1 day'* coalesce(pur_delivery_buffer_days, 0)
+                              )
+                          ) 
+  AND UPPER(stg.icode) = UPPER(i.icode)
+  AND UPPER(m.scheme_docno) = UPPER(stg.purchase_order_no) 
+  AND m.authorcode IS NOT NULL 
+  AND coalesce(set_applicable, 'N') = 'N'
+  AND m.orddt <= stg.grcdt --TO_CHAR(stg.grcdt, 'DD-MM-YYYY') 
+  AND m.enable_lgt_track = 0 AND m.shipstatus = 0 
+  --AND TO_CHAR(stg.grcdt, 'DD-MM-YYYY') >= 
+                    AND stg.grcdt >= m.dtfr AND (stg.grcdt <=
+                                    m.dtto + INTERVAL '1 day'* coalesce(pur_delivery_buffer_days, 0)
+                          ) AND m.admsite_code = p_connect_site 
+				 AND stg.userid = p_userid AND coalesce(m.stat, 'N') <> 'T' 
+				 GROUP BY i.icode, m.scheme_docno, stg.item_qty, i.barcode
+                   HAVING SUM (
+                                 (CASE WHEN coalesce(d.OQTY,0) = 0 THEN
+                                 coalesce(d.ordqty,0)
+                                    ELSE
+                                      coalesce(d.OQTY,0)
+                               END)
+                               - coalesce(d.cnlqty, 0)
+                               - coalesce(d.rcqty, 0)
+                              ) < coalesce(stg.item_qty, 0)) p
+
+          WHERE a.userid = p_userid
+            AND (   UPPER(a.item_barcode) = UPPER(p.icode)
+                 OR UPPER(a.item_barcode) = UPPER(p.barcode)
+                )
+            AND UPPER(p.scheme_docno) = UPPER(a.purchase_order_no);
+
+/**************************expired po checking **********************************/
+
+      BEGIN
+         SELECT profcode, rlcode
+           INTO STRICT v_profcode, v_rlcode
+           FROM hrdemp
+          WHERE ecode = p_userid;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            NULL;
+      END;
+
+      IF v_profcode IS NULL
+      THEN
+         BEGIN
+            SELECT coalesce(profcode, 1)
+              INTO STRICT v_profcode
+              FROM admrole
+             WHERE rlcode = v_rlcode;
+         EXCEPTION
+            WHEN no_data_found
+            THEN
+               v_profcode := 1;                                       --NULL;
+         END;
+      END IF;
+
+      BEGIN
+         SELECT allow_grc_against_po
+           INTO STRICT v_allow_grc_against_po
+           FROM admprof
+          WHERE profcode = v_profcode;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            v_allow_grc_against_po := 'I';            --W_GRC_AGAINST_PONULL;
+      END;
+
+      IF v_allow_grc_against_po IN ('W', 'S')
+      THEN
+         INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                      createdon)
+            SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid,
+                   'Item Data Validation',
+                   'Item cannot be received as validity of the Item/PO has expired.',
+                   clock_timestamp()
+              FROM int$stg_grcord a,
+                   (SELECT   i.icode, i.barcode, m.scheme_docno
+                        FROM (SELECT   grcdt, item_barcode, purchase_order_no,
+                                       SUM(coalesce(item_qty, 0)) item_qty,
+                                       userid
+                                  FROM int$stg_grcord stg
+                                 WHERE stg.userid = p_userid
+                              GROUP BY grcdt,
+                                       item_barcode,
+                                       purchase_order_no,
+                                       userid) stg, finsl s, purordmain m, invitem i, purorddet d
+LEFT OUTER JOIN purorddet_delivery a ON (d.code = a.purorddet_code)
+WHERE d.ordcode = m.ordcode -- START REV : 003
+  AND ADMOU_CODE = P_CONNECT_OU -- END REV : 003
+  AND i.icode = d.icode AND m.pcode = s.slcode --  AND m.ycode = y.ycode
+                         --   AND STG.grcdt BETWEEN Y.dtfr AND Y.dtto
+  AND (   (    a.duedate IS NOT NULL
+                                  AND (stg.grcdt >
+                                            a.duedate
+                                          + INTERVAL '1 day'* coalesce(pur_delivery_buffer_days, 0)
+                                      )
+                                 )
+                              OR (    a.duedate IS NULL
+                                  AND (stg.grcdt >
+                                            m.dtto
+                                          + INTERVAL '1 day'* coalesce(pur_delivery_buffer_days, 0)
+                                      )
+                                 )
+                             ) AND (   UPPER(stg.item_barcode) = UPPER(i.icode)
+                              OR UPPER(stg.item_barcode) = UPPER(i.barcode)
+                             ) --AND m.ordcode = v_ordcode
+  AND UPPER(m.scheme_docno) =
+                                                 UPPER(stg.purchase_order_no) AND coalesce(m.stat, 'N') <> 'T' AND m.authorcode IS NOT NULL AND coalesce(set_applicable, 'N') = 'N' -- AND NVL (d.ordqty, 0) - NVL (d.cnlqty, 0) - NVL (d.rcqty, 0) > 0
+ -- AND m.orddt <= TO_CHAR(stg.grcdt, 'DD-MM-YYYY') 
+  AND m.orddt <= stg.grcdt					
+	AND m.enable_lgt_track = 0 AND m.shipstatus = 0 AND m.orddt <= stg.grcdt AND stg.grcdt >= m.dtfr AND m.admsite_code = p_connect_site AND stg.userid = p_userid GROUP BY i.icode, i.barcode, m.scheme_docno
+                                                               /*HAVING SUM (  NVL (d.ordqty, 0)
+                                                                           - NVL (d.cnlqty, 0)
+                                                                           - NVL (d.rcqty, 0)
+                                                                          ) <= SUM (NVL (stg.item_qty, 0))*/
+                   ) p
+             WHERE a.userid = p_userid
+               AND (   UPPER(a.item_barcode) = UPPER(p.icode)
+                    OR UPPER(a.item_barcode) = UPPER(p.barcode)
+                   )
+               AND UPPER(p.scheme_docno) = UPPER(a.purchase_order_no);
+      END IF;
+
+      -- START REV : 013
+      BEGIN
+         SELECT ALLOW_GRC_AGST_PO_RATE_CHANGE, MARGIN_MONITOR_ALERT
+           INTO STRICT v_prof_rate_change_receipts, v_prof_margin_rule_method
+           FROM admprof
+          WHERE profcode = v_profcode;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            v_prof_rate_change_receipts := 'N';
+            v_prof_margin_rule_method := 'S';
+      END;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid,
+                'Item Data Validation',
+                'User is not allowed to change rate in GRC.', clock_timestamp()
+           FROM int$stg_grcord a
+          WHERE a.ITEM_RATE IS NOT NULL
+            AND v_prof_rate_change_receipts = 'N'
+            AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), a.lineno, 'GRCORD', userid,
+                'Item Data Validation',
+                'ITEM_RATE cannot be more than PO rate as per the profile.',
+                clock_timestamp()
+           FROM int$stg_grcord a,
+                                    (SELECT   a.lineno, d.RATE
+                                         FROM int$stg_grcord a,
+                                              purordmain b,
+                                              purorddet d,
+                                              invitem i
+                                        WHERE UPPER(a.purchase_order_no) = UPPER(b.scheme_docno)
+                                          AND d.ordcode = b.ordcode
+                                          AND b.ADMOU_CODE = P_CONNECT_OU
+                                          AND d.icode = i.icode
+                                          AND a.userid = p_userid
+                                          AND (   UPPER(a.item_barcode) = UPPER(i.icode)
+                                               OR UPPER(a.item_barcode) = UPPER(i.barcode)
+                                              )
+                                     ) b
+          WHERE a.lineno = b.lineno
+            AND a.ITEM_RATE > b.RATE
+            AND v_prof_rate_change_receipts = 'R'
+            AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), a.lineno, 'GRCORD', userid,
+                'Item Data Validation',
+                'ITEM_RATE cannot be provided in excel for margin rule enabled items when margin rule alert method is either Stop or Warn in user profile. Please use UI to proceed.', clock_timestamp()
+           FROM int$stg_grcord a, ( SELECT coalesce(y.LINENO, 0) LINENO, y.ARTICLEMMCODE, y.ARTICLESLMMCODE, m.INVMMRULE_CODE ARTICLESLSITEMMCODE
+                                      FROM (SELECT x.LINENO, x.ARTICLECODE, x.SITECODE, x.VENDORCODE, x.ARTICLEMMCODE, m.INVMMRULE_CODE ARTICLESLMMCODE
+                                              FROM (SELECT a.LINENO, a.ARTICLECODE, a.SITECODE, a.VENDORCODE, ar.INVMMRULE_CODE ARTICLEMMCODE
+                                                    FROM (  SELECT a.LINENO, ar.ARTICLECODE, po.SITECODE, po.VENDORCODE
+                                                            FROM int$stg_grcord a, 
+                                                                  (SELECT a.LINENO, i.INVARTICLE_CODE ARTICLECODE
+                                                                    FROM int$stg_grcord a, invitem i
+                                                                    WHERE (   UPPER(a.item_barcode) = UPPER(i.icode)
+                                                                               OR UPPER(a.item_barcode) = UPPER(i.barcode)
+                                                                              )
+                                                                    AND a.userid = p_userid) ar,
+                                                                  (SELECT a.LINENO, m.PCODE VENDORCODE, m.ADMSITE_CODE SITECODE
+                                                                    FROM int$stg_grcord a, purordmain m
+                                                                    WHERE UPPER(a.purchase_order_no) = UPPER(m.scheme_docno)
+                                                                    AND m.ADMOU_CODE = P_CONNECT_OU
+                                                                    AND a.userid = p_userid) po
+                                                            WHERE a.LINENO = ar.LINENO
+                                                            AND   a.LINENO = po.LINENO
+                                                            AND   a.userid = p_userid
+                                                            ) a, INVARTICLE ar
+                                                     WHERE a.ARTICLECODE = ar.CODE
+                                                     ) x
+LEFT OUTER JOIN invarticle_finsl_mm m ON (x.ARTICLECODE = m.INVARTICLE_CODE AND x.VENDORCODE = m.SLCODE) ) y
+LEFT OUTER JOIN invmmrule_allocation m ON (y.ARTICLECODE = m.INVARTICLE_CODE AND y.SITECODE = m.ADMSITE_CODE AND y.VENDORCODE = m.SLCODE) ) b
+          WHERE a.LINENO = b.lineno
+            AND (
+                    b.ARTICLEMMCODE IS NOT NULL
+                    OR 
+                    b.ARTICLESLMMCODE IS NOT NULL
+                    OR
+                    b.ARTICLESLSITEMMCODE IS NOT NULL
+                )
+            AND v_prof_margin_rule_method <> 'I'
+            AND a.ITEM_RATE IS NOT NULL
+            AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid,
+                'Item Data Validation',
+                'Same Item for same order with different rate combination cannot exist in multiple rows.', clock_timestamp()
+           FROM int$stg_grcord a, ( SELECT y.PURCHASE_ORDER_NO, y.icode, y.barcode
+                                        from (
+                                                SELECT DISTINCT x.PURCHASE_ORDER_NO, i.icode, i.barcode, x.ITEM_RATE
+                                                    FROM int$stg_grcord x, invitem i
+                                                    WHERE (   UPPER(x.item_barcode) = UPPER(i.icode)
+                                                               OR UPPER(x.item_barcode) = UPPER(i.barcode)
+                                                              )
+                                                      AND x.USERID = p_userid
+                                                      ) y
+                                        group by y.PURCHASE_ORDER_NO, y.icode, y.barcode
+                                        having count(*) > 1
+                                    ) b
+          WHERE a.PURCHASE_ORDER_NO = b.PURCHASE_ORDER_NO
+            AND (UPPER(a.ITEM_BARCODE) = UPPER(b.ICODE) OR UPPER(a.ITEM_BARCODE) = UPPER(b.barcode))
+            AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid,
+                'Item Data Validation',
+                'ITEM_RATE cannot be provided for excise related transactions.', clock_timestamp()
+           FROM int$stg_grcord a, ADMDOCSCHEME d
+          WHERE UPPER(a.DOCUMENT_SCHEME) = UPPER(d.DOCNAME)
+            AND a.userid = p_userid
+            AND a.ITEM_RATE IS NOT NULL
+            AND coalesce(d.ISEXCISE, 'N') = 'Y';
+
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid,
+                'Item Data Validation',
+                'ITEM_RATE cannot be less than 0.001.', clock_timestamp()
+           FROM int$stg_grcord a
+          WHERE a.userid = p_userid
+            AND a.ITEM_RATE IS NOT NULL
+            AND a.ITEM_RATE < 0.001;
+
+    -- START REV : 014
+    
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid, 'Data Validation', 'Numbering scheme is not defined for the item. Please input the batch number manually or define the numbering scheme at item group level to proceed.', clock_timestamp()
+        FROM int$stg_grcord a, invitem i
+LEFT OUTER JOIN invgrp g ON (i.grpcode = g.grpcode)
+WHERE (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode) and a.batch_serial_no is null and a.item_barcode is not null  and g.iscreatebatchdocumentwise = 'N' and i.item_management_mode in ('B','S') and (g.grpcode is null or g.doccode is null or g.item_management_mode not in ('B','S')) and a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid, 'Data Validation', 'You can’t define Batch/Serial no. for this item manually.', clock_timestamp()
+        from    int$stg_grcord a, invitem i, invgrp g
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        and    i.grpcode = g.grpcode
+        and    g.iscreatebatchdocumentwise = 'Y'
+        and    i.item_management_mode = 'B'
+        and    a.item_barcode is not null
+        and    a.batch_serial_no is not null
+        and    a.userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GRCORD', userid, 'Mandatory Validation', 'Batch Serial No already exists in the system, expiry information is not required.', clock_timestamp()
+        from     int$stg_grcord a, invitem i, invbatch_serial b
+        where   ((a.item_barcode = i.icode) OR (a.item_barcode = i.barcode))
+        and     i.icode = b.icode
+        and     upper(a.batch_serial_no) = upper(b.batch_serial_no)
+        and (a.mfg_date is not null or a.valid_upto is not null)
+        and     userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GRCORD', userid, 'Mandatory Validation', 'Expiry information required. Can’t proceed.', clock_timestamp()
+        FROM int$stg_grcord a LEFT OUTER JOIN invbatch_serial b
+		ON (upper(a.batch_serial_no) = upper(b.batch_serial_no))
+		LEFT OUTER JOIN invitem i ON (i.icode = b.icode)
+		WHERE ((a.item_barcode = i.icode) OR (a.item_barcode = i.barcode)) and i.item_management_mode = 'B' and i.manage_expiry = 'Y'   and b.batch_serial_no is null and a.valid_upto is null and userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GRCORD', userid, 'Mandatory Validation', 'Valid Upto information not required for Serial Managed Item. Can’t proceed.', clock_timestamp()
+        from     int$stg_grcord a, invitem i
+        where   ((a.item_barcode = i.icode) OR (a.item_barcode = i.barcode))
+        and     i.item_management_mode = 'S'
+        and     a.valid_upto is not null
+        and     userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid, 'Data Validation', 'Expiry is not managed for the item. Remove expiry info. and try again.', clock_timestamp()
+		FROM int$stg_grcord a LEFT OUTER JOIN invbatch_serial b
+		ON (upper(a.batch_serial_no) = upper(b.batch_serial_no))
+		LEFT OUTER JOIN invitem i ON (i.icode = b.icode)
+WHERE (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode) and i.item_management_mode = 'B' and i.manage_expiry = 'N'   and b.batch_serial_no is null and a.valid_upto is not null and a.userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GRCORD', userid, 'Mandatory Validation', 'Batch Serial No already exists in the system, pricing information is not required.', clock_timestamp()
+        from     int$stg_grcord a, invitem i, invbatch_serial b
+        where   ((a.item_barcode = i.icode) OR (a.item_barcode = i.barcode))
+        and     i.icode = b.icode
+        and     upper(a.batch_serial_no) = upper(b.batch_serial_no)
+        and     ((a.standardrate is not null) OR (a.wsp is not null) OR (a.rsp is not null) OR (a.mrp is not null))
+        and     userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GRCORD', userid, 'Mandatory Validation', 'Pricing information required at Batch Serial. Can’t proceed.', clock_timestamp()
+		FROM int$stg_grcord a LEFT OUTER JOIN invbatch_serial b
+		ON (upper(a.batch_serial_no) = upper(b.batch_serial_no))
+		LEFT OUTER JOIN invitem i ON (i.icode = b.icode)
+WHERE ((a.item_barcode = i.icode) OR (a.item_barcode = i.barcode)) and i.price_management in ('B', 'S')   and b.batch_serial_no is null and ((a.standardrate is null) OR (a.wsp is null) OR (a.rsp is null) OR (a.mrp is null)) and userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GRCORD', userid, 'Mandatory Validation', 'Pricing is managed for the Item at Item level. Remove pricing info. and try again.', clock_timestamp()
+        from     int$stg_grcord a, invitem i
+        where   ((a.item_barcode = i.icode) OR (a.item_barcode = i.barcode))
+        and     i.price_management = 'I'
+        and     ((a.standardrate is not null) OR (a.wsp is not null) OR (a.rsp is not null) OR (a.mrp is not null))
+        and     userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid, 'Data Validation', 'Mfg Date cannot be greater than Entry date.', clock_timestamp()
+        from    int$stg_grcord a
+        where  TO_CHAR(a.mfg_date, 'DD-MM-YYYY') > TO_CHAR(a.grcdt, 'DD-MM-YYYY')
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid, 'Data Validation', 'Valid Upto cannot be less than Entry Date.', clock_timestamp()
+        from    int$stg_grcord a, invitem i
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        and    i.item_management_mode = 'B'
+        and    a.valid_upto is not null
+        and    TO_CHAR(a.valid_upto, 'DD-MM-YYYY') < TO_CHAR(a.grcdt, 'DD-MM-YYYY')
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid, 'Data Validation', 'Valid Upto cannot be less than Manufacturing Date.', clock_timestamp()
+        from    int$stg_grcord a, invitem i
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        and    i.item_management_mode = 'B'
+        and    a.valid_upto is not null
+        and    a.mfg_date is not null
+        and    TO_CHAR(a.valid_upto, 'DD-MM-YYYY') < TO_CHAR(a.mfg_date, 'DD-MM-YYYY')
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid, 'Data Validation', 'Duplicate serial number is not allowed for an item.', clock_timestamp()
+        from    int$stg_grcord a, invitem i
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        and    a.batch_serial_no is not null
+        and    i.item_management_mode = 'S'
+        and    i.icode in (SELECT i.icode
+                                    from int$stg_grcord a, invitem i
+                                  where (upper(a.item_barcode) = i.icode or upper(a.item_barcode) = i.barcode)
+                                  and batch_serial_no is not null
+                                  and i.item_management_mode = 'S'
+                                  and a.userid = p_userid
+                                  GROUP BY i.icode, a.batch_serial_no HAVING count(i.icode) > 1
+                                  )
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid, 'Data Validation', 'Batch/Serial details are not applicable for this item.', clock_timestamp()
+        from    int$stg_grcord a, invitem i
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        and    i.item_management_mode = 'I'
+        and (a.batch_serial_no is not null or a.mfg_date is not null or a.valid_upto is not null or a.standardrate is not null or a.wsp is not null or a.rsp is not null or a.mrp is not null)
+        and    a.userid = p_userid;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'GRCORD', userid, 'Mandatory Validation', 'Value defined is out of range as per the limit prescribed in Article.', clock_timestamp()
+        from     int$stg_grcord a, invitem i, invarticle ar
+        where   ((a.item_barcode = i.icode) OR (a.item_barcode = i.barcode))
+        and     i.invarticle_code = ar.code
+        and     i.item_management_mode <> 'I'
+        and     coalesce(a.rsp,0) not between ar.mrprangefrom and ar.mrprangeto
+        and     userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid, 'Data Validation', 'Item Quantity for serial managed items must be equal to scan unit of item.', clock_timestamp()
+        from    int$stg_grcord a, invitem i
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        --and    a.batch_serial_no is not null
+        and    i.item_management_mode = 'S'
+        and    coalesce(ABS(a.item_qty),0) <> coalesce(i.barunit,1)
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'GRCORD', userid, 'Data Validation', 'Expiry Batch Selected. Please rectify and proceed.', clock_timestamp()
+        from int$stg_grcord a, invitem i, invbatch_serial b
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        and    UPPER(i.icode) = b.icode
+        and    UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no)
+        and    b.exp_date < a.grcdt
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), a.lineno, 'GRCORD', p_userid, 'Data Validation', 'Same Batch and Item with different Pricing and Expiry information found. Please rectify and proceed.', clock_timestamp()
+        from int$stg_grcord a, int$stg_grcord b
+        where  UPPER(a.item_barcode) = UPPER(b.item_barcode)
+        and    UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no)
+        and ( a.mfg_date <> b.mfg_date OR a.valid_upto <> b.valid_upto OR a.wsp <> b.wsp OR a.rsp <> b.rsp OR a.mrp <> b.mrp OR a.standardrate <> b.standardrate)
+        and    a.userid = p_userid;
+
+    -- END REV : 014
+    -- END REV : 013
+      -- Check whether records are valid or not
+      BEGIN
+         SELECT 'S'
+           INTO STRICT v_status
+           
+          WHERE EXISTS (SELECT 'S'
+                          FROM int$error_log
+                         WHERE userid = p_userid);
+
+         RETURN('0');
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            RETURN('1');
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code, lineno, classname,
+                      userid, errortype, errordesc, createdon
+                     )
+              VALUES (nextval('int$error_log_code'), 0, 'V' || 'GRCORD',
+                      p_userid, errcode, errmsg, clock_timestamp()
+                     );
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+ --  PROMPT CREATE GRC against PO after validation
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

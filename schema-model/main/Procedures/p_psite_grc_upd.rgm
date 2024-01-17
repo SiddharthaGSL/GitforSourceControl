@@ -1,0 +1,47 @@
+procedure "main"."p_psite_grc_upd(bigint, text)" {
+  text = """
+
+DECLARE
+
+V_SITETYPE      varchar(25) := NULL;
+
+BEGIN
+        BEGIN
+            SELECT SITETYPE
+            INTO STRICT   V_SITETYPE
+            FROM psite_grc g
+LEFT OUTER JOIN admsite s ON (G.ADMSITE_CODE = S.CODE)
+WHERE G.CODE = p_sitecuid || '-' || p_grcdocid :: text;
+        EXCEPTION WHEN no_data_found THEN
+            NULL;
+        END;
+    IF V_SITETYPE <> 'MS-CO-OM-TS' THEN
+        UPDATE PSITE_GRC
+        SET(MAIN_GL_receiveamt,MAIN_GL_damageamt,MAIN_GL_shortexcessamt)=
+                                            (
+                                                SELECT SUM(coalesce(receiveamt,0)),SUM(coalesce(damageamt,0)),SUM(coalesce(shortexcessamt,0))
+                                                FROM   PSITE_GRCITEM I
+                                                WHERE  I.PSITE_GRC_CODE = p_sitecuid || '-' || p_grcdocid :: text
+                                                AND    I.GLCODE IS NULL
+                                            )
+        WHERE CODE = p_sitecuid || '-' || p_grcdocid :: text;
+    END IF;
+END;
+"""
+  arguments = <
+    {
+      name = p_grcdocid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_sitecuid
+      type = text
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

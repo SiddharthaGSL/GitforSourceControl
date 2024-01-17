@@ -1,0 +1,43 @@
+function "main"."trigger_fct_t_assortment_incl_cdc()" {
+  text = """
+
+DECLARE
+   c1rec CURSOR FOR
+      SELECT DISTINCT ho_matching_code
+        FROM (SELECT ho_matching_code
+                FROM psite_promo_assign a
+               WHERE     promo_code IN
+                            (SELECT promo_code
+                               FROM promo_buy
+                              WHERE assortment_code = (coalesce(NEW.assortment_code,OLD.assortment_code)))
+                     AND status = 'A'
+              
+UNION ALL
+
+              SELECT ho_matching_code
+                FROM psite_promo_assign
+               WHERE     promo_code IN
+                            (SELECT promo_code
+                               FROM promo_slab
+                              WHERE get_assortment_code =
+                                       (coalesce(NEW.assortment_code,OLD.assortment_code)))
+                     AND status = 'A') alias6;
+BEGIN
+   FOR c1 IN c1rec
+   LOOP
+      CALL db_pkg_npos_event$track(NULL, 'PROMOCHANGE', c1.ho_matching_code);
+   END LOOP;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

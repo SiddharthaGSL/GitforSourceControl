@@ -1,0 +1,274 @@
+function "main"."trigger_fct_t_prdjobdet()" {
+  text = """
+
+/********************************************************************************************************************
+REV NO      OWNER       DATE            DESCRIPTION
+---------   ----------- -----------     -----------------------------------------------------------------------------
+REV : 000   MANASH       23-JUL-2013     (BUG : 825) V11 Production.
+REV : 001   DIPTIMAN     07-DEC-2013     (BUG ID : 924) Advance production related changes.
+REV : 002   MANASH       07-DEC-2013     (BUG ID : 925) Advance production related changes.
+REV : 004   MAANSH       30-DEC-2014     (BUG ID : 1683) Job Order Cancel will cancel respective BOM quantity also.
+REV : 005   MANASH       23-JUN-2015     (BUG ID : 2368) Production Alternate Item changes.
+REV : 006   MOUSUMI      05-AUG-2020     (TFS ID : 2368) MIGRATION RELATED CHANGES.
+********************************************************************************************************************/
+DECLARE
+   V_JOBTYPE           PRDJOBMAIN.JOBTYPE%TYPE;
+   V_QTY               PRDLOTOPERATION.AVAILABLE_TO_FORWARD%TYPE;
+   V_PREV_SEQ          PRDLOTOPERATION.OPERATION_SEQ%TYPE;
+   V_CNT               bigint;
+   
+   V_PRCODE            PRDWIPTRANS.PRCODE%TYPE := NULL;
+   
+   V_ADMSITE_CODE      PRDJOBMAIN.ADMSITE_CODE%TYPE;
+   V_MAX_OP_SEQ_SAI    PRDLOTOPERATION.OPERATION_SEQ%TYPE;
+   V_IS_LAST_PROCESS   char(1);
+   V_BAL_QTY           bigint := 0;
+   V_CUR_CNLQTY        bigint := 0;
+   -- START REV : 006
+   V_ENTRY_SOURCE      varchar(25) := NULL;
+   V_SID               bigint;
+   V_PROGRAM           varchar(50);
+-- END REV : 006
+BEGIN
+  BEGIN
+   SELECT JOBTYPE,
+          PRCODE,
+          ADMSITE_CODE,
+          ENTRY_SOURCE
+     INTO STRICT V_JOBTYPE,
+          V_PRCODE,
+          V_ADMSITE_CODE,
+          V_ENTRY_SOURCE
+     FROM PRDJOBMAIN
+    WHERE CODE = coalesce(NEW.JOBCODE, OLD.JOBCODE);
+
+   -- START REV : 006
+   SELECT PG_BACKEND_PID() INTO V_SID;
+
+   SELECT APPLICATION_NAME INTO V_PROGRAM FROM PG_STAT_ACTIVITY WHERE PID=V_SID;
+
+   IF     coalesce(V_ENTRY_SOURCE, 'XX') <> 'WEB'
+AND not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+   THEN
+      -- END REV : 006
+      IF (TG_OP = 'INSERT' OR TG_OP = 'UPDATE')
+      THEN
+         -- START REV : 005
+         /*
+         IF  (NVL(:NEW.QTY,0)-NVL(:NEW.COMPLETED_QTY,0)-NVL(:NEW.CNL_QTY,0)>0) THEN
+             :NEW.P_QTY := NVL(:NEW.QTY,0)-NVL(:NEW.COMPLETED_QTY,0)-NVL(:NEW.CNL_QTY,0);
+         ELSE
+             :NEW.P_QTY := NULL;
+         END IF;
+         */
+         IF (  coalesce(NEW.QTY, 0)
+             - coalesce(NEW.COMPLETED_QTY, 0)
+             - coalesce(NEW.CNL_QTY, 0)
+             - coalesce(NEW.ALTERNATE_QTY, 0) > 0)
+         THEN
+            NEW.P_QTY :=
+                 coalesce(NEW.QTY, 0)
+               - coalesce(NEW.COMPLETED_QTY, 0)
+               - coalesce(NEW.CNL_QTY, 0)
+               - coalesce(NEW.ALTERNATE_QTY, 0);
+         ELSE
+            NEW.P_QTY := NULL;
+         END IF;
+      -- END REV : 005
+      END IF;
+
+      IF V_JOBTYPE IN ('LS', 'LN')
+      THEN
+         IF TG_OP = 'DELETE' OR TG_OP = 'UPDATE'
+         THEN
+            IF OLD.LOTCODE IS NOT NULL
+            THEN
+               SELECT MAX(FLOOR (OPERATION_SEQ))
+                 INTO STRICT V_MAX_OP_SEQ_SAI
+                 FROM PRDLOTOPERATION
+                WHERE     LOTCODE = OLD.LOTCODE
+                      AND ASSEMBLY_ICODE = OLD.ASSEMBLY_ICODE
+                      AND coalesce(ASS_SAITEM_CODE, 0) =
+                             coalesce(OLD.ASS_SAITEM_CODE, 0);
+            END IF;
+
+            UPDATE PRDLOTOPERATION
+               SET ORD_QTY = coalesce(ORD_QTY, 0) - coalesce(OLD.QTY, 0),
+                   P_QTY = coalesce(P_QTY, 0) - coalesce(OLD.P_QTY, 0),
+                   CNL_QTY = coalesce(CNL_QTY, 0) - coalesce(OLD.CNL_QTY, 0),
+                   -- START REV : 005
+                   ALTERNATE_CNL_QTY =
+                        coalesce(ALTERNATE_CNL_QTY, 0)
+                      - coalesce(OLD.ALTERNATE_QTY, 0)
+             -- END REV : 005
+             WHERE     LOTCODE = OLD.LOTCODE
+                   AND ASSEMBLY_ICODE = OLD.ASSEMBLY_ICODE
+                   AND coalesce(ASS_SAITEM_CODE, 0) =
+                          coalesce(OLD.ASS_SAITEM_CODE, 0)
+                   AND OPERATION_SEQ = OLD.OPERATION_SEQ
+                   AND PRCODE = V_PRCODE;
+         END IF;                                              -- END REV : 006
+      -- START REV : 005
+      /*
+      BEGIN
+          SELECT  MAX(TRUNC(OPERATION_SEQ))
+          INTO    V_PREV_SEQ
+          FROM    PRDLOTOPERATION
+          WHERE   LOTCODE         =   :OLD.LOTCODE
+          AND     ASSEMBLY_ICODE  =   :OLD.ASSEMBLY_ICODE
+          AND     NVL(ASS_SAITEM_CODE,0) = NVL(:OLD.ASS_SAITEM_CODE,0)
+          AND     OPERATION_SEQ   <   :OLD.OPERATION_SEQ
+          AND     IS_STANDARD     =   'Y';
+      EXCEPTION
+          WHEN OTHERS THEN
+          V_PREV_SEQ := NULL;
+      END;
+
+      BEGIN
+          SELECT  DISTINCT 'N'
+          INTO    V_IS_LAST_PROCESS
+          FROM    PRDLOTOPERATION
+          WHERE   LOTCODE                = :OLD.LOTCODE
+          AND     ASSEMBLY_ICODE         = :OLD.ASSEMBLY_ICODE
+          AND     NVL(ASS_SAITEM_CODE,0) = NVL(:OLD.ASS_SAITEM_CODE,0)
+          AND     TRUNC(OPERATION_SEQ)   > TRUNC(:OLD.OPERATION_SEQ);
+      EXCEPTION
+          WHEN NO_DATA_FOUND THEN
+               V_IS_LAST_PROCESS := 'Y';
+      END;
+
+      IF  V_PREV_SEQ IS NOT NULL AND (V_IS_LAST_PROCESS = 'N' OR (V_PREV_SEQ < NVL(V_MAX_OP_SEQ_SAI,0))) THEN
+          V_QTY := DB_PKG_PRODUCTION.CALC_AVAILABLE_TO_FOROWARD_QTY(:OLD.LOTCODE, :OLD.ASSEMBLY_ICODE, V_PREV_SEQ, :OLD.ASS_SAITEM_CODE);
+
+          UPDATE PRDLOTOPERATION
+          SET    AVAILABLE_TO_FORWARD = V_QTY
+          WHERE  LOTCODE          =   :OLD.LOTCODE
+          AND    ASSEMBLY_ICODE   =   :OLD.ASSEMBLY_ICODE
+          AND    NVL(ASS_SAITEM_CODE,0) = NVL(:OLD.ASS_SAITEM_CODE,0)
+          AND    OPERATION_SEQ    =   V_PREV_SEQ
+          AND    CONSIDER_IN_WIP <> 'N';
+      END IF;
+
+      FOR C1_LOOP IN C1(:OLD.JOBCODE,:OLD.CODE)
+      LOOP
+          V_QTY := DB_PKG_PRODUCTION.CALC_AVAILABLE_TO_FOROWARD_QTY(C1_LOOP.LOTCODE,C1_LOOP.ASSEMBLY_ICODE,V_PREV_SEQ,C1_LOOP.ASS_SAITEM_CODE);
+
+          UPDATE  PRDLOTOPERATION
+          SET     AVAILABLE_TO_FORWARD = V_QTY
+          WHERE   LOTCODE         =   :OLD.LOTCODE
+          AND     ASSEMBLY_ICODE  =   :OLD.ASSEMBLY_ICODE
+          AND     NVL(ASS_SAITEM_CODE,0) = NVL(:OLD.ASS_SAITEM_CODE,0)
+          AND     OPERATION_SEQ   =   V_PREV_SEQ
+          AND     CONSIDER_IN_WIP <> 'N';
+      END LOOP;
+      */
+      -- END REV : 005
+      END IF;
+
+      IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE'
+      THEN
+         IF NEW.LOTCODE IS NOT NULL
+         THEN
+            SELECT MAX(FLOOR (OPERATION_SEQ))
+              INTO STRICT V_MAX_OP_SEQ_SAI
+              FROM PRDLOTOPERATION
+             WHERE     LOTCODE = NEW.LOTCODE
+                   AND ASSEMBLY_ICODE = NEW.ASSEMBLY_ICODE
+                   AND coalesce(ASS_SAITEM_CODE, 0) =
+                          coalesce(NEW.ASS_SAITEM_CODE, 0);
+         END IF;
+
+         UPDATE PRDLOTOPERATION
+            SET ORD_QTY = coalesce(ORD_QTY, 0) + coalesce(NEW.QTY, 0),
+                P_QTY = coalesce(P_QTY, 0) + coalesce(NEW.P_QTY, 0),
+                CNL_QTY = coalesce(CNL_QTY, 0) + coalesce(NEW.CNL_QTY, 0),
+                -- START REV : 005
+                ALTERNATE_CNL_QTY =
+                   coalesce(ALTERNATE_CNL_QTY, 0) + coalesce(NEW.ALTERNATE_QTY, 0)
+          -- END REV : 005
+          WHERE     LOTCODE = NEW.LOTCODE
+                AND ASSEMBLY_ICODE = NEW.ASSEMBLY_ICODE
+                AND coalesce(ASS_SAITEM_CODE, 0) = coalesce(NEW.ASS_SAITEM_CODE, 0)
+                AND OPERATION_SEQ = NEW.OPERATION_SEQ
+                AND PRCODE = V_PRCODE;
+      -- START REV : 005
+      /*
+      BEGIN
+          SELECT  MAX(TRUNC(OPERATION_SEQ))
+          INTO    V_PREV_SEQ
+          FROM    PRDLOTOPERATION
+          WHERE   LOTCODE         =   :NEW.LOTCODE
+          AND     ASSEMBLY_ICODE  =   :NEW.ASSEMBLY_ICODE
+          AND     NVL(ASS_SAITEM_CODE,0) = NVL(:NEW.ASS_SAITEM_CODE,0)
+          AND     OPERATION_SEQ   <   :NEW.OPERATION_SEQ
+          AND     IS_STANDARD     =   'Y';
+      EXCEPTION
+          WHEN OTHERS THEN
+          V_PREV_SEQ := NULL;
+      END;
+
+      BEGIN
+          SELECT  DISTINCT 'N'
+          INTO    V_IS_LAST_PROCESS
+          FROM    PRDLOTOPERATION
+          WHERE   LOTCODE                = :NEW.LOTCODE
+          AND     ASSEMBLY_ICODE         = :NEW.ASSEMBLY_ICODE
+          AND     NVL(ASS_SAITEM_CODE,0) = NVL(:NEW.ASS_SAITEM_CODE,0)
+          AND     TRUNC(OPERATION_SEQ)   > TRUNC(:NEW.OPERATION_SEQ);
+      EXCEPTION
+          WHEN NO_DATA_FOUND THEN
+               V_IS_LAST_PROCESS := 'Y';
+      END;
+
+      IF  V_PREV_SEQ IS NOT NULL AND (V_IS_LAST_PROCESS = 'N' OR (V_PREV_SEQ < NVL(V_MAX_OP_SEQ_SAI,0))) THEN
+          V_QTY := DB_PKG_PRODUCTION.CALC_AVAILABLE_TO_FOROWARD_QTY(:NEW.LOTCODE, :NEW.ASSEMBLY_ICODE, V_PREV_SEQ, :NEW.ASS_SAITEM_CODE);
+          UPDATE  PRDLOTOPERATION
+          SET     AVAILABLE_TO_FORWARD = V_QTY
+          WHERE   LOTCODE         =   :NEW.LOTCODE
+          AND     ASSEMBLY_ICODE  =   :NEW.ASSEMBLY_ICODE
+          AND     NVL(ASS_SAITEM_CODE,0) = NVL(:NEW.ASS_SAITEM_CODE,0)
+          AND     OPERATION_SEQ   =   V_PREV_SEQ
+          AND     CONSIDER_IN_WIP <> 'N';
+      END IF;
+
+      FOR C1_LOOP IN C1(:NEW.JOBCODE,:NEW.CODE)
+      LOOP
+          V_QTY := DB_PKG_PRODUCTION.CALC_AVAILABLE_TO_FOROWARD_QTY(C1_LOOP.LOTCODE,C1_LOOP.ASSEMBLY_ICODE,V_PREV_SEQ,C1_LOOP.ASS_SAITEM_CODE);
+
+          UPDATE  PRDLOTOPERATION
+          SET     AVAILABLE_TO_FORWARD = V_QTY
+          WHERE   LOTCODE         =   :NEW.LOTCODE
+          AND     ASSEMBLY_ICODE  =   :NEW.ASSEMBLY_ICODE
+          AND     NVL(ASS_SAITEM_CODE,0) = NVL(:NEW.ASS_SAITEM_CODE,0)
+          AND     OPERATION_SEQ   =   V_PREV_SEQ
+          AND     CONSIDER_IN_WIP <> 'N';
+      END LOOP;
+      */
+      -- END REV : 005
+      END IF;
+   END IF;
+EXCEPTION
+   WHEN SQLSTATE '50001' THEN
+      RAISE EXCEPTION '%', 'BOM updation failed.' USING ERRCODE = '45901';
+   WHEN OTHERS
+   THEN
+      CALL ERRAUDIT(USER,
+                'T_PRDJOBDET',
+                SQLSTATE::varchar,
+                SQLERRM);
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED  ' || SQLSTATE::varchar || '  ' || SQLERRM USING ERRCODE = '45001';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

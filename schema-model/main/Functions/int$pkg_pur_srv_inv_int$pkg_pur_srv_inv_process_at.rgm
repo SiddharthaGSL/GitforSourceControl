@@ -1,0 +1,1294 @@
+function "main"."int$pkg_pur_srv_inv_int$pkg_pur_srv_inv_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      errmsg                    varchar(2000);
+      vsession                  varchar(100);
+      vdetailtbl                varchar(2000);
+      vdetailrec                varchar(500);
+      errcode                   text;
+      --vmaxno                  number;
+      vcount                    bigint;
+      v_null_GL_cnt             bigint;
+      v_status                  varchar(2000);
+      v_menucode                bigint := 99;
+      v_det_cnt                 bigint;
+
+      v_srvcode                 pursrvmain.srvcode%TYPE;
+      v_srvno                   pursrvmain.srvno%TYPE;
+      v_ycode                   pursrvmain.ycode%TYPE;
+      v_ref_admsite_code        pursrvmain.ref_admsite_code%TYPE;
+      v_srv_dt                  pursrvmain.srvdt%TYPE;
+      v_grsamt                  pursrvmain.grsamt%TYPE;
+      v_chgamt                  pursrvmain.chgamt%TYPE;
+      v_netamt                  pursrvmain.netamt%TYPE;
+      v_doccode                 pursrvmain.doccode%TYPE;
+      v_scheme_docno            pursrvmain.scheme_docno%TYPE;
+      v_pursrvmain_chg_glcode   fingl.glcode%TYPE;
+      v_pursrvmain_chg_slcode   finsl.slcode%TYPE;
+
+      v_tempno                  bigint;
+      v_err                     varchar(1000);
+      g_mark                    varchar(100);
+      v_str                     varchar(4000);
+      v_no                      bigint;
+
+      -- START REV : 006
+      v_admou_code              bigint := NULL;
+      v_admsite_code_owner      bigint := NULL;
+      -- END REV : 006
+c1 CURSOR FOR
+           SELECT DISTINCT srvcode
+             FROM int$stg_pur_srv_inv
+            WHERE userid = p_userid
+         ORDER BY 1;
+
+      -- main fields
+      c_main CURSOR(p_srvcode bigint)
+      FOR
+         SELECT DISTINCT srvcode,
+                         srvdt,
+                         ref_no,
+                         ref_dt,
+                         due_dt,
+                         remarks,
+                         admsite_code,
+                         admou_code,
+                         pcode,
+                         ycode,
+                         srv_type,                                  --pglcode,
+                         fintradegrp_code,
+                         purtermcode,
+                         formapp,
+                         formcode,
+                         formno,
+                         formdt,
+                         formamt,
+                         doccode,
+                         scheme_docno,
+                         gstappl,
+                         cp_gstin_state_code,
+                         cp_gstin_no,
+                         owner_gstin_no,
+                         owner_gstin_state_code,
+                         ref_admsite_code,
+                         ref_period,
+                         exrate,
+                         admcurrency_code,
+                         certificateno,
+                         tds_app,
+                         tdsrate,
+                         tds_grossamt,
+                         tds_roundoff_amt,
+                         tdstypecode,
+                         tdssrccode,
+                         tdssection,
+                         tdsglcode,
+                         tdsslcode,
+                         tdsamt,
+                         tds_appamt
+           FROM int$stg_pur_srv_inv a
+          WHERE userid = p_userid AND srvcode = p_srvcode;
+
+      -- detail fields
+      c_det CURSOR(p_srvcode bigint)
+      FOR
+         SELECT DISTINCT servicecode,
+                         qty,
+                         rate,
+                         amount,
+                         det_glcode,
+                         det_slcode,
+                         det_gl_cc_appl,
+                         det_taxcode,
+                         det_tdstypecode,
+                         det_tdssection,
+                         det_tdsglcode,
+                         det_tdsslcode,
+                         det_tds_appamt,
+                         det_tdsrate,
+                         det_tdsamt,
+                         certificateno,
+                         det_tds_roundoff_amt,
+                         det_tds_grossamt,
+                         det_hsn_sac_code,
+                         det_gst_itc_appl
+           FROM int$stg_pur_srv_inv
+          WHERE userid = p_userid AND srvcode = p_srvcode;
+
+  i RECORD;
+  y RECORD;
+BEGIN
+      g_mark := 'P01';
+
+      -- Deleting all log against the Purchase of Service creation for the user
+      DELETE FROM admerraudit a
+       WHERE     a.usrname = USER
+             AND a.prcname = 'PUR_SRV_INV'
+             AND a.errcode = p_userid :: text;
+
+      /*CALL erraudit(USER,
+                'PUR_SRV_INV',
+                p_userid,
+                '1 - Web import Purchase of Service creation start');*/
+
+      -- Updating srvcode in int$stg_pur_srv_inv
+      FOR i IN (  SELECT DISTINCT UPPER(scheme_doc_format) scheme_doc_format1,
+                                  UPPER(scheme_docno)    scheme_docno1,
+                                  date_trunc('day', srvdt)           srv_dt,
+                                  UPPER(supplier_slid)   supplier_slid1,
+                                  UPPER(tds_name)        tds_name1,
+                                  ref_admsite_code,
+                                  UPPER(ref_no)          ref_no1,
+                                  ref_dt,
+                                  due_dt,
+                                  UPPER(ref_period)      ref_period1,
+                                  currency_shortcode,
+                                  UPPER(remarks)         remarks1
+                    FROM int$stg_pur_srv_inv
+                   WHERE userid = p_userid
+                ORDER BY 1)
+      LOOP
+         SELECT nextval('erp01') INTO STRICT v_srvcode;
+
+         -- start rev : 005
+         
+         v_status :=
+' update int$stg_pur_srv_inv a'
+            || ' set    srvcode = '
+            || v_srvcode :: text
+            || ','
+            || '        ycode = (select ycode from admyear where '''
+            || TO_CHAR(i.srv_dt, 'YYYY-MM-DD')
+            || ''' between dtfr and dtto),'
+            || '        amount = coalesce(amount, round((qty*rate)::NUMERIC,2))'
+            || ' where  srvdt = '''
+            || TO_CHAR(i.srv_dt, 'YYYY-MM-DD')
+            || ''''
+            || ' and    upper(scheme_doc_format) = '
+            || quote_nullable(i.scheme_doc_format1)
+            || ''
+            || ' and    ('
+            || quote_nullable(i.scheme_docno1)
+            || ' is null or upper(a.scheme_docno) = '
+            || quote_nullable(i.scheme_docno1)
+            || ')'
+            || ' and    upper(supplier_slid) = '
+            || quote_nullable(i.supplier_slid1)
+            || ''
+            || ' and    ('
+            || quote_nullable(i.ref_admsite_code ::text)
+            || ' is null or a.ref_admsite_code = '
+            || quote_nullable(i.ref_admsite_code ::text)
+            || ')'
+            || ' and    ('
+            || quote_nullable(i.tds_name1)
+            || ' is null or upper(a.tds_name) = '
+            || quote_nullable(i.tds_name1)
+            || ')'
+            || ' and    ('
+            || quote_nullable(i.ref_no1)
+            || ' is null or upper(a.ref_no) = '
+            || quote_nullable(i.ref_no1)
+            || ')'
+            || ' and    (ref_dt is null or ref_dt = '
+            || quote_nullable(TO_CHAR(i.ref_dt, 'YYYY-MM-DD'))
+            || ')'
+            || ' and    (due_dt is null or due_dt = '
+            || quote_nullable(TO_CHAR(i.due_dt, 'YYYY-MM-DD'))
+            || ')'
+            || ' and    ('
+            || quote_nullable(i.ref_period1)
+            || ' is null or upper(a.ref_period) = '
+            || quote_nullable(i.ref_period1)
+            || ')'
+            || ' and    ('
+            || quote_nullable(i.currency_shortcode)
+            || ' is null or a.currency_shortcode = '
+            || quote_nullable(i.currency_shortcode)
+            || ')'
+            || ' and    ('
+            || quote_nullable(i.remarks1)
+            || ' is null or upper(a.remarks) = '
+            || quote_nullable(i.remarks1)
+            || ')'
+            || ' and    userid = '
+            || p_userid::text;
+         -- end rev : 005
+         /*CALL erraudit(USER,
+                   'PUR_SRV_INV',
+                   p_userid,
+                   '2 - Updating srvcode - ' || v_status);*/
+
+         v_status := db_fun_commit_statement(USER, v_status);
+      END LOOP;
+
+      FOR i IN c1
+      LOOP
+         FOR j IN c_main(i.srvcode)
+         LOOP           
+            /*CALL erraudit(
+               USER,
+               'PUR_SRV_INV',
+               p_userid,
+               '3 - Inserting main entry ... ' || i.srvcode::text || '*' || J.YCODE::text);*/
+
+            INSERT INTO pursrvmain(srvcode,
+                                    srvno,
+                                    srvdt,
+                                    TYPE,
+                                    pcode,
+                                    docno,
+                                    docdt,
+                                    duedt,
+                                    jrncode,
+                                    grsamt,
+                                    chgamt,
+                                    netamt,
+                                    adjamt,
+                                    REM,
+                                    YCODE,
+                                    ECODE,
+                                    TIME,
+                                    tdsrate,
+                                    admou_code,
+                                    doccode,
+                                    scheme_docno,
+                                    admsite_code_owner,
+                                    tds_app,
+                                    tdstypecode,
+                                    tdssrccode,
+                                    tdssection,
+                                    tdsglcode,
+                                    tdsslcode,
+                                    tds_appamt,
+                                    tdsamt,
+                                    certificateno,
+                                    tds_roundoff_amt,
+                                    tds_grossamt,
+                                    admcurrency_code,
+                                    exrate,
+                                    fintradegrp_code,
+                                    formcode,
+                                    formno,
+                                    formdt,
+                                    release_status,
+                                    release_time,
+                                    release_ecode,
+                                    ref_period,
+                                    ref_admsite_code,
+                                    purtermcode,
+                                    formamt,
+                                    owner_gstin_no,
+                                    owner_gstin_state_code,
+                                    cp_gstin_no,
+                                    cp_gstin_state_code,
+                                    gstappl,
+                                    -- start rev : 001
+                                    entry_source              -- end rev : 001
+                                                )
+                 VALUES (i.srvcode,
+                         v_tempno,
+                         j.srvdt,
+                         coalesce(j.srv_type, 'N'),
+                         j.pcode,
+                         j.ref_no,
+                         j.ref_dt,
+                         j.due_dt,
+                         NULL,
+                         0,
+                         0,
+                         0,
+                         0,
+                         j.remarks,
+                         j.ycode,
+                         p_userid,
+                         clock_timestamp(),
+                         j.tdsrate,
+                         p_connect_ou,
+                         j.doccode,
+                         coalesce(j.scheme_docno, 'Automatic'),
+                         p_connect_site,
+                         j.tds_app,
+                         j.tdstypecode,
+                         j.tdssrccode,
+                         j.tdssection,
+                         j.tdsglcode,
+                         j.tdsslcode,
+                         j.tds_appamt,
+                         j.tdsamt,
+                         j.certificateno,
+                         j.tds_roundoff_amt,
+                         j.tds_grossamt,
+                         j.admcurrency_code,
+                         j.exrate,
+                         j.fintradegrp_code,
+                         j.formcode,
+                         j.formno,
+                         j.formdt,
+                         'U',
+                         NULL,
+                         NULL,
+                         j.ref_period,
+                         j.ref_admsite_code,
+                         j.purtermcode,
+                         j.formamt,
+                         j.owner_gstin_no,
+                         j.owner_gstin_state_code,
+                         j.cp_gstin_no,
+                         j.cp_gstin_state_code,
+                         j.gstappl,
+                         -- start rev : 001
+                         'EXCEL'                              -- end rev : 001
+                                );
+
+            /*CALL erraudit(
+               USER,
+               'PUR_SRV_INV',
+               p_userid,
+                  '3 - Inserting detail entry ... '
+               || i.srvcode::text
+               || '*'
+               || J.YCODE::text);*/
+
+            -- Document detail entry -- PURSRVDET_CODE.NEXTVAL
+            FOR k IN c_det(i.srvcode)
+            LOOP
+               INSERT INTO pursrvdet(srvcode,
+                                      srvno,
+                                      srvdt,
+                                      ycode,
+                                      servicecode,
+                                      qty,
+                                      rate,
+                                      srvamt,
+                                      glcode,
+                                      slcode,
+                                      gl_cc_appl,
+                                      taxcode,
+                                      tdstypecode,
+                                      tdssection,
+                                      tdsglcode,
+                                      tdsslcode,
+                                      tds_appamt,
+                                      tdsrate,
+                                      tdsamt,
+                                      certificateno,
+                                      tds_roundoff_amt,
+                                      tds_grossamt,
+                                      hsn_sac_code,
+                                      gst_itc_appl)
+                    VALUES (i.srvcode,
+                            v_tempno,
+                            j.srvdt,
+                            j.ycode,
+                            k.servicecode,
+                            k.qty,
+                            k.rate,
+                            k.amount,
+                            k.det_glcode,
+                            k.det_slcode,
+                            k.det_gl_cc_appl,
+                            k.det_taxcode,
+                            k.det_tdstypecode,
+                            k.det_tdssection,
+                            k.det_tdsglcode,
+                            k.det_tdsslcode,
+                            k.det_tds_appamt,
+                            k.det_tdsrate,
+                            k.det_tdsamt,
+                            k.certificateno,
+                            k.det_tds_roundoff_amt,
+                            k.det_tds_grossamt,
+                            k.det_hsn_sac_code,
+                            k.det_gst_itc_appl);
+            END LOOP;                                   -- End of detail entry
+            /*CALL erraudit(USER,
+                      'PUR_SRV_INV',
+                      p_userid,
+                      '4 - costcenter posting starts ... ');*/
+			
+            DECLARE
+               v_postcode   finpost.postcode%TYPE;
+               v_damount    fincosttag.damount%TYPE;
+               v_camount    fincosttag.camount%TYPE;
+
+               c2 CURSOR FOR
+                  SELECT *
+                    FROM pursrvdet
+                   WHERE coalesce(gl_cc_appl, 'N') = 'Y' AND srvcode = j.srvcode;
+            BEGIN
+               FOR x IN c2
+               LOOP
+                  SELECT postcode
+                    INTO STRICT v_postcode
+                    FROM finpost
+                   WHERE     entcode = j.srvcode::varchar
+                         AND enttype = 'PSD'
+                         AND servicecode = x.servicecode
+                         AND glcode = x.glcode
+                         AND coalesce(slcode, 0) = coalesce(x.slcode, 0);
+
+                  FOR y
+                     IN (SELECT *
+                           FROM int$stg_pur_srv_inv
+                          WHERE     srvcode = j.srvcode
+                                AND servicecode = x.servicecode
+                                AND det_glcode = x.glcode
+                                AND coalesce(det_slcode, 0) = coalesce(x.slcode, 0))
+                  LOOP
+                     IF y.det_tag_admsite_code IS NULL
+                     THEN
+                        INSERT INTO fincosttag(entcode,
+                                                entno,
+                                                entdt,
+                                                enttype,
+                                                glcode,
+                                                slcode,
+                                                damount,
+                                                camount,
+                                                ycode,
+                                                postcode,
+                                                admsite_code,
+                                                ref_admsite_code,
+                                                admou_code)
+                             VALUES (j.srvcode::varchar,
+                                     x.srvno::varchar,
+                                     j.srvdt,
+                                     'PSD',
+                                     x.glcode,
+                                     x.slcode,
+                                     coalesce(x.srvamt, 0),
+                                     0,
+                                     j.ycode,
+                                     v_postcode,
+                                     p_connect_site,
+                                     p_connect_site,
+                                     j.admou_code);
+                     ELSE
+                        IF coalesce(y.tag_admsite_amount, 0) > 0
+                        THEN
+                           v_damount := coalesce(y.tag_admsite_amount, 0);
+                           v_camount := 0;
+                        ELSE
+                           -- for negative value
+                           v_damount := 0;
+                           v_camount := ABS(coalesce(y.tag_admsite_amount, 0));
+                        END IF;
+
+                        INSERT INTO fincosttag(entcode,
+                                                entno,
+                                                entdt,
+                                                enttype,
+                                                glcode,
+                                                slcode,
+                                                damount,
+                                                camount,
+                                                ycode,
+                                                postcode,
+                                                admsite_code,
+                                                ref_admsite_code,
+                                                admou_code)
+                             VALUES (j.srvcode::varchar,
+                                     x.srvno::varchar,
+                                     j.srvdt,
+                                     'PSD',
+                                     x.glcode,
+                                     x.slcode,
+                                     v_damount,
+                                     v_camount,
+                                     j.ycode,
+                                     v_postcode,
+                                     y.det_tag_admsite_code,
+                                     y.det_tag_admsite_code,
+                                     j.admou_code);
+                     END IF;
+                  END LOOP;
+               END LOOP;
+            END;
+
+            /*CALL erraudit(USER,
+                      'PUR_SRV_INV',
+                      p_userid,
+                      '4 - costcenter posting end ... ');*/
+
+            UPDATE pursrvdet
+               SET srvcode = i.srvcode
+             WHERE srvcode = i.srvcode;
+
+            v_det_cnt := 0;
+
+            BEGIN
+               SELECT COUNT(*)
+                 INTO STRICT v_det_cnt
+                 FROM pursrvdet
+                WHERE srvcode = i.srvcode;
+            EXCEPTION
+               WHEN no_data_found
+               THEN
+                  NULL;
+            END;
+
+            IF coalesce(v_det_cnt, 0) = 0
+            THEN
+               ROLLBACK;
+            --g_error := 'Detail record not found';
+            --raise insert_violation;
+            END IF;
+
+            BEGIN
+               vcount := 0;
+
+               SELECT COUNT(DISTINCT glcode)
+                 INTO STRICT vcount
+                 FROM pursrvdet
+                WHERE srvcode = i.srvcode;
+            EXCEPTION
+               WHEN no_data_found
+               THEN
+                  vcount := 0;
+            END;
+
+            BEGIN
+               v_det_cnt := 0;
+
+               SELECT COUNT(DISTINCT coalesce(slcode, 0))
+                 INTO STRICT v_det_cnt
+                 FROM pursrvdet
+                WHERE srvcode = i.srvcode;
+            EXCEPTION
+               WHEN no_data_found
+               THEN
+                  v_det_cnt := 0;
+            END;
+
+            v_pursrvmain_chg_glcode := NULL;
+            v_pursrvmain_chg_slcode := NULL;
+
+            IF coalesce(vcount, 0) = 1 AND coalesce(v_det_cnt, 0) = 1
+            THEN
+               BEGIN
+                  SELECT DISTINCT glcode
+                    INTO STRICT v_pursrvmain_chg_glcode
+                    FROM pursrvdet
+                   WHERE srvcode = i.srvcode;
+               EXCEPTION
+                  WHEN no_data_found
+                  THEN
+                     v_pursrvmain_chg_glcode := NULL;
+               END;
+
+               BEGIN
+                  SELECT DISTINCT slcode
+                    INTO STRICT v_pursrvmain_chg_slcode
+                    FROM pursrvdet
+                   WHERE srvcode = i.srvcode AND coalesce(slcode, 0) <> 0;
+               EXCEPTION
+                  WHEN no_data_found
+                  THEN
+                     v_pursrvmain_chg_slcode := NULL;
+               END;
+            END IF;
+
+            /*CALL erraudit(USER,
+                      'PUR_SRV_INV',
+                      p_userid,
+                      '5 - Calculating line level charge ... ');*/
+
+            CALL int$pkg_pur_srv_inv_calculate_term_item(i.srvcode,
+                                 j.srvdt,
+                                 j.fintradegrp_code,
+                                 j.purtermcode,
+                                 j.formcode,
+                                 j.pcode,
+                                 v_pursrvmain_chg_glcode,
+                                 v_pursrvmain_chg_slcode,
+                                 j.admsite_code,
+                                 p_connect_site);
+
+            /*CALL erraudit(USER,
+                      'PUR_SRV_INV',
+                      p_userid,
+                      '6 - Calculating header level charge ... ');
+
+            CALL int$pkg_pur_srv_inv_calculate_term(i.srvcode,
+                            j.purtermcode,
+                            v_pursrvmain_chg_glcode,
+                            v_pursrvmain_chg_slcode);*/
+
+            DECLARE
+               v_postcode   finpost.postcode%TYPE;
+               v_damount    fincosttag.damount%TYPE;
+               v_camount    fincosttag.camount%TYPE;
+
+               c3 CURSOR FOR
+                  SELECT *
+                    FROM pursrvchg
+                   WHERE coalesce(gl_cc_appl, 'N') = 'Y' AND srvcode = j.srvcode;
+            BEGIN
+               FOR x IN c3
+               LOOP
+                  BEGIN
+                     v_postcode := NULL;
+
+                     SELECT postcode
+                       INTO STRICT v_postcode
+                       FROM finpost
+                      WHERE     entcode = j.srvcode::varchar
+                            AND enttype = 'PSC'
+                            AND chgcode = x.chgcode
+                            AND chg_pk_code = x.code
+                            AND glcode = x.glcode
+                            AND coalesce(slcode, 0) = coalesce(x.slcode, 0);
+                  EXCEPTION
+                     WHEN no_data_found
+                     THEN
+                        NULL;
+                  END;
+
+                  IF v_postcode IS NOT NULL
+                  THEN
+                     IF coalesce(x.chgamt, 0) > 0
+                     THEN
+                        v_damount := coalesce(x.chgamt, 0);
+                        v_camount := 0;
+                     ELSE
+                        -- for negative value
+                        v_damount := 0;
+                        v_camount := ABS(coalesce(x.chgamt, 0));
+                     END IF;
+
+                     INSERT INTO fincosttag(entcode,
+                                             entno,
+                                             entdt,
+                                             enttype,
+                                             glcode,
+                                             slcode,
+                                             damount,
+                                             camount,
+                                             ycode,
+                                             postcode,
+                                             admsite_code,
+                                             ref_admsite_code,
+                                             admou_code)
+                          VALUES (j.srvcode::varchar,
+                                  x.srvno::varchar,
+                                  j.srvdt,
+                                  'PSC',
+                                  x.glcode,
+                                  x.slcode,
+                                  v_damount,
+                                  v_camount,
+                                  j.ycode,
+                                  v_postcode,
+                                  p_connect_site,
+                                  p_connect_site,
+                                  j.admou_code);
+                  END IF;
+               END LOOP;
+            END;
+
+            v_null_GL_cnt := NULL;
+
+            SELECT COUNT(*)
+              INTO STRICT v_null_gl_cnt
+              FROM pursrvchg
+             WHERE srvcode = i.srvcode AND glcode IS NULL;
+
+            IF coalesce(v_null_GL_cnt, 0) > 0
+            THEN                    --and v_pursrvmain_chg_glcode is null then
+               INSERT INTO global_temp_storage(code_1)
+                    VALUES (i.srvcode);
+            END IF;
+
+            -- WHEN-VALIDATE-RECORD (PURSRVDET)
+            DECLARE
+               v_tdsamt             double precision;
+               v_tds_appamt         double precision;
+               v_tds_grossamt       double precision;
+               v_tds_roundoff_amt   double precision;
+
+               v_chg_tds_appamt     double precision;
+               v_tds_amt            double precision;
+
+               c4 CURSOR(p_srvcode bigint)
+               FOR
+                    SELECT *
+                      FROM pursrvdet
+                     WHERE srvcode = p_srvcode
+                  ORDER BY code;
+            BEGIN
+               FOR k IN c4(i.srvcode)
+               LOOP
+                  /*
+                  v_chg_tds_appamt :=0;
+                  v_tds_amt        := 0;
+
+                  if  nvl(j.tds_app,'N') = 'Y' and k.tdstypecode is not null then
+                      for x in c2 (i.srvcode, x.code) loop
+                          v_chg_tds_appamt := nvl(v_chg_tds_appamt,0)+ nvl(x.chgamt,0);
+                      end loop;
+
+                      v_tds_amt := (nvl(v_chg_tds_appamt,0) + nvl(k.srvamt,0)) * nvl(j.tdsrate,0)/100;
+                      if  nvl(v_tds_amt,0) < 1 and nvl(v_tds_amt,0) <> 0 then
+                          v_tds_amt := 1;
+                      else
+                          v_tds_amt := round(v_tds_amt::NUMERIC);
+                      end if;
+                  end if;
+                  */
+                  IF coalesce(j.tds_app, 'N') = 'Y'
+                  THEN
+                     v_tdsamt := int$pkg_pur_srv_inv_loc_fun_serv_tds_amount(k.srvcode, k.code);
+                     v_tds_appamt :=
+                        int$pkg_pur_srv_inv_loc_fun_serv_tds_appamt(k.srvcode, k.code);
+                     v_tds_grossamt :=
+                        int$pkg_pur_srv_inv_loc_fun_gross_tdsamt(k.srvcode, k.code);
+                     v_tds_roundoff_amt := v_tdsamt - v_tds_grossamt;
+
+                     UPDATE pursrvdet
+                        SET tdsamt = v_tdsamt,
+                            tds_appamt = v_tds_appamt,
+                            tds_grossamt = v_tds_grossamt,
+                            tds_roundoff_amt = v_tds_roundoff_amt
+                      WHERE code = k.code;
+                  ELSE
+                     UPDATE pursrvdet
+                        SET tdsamt = 0,
+                            tds_appamt = 0,
+                            tds_grossamt = 0,
+                            tds_roundoff_amt = 0
+                      WHERE code = k.code;
+                  END IF;
+               END LOOP;                                -- End of detail entry
+            END;
+         END LOOP;                                        -- End of Main entry
+      END LOOP;                                          -- End of Per srvcode
+      v_null_GL_cnt := NULL;
+
+      SELECT COUNT(*)
+        INTO STRICT v_null_GL_cnt
+        FROM global_temp_storage
+       WHERE code_1 IS NOT NULL;
+
+      IF coalesce(v_null_GL_cnt, 0) > 0
+      THEN
+         RAISE EXCEPTION 'chg_gl_exp' USING ERRCODE = '50001';
+      END IF;
+
+      -- totamt_negative_exp
+      DELETE FROM global_temp_storage;
+
+      FOR i IN c1
+      LOOP
+         SELECT coalesce(SUM(coalesce(srvamt, 0)), 0)
+           INTO STRICT v_grsamt
+           FROM pursrvdet
+          WHERE srvcode = i.srvcode;
+
+         SELECT round((coalesce(SUM(coalesce(chgamt, 0)), 0))::numeric, 2)
+           INTO STRICT v_chgamt
+           FROM pursrvchg
+          WHERE srvcode = i.srvcode;
+
+         v_netamt := coalesce(v_grsamt, 0) + coalesce(v_chgamt, 0);
+
+         IF v_netamt < 0
+         THEN
+            INSERT INTO global_temp_storage(code_1,
+                                             value_1,
+                                             value_2,
+                                             value_3)
+                 VALUES (i.srvcode,
+                         v_grsamt,
+                         v_chgamt,
+                         v_netamt);
+         END IF;
+      END LOOP;
+
+      v_null_GL_cnt := NULL;
+
+      SELECT COUNT(*)
+        INTO STRICT v_null_GL_cnt
+        FROM global_temp_storage
+       WHERE code_1 IS NOT NULL;
+
+      IF coalesce(v_null_GL_cnt, 0) > 0
+      THEN
+         RAISE EXCEPTION 'totamt_negative_exp' USING ERRCODE = '50002';
+      END IF;
+
+      /*CALL erraudit(USER,
+                'PUR_SRV_INV',
+                p_userid,
+                '7 - Updating charge amount in  main table ... ');*/
+
+      -- Now all data inserted with proper validation
+      -- Now you may generate the scheme_docno, otherwise it may skipped.
+      -- site wise entry
+      FOR i IN c1
+      LOOP
+         --v_scheme_docno := NULL;
+         v_grsamt := NULL;
+         v_chgamt := NULL;
+         v_netamt := NULL;
+         v_ycode := NULL;
+         v_srv_dt := NULL;
+
+         -- start rev : 006
+         /*
+         SELECT DISTINCT ycode, srvdt
+           INTO v_ycode, v_srv_dt
+           FROM int$stg_pur_srv_inv
+          WHERE srvcode = i.srvcode;
+         */
+         SELECT DISTINCT ycode,
+                         srvdt,
+                         doccode,
+                         admou_code,
+                         admsite_code_owner
+           INTO STRICT v_ycode,
+                v_srv_dt,
+                v_doccode,
+                v_admou_code,
+                v_admsite_code_owner
+           FROM int$stg_pur_srv_inv
+          WHERE srvcode = i.srvcode;
+
+         -- end rev : 006
+         DECLARE
+            v_tds_app            pursrvmain.tds_app%TYPE;
+            v_gltype             CHAR(1);
+            v_tdsglcode          bigint;
+
+            v_tds_appamt         bigint;
+            v_tdsamt             bigint;
+            v_tds_grossamt       bigint;
+            v_tds_roundoff_amt   bigint;
+         BEGIN
+            SELECT tds_app, tdsglcode
+              INTO STRICT v_tds_app, v_tdsglcode
+              FROM pursrvmain
+             WHERE srvcode = i.srvcode;
+
+            IF coalesce(v_tds_app, 'N') = 'Y'
+            THEN
+               BEGIN
+                  v_gltype := NULL;
+
+                  SELECT srctype
+                    INTO STRICT v_gltype
+                    FROM fingl
+                   WHERE glcode = v_tdsglcode;
+               EXCEPTION
+                  WHEN no_data_found
+                  THEN
+                     NULL;
+               END;
+
+               IF coalesce(v_gltype, 'R') = 'R'
+               THEN
+                  SELECT SUM(coalesce(TDS_APPAMT, 0)),
+                         SUM(coalesce(TDSAMT, 0)),
+                         SUM(coalesce(TDS_GROSSAMT, 0)),
+                         SUM(coalesce(TDS_ROUNDOFF_AMT, 0))
+                    INTO STRICT v_tds_appamt,
+                         v_tdsamt,
+                         v_tds_grossamt,
+                         v_tds_roundoff_amt
+                    FROM pursrvdet
+                   WHERE srvcode = i.srvcode;
+
+                  UPDATE pursrvmain
+                     SET tds_appamt = v_tds_appamt,
+                         tdsamt = v_tdsamt,
+                         tds_grossamt = v_tds_grossamt,
+                         tds_roundoff_amt = v_tds_roundoff_amt
+                   WHERE srvcode = i.srvcode;
+               ELSE
+                  UPDATE pursrvmain
+                     SET tds_appamt  = NULL,
+                         tdsamt  = NULL,
+                         tds_grossamt  = NULL,
+                         tds_roundoff_amt  = NULL
+                   WHERE srvcode = i.srvcode;
+               END IF;
+            END IF;
+         END;
+
+         -- start rev : 006
+         /*
+         db_pkg_genentryno.set_oucode (p_connect_ou);
+         db_pkg_genentryno.set_sitecode (p_connect_site);
+         db_pkg_genentryno.set_menucode (v_menucode);
+         db_pkg_genentryno.initialize_globals (v_ycode);
+
+         db_pkg_genentryno.set_entcode (i.srvcode);
+         */
+         -- end rev : 006
+         -- Update main entry
+         SELECT coalesce(SUM(coalesce(srvamt, 0)), 0)
+           INTO STRICT v_grsamt
+           FROM pursrvdet
+          WHERE srvcode = i.srvcode;
+
+         SELECT round((coalesce(SUM(coalesce(chgamt, 0)), 0))::numeric, 2)
+           INTO STRICT v_chgamt
+           FROM pursrvchg
+          WHERE srvcode = i.srvcode;
+
+         v_netamt := coalesce(v_grsamt, 0) + coalesce(v_chgamt, 0);
+
+         UPDATE pursrvmain
+            SET grsamt = v_grsamt,
+                chgamt = v_chgamt,
+                netamt = v_netamt,
+                srvno = null--db_pkg_genentryno.g_tempno
+          WHERE srvcode = i.srvcode;
+
+         -- start rev : 006         
+         SELECT scheme_docno
+           INTO STRICT v_scheme_docno
+           FROM pursrvmain
+          WHERE srvcode = i.srvcode;
+
+         /*CALL erraudit('gsl',
+                   'gsl',
+                   'gsl',
+                   'scheme_docno = ' || v_scheme_docno);*/
+
+         IF V_SCHEME_DOCNO = 'Automatic'
+         THEN
+            V_SCHEME_DOCNO :=
+               db_fun_document_number_web(NULL,
+                                           v_doccode,
+                                           v_ycode,
+                                           TO_CHAR(v_srv_dt,'DD-MM-YYYY'),
+                                           NULL,
+                                           V_ADMSITE_CODE_OWNER,
+                                           V_ADMOU_CODE,
+                                           'ServInvAdhoc');
+
+            UPDATE pursrvmain
+               SET SCHEME_DOCNO = V_SCHEME_DOCNO
+             WHERE srvcode = i.srvcode;
+
+            -- start rev : 008
+            UPDATE gst_docno_check
+            set scheme_docno = V_SCHEME_DOCNO
+            where enttype = 'PSM'
+            and   entcode = i.srvcode
+            and   scheme_docno = 'Automatic';
+            -- end rev : 008
+         END IF;
+
+         -- end rev : 006
+         SELECT scheme_docno, srvno
+           INTO STRICT v_scheme_docno, v_srvno
+           FROM pursrvmain
+          WHERE srvcode = i.srvcode;
+
+         UPDATE int$stg_pur_srv_inv
+            SET scheme_docno = V_SCHEME_DOCNO
+          WHERE srvcode = i.srvcode;
+
+         UPDATE pursrvdet
+            SET srvno = v_srvno
+          WHERE srvcode = i.srvcode;
+
+         UPDATE pursrvchg
+            SET srvno = v_srvno
+          WHERE srvcode = i.srvcode;
+
+         UPDATE fincosttag
+            SET entno = v_srvno::varchar
+          WHERE     entcode = i.srvcode::varchar
+                AND enttype IN ('PSM', 'PSD', 'PSC');
+   
+      END LOOP;
+
+      /*CALL erraudit(USER,
+                'PUR_SRV_INV',
+                p_userid,
+                '8 - Document generated successfully ... ');*/
+
+      -- log to be added in history table
+      SELECT nextval('int$error_log_code') INTO STRICT vsession;
+
+      vdetailtbl :=
+            'CREATE TABLE ginarchive.pur_srv_inv_'
+         || vsession
+         || ' AS
+                SELECT distinct upper(scheme_docno) scheme_docno, to_char(srvdt,''DD-MM-RRRR'') srv_dt, upper(supplier_slid) supplier_slid, upper(ref_admsite_shrtname) ref_admsite_shrtname, upper(tds_name) tds_name, upper(ref_no) ref_no, ref_dt, due_dt, upper(ref_period) ref_period, upper(remarks) remarks
+                FROM   int$stg_pur_srv_inv a
+                WHERE  userid = '
+         || p_userid::text
+         || ' '
+         || 'GROUP BY upper(scheme_docno), srvdt, upper(supplier_slid), upper(ref_admsite_shrtname), upper(tds_name), upper(ref_no), ref_dt, due_dt, upper(ref_period), upper(remarks) '
+         || 'ORDER BY 2, 1';
+
+      /*CALL erraudit(USER,
+                'PUR_SRV_INV',
+                p_userid,
+                '9 - Creating table in ginarchive... ' || vdetailtbl);*/
+
+      EXECUTE vdetailtbl;
+
+      vdetailrec :=
+         'SELECT count(1) FROM ginarchive.PUR_SRV_INV_' || vsession::text;
+
+      EXECUTE vdetailrec INTO STRICT vcount;
+
+      IF coalesce(vcount, 0) = 0
+      THEN
+         NULL;
+      --RAISE insert_violation;
+      END IF;
+
+      INSERT INTO int$history(code,
+                               importedby,
+                               importedon,
+                               classname,
+                               summary,
+                               history_detail_tablename,
+                               history_detail_row_count)
+              VALUES (
+                        nextval('int$history_code'),
+                        p_userid,
+                        clock_timestamp(),
+                        'PUR_SRV_INV',
+                           vcount::text
+                        || ' Purchase service document(s) imported successfully.',
+                        'ginarchive.PUR_SRV_INV_' || vsession::text,
+                        vcount);
+
+      RETURN('1');
+   EXCEPTION
+      WHEN SQLSTATE '50001' THEN
+         errcode := 0;
+
+         FOR i IN (SELECT DISTINCT srvcode
+                     FROM int$stg_pur_srv_inv
+                    WHERE userid = p_userid)
+         LOOP
+            DELETE FROM fincosttag
+             WHERE     entcode = i.srvcode::varchar
+                   AND enttype IN ('PSM', 'PSD', 'PSC');
+
+            DELETE FROM finpost
+             WHERE     entcode = i.srvcode::varchar
+                   AND enttype IN ('PSM', 'PSD', 'PSC');
+
+            DELETE FROM pursrvchg_item
+             WHERE srvcode = i.srvcode;
+
+            DELETE FROM pursrvchg
+             WHERE srvcode = i.srvcode;
+
+            DELETE FROM pursrvdet
+             WHERE srvcode = i.srvcode;
+
+            DELETE FROM pursrvmain
+             WHERE srvcode = i.srvcode;
+         END LOOP;
+
+         FOR i IN (SELECT DISTINCT code_1 srvcode
+                     FROM global_temp_storage
+                    WHERE code_1 IS NOT NULL)
+         LOOP
+            errmsg := NULL;
+
+            FOR j IN c_main(i.srvcode)
+            LOOP
+               errmsg :=
+                     ' srvcode = '
+                  || i.srvcode
+                  || ','
+                  || ' service_date = '''
+                  || TO_CHAR(j.srvdt, 'dd-mm-yyyy')
+                  || ''''
+                  || ' Ref no = '''
+                  || j.ref_no
+                  || ''''
+                  || ' Ref date = '''
+                  || TO_CHAR(j.ref_dt, 'dd-mm-yyyy')
+                  || ''''
+                  || ' remarks = '''
+                  || j.remarks
+                  || '''';
+            END LOOP;
+
+            errmsg :=
+                  'General Ledger is missing in charge. Document details - '
+               || errmsg;
+
+            INSERT INTO int$error_log(code,
+                                       lineno,
+                                       classname,
+                                       userid,
+                                       errortype,
+                                       errordesc,
+                                       createdon)
+                 VALUES (nextval('int$error_log_code'),
+                         0,
+                         'PUR_SRV_INV',
+                         p_userid,
+                         'Data Validation',
+                         errmsg,
+                         clock_timestamp());
+         END LOOP;
+
+         SELECT nextval('int$error_log_code') INTO STRICT v_no;
+
+         v_str :=
+            'insert into int$error_log (code, lineno, classname, userid, errortype, errordesc, createdon) ';
+         v_str :=
+               v_str
+            || ' values ('
+            || v_no
+            || ',0,''PUR_SRV_INV'','
+            || p_userid::text
+            || ',''Data Validation'','''
+            || errmsg
+            || ''','
+            || clock_timestamp()
+            || ')';
+         v_str := db_fun_commit_statement(USER, v_str);
+
+         --Error log for Oracle Internal Error
+         --rollback;
+         --COMMIT;
+         RETURN('0');
+      WHEN SQLSTATE '50002' THEN
+         errcode := 0;
+
+         FOR i IN (SELECT DISTINCT srvcode
+                     FROM int$stg_pur_srv_inv
+                    WHERE userid = p_userid)
+         LOOP
+            DELETE FROM fincosttag
+             WHERE     entcode = i.srvcode::varchar
+                   AND enttype IN ('PSM', 'PSD', 'PSC');
+
+            DELETE FROM finpost
+             WHERE     entcode = i.srvcode::varchar
+                   AND enttype IN ('PSM', 'PSD', 'PSC');
+
+            DELETE FROM pursrvchg_item
+             WHERE srvcode = i.srvcode;
+
+            DELETE FROM pursrvchg
+             WHERE srvcode = i.srvcode;
+
+            DELETE FROM pursrvdet
+             WHERE srvcode = i.srvcode;
+
+            DELETE FROM pursrvmain
+             WHERE srvcode = i.srvcode;
+         END LOOP;
+
+         FOR i IN (SELECT DISTINCT code_1 srvcode
+                     FROM global_temp_storage
+                    WHERE code_1 IS NOT NULL)
+         LOOP
+            errmsg := NULL;
+
+            FOR j IN c_main(i.srvcode)
+            LOOP
+               errmsg :=
+                     ' srvcode = '
+                  || i.srvcode
+                  || ','
+                  || ' service_date = '''
+                  || TO_CHAR(j.srvdt, 'dd-mon-rr')
+                  || ''''
+                  || ' Ref no = '''
+                  || j.ref_no
+                  || ''''
+                  || ' Ref date = '''
+                  || TO_CHAR(j.ref_dt, 'dd-mon-rr')
+                  || ''''
+                  || ' remarks = '''
+                  || j.remarks
+                  || '''';
+            END LOOP;
+
+            errmsg :=
+                  'Total amount can not be negative. Document details - '
+               || errmsg;
+
+            INSERT INTO int$error_log(code,
+                                       lineno,
+                                       classname,
+                                       userid,
+                                       errortype,
+                                       errordesc,
+                                       createdon)
+                 VALUES (nextval('int$error_log_code'),
+                         0,
+                         'PUR_SRV_INV',
+                         p_userid,
+                         'Data Validation',
+                         errmsg,
+                         clock_timestamp());
+         END LOOP;
+
+         --COMMIT;
+         RETURN('0');
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'PUR_SRV_INV',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

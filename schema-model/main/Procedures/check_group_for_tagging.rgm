@@ -1,0 +1,53 @@
+procedure "main"."check_group_for_tagging(bigint, character)" {
+  text = """
+
+DECLARE
+
+ ERRCODE varchar(50);
+ ERRMSG varchar(2000);
+ V_CNT  bigint;
+ V_FOUND char(1) := 'N';
+  C1REC RECORD;
+
+BEGIN
+  FOR C1REC IN (SELECT DISTINCT PARCODE FROM FINGRP)
+  LOOP
+    V_CNT := 0;
+    SELECT COUNT(GLCODE) INTO STRICT V_CNT FROM FINGL WHERE GRPCODE = C1REC.PARCODE;
+    IF coalesce(V_CNT,0) > 0 THEN
+       SELECT 	GRPCODE,   GRPNAME
+       INTO STRICT 	O_GRPCODE, O_GRPNAME
+       FROM		FINGRP
+       WHERE	GRPCODE = C1REC.PARCODE;
+       V_FOUND := 'Y';
+       EXIT;
+    END IF;
+  END LOOP;
+  IF V_FOUND = 'N' THEN
+     O_GRPCODE := NULL;
+     O_GRPNAME := NULL;
+  END IF;
+EXCEPTION
+  WHEN OTHERS THEN
+	ERRCODE := SQLSTATE;
+	ERRMSG 	:= SQLERRM;
+	call ERRAUDIT(USER,'CHECK_GROUP_FOR_TAGGING',ERRCODE,ERRMSG);
+END;
+"""
+  arguments = <
+    {
+      name = o_grpcode
+      type = bigint
+      mode = INOUT
+    }
+
+    {
+      name = o_grpname
+      type = character
+      mode = INOUT
+    }
+
+  >
+  language = plpgsql
+}
+

@@ -1,0 +1,777 @@
+function "main"."trigger_fct_t_psite_grt()" {
+  text = """
+
+DECLARE
+  c_gstchg RECORD;
+   v_postcode                     finpost.postcode%TYPE;
+   v_transferout_glcode_costapp   fingl.costapp%TYPE;
+   v_transit_glcode_costapp       fingl.costapp%TYPE;
+   v_sitetype                     admsite.sitetype%TYPE;
+   v_admsite_code_owner           finpost.admsite_code_owner%TYPE;
+   -- start rev :  002
+   v_igst_glcode                  FINPOST.GLCODE%TYPE;
+   v_cgst_glcode                  FINPOST.GLCODE%TYPE;
+   v_sgst_glcode                  FINPOST.GLCODE%TYPE;
+   v_cess_glcode                  FINPOST.GLCODE%TYPE;
+   v_igst_slcode                  FINPOST.SLCODE%TYPE;
+   v_cgst_slcode                  FINPOST.SLCODE%TYPE;
+   v_sgst_slcode                  FINPOST.SLCODE%TYPE;
+   v_cess_slcode                  FINPOST.SLCODE%TYPE;
+   v_igst_gl_costapp              char(1);
+   v_cgst_gl_costapp              char(1);
+   v_sgst_gl_costapp              char(1);
+   v_cess_gl_costapp              char(1);
+   --VCENT							BIGINT;
+-- end rev : 002
+BEGIN
+  BEGIN
+   /********************************************************************************************************************************
+       REV NO         OWNER         DATE           DESCRIPTION
+       ---------     -----------    -----------    ---------------------------------------------------------------------
+       REV : 001     ANINDYA        28-APR-2017    (TFS ID : 26844) Introduced ADMOU_CODE in  FINPOST
+       REV : 002     ANINDYA        13-JUN-2017    (TFS ID : 29634) GST Related changes.
+       REV : 003     SIDDHARTH      02-SEP-2017    (TFS ID : 32486) Wrong Cost Center Posting for GRT (Transfer Out GL)
+       REV : 004     MOUSUMI        15-MAR-2018    (TFS ID : 37820) NON TRADING
+       REV : 005     ANINDYA        03-APR-2020    (TFS ID : XXXXX) Inbound related changes
+       REV : 006     Sayak          06-APR-2020    (TFS ID : XXXXX) Inbound related changes. Add DOCDT at "BEFORE INSERT OR UPDATE" section. For C D Amount Issue, after insert update is required but EF core not supports 'Update Code = Code'.
+       REV : 007     SIDDHARTHA     28-FEB-2022    (TFS ID : XXXXX) Delete from Finpost
+     *********************************************************************************************************************************/
+       SELECT sitetype
+         INTO STRICT v_sitetype
+         FROM admsite
+        WHERE code = coalesce(NEW.admsite_code,OLD.admsite_code);
+
+       IF v_sitetype <> 'MS-CO-OM-TS'
+       THEN
+          SELECT default_ho_site
+            INTO STRICT v_admsite_code_owner
+            FROM admou
+           WHERE code = coalesce(NEW.admou_code,OLD.admou_code);
+
+          BEGIN
+             SELECT M.IGST_OUTPUT_GLCODE,
+                    IG.COSTAPP,
+                    M.IGST_OUTPUT_SLCODE,
+                    M.CGST_OUTPUT_GLCODE,
+                    CG.COSTAPP,
+                    M.CGST_OUTPUT_SLCODE,
+                    M.SGST_OUTPUT_GLCODE,
+                    SG.COSTAPP,
+                    M.SGST_OUTPUT_SLCODE,
+                    M.CESS_OUTPUT_GLCODE,
+                    EG.COSTAPP,
+                    M.CESS_OUTPUT_SLCODE
+               INTO STRICT v_igst_glcode,
+                    v_igst_gl_costapp,
+                    v_igst_slcode,
+                    v_cgst_glcode,
+                    v_cgst_gl_costapp,
+                    v_cgst_slcode,
+                    v_sgst_glcode,
+                    v_sgst_gl_costapp,
+                    v_sgst_slcode,
+                    v_cess_glcode,
+                    v_cess_gl_costapp,
+                    v_cess_slcode
+               FROM admgstin m
+LEFT OUTER JOIN fingl ig ON (M.IGST_OUTPUT_GLCODE = IG.GLCODE)
+LEFT OUTER JOIN fingl cg ON (M.CGST_OUTPUT_GLCODE = CG.GLCODE)
+LEFT OUTER JOIN fingl sg ON (M.SGST_OUTPUT_GLCODE = SG.GLCODE)
+LEFT OUTER JOIN fingl eg ON (M.CESS_OUTPUT_GLCODE = EG.GLCODE)
+WHERE M.CODE = (SELECT ADMGSTIN_CODE
+                                    FROM ADMSITE
+                                   WHERE CODE = coalesce(NEW.ADMSITE_CODE,OLD.ADMSITE_CODE));
+          EXCEPTION
+             WHEN no_data_found
+             THEN
+                NULL;
+          END;
+      -- START REV : 004
+      --  IF INSERTING
+      -- START REV : 005
+      IF TG_OP = 'INSERT'
+      THEN
+         IF     NEW.transferout_glcode <> NEW.transit_glcode
+            AND coalesce(NEW.MAIN_GL_AMT, 0) <> 0
+         THEN
+            INSERT INTO finpost(postcode,
+                                 entcode,
+                                 entno,
+                                 entdt,
+                                 enttype,
+                                 glcode,
+                                 slcode,
+                                 camount,
+                                 ycode,
+                                 nartext,
+                                 scheme_docno,
+                                 release_status,
+                                 admsite_code_owner,
+                                 ref_admsite_code,
+                                 chgappamt,
+                                 chgamt,
+                                 ecode,
+                                 TIME,
+                                 last_access_ecode,
+                                 last_access_time,
+                                 release_ecode,
+                                 release_time,
+                                 admou_code)
+                 VALUES (nextval('erp01'),
+                         NEW.code,
+                         NEW.docno,
+                         NEW.docdt,
+                         'TOA',
+                         NEW.transferout_glcode,
+                         NEW.transferout_slcode,
+                         -- start rev : 002
+                         --NVL (:NEW.netamt, 0),
+                         -- START REV : 004
+                         --NVL (:NEW.basicamt, 0),
+                         coalesce(NEW.MAIN_GL_AMT, 0),
+                         -- END REV : 004
+                         -- end rev : 002
+                         NEW.ycode,
+                         NEW.remarks,
+                         NEW.docno,
+                         'P',
+                         v_admsite_code_owner,
+                         NEW.admsite_code,
+                         NULL,
+                         NULL,
+                         1,
+                         statement_timestamp(),
+                         NULL,
+                         NULL,
+                         1,
+                         statement_timestamp(),
+                         NEW.admou_code)
+              RETURNING postcode
+                   INTO v_postcode;
+
+            SELECT coalesce(costapp, 'N') costapp
+              INTO STRICT v_transferout_glcode_costapp
+              FROM fingl
+             WHERE glcode = NEW.transferout_glcode;
+
+            IF v_transferout_glcode_costapp = 'Y'
+            THEN
+               INSERT INTO fincosttag(entcode,
+                                       entno,
+                                       entdt,
+                                       enttype,
+                                       glcode,
+                                       ycode,
+                                       costcode,
+                                       slcode,
+                                       damount,
+                                       camount,
+                                       postcode,
+                                       admsite_code,
+                                       ref_admsite_code,
+                                       admou_code)
+                    VALUES (NEW.code,
+                            NEW.docno,
+                            NEW.docdt,
+                            'TOA',
+                            NEW.transferout_glcode,
+                            NEW.ycode,
+                            NULL,
+                            NEW.transferout_slcode,
+                            0,
+                            -- start rev : 003
+                            --NVL (:NEW.netamt, 0),
+                            -- START REV : 004
+                            --NVL (:NEW.basicamt, 0),
+                            coalesce(NEW.MAIN_GL_AMT, 0),
+                            -- END REV : 004
+                            -- end rev : 003
+                            v_postcode,
+                            NEW.admsite_code,
+                            NEW.admsite_code,
+                            NEW.admou_code);
+            END IF;
+         END IF;
+      END IF;
+
+      -- END REV : 005
+      IF TG_OP = 'UPDATE'
+      THEN
+	  --CALL ERRAUDIT('X','X','Ayana',new.CODE);
+         --IF :NEW.transferout_glcode <> :NEW.transit_glcode
+         IF     NEW.transferout_glcode <> NEW.transit_glcode
+            AND (    coalesce(OLD.MAIN_GL_AMT, 0) = 0
+                 AND coalesce(NEW.MAIN_GL_AMT, 0) <> 0)
+         -- END REV  : 004
+         THEN
+            INSERT INTO finpost(postcode,
+                                 entcode,
+                                 entno,
+                                 entdt,
+                                 enttype,
+                                 glcode,
+                                 slcode,
+                                 camount,
+                                 ycode,
+                                 nartext,
+                                 scheme_docno,
+                                 release_status,
+                                 admsite_code_owner,
+                                 ref_admsite_code,
+                                 chgappamt,
+                                 chgamt,
+                                 ecode,
+                                 TIME,
+                                 last_access_ecode,
+                                 last_access_time,
+                                 release_ecode,
+                                 release_time,
+                                 admou_code)
+                 VALUES (nextval('erp01'),
+                         NEW.code,
+                         NEW.docno,
+                         NEW.docdt,
+                         'TOA',
+                         NEW.transferout_glcode,
+                         NEW.transferout_slcode,
+                         -- start rev : 002
+                         --NVL (:NEW.netamt, 0),
+                         -- START REV : 004
+                         --NVL (:NEW.basicamt, 0),
+                         coalesce(NEW.MAIN_GL_AMT, 0),
+                         -- END REV : 004
+                         -- end rev : 002
+                         NEW.ycode,
+                         NEW.remarks,
+                         NEW.docno,
+                         'P',
+                         v_admsite_code_owner,
+                         NEW.admsite_code,
+                         NULL,
+                         NULL,
+                         1,
+                         statement_timestamp(),
+                         NULL,
+                         NULL,
+                         1,
+                         statement_timestamp(),
+                         NEW.admou_code)
+              RETURNING postcode
+                   INTO v_postcode;
+
+            SELECT coalesce(costapp, 'N') costapp
+              INTO STRICT v_transferout_glcode_costapp
+              FROM fingl
+             WHERE glcode = NEW.transferout_glcode;
+
+            IF v_transferout_glcode_costapp = 'Y'
+            THEN
+               INSERT INTO fincosttag(entcode,
+                                       entno,
+                                       entdt,
+                                       enttype,
+                                       glcode,
+                                       ycode,
+                                       costcode,
+                                       slcode,
+                                       damount,
+                                       camount,
+                                       postcode,
+                                       admsite_code,
+                                       ref_admsite_code,
+                                       admou_code)
+                    VALUES (NEW.code,
+                            NEW.docno,
+                            NEW.docdt,
+                            'TOA',
+                            NEW.transferout_glcode,
+                            NEW.ycode,
+                            NULL,
+                            NEW.transferout_slcode,
+                            0,
+                            -- start rev : 003
+                            --NVL (:NEW.netamt, 0),
+                            -- START REV : 004
+                            --NVL (:NEW.basicamt, 0),
+                            coalesce(NEW.MAIN_GL_AMT, 0),
+                            -- END REV : 004
+                            -- end rev : 003
+                            v_postcode,
+                            NEW.admsite_code,
+                            NEW.admsite_code,
+                            NEW.admou_code);
+            END IF;
+         END IF;
+      END IF;
+
+      -- start rev : 002
+      IF TG_OP = 'UPDATE'
+      THEN
+	  --CALL ERRAUDIT('X','X','Anindya',new.CODE);
+	   /* SELECT Count(1) STRICT INTO VCENT
+                    FROM PSITE_GRTCHGITEM
+                   WHERE PSITE_GRT_CODE = NEW.CODE;*/
+	--CALL ERRAUDIT('X','X','Anindya',COALESCE(VCENT,0)::text);       
+         FOR c_gstchg
+            IN (  SELECT GSTCOMPONENT, SUM(coalesce(CHARGEAMT, 0)) CHARGEAMT
+                    FROM PSITE_GRTCHGITEM
+                   WHERE PSITE_GRT_CODE = NEW.CODE
+                GROUP BY GSTCOMPONENT
+                  HAVING SUM(coalesce(CHARGEAMT, 0)) > 0)
+         LOOP
+            IF C_GSTCHG.GSTCOMPONENT = 'IGST'
+            THEN
+               INSERT INTO finpost(postcode,
+                                    entcode,
+                                    entno,
+                                    entdt,
+                                    enttype,
+                                    glcode,
+                                    slcode,
+                                    camount,
+                                    ycode,
+                                    nartext,
+                                    scheme_docno,
+                                    release_status,
+                                    admsite_code_owner,
+                                    ref_admsite_code,
+                                    chgappamt,
+                                    chgamt,
+                                    ecode,
+                                    TIME,
+                                    last_access_ecode,
+                                    last_access_time,
+                                    release_ecode,
+                                    release_time,
+                                    admou_code)
+                    VALUES (nextval('erp01'),
+                            NEW.code,
+                            NEW.docno,
+                            NEW.docdt,
+                            'TOA',
+                            v_igst_glcode,
+                            v_igst_slcode,
+                            c_gstchg.chargeamt,
+                            NEW.ycode,
+                            NEW.remarks,
+                            NEW.docno,
+                            'P',
+                            v_admsite_code_owner,
+                            NEW.admsite_code,
+                            NULL,
+                            NULL,
+                            1,
+                            statement_timestamp(),
+                            NULL,
+                            NULL,
+                            1,
+                            statement_timestamp(),
+                            NEW.admou_code)
+                 RETURNING postcode
+                      INTO v_postcode;
+
+               IF v_igst_gl_costapp = 'Y'
+               THEN
+                  INSERT INTO fincosttag(entcode,
+                                          entno,
+                                          entdt,
+                                          enttype,
+                                          glcode,
+                                          ycode,
+                                          costcode,
+                                          slcode,
+                                          damount,
+                                          camount,
+                                          postcode,
+                                          admsite_code,
+                                          ref_admsite_code,
+                                          admou_code)
+                       VALUES (NEW.code,
+                               NEW.docno,
+                               NEW.docdt,
+                               'TOA',
+                               v_igst_glcode,
+                               NEW.ycode,
+                               NULL,
+                               v_igst_slcode,
+                               0,
+                               c_gstchg.chargeamt,
+                               v_postcode,
+                               NEW.admsite_code,
+                               NEW.admsite_code,
+                               NEW.admou_code);
+               END IF;
+            END IF;
+
+            IF C_GSTCHG.GSTCOMPONENT = 'CGST'
+            THEN
+               INSERT INTO finpost(postcode,
+                                    entcode,
+                                    entno,
+                                    entdt,
+                                    enttype,
+                                    glcode,
+                                    slcode,
+                                    camount,
+                                    ycode,
+                                    nartext,
+                                    scheme_docno,
+                                    release_status,
+                                    admsite_code_owner,
+                                    ref_admsite_code,
+                                    chgappamt,
+                                    chgamt,
+                                    ecode,
+                                    TIME,
+                                    last_access_ecode,
+                                    last_access_time,
+                                    release_ecode,
+                                    release_time,
+                                    admou_code)
+                    VALUES (nextval('erp01'),
+                            NEW.code,
+                            NEW.docno,
+                            NEW.docdt,
+                            'TOA',
+                            v_cgst_glcode,
+                            v_cgst_slcode,
+                            c_gstchg.chargeamt,
+                            NEW.ycode,
+                            NEW.remarks,
+                            NEW.docno,
+                            'P',
+                            v_admsite_code_owner,
+                            NEW.admsite_code,
+                            NULL,
+                            NULL,
+                            1,
+                            statement_timestamp(),
+                            NULL,
+                            NULL,
+                            1,
+                            statement_timestamp(),
+                            NEW.admou_code)
+                 RETURNING postcode
+                      INTO v_postcode;
+
+               IF v_cgst_gl_costapp = 'Y'
+               THEN
+                  INSERT INTO fincosttag(entcode,
+                                          entno,
+                                          entdt,
+                                          enttype,
+                                          glcode,
+                                          ycode,
+                                          costcode,
+                                          slcode,
+                                          damount,
+                                          camount,
+                                          postcode,
+                                          admsite_code,
+                                          ref_admsite_code,
+                                          admou_code)
+                       VALUES (NEW.code,
+                               NEW.docno,
+                               NEW.docdt,
+                               'TOA',
+                               v_cgst_glcode,
+                               NEW.ycode,
+                               NULL,
+                               v_cgst_slcode,
+                               0,
+                               c_gstchg.chargeamt,
+                               v_postcode,
+                               NEW.admsite_code,
+                               NEW.admsite_code,
+                               NEW.admou_code);
+               END IF;
+            END IF;
+
+            IF C_GSTCHG.GSTCOMPONENT = 'SGST'
+            THEN
+               INSERT INTO finpost(postcode,
+                                    entcode,
+                                    entno,
+                                    entdt,
+                                    enttype,
+                                    glcode,
+                                    slcode,
+                                    camount,
+                                    ycode,
+                                    nartext,
+                                    scheme_docno,
+                                    release_status,
+                                    admsite_code_owner,
+                                    ref_admsite_code,
+                                    chgappamt,
+                                    chgamt,
+                                    ecode,
+                                    TIME,
+                                    last_access_ecode,
+                                    last_access_time,
+                                    release_ecode,
+                                    release_time,
+                                    admou_code)
+                    VALUES (nextval('erp01'),
+                            NEW.code,
+                            NEW.docno,
+                            NEW.docdt,
+                            'TOA',
+                            v_sgst_glcode,
+                            v_sgst_slcode,
+                            c_gstchg.chargeamt,
+                            NEW.ycode,
+                            NEW.remarks,
+                            NEW.docno,
+                            'P',
+                            v_admsite_code_owner,
+                            NEW.admsite_code,
+                            NULL,
+                            NULL,
+                            1,
+                            statement_timestamp(),
+                            NULL,
+                            NULL,
+                            1,
+                            statement_timestamp(),
+                            NEW.admou_code)
+                 RETURNING postcode
+                      INTO v_postcode;
+
+               IF v_sgst_gl_costapp = 'Y'
+               THEN
+                  INSERT INTO fincosttag(entcode,
+                                          entno,
+                                          entdt,
+                                          enttype,
+                                          glcode,
+                                          ycode,
+                                          costcode,
+                                          slcode,
+                                          damount,
+                                          camount,
+                                          postcode,
+                                          admsite_code,
+                                          ref_admsite_code,
+                                          admou_code)
+                       VALUES (NEW.code,
+                               NEW.docno,
+                               NEW.docdt,
+                               'TOA',
+                               v_sgst_glcode,
+                               NEW.ycode,
+                               NULL,
+                               v_sgst_slcode,
+                               0,
+                               c_gstchg.chargeamt,
+                               v_postcode,
+                               NEW.admsite_code,
+                               NEW.admsite_code,
+                               NEW.admou_code);
+               END IF;
+            END IF;
+
+            IF C_GSTCHG.GSTCOMPONENT = 'CESS'
+            THEN
+               INSERT INTO finpost(postcode,
+                                    entcode,
+                                    entno,
+                                    entdt,
+                                    enttype,
+                                    glcode,
+                                    slcode,
+                                    camount,
+                                    ycode,
+                                    nartext,
+                                    scheme_docno,
+                                    release_status,
+                                    admsite_code_owner,
+                                    ref_admsite_code,
+                                    chgappamt,
+                                    chgamt,
+                                    ecode,
+                                    TIME,
+                                    last_access_ecode,
+                                    last_access_time,
+                                    release_ecode,
+                                    release_time,
+                                    admou_code)
+                    VALUES (nextval('erp01'),
+                            NEW.code,
+                            NEW.docno,
+                            NEW.docdt,
+                            'TOA',
+                            v_cess_glcode,
+                            v_cess_slcode,
+                            c_gstchg.chargeamt,
+                            NEW.ycode,
+                            NEW.remarks,
+                            NEW.docno,
+                            'P',
+                            v_admsite_code_owner,
+                            NEW.admsite_code,
+                            NULL,
+                            NULL,
+                            1,
+                            statement_timestamp(),
+                            NULL,
+                            NULL,
+                            1,
+                            statement_timestamp(),
+                            NEW.admou_code)
+                 RETURNING postcode
+                      INTO v_postcode;
+
+               IF v_cess_gl_costapp = 'Y'
+               THEN
+                  INSERT INTO fincosttag(entcode,
+                                          entno,
+                                          entdt,
+                                          enttype,
+                                          glcode,
+                                          ycode,
+                                          costcode,
+                                          slcode,
+                                          damount,
+                                          camount,
+                                          postcode,
+                                          admsite_code,
+                                          ref_admsite_code,
+                                          admou_code)
+                       VALUES (NEW.code,
+                               NEW.docno,
+                               NEW.docdt,
+                               'TOA',
+                               v_cess_glcode,
+                               NEW.ycode,
+                               NULL,
+                               v_cess_slcode,
+                               0,
+                               c_gstchg.chargeamt,
+                               v_postcode,
+                               NEW.admsite_code,
+                               NEW.admsite_code,
+                               NEW.admou_code);
+               END IF;
+            END IF;
+         END LOOP;
+      -- end rev : 002
+      END IF;
+
+      IF TG_OP = 'INSERT'
+      THEN
+         INSERT INTO finpost(postcode,
+                              entcode,
+                              entno,
+                              entdt,
+                              enttype,
+                              glcode,
+                              slcode,
+                              damount,
+                              ycode,
+                              nartext,
+                              scheme_docno,
+                              release_status,
+                              admsite_code_owner,
+                              ref_admsite_code,
+                              chgappamt,
+                              chgamt,
+                              ecode,
+                              TIME,
+                              last_access_ecode,
+                              last_access_time,
+                              release_ecode,
+                              release_time,
+                              admou_code)
+              VALUES (nextval('erp01'),
+                      NEW.code,
+                      NEW.docno,
+                      NEW.docdt,
+                      'TOA',
+                      NEW.transit_glcode,
+                      NEW.transit_slcode,
+                      coalesce(NEW.netamt, 0),
+                      NEW.ycode,
+                      NEW.remarks,
+                      NEW.docno,
+                      'P',
+                      v_admsite_code_owner,
+                      NEW.admsite_code,
+                      NULL,
+                      NULL,
+                      1,
+                      statement_timestamp(),
+                      NULL,
+                      NULL,
+                      1,
+                      statement_timestamp(),
+                      NEW.admou_code)
+           RETURNING postcode
+                INTO v_postcode;
+
+         SELECT coalesce(costapp, 'N') costapp
+           INTO STRICT v_transit_glcode_costapp
+           FROM fingl
+          WHERE glcode = NEW.transit_glcode;
+
+         IF v_transit_glcode_costapp = 'Y'
+         THEN
+            INSERT INTO fincosttag(entcode,
+                                    entno,
+                                    entdt,
+                                    enttype,
+                                    glcode,
+                                    ycode,
+                                    costcode,
+                                    slcode,
+                                    damount,
+                                    camount,
+                                    postcode,
+                                    admsite_code,
+                                    ref_admsite_code,
+                                    admou_code)
+                 VALUES (NEW.code,
+                         NEW.docno,
+                         NEW.docdt,
+                         'TOA',
+                         NEW.transit_glcode,
+                         NEW.ycode,
+                         NULL,
+                         NEW.transit_slcode,
+                         coalesce(NEW.netamt, 0),
+                         0,
+                         v_postcode,
+                         NEW.repln_admsite_code,
+                         NEW.repln_admsite_code,
+                         NEW.admou_code);
+         END IF;
+      END IF;
+    --START REV : 007
+      IF TG_OP = 'DELETE'
+      THEN
+           DELETE FROM fincosttag
+                 WHERE postcode IN (SELECT postcode
+                                          FROM finpost
+                                         WHERE entcode = OLD.code)
+                       AND enttype IN ('TOA','TOD');
+
+           DELETE FROM finpost
+                 WHERE entcode = OLD.code AND enttype IN ('TOA','TOD');
+      END IF;
+    --END REV : 007
+   END IF;
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

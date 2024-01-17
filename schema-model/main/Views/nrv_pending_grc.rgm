@@ -1,0 +1,112 @@
+view "main"."nrv_pending_grc" {
+  text = """-
+SELECT m.grccode AS uk,
+    m.admou_code,
+    ou.name AS admou_name,
+    m.admsite_code_in,
+    s.shrtname AS owner_site,
+    s.name AS site_name,
+    sl.slname AS supplier_name,
+    m.scheme_docno AS receive_no,
+    m.docno AS document_no,
+    m.grcdt AS receive_date,
+    m.rcqty AS received_quantity,
+    m.netamt AS received_net_amount,
+    m.rcinvqty AS invoiced_quantity,
+    po.ord_docno AS order_no,
+    po.ordqty AS order_qty,
+    m.ycode,
+        CASE
+            WHEN ((m.whether_consignment)::text = 'Y'::text) THEN 'CONSIGNMENT'::text
+            ELSE 'NON-CONSIGNMENT'::text
+        END AS grc_type,
+    pi.scheme_docno AS invoice_no,
+    pi.invdt AS invoice_date
+   FROM main.finsl sl,
+    main.admsite s,
+    main.admou ou,
+    ((main.invgrcmain m
+     LEFT JOIN ( SELECT d.grccode,
+            m_1.scheme_docno,
+            m_1.invdt,
+            count(1) AS count
+           FROM main.purinvmain m_1,
+            main.purinvdet d
+          WHERE (m_1.invcode = d.invcode)
+          GROUP BY d.grccode, m_1.scheme_docno, m_1.invdt) pi ON ((m.grccode = pi.grccode)))
+     LEFT JOIN ( SELECT tm.grccode,
+            string_agg(((((tm.scheme_docno)::text || '('::text) || tm.orddt) || ')'::text), ', '::text ORDER BY ((((tm.scheme_docno)::text || '('::text) || tm.orddt) || ')'::text)) AS ord_docno,
+            sum(tm.ordqty) AS ordqty
+           FROM ( SELECT det.grccode,
+                    pom.scheme_docno,
+                    pom.orddt,
+                    sum(pod.ordqty) AS ordqty
+                   FROM main.purorddet pod,
+                    main.invgrcdet det,
+                    main.purordmain pom
+                  WHERE ((pod.ordcode = det.ordcode) AND ((pod.icode)::text = (det.icode)::text) AND (pod.ordcode = pom.ordcode))
+                  GROUP BY det.grccode, pom.scheme_docno, pom.orddt) tm
+          GROUP BY tm.grccode) po ON ((m.grccode = po.grccode)))
+  WHERE ((m.admsite_code_in = s.code) AND (m.admou_code = ou.code) AND (m.pcode = sl.slcode) AND (m.rcqty <> m.rcinvqty) AND (m.whether_consignment = 'NON-CONSIGNMENT'::bpchar));
+"""
+  columns = (
+    column "uk" {
+      type = "bigint"
+    }
+    column "admou_code" {
+      type = "bigint"
+    }
+    column "admou_name" {
+      type = "character varying(100)"
+    }
+    column "admsite_code_in" {
+      type = "bigint"
+    }
+    column "owner_site" {
+      type = "character varying(25)"
+    }
+    column "site_name" {
+      type = "character varying(100)"
+    }
+    column "supplier_name" {
+      type = "character varying(100)"
+    }
+    column "receive_no" {
+      type = "character varying(25)"
+    }
+    column "document_no" {
+      type = "character varying(100)"
+    }
+    column "receive_date" {
+      type = "timestamp(0) without time zone"
+    }
+    column "received_quantity" {
+      type = "numeric(20,3)"
+    }
+    column "received_net_amount" {
+      type = "numeric(20,2)"
+    }
+    column "invoiced_quantity" {
+      type = "numeric(20,3)"
+    }
+    column "order_no" {
+      type = text
+    }
+    column "order_qty" {
+      type = "numeric"
+    }
+    column "ycode" {
+      type = "bigint"
+    }
+    column "grc_type" {
+      type = text
+    }
+    column "invoice_no" {
+      type = "character varying(25)"
+    }
+    column "invoice_date" {
+      type = "timestamp(0) without time zone"
+    }
+  )
+}
+

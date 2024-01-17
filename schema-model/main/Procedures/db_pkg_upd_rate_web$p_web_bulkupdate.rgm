@@ -1,0 +1,70 @@
+procedure "main"."db_pkg_upd_rate_web$p_web_bulkupdate(character varying[], character varying)" {
+  text = """
+
+DECLARE
+    v_itemids              character varying(9)[];
+    v_item_first_element   VARCHAR(100);
+    V_CNT       BIGINT := NULL;
+    i RECORD; 
+BEGIN
+    /*******************************************************************************************************************
+    No.          Date        Author         Description
+    ---------  ----------  --------------   ------------------------------------------------------------------
+    REV : 001  26/02/2021  MANASH           (TFS ID: 105104) Manage item rate change taking too long time.
+    *********************************************************************************************************************/
+	
+	FOR i IN ARRAY_LOWER(p_barcodes,1)..ARRAY_UPPER(p_barcodes,1)
+        LOOP
+            v_itemids[I]:= p_barcodes[I];
+            v_item_first_element := p_barcodes[I];
+        END LOOP;
+		
+    DELETE FROM GLOBAL_DC_ITEMS;
+
+    -- Order is pending and items are not delivered
+    INSERT INTO GLOBAL_DC_ITEMS(ORDCODE, REM, icode)
+    SELECT DISTINCT M.ORDCODE, P_TYPE, X.LIST_CODS
+    FROM SALORDMAIN M, SALORDDET D, (SELECT GENERATE_SERIES(ARRAY_LOWER(v_itemids, 1), 
+															ARRAY_UPPER(v_itemids, 1))AS K) X
+    WHERE M.ORDCODE = D.ORDCODE
+      AND D.ICODE = v_itemids[X.K]
+      AND (P_TYPE IS NULL OR M.PRICETYPE = P_TYPE)
+      AND COALESCE(D.ORDQTY, 0) - COALESCE(D.CNLQTY, 0) - COALESCE(D.DQTY, 0) > 0
+      AND COALESCE(D.DQTY, 0) = 0;
+
+    BEGIN
+        SELECT COUNT(*)
+        INTO V_CNT
+        FROM GLOBAL_DC_ITEMS;
+        --ERRAUDIT('A','A','A',V_CNT);
+    EXCEPTION WHEN NO_DATA_FOUND THEN
+         V_CNT := NULL;
+    END;
+
+    FOR i IN (SELECT DISTINCT ORDCODE, ICODE FROM GLOBAL_DC_ITEMS) LOOP
+        --erraudit('PB','PB','PB',i.ordcode||'*'||i.ICODE);
+        -- START REV : 001
+        --db_pkg_upd_rate.calculate_charge_so(TO_NUMBER(i.ordcode));
+        CALL db_pkg_upd_rate$calculate_charge_so(i.ordcode::NUMERIC, i.ICODE);
+        -- END REV : 001
+    END LOOP;
+
+END;
+"""
+  arguments = <
+    {
+      name = p_barcodes
+      type = character varying[]
+      mode = IN
+    }
+
+    {
+      name = p_type
+      type = character varying
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

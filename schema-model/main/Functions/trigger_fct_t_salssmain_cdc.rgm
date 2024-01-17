@@ -1,0 +1,41 @@
+function "main"."trigger_fct_t_salssmain_cdc()" {
+  text = """
+
+DECLARE
+   TMPVAR       bigint;
+   V_SITETYPE   varchar(15);
+BEGIN
+   SELECT SITETYPE
+     INTO STRICT V_SITETYPE
+     FROM ADMSITE
+    WHERE CODE = NEW.ADMSITE_CODE;
+
+   IF (TG_OP = 'INSERT' OR TG_OP = 'UPDATE') AND NEW.DATAVERSION IS NULL
+   THEN
+      SELECT nextval('psite_dataversion') INTO STRICT TMPVAR;
+
+      NEW.DATAVERSION := TMPVAR;
+   END IF;
+
+   IF TG_OP = 'UPDATE'
+   THEN
+      IF (    NEW.STATUS = 'C'
+          AND V_SITETYPE LIKE 'MS%'
+          AND NEW.CHANNELTYPE = 'ETL')
+      THEN
+         BEGIN
+            CALL DB_PKG_NPOS_EVENT$TRACK(NEW.ADMSITE_CODE,
+                                     'ONLINESALE',
+                                     NEW.SSCODE);
+         END;
+      END IF;
+   END IF;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

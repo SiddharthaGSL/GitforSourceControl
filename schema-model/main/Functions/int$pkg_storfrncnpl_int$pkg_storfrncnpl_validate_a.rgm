@@ -1,0 +1,1337 @@
+function "main"."int$pkg_storfrncnpl_int$pkg_storfrncnpl_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status   char(1);
+      errmsg     varchar(200);
+      v_item_batch_separator char(1);
+      errcode    bigint;
+BEGIN
+      --Invalid or non-extinct numbering scheme
+     
+        select item_batch_separator into STRICT v_item_batch_separator from admcmpprof;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'storfrncnpl', userid, 'Data Validation', 'Please remove value from batch/serial column and try again.', clock_timestamp()
+        from   int$stg_storfrncnpl a
+        where  a.item_barcode is not null
+        and    a.batch_serial_no is not null
+        and    coalesce((position(v_item_batch_separator in a.item_barcode)),0) <> 0
+        and    a.userid = p_userid;
+
+        declare 
+         v_count                     bigint;
+         c_separator CURSOR FOR
+                    SELECT *
+                    from   int$stg_storfrncnpl
+                    where  userid = p_userid
+                    order by lineno;
+         begin
+           for c1 in c_separator loop
+                   select count(*) into STRICT v_count from int$stg_storfrncnpl  where item_barcode like '%'||v_item_batch_separator||'%'
+                   and lineno = c1.lineno
+                   and    userid = p_userid;
+                   if v_count > 0 then
+
+                   update int$stg_storfrncnpl
+                   set    batch_serial_no = SUBSTR(item_barcode, INSTR(item_barcode,v_item_batch_separator, -1) + 1),
+                   item_barcode = SUBSTR(item_barcode, 1, position(v_item_batch_separator in item_barcode)-1)
+                   where  lineno = c1.lineno
+                   and    item_barcode like '%'||v_item_batch_separator||'%'
+                   and    userid = p_userid;
+
+                   end if;
+           end loop;
+         end;
+
+        --COMMIT;
+
+        declare c_batch CURSOR FOR
+                SELECT lineno, b.code
+                from   int$stg_storfrncnpl a, invitem i, invbatch_serial b
+                where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+                and    i.icode = b.icode
+                and    UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no)
+                and    a.batch_serial_no is not null
+                and    userid = p_userid
+                order by lineno;
+         begin
+           for c1 in c_batch loop
+                   update int$stg_storfrncnpl
+                   set invbatch_serial_code = c1.code
+                   where  lineno = c1.lineno
+                   and    userid = p_userid;
+           end loop;
+         end;
+
+       --COMMIT;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'storfrncnpl', userid, 'Data Validation', 'System Batch Serial is not allowed. Please remove and proceed.', clock_timestamp()
+        from   int$stg_storfrncnpl a
+        where  UPPER(a.batch_serial_no) = 'SYSTEM BATCH SERIAL'
+        and    a.batch_serial_no is not null
+        and    a.userid = p_userid;
+       -- END REV : 015
+      --Future date transaction is not allowed
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Date Validation',
+                'Future date transaction is not allowed.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+          WHERE date_trunc('day', saledt) > date_trunc('day', clock_timestamp()) AND a.userid = p_userid;
+
+      --User lock days setting getting violated
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Date Validation',
+                'User lock days setting getting violated.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a, hrdemp b
+          WHERE     a.userid = b.ecode
+                AND date_trunc('day', a.saledt) NOT BETWEEN (current_date - locdays::integer)
+                                             AND current_date
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Date Validation',
+                'Customer City PIN can not exceed more than 6 caracter.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+          WHERE LENGTH(CUSTOMER_PIN) > 6 AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Date Validation',
+                'Customer City PIN can not be negative.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+          WHERE position('-' in CUSTOMER_PIN) <> 0 AND a.userid = p_userid;
+
+      -- START REV : 003
+      --Date is not in open state
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Date Validation',
+                'Month / Year is not in open state.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a, ADMMONTH m, ADMOU_MONTH b
+          WHERE     date_trunc('day', a.saledt) BETWEEN date_trunc('day', m.dtfr)
+                                         AND date_trunc('day', m.dtto)
+                AND B.ADMMONTH_CODE = M.MCODE
+                AND B.ADMOU_CODE = P_CONNECT_OU
+                AND b.INV_MONTH_STATUS <> 'O'
+                AND a.userid = p_userid;
+
+      -- END REV : 003
+      --Site is mandatory.
+      
+
+      --Site should be valid null-extinct or sitetype should be US-CO-CM
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Site Validation',
+                CASE
+                   WHEN(b.shrtname IS NULL OR coalesce(b.ext, 'N') = 'Y')
+                   THEN
+                      'Site should be valid null-extinct.'
+                   WHEN sitetype <> 'US-CO-CM'
+                   THEN
+                      'Only unmanaged consignment mode site (US-CO-CM) is allowed here.'
+                END,
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+LEFT OUTER JOIN admsite b ON (UPPER(a.site_short_name) = UPPER(b.shrtname))
+WHERE ADMOU_CODE = P_CONNECT_OU                      -- REV : 002
+  AND (   b.shrtname IS NULL
+                     OR coalesce(b.ext, 'N') = 'Y'
+                     OR sitetype <> 'US-CO-CM') AND a.userid = p_userid;
+
+      --SLCODE should be valid null-extinct
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Site Validation',
+                'Customer/Site should be valid and non-extinct.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+LEFT OUTER JOIN admsite b ON (UPPER(a.site_short_name) = UPPER(b.shrtname))
+WHERE ADMOU_CODE = P_CONNECT_OU                      -- REV : 002
+  AND a.userid = p_userid AND 0 <
+                       (SELECT COUNT(*)
+                          FROM FINSL S
+                         WHERE S.SLCODE = B.SLCODE AND coalesce(S.EXT, 'N') = 'Y');
+
+      -- Multiple sites found for this short name, unable to proceed
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'storfrncnpl',
+                userid,
+                'Site Validation',
+                'Multiple sites found for this short name, unable to proceed.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a,
+                (  SELECT lineno, UPPER(b.shrtname), COUNT(1)
+                     FROM int$stg_storfrncnpl a, admsite b
+                    WHERE     UPPER(a.site_short_name) = UPPER(b.shrtname)
+                          AND ADMOU_CODE = P_CONNECT_OU           -- REV : 002
+                          AND a.userid = p_userid
+                 GROUP BY lineno, UPPER(b.shrtname)
+                   HAVING COUNT(1) > 1) b
+          WHERE a.lineno = b.lineno AND a.userid = p_userid;
+--START REV : 012
+      
+--END REV : 012
+      --VAT region is not defined in site.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Site Validation',
+                'VAT region is not defined in site.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a, admsite b
+          WHERE     UPPER(a.site_short_name) = UPPER(b.shrtname)
+                AND ADMOU_CODE = P_CONNECT_OU                     -- REV : 002
+                AND b.psite_admcmptax_code IS NULL
+                AND a.userid = p_userid;
+
+      --Consignment sale ledger is mandatory for the customer.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Site Validation',
+                'Consignment sale ledger is mandatory for the customer.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a, admsite b, finsl p
+          WHERE     UPPER(a.site_short_name) = UPPER(b.shrtname)
+                AND ADMOU_CODE = P_CONNECT_OU                     -- REV : 002
+                AND b.slcode = p.slcode
+                AND p.consignment_sales_glcode IS NULL
+                AND a.userid = p_userid;
+
+      --Reference No. is mandatory.
+      
+
+      --Round off GL in Organization Unit is not provided.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Ledger Validation',
+                'Round off GL in Organization Unit is not provided.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a, admou b
+          WHERE (a.roundoff IS NOT NULL AND b.roundoff_glcode IS NULL)
+                AND B.CODE = P_CONNECT_OU                         -- REV : 002
+                AND a.userid = p_userid;
+
+      /*
+      *****************************************************************************
+      ITEM VALIDATION START
+      *****************************************************************************
+      */
+      --SIDD - CHECK ALREADY EXISTS IN FRONTEND
+      --Item is mandatory.
+      /* INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+       SELECT  int$error_log_code.NEXTVAL, lineno, 'storfrncnpl', userid, 'Mandatory Validation','Item is mandatory.',SYSDATE
+       FROM    int$stg_storfrncnpl a
+       WHERE   a.item_barcode is null
+       AND     a.userid = p_userid;*/
+      --Item doesn't exist or is extinct.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Item Data Validation',
+                'Item doesn''t exist or is extinct.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+LEFT OUTER JOIN (SELECT icode, ext FROM invitem
+
+UNION
+
+                 SELECT barcode, ext FROM invitem) b ON (UPPER(a.item_barcode) = UPPER(b.icode))
+WHERE (b.icode IS NULL OR coalesce(b.ext, 'N') = 'Y') AND a.userid = p_userid;
+
+      -- Tax ledger is not defined.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                p_userid,
+                'Ledger Validation',
+                'Tax ledger is not defined.',
+                clock_timestamp()
+           FROM (SELECT lineno,
+                        -- START REV : 002
+                        --int$pkg_storfrncnpl_db_fun_taxdetcode(i.icode, saledt, b.code) taxdetcode
+                        int$pkg_storfrncnpl_db_fun_taxdetcode(i.icode,
+                                           saledt,
+                                           b.code,
+                                           P_CONNECT_OU)
+                           taxdetcode-- END REV : 002
+                        ,
+                        psite_admcmptax_code-- START REV : 004
+                        ,
+                        ICODE,
+                        SALEDT,
+                        INVHSNSACMAIN_CODE,
+                        CASE
+                           WHEN    B.SITETYPE LIKE '%OO-CM'
+                                OR B.SITETYPE = 'MS-CO-CM'
+                           THEN
+                              CASE WHEN ADMGSTIN_CODE IS NULL THEN  NULL  ELSE 'Y' END
+                           ELSE
+                              B.CP_GSTIN_NO
+                        END
+                           ADMGSTIN_CODE
+                   -- END REV : 004
+                   FROM int$stg_storfrncnpl a,
+                        admsite             b,
+                        invitem             i,
+                        finsl               p
+                  WHERE     UPPER(a.site_short_name) = UPPER(b.shrtname)
+                        AND ADMOU_CODE = P_CONNECT_OU             -- REV : 002
+                        AND a.userid = p_userid
+                        AND (   UPPER(a.item_barcode) = UPPER(i.icode)
+                             OR UPPER(a.item_barcode) = UPPER(i.barcode))
+                        AND b.slcode = p.slcode
+                        AND coalesce(p.sale_post_method, 'E') = 'E') t1, fintaxdet t2
+LEFT OUTER JOIN (SELECT tr.taxdetcode, tr.SALTAX_GLCODE, tr.SALTAX_SLCODE
+                   FROM fintax_range tr) td ON (t2.TAXDETCODE = td.TAXDETCODE)
+WHERE t1.taxdetcode = t2.taxdetcode AND t1.psite_admcmptax_code = t2.admcmptax_code  AND coalesce(td.saltax_glcode, t2.saltax_glcode) IS NULL AND t2.taxcode <> 0 -- START REV : 004
+  AND (   (T1.ICODE NOT IN
+                            (SELECT ICODE
+                               FROM INVHSNSACDET D, INVITEM IT
+                              WHERE     D.INVHSNSACMAIN_CODE =
+                                           IT.INVHSNSACMAIN_CODE
+                                    AND D.INVHSNSACMAIN_CODE =
+                                           T1.INVHSNSACMAIN_CODE
+                                    AND D.CODE =
+                                           (SELECT DISTINCT D1.CODE
+                                              FROM INVHSNSACDET D1,
+                                                   INVITEM      IT1
+                                             WHERE     D1.INVHSNSACMAIN_CODE =
+                                                          IT1.INVHSNSACMAIN_CODE
+                                                   AND D1.INVHSNSACMAIN_CODE =
+                                                          T1.INVHSNSACMAIN_CODE
+                                                   AND EFFECTIVE_DATE =
+                                                          (SELECT MAX(
+                                                                     EFFECTIVE_DATE)
+                                                             FROM INVHSNSACDET
+                                                                  D3,
+                                                                  INVITEM IT3
+                                                            WHERE     D3.INVHSNSACMAIN_CODE =
+                                                                         IT3.INVHSNSACMAIN_CODE
+                                                                  AND D3.INVHSNSACMAIN_CODE =
+                                                                         T1.INVHSNSACMAIN_CODE
+                                                                  AND D3.EFFECTIVE_DATE <=
+                                                                         SALEDT))))
+                     OR ADMGSTIN_CODE IS NULL                     -- REV : 005
+                                             ) -- END REV : 004
+  AND t2.fintradegrp_code = (SELECT code
+                                             FROM fintradegrp
+                                            WHERE UPPER(NAME) = 'LOCAL') AND coalesce(t2.formcode, 0) = 0;
+
+      --Item''s Net Amount cannot be negative
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Item Data Validation',
+                'Item''s Net Amount cannot be negative.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+LEFT OUTER JOIN (SELECT icode, ICODE ICODE1, ext FROM invitem
+
+UNION
+
+                 SELECT barcode, ICODE ICODE1, ext FROM invitem) b ON (UPPER(a.item_barcode) = UPPER(b.icode))
+WHERE (    coalesce(item_qty, 0) > 0
+                     AND (  (  coalesce(
+                                  int$pkg_storfrncnpl_db_fun_item_rate_imp(
+                                     B.ICODE1::text,
+                                     SALEDT,
+                                     ITEM_qty::bigint,
+                                     UPPER(site_short_name)::text,
+                                     p_connect_site::bigint,
+                                     p_connect_ou::bigint,
+                                     a.invbatch_serial_code::bigint),
+                                  0)
+                             * coalesce(item_qty, 0))
+                          - coalesce(item_discountamt, 0)
+                          + coalesce(item_extra_taxamt, 0)) < 0) AND a.userid = p_userid;
+
+      --Item''s Net Amount cannot be positive
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Item Data Validation',
+                'Item''s Net Amount cannot be positive.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+LEFT OUTER JOIN (SELECT icode, ICODE ICODE1, ext FROM invitem
+
+UNION
+
+                 SELECT barcode, ICODE ICODE1, ext FROM invitem) b ON (UPPER(a.item_barcode) = UPPER(b.icode))
+WHERE (    coalesce(item_qty, 0) < 0
+                     AND (  (  coalesce(
+                                  int$pkg_storfrncnpl_db_fun_item_rate_imp(
+                                     B.ICODE1::text,
+                                     SALEDT,
+                                     ITEM_qty::bigint,
+                                     UPPER(site_short_name)::text,
+                                     p_connect_site::bigint,
+                                     P_CONNECT_OU::bigint,
+                                     a.invbatch_serial_code)::bigint,
+                                  0)
+                             * coalesce(item_qty, 0))
+                          - coalesce(item_discountamt, 0)
+                          + coalesce(item_extra_taxamt, 0)) > 0) AND a.userid = p_userid;
+
+      --Item quantity is required.
+      /* INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+       SELECT  int$error_log_code.NEXTVAL, lineno, 'storfrncnpl', userid, 'Mandatory Validation','Item quantity is required.',SYSDATE
+       FROM    int$stg_storfrncnpl a
+       WHERE   a.item_qty is null
+       AND     a.userid = p_userid;*/
+      --Item quantity cannot be 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Mandatory Validation',
+                'Item quantity cannot be 0.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+          WHERE a.item_qty = 0 AND a.userid = p_userid;
+
+      --Item quantity should be in multiples of scan unit.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Item Data Validation',
+                'Item quantity should be in multiples of scan unit.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a, invitem b
+          WHERE (   UPPER(a.item_barcode) = UPPER(b.icode)
+                     OR UPPER(a.item_barcode) = UPPER(b.barcode))
+                AND MOD(a.item_qty, b.barunit) <> 0
+                AND b.item_management_mode  <> 'S'
+                AND a.userid = p_userid;
+
+      --Item's RSP is mandatory.
+      /*INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+      SELECT  int$error_log_code.NEXTVAL, lineno, 'storfrncnpl', userid, 'Mandatory Validation','Item''s RSP is mandatory.',SYSDATE
+      FROM    int$stg_storfrncnpl a
+      WHERE   a.item_rsp is null
+      AND     a.userid = p_userid;*/
+      --RSP must be >= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Item Data Validation',
+                'RSP must be >= 0.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+          WHERE a.item_rsp < 0 AND a.userid = p_userid;
+
+      --Item's Price List is mandatory.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'storfrncnpl',
+                p_userid,
+                'Mandatory Validation',
+                'Item''s Price List is mandatory.',
+                clock_timestamp()
+           FROM (SELECT c.pricelistcode pricelistcode
+                   FROM int$stg_storfrncnpl a, admsite b, salpricelistmain c
+                  WHERE     UPPER(a.site_short_name) = UPPER(b.shrtname)
+                        AND ADMOU_CODE = P_CONNECT_OU             -- REV : 002
+                        AND b.pricelist_code = c.pricelistcode
+                        AND a.userid = p_userid
+
+UNION ALL
+
+                 SELECT d.pricelistcode
+                   FROM int$stg_storfrncnpl a,
+                        admsite             b,
+                        finsl               c,
+                        salpricelistmain    d
+                  WHERE     UPPER(a.site_short_name) = UPPER(b.shrtname)
+                        AND ADMOU_CODE = P_CONNECT_OU             -- REV : 002
+                        AND b.slcode = c.slcode
+                        AND c.pricelistcode = d.pricelistcode
+                        AND a.userid = p_userid) alias7
+          WHERE pricelistcode IS NULL;
+
+      --Tax region is not defined for the connected site.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'storfrncnpl',
+                p_userid,
+                'Connect Site Validation',
+                'Tax region is not defined for the connected site.',
+                clock_timestamp()
+           FROM admsite b
+          WHERE     b.code = p_connect_site
+                AND ADMOU_CODE = P_CONNECT_OU                     -- REV : 002
+                AND b.psite_admcmptax_code IS NULL;
+
+      --Discount should be <= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Item Data Validation',
+                'Discount should be a negative value for return items.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+          WHERE (    a.item_qty < 0
+                     AND a.item_discountamt IS NOT NULL
+                     AND a.item_discountamt > 0)
+                AND a.userid = p_userid;
+
+      --Discount should be >= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Item Data Validation',
+                'Discount should be a positive value for sale items.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+          WHERE (    a.item_qty > 0
+                     AND a.item_discountamt IS NOT NULL
+                     AND a.item_discountamt < 0)
+                AND a.userid = p_userid;
+
+      --Extra Tax should be <= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Item Data Validation',
+                'Extra Tax should be a negative value for return items.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+          WHERE (    a.item_qty < 0
+                     AND a.item_extra_taxamt IS NOT NULL
+                     AND a.item_extra_taxamt > 0)
+                AND a.userid = p_userid;
+
+      --Extra Tax should be >= 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Item Data Validation',
+                'Extra Tax should be a positive value for sale items.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+          WHERE (    a.item_qty > 0
+                     AND a.item_extra_taxamt IS NOT NULL
+                     AND a.item_extra_taxamt < 0)
+                AND a.userid = p_userid;
+
+      /*
+        *****************************************************************************
+        RETAIL CUSTOMER VALIDATION START
+        *****************************************************************************
+        */
+      --SIDD - NEW CHECK ADDED
+      -- Mobile required if any customer parameter provided
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Data Validation',
+                'Mobile No. and ISDCode is mandatory for customer',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+
+          WHERE     (    (a.customer_mobileno IS NULL OR a.isdcode IS NULL)
+                     --END REV : 012
+                     AND (   a.customer_addressline1 IS NOT NULL
+                          OR a.customer_addressline2 IS NOT NULL
+                          OR a.customer_addressline3 IS NOT NULL
+                          OR a.customer_city IS NOT NULL
+                          OR a.customer_country IS NOT NULL
+                          OR a.customer_district IS NOT NULL
+                          OR a.customer_email IS NOT NULL
+                          OR a.customer_firstname IS NOT NULL
+                          OR a.customer_gender IS NOT NULL
+                          OR a.customer_lastname IS NOT NULL
+                          OR a.customer_middlename IS NOT NULL
+                          OR a.customer_pin IS NOT NULL
+                          OR a.customer_state IS NOT NULL
+                          -- start rev : 011
+                          OR CUST_GST_IDENTIFICATION_NO IS NOT NULL
+                          OR CUST_GST_REGISTRATION_DATE IS NOT NULL
+                          OR CUST_GST_STATE_NAME IS NOT NULL-- end rev : 011
+                         ))
+                AND userid = p_userid;
+--START REV : 012
+      --SIDD - New Check Added
+      -- Multiple sites found for this short name, unable to proceed
+      
+--END REV : 012
+      --First Name is mandatory for customer.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Mandatory Validation',
+                'First Name is mandatory for customer.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+          WHERE (    a.customer_mobileno IS NOT NULL
+                     AND customer_firstname IS NULL)
+                AND a.userid = p_userid;
+
+      --Last Name is mandatory for customer.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Mandatory Validation',
+                'Last Name is mandatory for customer.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+          WHERE (    a.customer_mobileno IS NOT NULL
+                     AND customer_lastname IS NULL)
+                AND a.userid = p_userid;
+
+      --Gender is mandatory for customer.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Mandatory Validation',
+                'Gender is mandatory for customer.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+          WHERE (    a.customer_mobileno IS NOT NULL
+                     AND customer_gender IS NULL)
+                AND a.userid = p_userid;
+
+      --Gender can be either Male or Female.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Customer Data Validation',
+                'Gender can be either Male or Female.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+          WHERE (    customer_gender IS NOT NULL
+                     AND LOWER(customer_gender) NOT IN ('male', 'female'))
+                AND a.userid = p_userid;
+
+      -- Email Id is invalid.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Data Validation',
+                'Email Id is invalid.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl
+          WHERE (    customer_email IS NOT NULL
+                     AND (   customer_email NOT LIKE '%@%'
+                          OR customer_email NOT LIKE '%.%'))
+                AND userid = p_userid;
+
+      --Start Rev 010
+      --******************************************************************************
+      --TFS ID - 39865 RETAIL CUSTOMER EXCEL IMPORT VIA RETAIL SALE
+      --******************************************************************************
+      --Customer GST Identification No.
+      --1
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Data Validation',
+                'GST Identification No. should have exactly 15 characters.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+          
+          WHERE     LENGTH(a.CUST_GST_IDENTIFICATION_NO) <> 15
+                AND a.CUST_GST_IDENTIFICATION_NO IS NOT NULL
+                AND a.customer_mobileno IS NOT NULL
+                -- END REV : 011
+                AND a.userid = p_userid;
+
+      --2
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Data Validation',
+                'GST Identification No. is invalid as per Government prescribed format.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+          WHERE     a.CUST_GST_IDENTIFICATION_NO IS NOT NULL
+                AND db_fun_check_gstin_no(a.CUST_GST_IDENTIFICATION_NO) =
+                       'F'
+                AND a.customer_mobileno IS NOT NULL               -- REV : 010
+                AND a.userid = p_userid;
+
+      --3
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Data Validation',
+                'Unable to determine state as per inputted GST Identification No., State code is invalid.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+LEFT OUTER JOIN admgststate m ON (SUBSTR(a.CUST_GST_IDENTIFICATION_NO, 1, 2) = m.code)
+WHERE a.userid = p_userid AND a.customer_mobileno IS NOT NULL AND a.CUST_GST_IDENTIFICATION_NO IS NOT NULL  AND M.code IS NULL;
+
+      -- END REV : 011
+      --Customer GST Registration Date
+      --1
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Data Validation',
+                'GST Reg. Date cannot be provided without providing GST Identification No.',
+                clock_timestamp()
+           -- START REV : 011
+           FROM int$stg_storfrncnpl a
+
+          WHERE     a.CUST_GST_REGISTRATION_DATE IS NOT NULL
+                AND a.CUST_GST_IDENTIFICATION_NO IS NULL
+                AND a.customer_mobileno IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Data Validation',
+                'GST Reg. date is not in valid format.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+          WHERE     a.CUST_GST_REGISTRATION_DATE IS NOT NULL
+                AND a.customer_mobileno IS NOT NULL
+                AND (   (TO_CHAR(a.CUST_GST_REGISTRATION_DATE, 'yyyy'))::numeric  <
+                           4
+                     OR (TO_CHAR(a.CUST_GST_REGISTRATION_DATE, 'yyyymmdd'))::numeric  <
+                           8)
+                AND a.userid = p_userid;
+
+      -- END REV : 011
+      --Customer GST State Name
+      --1
+      -- START REV : 011
+      -- GST state validation
+      -- CASE - I
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Data Validation',
+                'GST State provided is invalid.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+LEFT OUTER JOIN admgststate gs ON (UPPER(a.CUST_GST_STATE_NAME) = UPPER(gs.name))
+WHERE a.CUST_GST_STATE_NAME IS NOT NULL AND gs.name IS NULL AND a.customer_mobileno IS NOT NULL AND a.userid = p_userid;
+
+      -- CASE - II
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Data Validation',
+                'GST State inputted is not at per with GST Identification No.''s state.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a, admgststate gs
+          WHERE     UPPER(a.CUST_GST_STATE_NAME) = UPPER(gs.name)
+                AND (SUBSTR(a.CUST_GST_IDENTIFICATION_NO, 1, 2)) <> gs.code
+                AND a.CUST_GST_STATE_NAME IS NOT NULL
+                -- AND     a.CUST_GST_IDENTIFICATION_NO  is not null
+                AND a.customer_mobileno IS NOT NULL
+                AND a.userid = p_userid;
+
+      -- end rev : 004
+      
+--==============================================================================
+      --************************************ISDCODE***********************************
+      --==============================================================================
+      -- START REV : 012
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Data Validation',
+                'Mobile number should contain digits.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+          WHERE (    a.customer_mobileno IS NOT NULL
+                     AND a.customer_mobileno  ~ '[^0-9]'
+                           )
+                AND userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'storfrncnpl',
+                a.userid,
+                'Data Validation',
+                'Same Mobile No. with multiple information, unable to proceed.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a,
+                (  SELECT COUNT(1), customer_mobileno
+                     FROM (SELECT DISTINCT customer_firstname,
+                                           customer_middlename,
+                                           customer_lastname,
+                                           customer_addressline1,
+                                           customer_addressline2,
+                                           customer_addressline3,
+                                           customer_pin,
+                                           customer_email,
+                                           customer_gender,
+                                           customer_district,
+                                           customer_city,
+                                           customer_state,
+                                           customer_country,
+                                           customer_mobileno
+                             FROM int$stg_storfrncnpl a
+                            WHERE a.userid = p_userid) alias4
+                 GROUP BY customer_mobileno
+                   HAVING COUNT(1) > 1) b
+          WHERE     a.customer_mobileno = b.customer_mobileno
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+          lineno,
+          'storfrncnpl',
+          userid,
+          'Data Validation',
+          'ISD Code is not provided or invalid.',
+          clock_timestamp()
+     FROM int$stg_storfrncnpl a
+    WHERE (a.ISDCODE NOT IN (SELECT a.isdcode from int$stg_storfrncnpl a, admisd i
+                                 where a.isdcode::text = i.isdcode)
+           OR a.isdcode IS NULL)
+          AND a.customer_mobileno IS NOT NULL
+          AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Data Validation',
+                'Length of mobile number is not valid for the given ISD Code',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a
+LEFT OUTER JOIN admisd i ON (a.ISDCODE::text = i.ISDCODE)
+WHERE i.ALLOW_MOBILENO_DIGIT IS NOT NULL AND LENGTH(a.customer_mobileno)::text <> i.ALLOW_MOBILENO_DIGIT AND a.customer_mobileno IS NOT NULL AND a.userid = p_userid;
+-- END REV : 012
+     --START REV : 015
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'storfrncnpl', userid, 'Data Validation', 'Batch/Serial information for item not defined.', clock_timestamp()
+        from   int$stg_storfrncnpl a, invitem i
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        and    a.item_barcode is not null
+        and    a.batch_serial_no is null
+        and    i.item_management_mode in ('B','S')
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'storfrncnpl', userid, 'Data Validation', 'Batch/Serial information is not applicable for the item, Please delete batch/serial info and try again.', clock_timestamp()
+        from   int$stg_storfrncnpl a, invitem i
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        and    a.item_barcode is not null
+        and    a.batch_serial_no is not null
+        and    i.item_management_mode = 'I'
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'storfrncnpl', userid, 'Data Validation', 'Icode and batch/serial both field cannot be blank.', clock_timestamp()
+        from   int$stg_storfrncnpl a
+        where (a.item_barcode is null
+        and     a.batch_serial_no is null)
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+                SELECT nextval('int$error_log_code'), lineno, 'storfrncnpl', userid, 'Data Validation', 'Serial No. can’t be duplicate.', clock_timestamp()
+        from   int$stg_storfrncnpl a, invitem i,
+               (    SELECT icode, batch_serial_no from (select i.icode, sum(abs(item_qty)) as qty, batch_serial_no from int$stg_storfrncnpl a, invitem i
+                                    where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+                                    and userid= p_userid group by i.icode, batch_serial_no) alias8
+                                    where qty <> 2
+                                    group by icode, batch_serial_no
+                    
+union
+
+                    select icode, batch_serial_no from (select i.icode, sum(item_qty) as qty, batch_serial_no from int$stg_storfrncnpl a, invitem i
+                                    where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+                                    and userid= p_userid group by i.icode, batch_serial_no) alias13
+                                    where qty <> 0
+                                    group by icode, batch_serial_no
+                    EXCEPT
+                    select icode, batch_serial_no from int$stg_storfrncnpl a, invitem i
+                    where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+                    and userid= p_userid
+                    GROUP BY icode, batch_serial_no
+                     HAVING count(*) = 1
+                    ) b
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        and    a.batch_serial_no is not null
+        and    i.item_management_mode = 'S'
+        and    i.icode = b.icode
+        and    UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no)
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'storfrncnpl', userid, 'Data Validation', 'Invalid Batch/Serial information or Batch/Serial No. not exists for this Item.', clock_timestamp()
+        FROM int$stg_storfrncnpl a LEFT OUTER JOIN invbatch_serial b ON (UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no ))
+			LEFT OUTER JOIN invitem i ON (i.icode = b.icode)
+			WHERE (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode) 
+			and a.batch_serial_no is not null   
+			and (b.icode is null or b.batch_serial_no is null) 
+			and i.item_management_mode in ('B','S') 
+			and a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'storfrncnpl', userid, 'Data Validation', 'Item Quantity for serial managed items must be equal to scan unit of item.', clock_timestamp()
+        from   int$stg_storfrncnpl a, invitem i
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        and    a.batch_serial_no is not null
+        and    i.item_management_mode = 'S'
+        and    coalesce(ABS(a.item_qty),0) <> coalesce(i.barunit,1)
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'storfrncnpl', userid, 'Data Validation', 'Invalid Batch/Serial information.', clock_timestamp()
+        FROM int$stg_storfrncnpl a
+LEFT OUTER JOIN invbatch_serial b ON (UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no))
+WHERE a.batch_serial_no is not null and b.batch_serial_no is null and a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'storfrncnpl', userid, 'Data Validation', 'Multi combination exist for the given batch/serial. Specify the icode to proceed.', clock_timestamp()
+        from   int$stg_storfrncnpl a
+        where  a.item_barcode is null
+        and    a.batch_serial_no is not null
+        and    a.batch_serial_no in (SELECT distinct batch_serial_no from int$stg_storfrncnpl where item_barcode is not null)
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'storfrncnpl', userid, 'Data Validation', 'Expiry Batch Selected. Please rectify and proceed.', clock_timestamp()
+        from int$stg_storfrncnpl a, invitem i, invbatch_serial b
+        where (UPPER(a.item_barcode) = i.icode OR UPPER(a.item_barcode) = i.barcode)
+        and    UPPER(i.icode) = b.icode
+        and    UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no)
+        and    b.exp_date < a.saledt
+        and    a.userid = p_userid;
+		
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'storfrncnpl',
+                userid,
+                'Site Validation',
+                'Site Short Name is invalid for the defined site.',
+                clock_timestamp()
+           FROM int$stg_storfrncnpl a LEFT OUTER JOIN admsite b 
+		   ON UPPER(a.site_short_name) = UPPER(b.shrtname)
+          WHERE a.site_short_name IS NOT NULL
+		  		AND b.shrtname IS NULL
+                AND a.userid = p_userid;
+
+       --END REV : 015
+      --COMMIT;
+
+      --End Rev 010
+      -- Check whether records are valid or not
+      BEGIN
+         SELECT 'S'
+           INTO STRICT v_status
+
+          WHERE EXISTS (SELECT 'S'
+                      FROM int$error_log
+                     WHERE userid = p_userid);
+
+         RETURN('0');
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            RETURN('1');
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'storfrncnpl',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+
+         RETURN('0');
+   END;
+
+   -- Create Store Franchise Consignment Sale after validation
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

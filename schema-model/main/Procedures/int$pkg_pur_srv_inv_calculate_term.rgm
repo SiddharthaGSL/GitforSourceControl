@@ -1,0 +1,274 @@
+procedure "main"."int$pkg_pur_srv_inv_calculate_term(bigint, bigint, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+      C1 CURSOR(
+         p_isbase    bigint,
+         p_exrate    bigint)
+      FOR
+           SELECT purtermdet.purtermmain_code purtermcode,
+                  purtermdet.chgcode,
+                  CASE WHEN                      coalesce(p_isbase, 1)=1 THEN  PURTERMDET.RATE  ELSE CASE WHEN coalesce(FINCHG.BASIS, 'P')='P' THEN  PURTERMDET.RATE  ELSE round((PURTERMDET.RATE * coalesce(p_exrate, 1))::numeric, 2) END  END
+                     RATE,
+                  purtermdet.formulae,
+                  LENGTH(purtermdet.formulae) formlen,
+                  purtermdet.SIGN,
+                  finchg.formcode,
+                  finchg.roundoff,
+                  purtermdet.seq,
+                  finchg.basis,
+                  purtermdet.operation_level,
+                  finchg.istax,
+                  finchg.source,
+                  finchg.glcode,
+                  CASE WHEN finchg.glcode IS NULL THEN  finchg.slcode  ELSE finchg.slcode END 
+                     slcode,
+                  fingl.costapp              gl_cc_appl,
+                  include_in_tds
+             FROM purtermdet, finchg, fingl
+            WHERE     purtermdet.chgcode = finchg.chgcode
+                  AND purtermmain_code = p_purtermcode
+                  AND fingl.glcode =
+                         CASE WHEN                             finchg.istax='N' THEN  coalesce(finchg.glcode, p_pursrvmain_chg_glcode)  ELSE finchg.glcode END 
+                  --AND FINGL.GLCODE = DECODE(PURCHG.ISTAX,'N',SALCHG.GLCODE,SALCHG.GLCODE)
+                  AND purtermdet.operation_level = 'H'
+         ORDER BY purtermdet.seq;
+
+      v_isbase                 smallint;
+      v_exrate                 admcurrency_rate.exrate%TYPE;
+      v_srvno                  pursrvmain.srvno%TYPE;
+      v_srvdt                  timestamp;
+      v_ycode                  bigint;
+      dummy_appamt             double precision;
+      v_item_chg               double precision;
+      dummy_totchgamt          double precision;
+      dummy_chkchgamt          double precision;
+      dummy_chk                char(1);
+      dummy_prvchk             char(1);
+      dummy_sign               char(1);
+      v_pursrvdet_tot_srvamt   double precision;
+
+BEGIN
+      SELECT b.isbase,
+             a.exrate,
+             a.srvno,
+             a.srvdt,
+             a.ycode
+        INTO STRICT v_isbase,
+             v_exrate,
+             v_srvno,
+             v_srvdt,
+             v_ycode
+        FROM pursrvmain a, admcurrency b
+       WHERE a.admcurrency_code = b.code AND srvcode = p_srvcode;
+
+      /*
+      DELETE
+      FROM  FINCOSTTAG
+      WHERE ENTCODE = TO_CHAR(:PURSRVCHG.SRVCODE)
+      AND  ENTTYPE = 'PSC'
+      AND  GLCODE  = :PURSRVCHG.GLCODE
+      AND  (
+                      :PURSRVCHG.SLCODE IS NULL
+                      OR
+                      SLCODE = :PURSRVCHG.SLCODE
+                  )
+      AND  POSTCODE = NVL(:PURSRVCHG.POSTCODE,0)
+      AND   0 < (  SELECT COUNT(CHGCODE)
+                    FROM PURSRVCHG
+                                  WHERE SRVCODE = :PURSRVMAIN.SRVCODE
+                                  AND  OPERATION_LEVEL = 'H'
+                                  AND   TO_CHAR(SRVCODE)  = FINCOSTTAG.ENTCODE
+                                  );
+*/
+      DELETE FROM pursrvchg
+       WHERE srvcode = p_srvcode AND operation_level = 'H';
+
+      BEGIN
+         SELECT SUM(srvamt)
+           INTO STRICT v_pursrvdet_tot_srvamt
+           FROM pursrvdet
+          WHERE srvcode = p_srvcode;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            NULL;
+      END;
+
+      -- ADJUST ITEM CHARGE FROM GRSAMT
+      BEGIN
+         SELECT SUM(chgamt)
+           INTO STRICT v_item_chg
+           FROM pursrvchg_item
+          WHERE srvcode = p_srvcode;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            v_item_chg := 0;
+      END;
+
+      FOR C1REC IN C1(v_isbase, v_exrate)
+      LOOP
+         dummy_totchgamt := 0;
+
+         FOR i IN 1 .. c1rec.formlen
+         LOOP
+            IF MOD(I, 2) != 0
+            THEN
+               dummy_chk := SUBSTR(c1rec.formulae, i, 1);
+               dummy_chkchgamt := 0;
+
+               IF dummy_chk = 'B'
+               THEN
+                  dummy_chkchgamt :=
+                     coalesce(v_pursrvdet_tot_srvamt, 0) + coalesce(v_item_chg, 0);
+               ELSE
+                  BEGIN
+                     SELECT pursrvchg.chgamt
+                       INTO STRICT dummy_chkchgamt
+                       FROM purtermdet, pursrvchg
+                      WHERE     purtermdet.chgcode = pursrvchg.chgcode
+                            AND pursrvchg.srvcode = p_srvcode
+                            AND purtermdet.purtermmain_code =
+                                   c1rec.purtermcode
+                            AND purtermdet.operation_level = 'H'
+                            AND purtermdet.seq = (dummy_chk)::numeric;
+                  EXCEPTION
+                     WHEN no_data_found
+                     THEN
+                        dummy_chkchgamt := 0;
+                  END;
+               END IF;
+
+               dummy_prvchk := SUBSTR(c1rec.formulae, i - 1, 1);
+
+               IF dummy_prvchk = '+'
+               THEN
+                  dummy_totchgamt :=
+                     dummy_totchgamt + coalesce(dummy_chkchgamt, 0);
+               ELSIF dummy_prvchk = '-'
+               THEN
+                  dummy_totchgamt :=
+                     dummy_totchgamt - coalesce(dummy_chkchgamt, 0);
+               ELSE
+                  dummy_totchgamt := coalesce(dummy_chkchgamt, 0);
+               END IF;
+            END IF;
+         END LOOP;
+
+         dummy_appamt := dummy_totchgamt;
+
+         IF c1rec.basis = 'P'
+         THEN
+            dummy_totchgamt :=
+               ROUND ( ( (c1rec.rate / 100) * coalesce(dummy_totchgamt, 0)), 2);
+         ELSE
+            dummy_totchgamt := round((c1rec.rate)::numeric, 2);
+         END IF;
+
+         IF c1rec.SIGN = '-' AND dummy_totchgamt >= 0
+         THEN
+            dummy_totchgamt := -1 * coalesce(dummy_totchgamt, 0);
+         END IF;
+
+         IF dummy_totchgamt < 0
+         THEN
+            dummy_sign := '-';
+         ELSIF dummy_totchgamt > 0
+         THEN
+            dummy_sign := '+';
+         ELSIF dummy_totchgamt = 0
+         THEN
+            dummy_sign := c1rec.SIGN;
+         END IF;
+
+         IF c1rec.roundoff = 'Y'
+         THEN
+            dummy_totchgamt := ROUND(dummy_totchgamt);
+         END IF;
+
+         --erraudit('kj','1','3',c1rec.glcode);
+         INSERT INTO pursrvchg(srvcode,
+                                seq,
+                                chgcode,
+                                rate,
+                                SIGN,
+                                chgamt,
+                                basis,
+                                appamt,
+                                formulae,
+                                operation_level,
+                                istax,
+                                source,
+                                without_term_formula,
+                                include_in_tds,
+                                glcode,
+                                slcode,
+                                gl_cc_appl,
+                                srvno,
+                                srvdt,
+                                ycode,
+                                code)
+              VALUES (p_srvcode,
+                      c1rec.seq,
+                      c1rec.chgcode,
+                      c1rec.rate,
+                      dummy_sign,
+                      dummy_totchgamt,
+                      c1rec.basis,
+                      dummy_appamt,
+                      c1rec.formulae,
+                      c1rec.operation_level,
+                      c1rec.istax,
+                      c1rec.source,
+                      'N',
+                      c1rec.include_in_tds,
+                      c1rec.glcode,
+                      c1rec.slcode,
+                      c1rec.gl_cc_appl,
+                      v_srvno,
+                      v_srvdt,
+                      v_ycode,
+                      nextval('pursrvchg_code'));
+      END LOOP;
+
+      UPDATE pursrvchg
+         SET srvcode = srvcode
+       WHERE srvcode = p_srvcode;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         NULL;
+   END;
+
+"""
+  arguments = <
+    {
+      name = p_srvcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_purtermcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_pursrvmain_chg_glcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_pursrvmain_chg_slcode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

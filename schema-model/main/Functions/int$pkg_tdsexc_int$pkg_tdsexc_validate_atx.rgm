@@ -1,0 +1,280 @@
+function "main"."int$pkg_tdsexc_int$pkg_tdsexc_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status      char(1);
+      errmsg        varchar(200);
+      errcode       bigint;
+BEGIN
+
+    -- UPDATING SLCODE
+    update int$stg_TDSEXC a set DERIVED_FINSL_CODE = SLCODE
+    from(SELECT  coalesce(a.lineno, 0) lineno, sl.SLCODE
+             FROM    int$stg_TDSEXC a, FINSL sl
+             WHERE   UPPER(a.SLID) = UPPER(sl.SLID)
+             AND     a.userid = p_userid) b
+    where (a.lineno = b.lineno);
+
+    -- Updating OU Code
+    UPDATE int$stg_TDSEXC a SET DERIVED_ADMOU_CODE = oucode
+    FROM(SELECT  coalesce(a.lineno, 0) lineno, ou.CODE oucode
+             FROM    int$stg_TDSEXC a, ADMOU ou
+             WHERE   UPPER(a.OU_NAME) = UPPER(ou.NAME)
+             AND     a.userid = p_userid) b
+    WHERE (a.lineno = b.lineno);
+
+    -- Updating TDSTYPE
+    UPDATE int$stg_TDSEXC a SET DERIVED_TDSTYPE_CODE = TDSTYPECODE
+    FROM(SELECT  coalesce(a.lineno, 0) lineno, tds.TDSTYPECODE
+             FROM    int$stg_TDSEXC a, fintdstype tds
+             WHERE   UPPER(a.tds_name) = UPPER(tds.TDSNAME)
+             AND     coalesce(tds.EXT, 'N') = 'N'
+             AND     a.userid = p_userid) b
+    WHERE (a.lineno = b.lineno);
+
+    -- Updating TDS EXCEPTION CODE
+    UPDATE int$stg_TDSEXC a SET DERIVED_TDSEXC_CODE = exc_code
+    FROM(SELECT  coalesce(a.lineno, 0) lineno, exc.CODE exc_code
+             FROM    int$stg_TDSEXC a, fintds_exception exc
+             WHERE   a.DERIVED_FINSL_CODE = exc.SLCODE
+             AND     a.DERIVED_ADMOU_CODE = exc.ADMOU_CODE
+             AND     a.DERIVED_TDSTYPE_CODE = exc.TDSTYPECODE
+             AND     a.DATE_FROM = exc.DTFR
+             AND     a.DATE_TO = exc.DTTO
+             AND     a.userid = p_userid) b
+    WHERE (a.lineno = b.lineno);
+
+     -- Validing SLID
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'TDSEXC', userid, 'Data Validation', 'Sub-ledger not found as per the specified SLID.', clock_timestamp()
+        from   int$stg_TDSEXC a
+        where  a.DERIVED_FINSL_CODE IS NULL
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'TDSEXC', userid, 'Data Validation', 'TDS source is not defined for the sub-ledger.', clock_timestamp()
+        from   int$stg_TDSEXC a, FINSL sl
+        where  a.DERIVED_FINSL_CODE IS NOT NULL
+        and    a.DERIVED_FINSL_CODE = sl.SLCODE
+        and    sl.TDSSRCCODE IS NULL
+        and    a.userid = p_userid;
+
+     -- Validating OU
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'TDSEXC', userid, 'Data Validation', 'OU not found as per the specified OU_NAME.', clock_timestamp()
+        from   int$stg_TDSEXC a
+        where  a.DERIVED_ADMOU_CODE IS NULL
+        and    a.userid = p_userid;
+
+     -- Validating TDS_NAME
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'TDSEXC', userid, 'Data Validation', 'TDS Name not found as per the specified TDS_NAME.', clock_timestamp()
+        from   int$stg_TDSEXC a
+        where  a.DERIVED_TDSTYPE_CODE IS NULL
+        and    a.userid = p_userid;
+
+     -- Validating Max Limit 
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'TDSEXC', userid, 'Data Validation', 'MAX_LIMIT should be null or greater than 0.', clock_timestamp()
+        from   int$stg_TDSEXC a
+        where  a.MAX_LIMIT IS NOT NULL
+        and    a.MAX_LIMIT <= 0
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'TDSEXC', userid, 'Data Validation', 'MAX_LIMIT doesnt support decimals.', clock_timestamp()
+        from   int$stg_TDSEXC a
+        where  length(abs((a.MAX_LIMIT) - round(MAX_LIMIT))::text) > 1
+        and    a.MAX_LIMIT IS NOT NULL
+        and    a.userid = p_userid;
+
+     -- Validating TDS_RATE
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'TDSEXC', userid, 'Data Validation', 'TDS_RATE should be 0 or greater than 0.', clock_timestamp()
+        from   int$stg_TDSEXC a
+        where  a.TDS_RATE IS NOT NULL
+        and    a.TDS_RATE < 0
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'TDSEXC', userid, 'Data Validation', 'TDS_RATE supports upto 5 decimals only.', clock_timestamp()
+        from   int$stg_TDSEXC a
+        where  length(abs((a.TDS_RATE) - round(TDS_RATE))::text) > 7
+        and    a.TDS_RATE IS NOT NULL
+        and    a.userid = p_userid;
+
+     -- Validating date range
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'TDSEXC', userid, 'Data Validation', 'DATE_FROM cannot be greater than DATE_TO.', clock_timestamp()
+        from   int$stg_TDSEXC a
+        where  a.DATE_FROM > a.DATE_TO
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), a.lineno, 'TDSEXC', userid, 'Data Validation', 'Overlapping date range found with existing records.', clock_timestamp()
+        from   int$stg_TDSEXC a, (SELECT coalesce(stg.LINENO, 0) lineno 
+                                    from fintds_exception exc, int$stg_tdsexc stg
+                                    where (
+                                                stg.DATE_FROM BETWEEN exc.dtfr and exc.dtto
+                                                or 
+                                                stg.DATE_TO BETWEEN exc.dtfr and exc.dtto
+                                                or
+                                                exc.DTTO is null
+                                                or
+                                                exc.dtfr BETWEEN stg.DATE_FROM and stg.DATE_TO
+                                                or
+                                                exc.dtto BETWEEN stg.DATE_FROM and stg.DATE_TO
+                                         )
+                                    and exc.slcode = stg.DERIVED_FINSL_CODE
+                                    and exc.ADMOU_CODE = stg.DERIVED_ADMOU_CODE
+                                    and exc.TDSTYPECODE = stg.DERIVED_TDSTYPE_CODE
+                                    and stg.DERIVED_TDSEXC_CODE IS NULL
+                                    and stg.USERID = p_userid
+                                    group by coalesce(stg.LINENO, 0)
+                                    having count(*) > 0 ) b
+        where  a.LINENO = b.LINENO
+        and    a.userid = p_userid;
+
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), a.lineno, 'TDSEXC', userid, 'Data Validation', 'Overlapping date range found with inputted excel records.', clock_timestamp()
+        from   int$stg_TDSEXC a, (SELECT coalesce(stg.LINENO, 0) lineno 
+                                    from int$stg_tdsexc exc, int$stg_tdsexc stg
+                                    where (
+                                                stg.DATE_FROM BETWEEN exc.DATE_FROM and exc.DATE_TO
+                                                or 
+                                                stg.DATE_TO BETWEEN exc.DATE_FROM and exc.DATE_TO
+                                                or
+                                                exc.DATE_FROM BETWEEN stg.DATE_FROM and stg.DATE_TO
+                                                or 
+                                                exc.DATE_TO BETWEEN stg.DATE_FROM and stg.DATE_TO
+                                         )
+                                    and exc.DERIVED_FINSL_CODE = stg.DERIVED_FINSL_CODE
+                                    and exc.DERIVED_ADMOU_CODE = stg.DERIVED_ADMOU_CODE
+                                    and exc.DERIVED_TDSTYPE_CODE = stg.DERIVED_TDSTYPE_CODE
+                                    and exc.LINENO <> stg.LINENO
+                                    and stg.DERIVED_TDSEXC_CODE IS NULL
+                                    group by coalesce(stg.LINENO, 0)
+                                    having count(*) > 0) b
+        where  a.LINENO = b.LINENO
+        and    a.userid = p_userid;
+
+      -- Validating certificate number
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), a.lineno, 'TDSEXC', userid, 'Data Validation', 'CERTIFICATE_NO cannot be duplicate.', clock_timestamp()
+        from   int$stg_TDSEXC a
+        where  UPPER(a.CERTIFICATE_NO) IN (SELECT CERTIFICATE_NO
+                                            FROM (
+                                                    SELECT UPPER(CERTIFICATE_NO) CERTIFICATE_NO
+                                                    FROM int$stg_TDSEXC
+                                                    WHERE CERTIFICATE_NO IS NOT NULL
+                                                    AND   userid = p_userid
+                                                    
+UNION ALL
+
+                                                    SELECT UPPER(CERTIFICATENO) CERTIFICATE_NO
+                                                    FROM FINTDS_EXCEPTION
+                                                    WHERE CODE NOT IN (SELECT DERIVED_TDSEXC_CODE 
+                                                                        FROM int$stg_TDSEXC 
+                                                                        WHERE userid = p_userid 
+                                                                        AND DERIVED_TDSEXC_CODE IS NOT NULL)
+                                            ) alias7
+                                            WHERE CERTIFICATE_NO IS NOT NULL
+                                            GROUP BY CERTIFICATE_NO
+                                            HAVING COUNT(*) > 1)
+        and    a.CERTIFICATE_NO IS NOT NULL
+        and    a.userid = p_userid;
+
+      -- Common Validation
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'TDSEXC', userid, 'Data Validation', 'Same date from and to in multiple rows.', clock_timestamp()
+        from   int$stg_TDSEXC a
+        where  a.lineno in
+                    (
+                        SELECT  coalesce(b.lineno,0) lineno
+                        from    int$stg_TDSEXC b, (SELECT DERIVED_FINSL_CODE, DERIVED_ADMOU_CODE, DERIVED_TDSTYPE_CODE, DATE_FROM, DATE_TO
+                                                    FROM    int$stg_TDSEXC
+                                                    where   userid = p_userid 
+                                                    GROUP BY DERIVED_FINSL_CODE, DERIVED_ADMOU_CODE, DERIVED_TDSTYPE_CODE, DATE_FROM, DATE_TO
+                                                    HAVING COUNT(*) > 1) y
+                        where   b.DERIVED_FINSL_CODE = y.DERIVED_FINSL_CODE
+                        and     b.DERIVED_ADMOU_CODE = y.DERIVED_ADMOU_CODE
+                        and     b.DERIVED_TDSTYPE_CODE = y.DERIVED_TDSTYPE_CODE
+                        and     b.DATE_FROM = y.DATE_FROM
+                        and     b.DATE_TO = b.DATE_TO
+                        and     b.userid = p_userid
+                    )
+        and   a.userid = p_userid;
+
+      -- Check whether records are valid or not
+      BEGIN
+         SELECT 'S'
+           INTO STRICT v_status
+           
+          WHERE EXISTS (SELECT 'S'
+                      FROM int$error_log
+                     WHERE userid = p_userid);
+
+         RETURN('0');
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            RETURN('1');
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'TDSEXC',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

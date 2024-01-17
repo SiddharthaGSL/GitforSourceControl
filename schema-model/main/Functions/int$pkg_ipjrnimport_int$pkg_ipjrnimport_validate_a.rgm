@@ -1,0 +1,623 @@
+function "main"."int$pkg_ipjrnimport_int$pkg_ipjrnimport_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status   char(1);
+      errmsg     varchar(200);
+      errcode    bigint;
+      g_mark     varchar(100);
+BEGIN
+      -- ************************ Journal Date checking Start ************************************
+      -- date is null
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'IPJRNIMPORT',
+                userid,
+                'Mandatory Validation',
+                'Journal Date is Mandatory.',
+                clock_timestamp()
+           FROM int$stg_ipjrnimport a
+          WHERE a.JOURNAL_DATE IS NULL AND a.userid = p_userid;
+
+      -- jrndt <= sysdate
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'IPJRNIMPORT',
+                userid,
+                'Data Validation',
+                'Journal Date cannot be future date.',
+                clock_timestamp()
+           FROM int$stg_ipjrnimport a
+          WHERE     date_trunc('day', JOURNAL_DATE) > date_trunc('day', clock_timestamp())
+                AND a.userid = p_userid;
+
+      -- Year extinct,
+      DECLARE
+         v_dtfr           timestamp;
+         v_dtto           timestamp;
+         v_yr_ext         char(1);
+         v_locdays        hrdemp.locdays%TYPE;
+         v_last_dt_lock   char(1);
+
+         c1 CURSOR FOR
+            SELECT DISTINCT date_trunc('day', JOURNAL_DATE) JOURNAL_DATE
+              FROM int$stg_ipjrnimport
+             WHERE userid = p_userid;
+      BEGIN
+         FOR i IN c1
+         LOOP
+            -- Ycode related checking, min trans date checking, lockday checking, Year exists or not
+            BEGIN
+               SELECT ext, dtfr, dtto
+                 INTO STRICT v_yr_ext, v_dtfr, v_dtto
+                 FROM admyear
+                WHERE i.JOURNAL_DATE BETWEEN dtfr AND dtto;
+
+               IF coalesce(v_yr_ext, 'N') = 'Y'
+               THEN
+                  INSERT INTO int$error_log(code,
+                                             lineno,
+                                             classname,
+                                             userid,
+                                             errortype,
+                                             errordesc,
+                                             createdon)
+                     SELECT nextval('int$error_log_code'),
+                            lineno,
+                            'IPJRNIMPORT',
+                            userid,
+                            'Data Validation',
+                            'Accounting year is not open as per the journal date.',
+                            clock_timestamp()
+                       FROM int$stg_ipjrnimport
+                      WHERE     date_trunc('day', JOURNAL_DATE) = i.JOURNAL_DATE
+                            AND userid = p_userid;
+               ELSE
+                  BEGIN
+                     SELECT locdays, allow_last_fy_day_mode
+                       INTO STRICT v_locdays, v_last_dt_lock
+                       FROM hrdemp
+                      WHERE ecode = p_userid;
+
+                     IF v_locdays IS NOT NULL
+                     THEN
+                        IF coalesce(
+                              db_fun_chk_last_dt_lock(v_last_dt_lock,
+                                                       current_date),
+                              0) <> 0
+                        THEN
+                           INSERT INTO int$error_log(code,
+                                                      lineno,
+                                                      classname,
+                                                      userid,
+                                                      errortype,
+                                                      errordesc,
+                                                      createdon)
+                              SELECT nextval('int$error_log_code'),
+                                     lineno,
+                                     'IPJRNIMPORT',
+                                     userid,
+                                     'Data Validation',
+                                     'User doesnt have privilege to igonre lock days on the last day of the closed accounting year.',
+                                     clock_timestamp()
+                                FROM int$stg_ipjrnimport
+                               WHERE     date_trunc('day', JOURNAL_DATE) =
+                                            i.JOURNAL_DATE
+                                     AND userid = p_userid;
+                        ELSE
+                           IF date_trunc('day', i.JOURNAL_DATE) <
+                                 (current_date - v_locdays::integer)
+                           THEN
+                              INSERT INTO int$error_log(code,
+                                                         lineno,
+                                                         classname,
+                                                         userid,
+                                                         errortype,
+                                                         errordesc,
+                                                         createdon)
+                                 SELECT nextval('int$error_log_code'),
+                                        lineno,
+                                        'IPJRNIMPORT',
+                                        userid,
+                                        'Data Validation',
+                                        'Journal date should be within allowed user lock days.',
+                                        clock_timestamp()
+                                   FROM int$stg_ipjrnimport
+                                  WHERE     date_trunc('day', JOURNAL_DATE) =
+                                               i.JOURNAL_DATE
+                                        AND userid = p_userid;
+                           END IF;
+                        END IF;
+                     END IF;
+                  EXCEPTION
+                     WHEN no_data_found
+                     THEN
+                        INSERT INTO int$error_log(code,
+                                                   lineno,
+                                                   classname,
+                                                   userid,
+                                                   errortype,
+                                                   errordesc,
+                                                   createdon)
+                           SELECT nextval('int$error_log_code'),
+                                  lineno,
+                                  'IPJRNIMPORT',
+                                  userid,
+                                  'Data Validation',
+                                  'User does not exist.',
+                                  clock_timestamp()
+                             FROM int$stg_ipjrnimport
+                            WHERE     date_trunc('day', JOURNAL_DATE) = i.JOURNAL_DATE
+                                  AND userid = p_userid;
+                  END;
+               END IF;
+            EXCEPTION
+               WHEN no_data_found
+               THEN
+                  INSERT INTO int$error_log(code,
+                                             lineno,
+                                             classname,
+                                             userid,
+                                             errortype,
+                                             errordesc,
+                                             createdon)
+                     SELECT nextval('int$error_log_code'),
+                            lineno,
+                            'IPJRNIMPORT',
+                            userid,
+                            'Data Validation',
+                            'Accounting year doesnt exist as per the specified journal date.',
+                            clock_timestamp()
+                       FROM int$stg_ipjrnimport
+                      WHERE     date_trunc('day', JOURNAL_DATE) = i.JOURNAL_DATE
+                            AND userid = p_userid;
+            END;
+
+            -- Month check
+            INSERT INTO int$error_log(code,
+                                       lineno,
+                                       classname,
+                                       userid,
+                                       errortype,
+                                       errordesc,
+                                       createdon)
+               SELECT nextval('int$error_log_code'),
+                      0,
+                      'IPJRNIMPORT',
+                      p_userid,
+                      'Data Validation',
+                      'Finance Month is closed, new entry is possible for the journal date',
+                      clock_timestamp()
+                 FROM admmonth a, admou_month b
+                WHERE     a.mcode = b.admmonth_code
+                      AND i.JOURNAL_DATE BETWEEN dtfr AND dtto
+                      AND b.admou_code = p_connect_ou
+                      AND b.fin_month_status = 'C';
+         END LOOP;
+      END;
+
+      -- ************************ Journal Date checking End ************************************
+      -- Numbering scheme validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'IPJRNIMPORT',
+                userid,
+                'Data Validation',
+                'Document numbering scheme is either invalid or ectinct or not applicable for the connected site.',
+                clock_timestamp()
+           FROM int$stg_ipjrnimport a
+          WHERE     UPPER(a.document_scheme) NOT IN
+                       (SELECT UPPER(a.docname)
+                          FROM admdocscheme a, admmenu_docscheme b
+                         WHERE     a.doccode = b.doccode
+                               --AND b.menucode = 636
+                               -- START REV : 004
+                               and    b.mdmenushortcode = 'FinanceARAPJournal'
+                               -- END REV : 004
+                               AND coalesce(a.manual, 'N') = 'N'
+                               AND coalesce(a.ext, 'N') = 'N'
+                               AND (   0 =
+                                          (SELECT COUNT(*)
+                                             FROM admdocscheme    c,
+                                                  admou_docscheme d
+                                            WHERE     c.doccode = d.doccode
+                                                  AND d.admsite_code =
+                                                         p_connect_site
+                                                  AND coalesce(c.ext, 'N') = 'N')
+                                    OR a.doccode IN (SELECT e.doccode
+                                             FROM admdocscheme    e,
+                                                  admou_docscheme f
+                                            WHERE     e.doccode = f.doccode
+                                                  AND f.admsite_code =
+                                                         p_connect_site
+                                                  AND coalesce(e.ext, 'N') = 'N')))
+                AND a.userid = p_userid;
+
+      -- ************************ Reference No. checking Start ************************************
+      -- multiple dates
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'IPJRNIMPORT',
+                p_userid,
+                'Data Validation',
+                'Multiple dates found against same reference no. or reference no. is not provided.',
+                clock_timestamp()
+           FROM int$stg_ipjrnimport a
+          WHERE coalesce(a.ref_no, 'x-1x') IN (  SELECT coalesce(ref_no, 'x-1x') ref_no
+                        FROM int$stg_ipjrnimport
+                       WHERE userid = p_userid
+                    GROUP BY coalesce(ref_no, 'x-1x')
+                      HAVING COUNT(
+                                DISTINCT journal_date) > 1);
+
+      -- multiple remarks
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'IPJRNIMPORT',
+                p_userid,
+                'Data Validation',
+                'Multiple remarks found against same reference no. or reference no. is not provided.',
+                clock_timestamp()
+           FROM int$stg_ipjrnimport a
+          WHERE coalesce(a.ref_no, 'x-1x') IN (  SELECT coalesce(ref_no, 'x-1x') ref_no
+                        FROM int$stg_ipjrnimport
+                       WHERE userid = p_userid
+                    GROUP BY coalesce(ref_no, 'x-1x')
+                      HAVING COUNT(DISTINCT remarks) > 1);
+
+      -- same slid multiple times
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'IPJRNIMPORT',
+                p_userid,
+                'Data Validation',
+                'Same sub-ledger found multiple times against same reference no.',
+                clock_timestamp()
+           FROM int$stg_ipjrnimport a,
+                (  SELECT coalesce(ref_no, 'x-1x') ref_no, slid
+                     FROM int$stg_ipjrnimport
+                    WHERE userid = p_userid
+                 GROUP BY coalesce(ref_no, 'x-1x'), slid
+                   HAVING COUNT(1) > 1) b
+          WHERE     coalesce(a.ref_no, 'x-1x') = b.ref_no
+                AND a.slid = b.slid
+                AND a.userid = p_userid;
+
+      -- ************************ Reference No. checking End ************************************
+      -- ************************ SLID checking Start ************************************
+      --Multiple SL found against same SLID
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'IPJRNIMPORT',
+                userid,
+                'Data Validation',
+                'Multiple sub-ledgers found against same SLID.',
+                clock_timestamp()
+           FROM int$stg_ipjrnimport a,
+                (  SELECT lineno, UPPER(b.slid), COUNT(1)
+                     FROM int$stg_ipjrnimport a, finsl b
+                    WHERE     UPPER(a.slid) = UPPER(b.slid)
+                          AND a.userid = p_userid
+                 GROUP BY lineno, UPPER(b.slid)
+                   HAVING COUNT(1) > 1) b
+          WHERE a.lineno = b.lineno AND a.userid = p_userid;
+
+      -- SLID is mandtaory
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'IPJRNIMPORT',
+                userid,
+                'Data Validation',
+                'SLID is mandatory.',
+                clock_timestamp()
+           FROM int$stg_ipjrnimport
+          WHERE slid IS NULL AND userid = p_userid;
+
+      -- SLID is valid
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'IPJRNIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid SLID or SLID is extinct.',
+                clock_timestamp()
+           FROM int$stg_ipjrnimport
+          WHERE     UPPER(slid) NOT IN (SELECT UPPER(slid)
+                                           FROM finsl
+                                          WHERE coalesce(ext, 'N') = 'N')
+                AND userid = p_userid;
+
+      -- Only AR/AP tagged sub-ledgers are allowed here.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'IPJRNIMPORT',
+                userid,
+                'Data Validation',
+                'Only AR/AP tagged sub-ledgers are allowed here.',
+                clock_timestamp()
+           FROM int$stg_ipjrnimport a, finsl s
+          WHERE     UPPER(a.slid) = UPPER(s.slid)
+                AND S.GLCODE IS NULL
+                AND userid = p_userid;
+
+      -- ************************ SLID checking End ************************************
+      -- ************************ Amount checking Start *************************************
+      -- Amt = 0
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'IPJRNIMPORT',
+                p_userid,
+                'Data Validation',
+                'Amount cannot be 0.',
+                clock_timestamp()
+           FROM int$stg_ipjrnimport
+          WHERE coalesce(amount, 0) = 0
+          -- START REV : 005
+          AND userid = p_userid;
+          -- END REV : 005
+      -- Summation <> 0
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'IPJRNIMPORT',
+                p_userid,
+                'Data Validation',
+                'Total Debit and Credit values should match for same REF_NO.',
+                clock_timestamp()
+           FROM int$stg_ipjrnimport a
+          WHERE coalesce(a.ref_no, 'x-1x') IN (  SELECT coalesce(a.ref_no, 'x-1x')
+                                               FROM int$stg_ipjrnimport a
+                                              WHERE a.userid = p_userid
+                                           GROUP BY coalesce(a.ref_no, 'x-1x')
+                                             HAVING coalesce(
+                                                       SUM(
+                                                          coalesce(a.amount, 0)),
+                                                       0) <> 0);
+
+      -- ************************ Amount checking End *************************************
+      -- ************************ Reference Site checking Start *************************************
+      -- Multiple site found against same shortname
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'IPJRNIMPORT',
+                userid,
+                'Data Validation',
+                'Multiple reference site found against same shortname.',
+                clock_timestamp()
+           FROM int$stg_ipjrnimport a,
+                (  SELECT lineno, UPPER(b.shrtname), COUNT(1)
+                     FROM int$stg_ipjrnimport a, admsite b
+                    WHERE     UPPER(a.ref_site_shrtname) = UPPER(b.shrtname)
+                          AND a.userid = p_userid
+                 GROUP BY lineno, UPPER(b.shrtname)
+                   HAVING COUNT(1) > 1) b
+          WHERE a.lineno = b.lineno AND a.userid = p_userid;
+
+      -- No site found Short name or is extinct
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'IPJRNIMPORT',
+                userid,
+                'Data Validation',
+                'Reference Site is either invalid or is extinct.',
+                clock_timestamp()
+           FROM int$stg_ipjrnimport a
+			LEFT OUTER JOIN (SELECT UPPER(shrtname) shrtname, ext FROM admsite) st ON (UPPER(a.ref_site_shrtname) = st.shrtname)
+			WHERE (st.shrtname IS NULL OR coalesce(ST.EXT, 'N') = 'Y') AND a.ref_site_shrtname IS NOT NULL AND a.userid = p_userid;
+
+      -- SLID - Site matching
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'IPJRNIMPORT',
+                userid,
+                'Data Validation',
+                'Reference site is not applicable for this sub-ledger.',
+                clock_timestamp()
+           FROM int$stg_ipjrnimport a,
+                finsl               sl,
+                admcls              cls,
+                admsite             st
+          WHERE     UPPER(a.slid) = UPPER(sl.slid)
+                AND SL.CLSCODE = CLS.CLSCODE
+                AND UPPER(a.ref_site_shrtname) = UPPER(st.shrtname)
+                AND (   (    CLS.CLSTYPE = 'C'
+                         AND ST.CODE NOT IN
+                                (SELECT SITE_CODE
+                                   FROM V_POP_REF_ADMSITE vp
+                                  WHERE     (   (    vp.SLCODE IS NOT NULL
+                                                 AND vp.SLCODE = sl.slcode)
+                                             OR vp.SLCODE IS NULL)
+                                        AND vp.CLSTYPE = 'C'
+                                        AND (   vp.ADMOU_CODE IS NULL
+                                             OR vp.ADMOU_CODE = p_connect_ou)))
+                     OR (    CLS.CLSTYPE <> 'C'
+                         AND ST.CODE NOT IN
+                                (SELECT SITE_CODE
+                                   FROM V_POP_REF_ADMSITE vp
+                                  WHERE     (   (    vp.SLCODE IS NOT NULL
+                                                 AND vp.SLCODE = sl.slcode)
+                                             OR vp.SLCODE IS NULL)
+                                        AND vp.CLSTYPE = 'N'
+                                        AND (   vp.ADMOU_CODE IS NULL
+                                             OR vp.ADMOU_CODE = p_connect_ou))))
+                AND a.ref_site_shrtname IS NOT NULL
+                AND a.userid = p_userid;
+
+      -- ************************ Reference Site checking End *************************************
+      -- check whether records are valid or not
+      BEGIN
+         SELECT 'S'
+           INTO STRICT v_status
+           
+          WHERE EXISTS (SELECT 'S'
+                      FROM int$error_log
+                     WHERE userid = p_userid);
+
+         RETURN('0');
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            RETURN('1');
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'IPJRNIMPORT',
+                      p_userid,
+                      errcode,
+                      errmsg || ',' || COALESCE(g_mark,''),
+                      clock_timestamp());
+
+         --COMMIT;
+
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

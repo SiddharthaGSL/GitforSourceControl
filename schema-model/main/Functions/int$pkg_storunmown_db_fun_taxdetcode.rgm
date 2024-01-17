@@ -1,0 +1,90 @@
+function "main"."int$pkg_storunmown_db_fun_taxdetcode(text, timestamp without time zone, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+      vatid   bigint;
+
+BEGIN
+      SELECT vatid
+        INTO STRICT vatid
+        FROM (SELECT d.taxdetcode vatid,
+                     s.code       site_code,
+                     d.taxcode    vatcode,
+                     d.dtfr       effectivedate,
+                     0            isextinct
+                FROM fintaxdet d, fintaxmain m, admsite s
+               WHERE     d.taxcode = m.taxcode
+                     AND d.admcmptax_code = s.psite_admcmptax_code
+                     AND ADMOU_CODE = P_CONNECT_OU                -- REV : 002
+                     AND coalesce(d.formcode, 0) = 0
+                     AND d.fintradegrp_code = (SELECT code
+                                                 FROM fintradegrp
+                                                WHERE UPPER(NAME) = 'LOCAL'))
+             v1,
+             invitem i
+       WHERE     v1.vatcode = i.taxcode
+             AND i.icode = p_icode
+             AND (v1.vatcode, v1.effectivedate) IN
+                    (  SELECT v2.vatcode, MAX(v2.effectivedate) AS expr1
+                         FROM (SELECT s.code  site_code,
+                                      0       isextinct,
+                                      d.taxcode vatcode,
+                                      d.dtfr  effectivedate
+                                 FROM fintaxdet d, fintaxmain m, admsite s
+                                WHERE     d.taxcode = m.taxcode
+                                      AND ADMOU_CODE = P_CONNECT_OU -- REV : 002
+                                      AND d.admcmptax_code =
+                                             s.psite_admcmptax_code
+                                      AND coalesce(d.formcode, 0) = 0
+                                      AND d.fintradegrp_code =
+                                             (SELECT code
+                                                FROM fintradegrp
+                                               WHERE UPPER(NAME) = 'LOCAL'))
+                              v2
+                        WHERE     date_trunc('day', effectivedate) <= p_date
+                              AND v2.isextinct = 0
+                              AND v2.site_code = p_sitecode
+                     GROUP BY v2.vatcode)
+             AND v1.isextinct = 0
+             AND v1.site_code = p_sitecode;
+
+      RETURN(vatid);
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         RETURN(NULL);
+   END;
+
+   -- Validate Store franchise consignment Sale
+"""
+  returnType = bigint
+  arguments = <
+    {
+      name = p_icode
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_sitecode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

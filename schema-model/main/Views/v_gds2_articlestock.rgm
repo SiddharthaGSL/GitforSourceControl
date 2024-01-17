@@ -1,0 +1,56 @@
+view "main"."v_gds2_articlestock" {
+  text = """-
+SELECT q.sitecode,
+    q.loccode,
+    q.invarticle_code,
+    q.gds_refcode_article,
+    sum(q.closingstockqty) AS closingstockqty,
+    sum(q.unsettlesaleqty) AS unsettlesaleqty
+   FROM ( SELECT i.admsite_code AS sitecode,
+            i.loccode,
+            i.invarticle_code,
+            i.gds_refcode_article,
+            i.qty AS closingstockqty,
+            0 AS unsettlesaleqty
+           FROM main.invstock_onhand_article i
+          WHERE (i.loccode <> ( SELECT invloc.loccode
+                   FROM main.invloc
+                  WHERE (invloc.loctype = 'T'::bpchar)))
+        UNION ALL
+         SELECT pi.admsite_code AS sitecode,
+            ( SELECT invloc.loccode
+                   FROM main.invloc
+                  WHERE (invloc.loctype = 'S'::bpchar)) AS loccode,
+            i.invarticle_code,
+            concat_ws(''::text, i.invarticle_code, '~', pi.admsite_code) AS gds_refcode_article,
+            0 AS closingstockqty,
+            sum(pi.qty) AS unsettlesaleqty
+           FROM main.psite_posbillitem_park pi,
+            main.psite_posbill_park p,
+            main.invitem i
+          WHERE (((pi.psite_posbill_code)::text = (p.code)::text) AND ((pi.icode)::text = (i.icode)::text))
+          GROUP BY pi.admsite_code, i.invarticle_code) q
+  GROUP BY q.sitecode, q.loccode, q.invarticle_code, q.gds_refcode_article;
+"""
+  columns = (
+    column "sitecode" {
+      type = "bigint"
+    }
+    column "loccode" {
+      type = "bigint"
+    }
+    column "invarticle_code" {
+      type = "bigint"
+    }
+    column "gds_refcode_article" {
+      type = "character varying"
+    }
+    column "closingstockqty" {
+      type = "numeric"
+    }
+    column "unsettlesaleqty" {
+      type = "numeric"
+    }
+  )
+}
+

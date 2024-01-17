@@ -1,0 +1,69 @@
+procedure "main"."p_reco_alloc_table_ins(bigint)" {
+  text = """
+
+BEGIN
+   DECLARE
+      grt CURSOR FOR
+         SELECT DISTINCT ICODE, ADMSITE_CODE
+           FROM INVSTOCK_onhand S
+
+          WHERE     NOT EXISTS (SELECT NULL
+                          FROM PSITE_ALLOC_ITEM I
+                         WHERE     I.ADMSITE_CODE = S.ADMSITE_CODE
+                               AND I.ICODE = S.ICODE
+                               AND i.admsite_code = psitecode)
+                AND LOCCODE IN (1, 2)
+                AND admsite_code = psitecode;
+   BEGIN
+      FOR c1 IN grt
+      LOOP
+         INSERT INTO PSITE_ALLOC_ITEM(ADMSITE_CODE, ICODE)
+              VALUES (C1.ADMSITE_CODE, C1.ICODE);
+      END LOOP;
+   END;
+   INSERT INTO psite_alloc_article(admsite_code, invarticle_code)
+      SELECT psitecode admsite_code, i.invarticle_code
+        FROM psite_alloc_item pi, invitem i
+       WHERE pi.ICODE = i.icode AND admsite_code = psitecode
+      EXCEPT
+      SELECT psitecode, invarticle_code
+        FROM psite_alloc_article
+       WHERE admsite_code = psitecode;
+   INSERT INTO psite_alloc_department(admsite_code, grpcode)
+      SELECT psitecode admsite_code, departmentid
+        FROM v_npos_article
+       WHERE site_code = psitecode
+      EXCEPT
+      SELECT psitecode admsite_code, grpcode
+        FROM psite_alloc_department
+       WHERE admsite_code = psitecode;
+   INSERT INTO psite_alloc_section(admsite_code, grpcode)
+      SELECT psitecode admsite_code, sectionid
+        FROM v_npos_department
+       WHERE site_code = psitecode
+      EXCEPT
+      SELECT psitecode admsite_code, grpcode
+        FROM psite_alloc_section
+       WHERE admsite_code = psitecode;
+   INSERT INTO psite_alloc_division(admsite_code, grpcode)
+      SELECT psitecode admsite_code, divisionid
+        FROM v_npos_section
+       WHERE site_code = psitecode
+      EXCEPT
+      SELECT psitecode admsite_code, grpcode
+        FROM psite_alloc_division
+       WHERE admsite_code = psitecode;
+   COMMIT;
+END;
+"""
+  arguments = <
+    {
+      name = psitecode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

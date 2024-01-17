@@ -1,0 +1,100 @@
+procedure "main"."int$pkg_grcadhoc_loc_proc_insert_excise_data(bigint)" {
+  text = """
+
+DECLARE
+
+      v_excisemain_code      INVGRCDET.excisemain_code%TYPE;
+      v_ex_basis             INVGRCDET.ex_basis%TYPE;
+      v_ex_effrate           INVGRCDET.ex_effrate%TYPE;
+      v_ex_abtfactor         INVGRCDET.ex_abtfactor%TYPE;
+      v_ex_dutyfactor        INVGRCDET.ex_dutyfactor%TYPE;
+      v_ex_cessfactor        INVGRCDET.ex_cessfactor%TYPE;
+      v_ex_appamt            INVGRCDET.ex_appamt%TYPE;
+      v_ex_dutyamt           INVGRCDET.ex_dutyamt%TYPE;
+      v_ex_cessamt           INVGRCDET.ex_cessamt%TYPE;
+      v_ex_roundoff          excisedet.roundoff%TYPE;
+      v_ex_applicable_from   excisedet.ex_applicable_from%TYPE;
+      v_orddt                timestamp;
+      v_excise_appl          char(1);
+
+  C1_LOOP RECORD;
+
+BEGIN
+      SELECT m.GRCdt, d.isexcise
+        INTO STRICT v_orddt, v_excise_appl
+        FROM INVGRCMAIN m, admdocscheme d
+       WHERE m.doccode = d.doccode AND m.GRCCODE = p_GRCcode;
+
+      IF V_EXCISE_APPL = 'Y'
+      THEN
+         FOR C1_LOOP
+            IN (SELECT DET.CODE ERS_CODE,
+                       DET.ACQTY,
+                       ORDDET.ORDQTY,
+                       ORDDET.EXCISEMAIN_CODE,
+                       ORDDET.EX_BASIS,
+                       ORDDET.EX_EFFRATE,
+                       ORDDET.EX_ABTFACTOR,
+                       ORDDET.EX_DUTYFACTOR,
+                       ORDDET.EX_CESSFACTOR,
+                       ORDDET.EX_ROUNDOFF,
+                       ORDDET.EX_APPAMT,
+                       ORDDET.EX_DUTYAMT,
+                       ORDDET.EX_CESSAMT,
+                       ORDDET.EX_APPLICABLE_FROM
+                  FROM INVGRCDET DET, PURORDDET ORDDET
+                 WHERE DET.GRCCODE = P_GRCCODE AND DET.PO_CODE = ORDDET.CODE)
+         LOOP
+            UPDATE INVGRCDET
+               SET EXCISEMAIN_CODE = C1_LOOP.EXCISEMAIN_CODE,
+                   EX_BASIS = C1_LOOP.EX_BASIS,
+                   EX_EFFRATE = coalesce(C1_LOOP.EX_EFFRATE, 0),
+                   EX_ABTFACTOR = coalesce(C1_LOOP.EX_ABTFACTOR, 0),
+                   EX_DUTYFACTOR = coalesce(C1_LOOP.EX_DUTYFACTOR, 0),
+                   EX_CESSFACTOR = coalesce(C1_LOOP.EX_CESSFACTOR, 0),
+                   EX_APPAMT =
+                      (CASE WHEN                           C1_LOOP.EX_BASIS = NULL THEN  0  ELSE ROUND (                               coalesce(C1_LOOP.ACQTY, 0)                             * ( (  C1_LOOP.EX_EFFRATE                                  - (  (  C1_LOOP.EX_EFFRATE                                        * C1_LOOP.EX_ABTFACTOR)                                     / 100))),                             2) END ),
+                   EX_DUTYAMT =
+                      (CASE WHEN                           C1_LOOP.EX_BASIS = NULL THEN  0  ELSE ROUND (                             (  coalesce(C1_LOOP.ACQTY, 0)                              * (  (  (  C1_LOOP.EX_EFFRATE                                       - (  (  C1_LOOP.EX_EFFRATE                                             * C1_LOOP.EX_ABTFACTOR)                                          / 100))                                    * C1_LOOP.EX_DUTYFACTOR)                                 / 100)),                             (CASE WHEN C1_LOOP.EX_ROUNDOFF=0 THEN  0  ELSE 2 END )) END ),
+                   EX_CESSAMT =
+                      (CASE WHEN                           C1_LOOP.EX_BASIS = NULL THEN  0  ELSE ROUND (                             (  coalesce(C1_LOOP.ACQTY, 0)                              * (  (  (  (  (  C1_LOOP.EX_EFFRATE                                             - (  (  C1_LOOP.EX_EFFRATE                                                   * C1_LOOP.EX_ABTFACTOR)                                                / 100))                                          * C1_LOOP.EX_DUTYFACTOR)                                       / 100)                                    * C1_LOOP.EX_CESSFACTOR)                                 / 100)),                             (CASE WHEN C1_LOOP.EX_ROUNDOFF=0 THEN  0  ELSE 2 END )) END ),
+                   EX_ROUNDOFF = C1_LOOP.EX_ROUNDOFF,
+                   EX_APPLICABLE_FROM = C1_LOOP.EX_APPLICABLE_FROM
+             WHERE CODE = C1_LOOP.ERS_CODE;
+         END LOOP;
+
+         -- set excise related charge to 0 as per budget 2016 if ex_effrate is less than ex_exempt_limit
+         UPDATE INVGRCDET D
+            SET EX_DUTYFACTOR = 0, EX_DUTYAMT = 0, EX_CESSAMT = 0
+          WHERE     GRCCODE = P_GRCCODE
+                AND coalesce(EX_EFFRATE, 0) < coalesce(EX_APPLICABLE_FROM, 0);
+
+         CALL int$pkg_grcadhoc_loc_pro_setoff_fraction_value(p_GRCcode);
+      ELSE
+         UPDATE INVGRCDET
+            SET EXCISEMAIN_CODE  = NULL,
+                EX_BASIS  = NULL,
+                EX_EFFRATE = 0,
+                EX_ABTFACTOR = 0,
+                EX_DUTYFACTOR = 0,
+                EX_CESSFACTOR = 0,
+                EX_APPAMT = 0,
+                EX_DUTYAMT = 0,
+                EX_CESSAMT = 0,
+                EX_ROUNDOFF = 0
+          WHERE GRCCODE = P_GRCCODE;
+      END IF;
+   END;
+
+"""
+  arguments = <
+    {
+      name = p_grccode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

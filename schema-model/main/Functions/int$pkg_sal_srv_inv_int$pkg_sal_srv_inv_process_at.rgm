@@ -1,0 +1,777 @@
+function "main"."int$pkg_sal_srv_inv_int$pkg_sal_srv_inv_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      errmsg                    varchar(2000);
+      vsession                  varchar(100);
+      vdetailtbl                varchar(2000);
+      vdetailrec                varchar(500);
+      errcode                   text;
+      --vmaxno                  number;
+      vcount                    bigint;
+      v_null_GL_cnt             bigint;
+      v_status                  varchar(2000);
+      v_menucode                bigint := 959;
+      v_det_cnt                 bigint;
+
+      v_srvcode                 salsrvmain.srvcode%TYPE;
+      v_srvno                   salsrvmain.srvno%TYPE;
+      v_ycode                   salsrvmain.ycode%TYPE;
+      v_admsite_code            salsrvmain.admsite_code%TYPE;
+      v_srv_dt                  salsrvmain.srvdt%TYPE;
+      v_grsamt                  salsrvmain.grsamt%TYPE;
+      v_chgamt                  salsrvmain.chgamt%TYPE;
+      v_netamt                  salsrvmain.netamt%TYPE;
+      v_doccode                 salsrvmain.doccode%TYPE;
+      v_scheme_docno            salsrvmain.scheme_docno%TYPE;
+      v_salsrvmain_chg_glcode   fingl.glcode%TYPE;
+      v_salsrvmain_chg_slcode   finsl.slcode%TYPE;
+
+      v_tempno                  bigint;
+      v_err                     varchar(1000);
+      g_mark                    varchar(100);
+      v_str                     varchar(4000);
+      v_no                      bigint;
+
+      
+
+      -- START REV : 001
+      V_ADMOU_CODE               bigint :=  NULL;
+      V_ADMSITE_CODE_OWNER                 bigint :=  NULL;
+      -- END REV : 001
+c1 CURSOR FOR
+           SELECT DISTINCT srvcode
+             FROM int$stg_sal_srv_inv_all_fld
+            WHERE userid = p_userid
+         ORDER BY 1;
+
+      -- main fields
+      c_main CURSOR(p_srvcode bigint)
+      FOR
+         SELECT DISTINCT srvcode,
+                         service_date,
+                         docno,
+                         docdt,
+                         duedt,
+                         remarks,
+                         admsite_code,
+                         admou_code,
+                         pcode,
+                         pglcode,
+                         ycode,
+                         saltradegrp_code,
+                         saltermcode,
+                         formapp,
+                         formcode,
+                         formno,
+                         formdt,
+                         formamt,
+                         doccode,
+                         scheme_docno,
+                         gstappl,
+                         cp_gstin_state_code,
+                         cp_gstin_no,
+                         owner_gstin_no,
+                         owner_gstin_state_code,
+                         site_short_name
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE userid = p_userid AND srvcode = p_srvcode;
+
+      -- detail fields
+      c_det CURSOR(p_srvcode bigint)
+      FOR
+         SELECT *
+           FROM int$stg_sal_srv_inv_all_fld
+          WHERE userid = p_userid AND srvcode = p_srvcode;
+
+  i RECORD;
+BEGIN
+      g_mark := 'P01';
+
+      -- Deleting all log against the Sales of Service creation for the user
+      DELETE FROM admerraudit aud
+       WHERE     aud.usrname = USER
+             AND aud.prcname = 'SAL_SRV_INV'
+             AND aud.errcode = p_userid::text;
+
+      /*call erraudit(USER,
+                'SAL_SRV_INV',
+                p_userid,
+                '1 - Web import Sales of Service creation start');*/
+
+      -- Updating srvcode in int$stg_sal_srv_inv_all_fld
+      FOR i IN (  SELECT DISTINCT date_trunc('day', service_date) srv_dt,
+                                  site_short_name,
+                                  docno,
+                                  docdt,
+                                  remarks,
+                                  scheme_docno
+                    FROM int$stg_sal_srv_inv_all_fld
+                   WHERE userid = p_userid
+                ORDER BY 1)
+      LOOP
+         SELECT nextval('erp01') INTO STRICT v_srvcode;
+
+         v_status :=
+               ' update int$stg_sal_srv_inv_all_fld a'
+            || ' set    srvcode = '
+            || quote_nullable(v_srvcode::text)
+            || ','
+            || ' ycode = (select ycode from admyear where '
+            || quote_nullable(TO_CHAR(i.srv_dt, 'YYYY-MM-DD'))
+            || ' between dtfr and dtto)'
+            || ' where  service_date = '
+            || quote_nullable(TO_CHAR(i.srv_dt, 'YYYY-MM-DD'))
+            || ''
+            || ' and    site_short_name = '
+            || quote_nullable(i.site_short_name)
+            || ''
+            || ' and    ('
+            || quote_nullable(i.docno)
+            || ' is null or a.docno = '
+            || quote_nullable(i.docno)
+            || ')'
+            || ' and    (docdt is null or docdt = '
+            || quote_nullable(TO_CHAR(i.docdt, 'YYYY-MM-DD'))
+            || ')'
+            || ' and    ('
+            || quote_nullable(REPLACE(i.remarks,'''','@'))
+            || ' is null or  REPLACE (a.remarks,'''''''',''@'') = '
+            || quote_nullable(REPLACE(i.remarks,'''','@'))
+            || ')'
+            || ' and    ('
+            || quote_nullable(i.scheme_docno)
+            || ' is null or a.scheme_docno = '
+            || quote_nullable(i.scheme_docno)
+            || ')'
+            || ' and    userid = '
+            || p_userid::text;
+
+         /*call erraudit(USER,
+                   'SAL_SRV_INV',
+                   p_userid,
+                   '2 - Updating srvcode - ' || v_status);*/
+
+         v_status := db_fun_commit_statement(USER, v_status);
+      END LOOP;
+
+      FOR i IN c1
+      LOOP
+         FOR j IN c_main(i.srvcode)
+         LOOP
+         -- START REV : 001
+           /* db_pkg_genentryno.set_oucode (j.admou_code);
+            db_pkg_genentryno.set_sitecode (j.admsite_code);
+            db_pkg_genentryno.set_menucode (v_menucode);
+            db_pkg_genentryno.initialize_globals (j.ycode);
+
+            v_tempno := db_pkg_genentryno.get_tempno;*/
+        -- END REV : 001
+           /*call erraudit(
+               USER,
+               'SAL_SRV_INV',
+               p_userid,
+                  '71 - Inserting main entry ... '
+               || i.srvcode::text
+               || '*'
+               || J.YCODE::text);*/
+
+            INSERT INTO salsrvmain(srvcode,
+                                    srvno,
+                                    srvdt,
+                                    docno,
+                                    docdt,
+                                    duedt,
+                                    REM,
+                                    admsite_code,
+                                    pcode,
+                                    pglcode,
+                                    ycode,
+                                    ecode,
+                                    time,
+                                    saltradegrp_code,
+                                    saltermcode,
+                                    formapp,
+                                    formcode,
+                                    formno,
+                                    formdt,
+                                    formamt,
+                                    doccode,
+                                    scheme_docno,
+                                    gstappl,
+                                    admsite_code_owner,
+                                    admou_code,
+                                    owner_gstin_no,
+                                    owner_gstin_state_code,
+                                    cp_gstin_no,
+                                    cp_gstin_state_code,
+                                    entry_source)
+                 VALUES (i.srvcode,
+                         v_tempno,
+                         j.service_date,
+                         j.docno,
+                         j.docdt,
+                         j.duedt,
+                         j.remarks,
+                         j.admsite_code,
+                         j.pcode,
+                         j.pglcode,
+                         j.ycode,
+                         p_userid,
+                         clock_timestamp(),
+                         j.saltradegrp_code,
+                         j.saltermcode,
+                         j.formapp,
+                         j.formcode,
+                         j.formno,
+                         j.formdt,
+                         j.formamt,
+                         j.doccode,
+                         coalesce(j.scheme_docno, 'Automatic'),
+                         j.gstappl,
+                         p_connect_site,
+                         p_connect_ou,
+                         j.owner_gstin_no,
+                         j.owner_gstin_state_code,
+                         j.cp_gstin_no,
+                         j.cp_gstin_state_code,
+                         'EXCEL');
+
+            -- Document detail entry
+            FOR k IN c_det(i.srvcode)
+            LOOP
+               INSERT INTO salsrvdet(srvcode,
+                                      servicecode,
+                                      qty,
+                                      rate,
+                                      srvamt,
+                                      glcode,
+                                      slcode,
+                                      gl_cc_appl,
+                                      taxcode,
+                                      hsn_sac_code)
+                    VALUES (i.srvcode,
+                            k.servicecode,
+                            k.qty,
+                            k.rate,
+                            k.amount,
+                            k.det_glcode,
+                            k.det_slcode,
+                            k.det_gl_cc_appl,
+                            k.det_taxcode,
+                            k.hsn_sac_code);
+            END LOOP;                                   -- End of detail entry
+            UPDATE salsrvdet
+               SET srvcode = srvcode
+             WHERE srvcode = i.srvcode;
+
+            v_det_cnt := 0;
+
+            BEGIN
+               SELECT COUNT(*)
+                 INTO STRICT v_det_cnt
+                 FROM salsrvdet
+                WHERE srvcode = i.srvcode;
+            EXCEPTION
+               WHEN no_data_found
+               THEN
+                  NULL;
+            END;
+
+            IF coalesce(v_det_cnt, 0) = 0
+            THEN
+               ROLLBACK;
+            --g_error := 'Detail record not found';
+            --raise insert_violation;
+            END IF;
+
+            BEGIN
+               vcount := 0;
+
+               SELECT COUNT(DISTINCT glcode)
+                 INTO STRICT vcount
+                 FROM salsrvdet
+                WHERE srvcode = i.srvcode;
+            EXCEPTION
+               WHEN no_data_found
+               THEN
+                  vcount := 0;
+            END;
+
+            BEGIN
+               v_det_cnt := 0;
+
+               SELECT COUNT(DISTINCT coalesce(slcode, 0))
+                 INTO STRICT v_det_cnt
+                 FROM salsrvdet
+                WHERE srvcode = i.srvcode;
+            EXCEPTION
+               WHEN no_data_found
+               THEN
+                  v_det_cnt := 0;
+            END;
+
+            v_salsrvmain_chg_glcode := NULL;
+            v_salsrvmain_chg_slcode := NULL;
+
+            IF coalesce(vcount, 0) = 1 AND coalesce(v_det_cnt, 0) = 1
+            THEN
+               BEGIN
+                  SELECT DISTINCT glcode
+                    INTO STRICT v_salsrvmain_chg_glcode
+                    FROM salsrvdet
+                   WHERE srvcode = i.srvcode;
+               EXCEPTION
+                  WHEN no_data_found
+                  THEN
+                     v_salsrvmain_chg_glcode := NULL;
+               END;
+
+               BEGIN
+                  SELECT DISTINCT slcode
+                    INTO STRICT v_salsrvmain_chg_slcode
+                    FROM salsrvdet
+                   WHERE srvcode = i.srvcode AND coalesce(slcode, 0) <> 0;
+               EXCEPTION
+                  WHEN no_data_found
+                  THEN
+                     v_salsrvmain_chg_slcode := NULL;
+               END;
+            END IF;
+
+           /*call erraudit(USER,
+                      'SAL_SRV_INV',
+                      p_userid,
+                      '73 - Calculating line level charge ... ');*/
+
+            CALL int$pkg_sal_srv_inv_calculate_term_item(i.srvcode,
+                                 j.service_date,
+                                 j.saltradegrp_code,
+                                 j.saltermcode,
+                                 j.formcode,
+                                 j.pcode,
+                                 v_salsrvmain_chg_glcode,
+                                 v_salsrvmain_chg_slcode,
+                                 j.admsite_code,
+                                 p_connect_site);
+
+            CALL int$pkg_sal_srv_inv_calculate_term(i.srvcode,
+                            j.saltermcode,
+                            v_salsrvmain_chg_glcode,
+                            v_salsrvmain_chg_slcode);
+
+            v_null_GL_cnt := NULL;
+
+            SELECT COUNT(*)
+              INTO STRICT v_null_GL_cnt
+              FROM salsrvchg
+             WHERE srvcode = i.srvcode AND glcode IS NULL;
+
+            IF coalesce(v_null_GL_cnt, 0) > 0 AND v_salsrvmain_chg_glcode IS NULL
+            THEN
+               INSERT INTO global_temp_storage(code_1)
+                    VALUES (i.srvcode);
+            END IF;
+         END LOOP;                                        -- End of Main entry
+      END LOOP;                                          -- End of Per srvcode
+      v_null_GL_cnt := NULL;
+
+      SELECT COUNT(*)
+        INTO STRICT v_null_GL_cnt
+        FROM global_temp_storage
+       WHERE code_1 IS NOT NULL;
+
+      IF coalesce(v_null_GL_cnt, 0) > 0
+      THEN
+         RAISE EXCEPTION 'chg_gl_exp' USING ERRCODE = '50001';
+      END IF;
+
+      -- totamt_negative_exp
+      DELETE FROM global_temp_storage;
+
+      FOR i IN c1
+      LOOP
+         SELECT coalesce(SUM(coalesce(srvamt, 0)), 0)
+           INTO STRICT v_grsamt
+           FROM salsrvdet
+          WHERE srvcode = i.srvcode;
+
+         SELECT round((coalesce(SUM(coalesce(chgamt, 0)), 0))::numeric, 2)
+           INTO STRICT v_chgamt
+           FROM salsrvchg
+          WHERE srvcode = i.srvcode;
+
+         v_netamt := coalesce(v_grsamt, 0) + coalesce(v_chgamt, 0);
+
+         IF v_netamt < 0
+         THEN
+            INSERT INTO global_temp_storage(code_1,
+                                             value_1,
+                                             value_2,
+                                             value_3)
+                 VALUES (i.srvcode,
+                         v_grsamt,
+                         v_chgamt,
+                         v_netamt);
+         END IF;
+      END LOOP;
+
+      v_null_GL_cnt := NULL;
+
+      SELECT COUNT(*)
+        INTO STRICT v_null_GL_cnt
+        FROM global_temp_storage
+       WHERE code_1 IS NOT NULL;
+
+      IF coalesce(v_null_GL_cnt, 0) > 0
+      THEN
+         RAISE EXCEPTION 'totamt_negative_exp' USING ERRCODE = '50002';
+      END IF;
+
+      /*call erraudit(USER,
+                'SAL_SRV_INV',
+                p_userid,
+                '76 - Updating charge amount in  main table ... ');*/
+
+      -- Now all data inserted with proper validation
+      -- Now you may generate the scheme_docno, otherwise it may skipped.
+      -- site wise entry
+      FOR i IN c1
+      LOOP
+         --v_scheme_docno := NULL;
+         v_grsamt := NULL;
+         v_chgamt := NULL;
+         v_netamt := NULL;
+         v_ycode := NULL;
+         v_srv_dt := NULL;
+         V_DOCCODE := NULL;
+         V_ADMSITE_CODE_OWNER := NULL;
+         V_ADMOU_CODE   := NULL;
+
+         SELECT DISTINCT
+                ycode, 
+                service_date,
+                DOCCODE,
+                -- START REV : 003
+                --ADMSITE_CODE,
+                ADMSITE_CODE_OWNER,
+                -- END REV : 003
+                ADMOU_CODE
+           INTO STRICT v_ycode, v_srv_dt,V_DOCCODE,V_ADMSITE_CODE_OWNER,V_ADMOU_CODE
+           FROM int$stg_sal_srv_inv_all_fld
+          WHERE srvcode = i.srvcode;
+
+-- START REV : 001
+       
+-- END REV : 001
+         -- Update main entry
+         SELECT coalesce(SUM(coalesce(srvamt, 0)), 0)
+           INTO STRICT v_grsamt
+           FROM salsrvdet
+          WHERE srvcode = i.srvcode;
+
+         SELECT round((coalesce(SUM(coalesce(chgamt, 0)), 0))::numeric, 2)
+           INTO STRICT v_chgamt
+           FROM salsrvchg
+          WHERE srvcode = i.srvcode;
+
+         v_netamt := coalesce(v_grsamt, 0) + coalesce(v_chgamt, 0);
+
+         UPDATE salsrvmain
+            SET grsamt = v_grsamt,
+                chgamt = v_chgamt,
+                netamt = v_netamt,
+                srvno = NULL --db_pkg_genentryno.g_tempno
+          WHERE srvcode = i.srvcode;
+
+         SELECT scheme_docno
+           INTO STRICT v_scheme_docno
+           FROM salsrvmain
+          WHERE srvcode = i.srvcode;
+
+         -- START REV : 001
+         IF  V_SCHEME_DOCNO = 'Automatic' THEN
+             V_SCHEME_DOCNO :=
+             db_fun_document_number_web(NULL,
+                                         V_doccode,
+                                         V_YCODE,
+                                        TO_CHAR(v_srv_dt,'DD-MM-YYYY'),
+                                        NULL,
+                                        V_ADMSITE_CODE_OWNER,
+                                        V_ADMOU_CODE,
+                                        'SaleServInv'
+                                        );
+
+            UPDATE salsrvmain
+            SET SCHEME_DOCNO = V_SCHEME_DOCNO
+            WHERE srvcode = i.srvcode;
+
+         END IF;
+
+        -- END REV : 001
+         UPDATE int$stg_sal_srv_inv_all_fld
+            SET scheme_docno = v_scheme_docno
+          WHERE srvcode = i.srvcode;
+
+      END LOOP;
+
+      -- log to be added in history table
+      SELECT nextval('int$error_log_code') INTO STRICT vsession;
+
+      vdetailtbl :=
+            'CREATE TABLE ginarchive.SAL_SRV_INV_'
+         || vsession::text
+         || ' AS
+                    SELECT scheme_docno, DATE_TRUNC(''day'',service_date) srv_date, site_short_name, docno, remarks
+                    FROM   int$stg_sal_srv_inv_all_fld a
+                    WHERE  userid = '
+         || p_userid::text
+         || ' '
+         || 'GROUP BY scheme_docno, DATE_TRUNC(''day'',service_date), site_short_name, docno, remarks '
+         || 'ORDER BY 2, 1';
+
+      EXECUTE vdetailtbl;
+
+      vdetailrec :=
+         'SELECT count(1) FROM ginarchive.SAL_SRV_INV_' || vsession::text;
+
+      EXECUTE vdetailrec INTO STRICT vcount;
+
+      IF coalesce(vcount, 0) = 0
+      THEN
+         NULL;
+      --RAISE insert_violation;
+      END IF;
+
+      INSERT INTO int$history(code,
+                               importedby,
+                               importedon,
+                               classname,
+                               summary,
+                               history_detail_tablename,
+                               history_detail_row_count)
+           VALUES (nextval('int$history_code'),
+                   p_userid,
+                   clock_timestamp(),
+                   'SAL_SRV_INV',
+                   vcount::TEXT || ' Sale of service imported successfully.',
+                   'ginarchive.SAL_SRV_INV_' || vsession,
+                   vcount);
+
+      RETURN('1');
+   EXCEPTION
+      WHEN SQLSTATE '50001' THEN
+         errcode := 0;
+
+         FOR i IN (SELECT DISTINCT srvcode
+                     FROM int$stg_sal_srv_inv_all_fld
+                    WHERE userid = p_userid)
+         LOOP
+
+            DELETE FROM salsrvchg_item
+             WHERE srvcode = i.srvcode;
+
+            DELETE FROM salsrvchg
+             WHERE srvcode = i.srvcode;
+
+            DELETE FROM salsrvdet
+             WHERE srvcode = i.srvcode;
+
+            DELETE FROM salsrvmain
+             WHERE srvcode = i.srvcode;
+         END LOOP;
+
+         FOR i IN (SELECT DISTINCT code_1 srvcode
+                     FROM global_temp_storage
+                    WHERE code_1 IS NOT NULL)
+         LOOP
+            errmsg := NULL;
+
+            FOR j IN c_main(i.srvcode)
+            LOOP
+               errmsg :=
+                     ' srvcode = '
+                  || i.srvcode
+                  || ','
+                  || ' service_date = '''
+                  || TO_CHAR(j.service_date, 'dd-mon-rr')
+                  || ''''
+                  || ' site_short_name = '''
+                  || j.site_short_name
+                  || ''''
+                  || ' document_no = '''
+                  || j.docno
+                  || ''''
+                  || ' document_date = '''
+                  || TO_CHAR(j.docdt, 'dd-mon-rr')
+                  || ''''
+                  || ' REPLACE(remarks,'''''''',''@'') = '''
+                  || REPLACE(j.remarks,'''','@')
+                  || '''';
+            END LOOP;
+
+            errmsg :=
+                  'General Ledger is missing in charge. Document details - '
+               || errmsg;
+
+            INSERT INTO int$error_log(code,
+                                       lineno,
+                                       classname,
+                                       userid,
+                                       errortype,
+                                       errordesc,
+                                       createdon)
+                 VALUES (nextval('int$error_log_code'),
+                         0,
+                         'SAL_SRV_INV',
+                         p_userid,
+                         'Data Validation',
+                         errmsg,
+                         clock_timestamp());
+         END LOOP;
+
+         --select int$error_log_code.nextval into v_no from dual;
+         --v_str := 'insert into int$error_log (code, lineno, classname, userid, errortype, errordesc, createdon) ';
+         --v_str := v_str||' values ('||v_no||',0,''SAL_SRV_INV'','||p_userid||',''Data Validation'','''||errmsg||''','||sysdate||')';
+         --v_str := db_fun_commit_statement (user,v_str);
+         --Error log for Oracle Internal Error
+         --rollback;
+         --COMMIT;
+         RETURN('0');
+      WHEN SQLSTATE '50002' THEN
+         errcode := 0;
+
+         FOR i IN (SELECT DISTINCT srvcode
+                     FROM int$stg_sal_srv_inv_all_fld
+                    WHERE userid = p_userid)
+         LOOP
+            /*
+            delete fincosttag
+            where  entcode = to_char(i.srvcode)
+            and    enttype IN('SSM', 'SSD', 'SSC');
+
+            delete finpost
+            where  entcode = to_char(i.srvcode)
+            and    enttype IN('SSM', 'SSD', 'SSC');
+            */
+            DELETE FROM salsrvchg_item
+             WHERE srvcode = i.srvcode;
+
+            DELETE FROM salsrvchg
+             WHERE srvcode = i.srvcode;
+
+            DELETE FROM salsrvdet
+             WHERE srvcode = i.srvcode;
+
+            DELETE FROM salsrvmain
+             WHERE srvcode = i.srvcode;
+         END LOOP;
+
+         FOR i IN (SELECT DISTINCT code_1 srvcode
+                     FROM global_temp_storage
+                    WHERE code_1 IS NOT NULL)
+         LOOP
+            errmsg := NULL;
+
+            FOR j IN c_main(i.srvcode)
+            LOOP
+               errmsg :=
+                     ' srvcode = '
+                  || i.srvcode
+                  || ','
+                  || ' service_date = '''
+                  || TO_CHAR(j.service_date, 'dd-mon-rr')
+                  || ''''
+                  || ' site_short_name = '''
+                  || j.site_short_name
+                  || ''''
+                  || ' document_no = '''
+                  || j.docno
+                  || ''''
+                  || ' document_date = '''
+                  || TO_CHAR(j.docdt, 'dd-mon-rr')
+                  || ''''
+                  || ' REPLACE(remarks,'''''''',''@'') = '''
+                  || REPLACE(j.remarks,'''','@')
+                  || '''';
+            END LOOP;
+
+            errmsg :=
+                  'Total amount can not be negative. Document details - '
+               || errmsg;
+
+            INSERT INTO int$error_log(code,
+                                       lineno,
+                                       classname,
+                                       userid,
+                                       errortype,
+                                       errordesc,
+                                       createdon)
+                 VALUES (nextval('int$error_log_code'),
+                         0,
+                         'SAL_SRV_INV',
+                         p_userid,
+                         'Data Validation',
+                         errmsg,
+                         clock_timestamp());
+         END LOOP;
+
+         --COMMIT;
+         RETURN('0');
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'SAL_SRV_INV',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

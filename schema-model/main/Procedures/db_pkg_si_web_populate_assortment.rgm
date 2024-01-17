@@ -1,0 +1,114 @@
+procedure "main"."db_pkg_si_web_populate_assortment(text, bigint, bigint, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+      V_PRIORITY    bigint := 0;
+      V_STARTTIME   timestamp;
+      V_ENDTIME     timestamp;
+      V_SEQ         bigint;
+
+      C1 CURSOR FOR
+           SELECT SLNO,
+                  ALLOCATION_CODE,
+                  ASSORTMENT_CODE,
+                  STARTDATE,
+                  ENDDATE,
+                  BASIS,
+                  FACTOR,
+                  SELECTION
+             FROM TEMP_SI_ALLOCATION T
+            WHERE coalesce(SELECTION, 0) = 1
+         ORDER BY SLNO;
+
+BEGIN
+      IF UPPER(PC_ALLOCATION_MODE) = 'LOCAL'
+      THEN
+         SELECT coalesce(MAX(PRIORITY), 0)
+           INTO STRICT V_PRIORITY
+           -- start rev : 005
+           FROM PSITE_SI_ASSIGN D;
+
+         -- end rev : 005
+         FOR C1REC IN C1
+         LOOP
+            -- START REV : 005
+            /*  INSERT
+              INTO     SI_ALLOCATION_DET
+                      (
+                            ALLOCATION_CODE,CODE,ASSORTMENT_CODE,PRIORITY,BASIS,FACTOR,STARTDATE,ENDDATE,
+                          ALLOCATEDBY,ALLOCATEDON,APPROVED
+                      )
+              VALUES  (
+                          C1REC.ALLOCATION_CODE,PSITE_SI_ASSIGN_CODE.NEXTVAL,C1REC.ASSORTMENT_CODE,
+                          V_PRIORITY + 1,C1REC.BASIS,C1REC.FACTOR,C1REC.STARTDATE,C1REC.ENDDATE,
+                          PN_ALLOCATEDBY,SYSDATE,'N'
+                      );*/
+            INSERT INTO PSITE_SI_ASSIGN(CODE,
+                                         ASSORTMENT_CODE,
+                                         PRIORITY,
+                                         BASIS,
+                                         FACTOR,
+                                         STARTDATE,
+                                         ENDDATE,
+                                         ALLOCATEDBY,
+                                         ALLOCATEDON,
+                                         APPROVED)
+                 VALUES (nextval('psite_si_assign_code'),
+                         C1REC.ASSORTMENT_CODE,
+                         V_PRIORITY + 1,
+                         C1REC.BASIS,
+                         C1REC.FACTOR,
+                         C1REC.STARTDATE,
+                         C1REC.ENDDATE,
+                         PN_ALLOCATEDBY,
+                         clock_timestamp(),
+                         'N');
+
+            -- END REV : 005
+            V_PRIORITY := V_PRIORITY + 1;
+         END LOOP;
+      END IF;
+   END;
+
+
+"""
+  arguments = <
+    {
+      name = pc_allocation_mode
+      type = text
+      mode = IN
+    }
+
+    {
+      name = pn_allocation_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = pc_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = pn_iscreatedbyho
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = pn_allocatedby
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+  >
+  language = plpgsql
+}
+

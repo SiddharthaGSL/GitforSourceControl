@@ -1,0 +1,477 @@
+procedure "main"."db_pkg_get_data_snd$get_tradegrp_term(bigint, bigint, bigint, character varying, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+        V_TERMCODE      SALTERMMAIN.SALTERMCODE%TYPE;
+        V_TRADEGRP_CODE FINTRADEGRP.CODE%TYPE;
+        V_FORMCODE      FINFORM.FORMCODE%TYPE;
+        V_PRICELISTCODE SALPRICELISTMAIN.PRICELISTCODE%TYPE;
+        V_OWNER_SITE_TYPE ADMSITE.SITETYPE%TYPE;
+
+BEGIN
+
+        BEGIN
+            SELECT  S.SITETYPE
+            INTO STRICT    V_OWNER_SITE_TYPE
+            FROM ADMSITE S
+            WHERE S.CODE = P_SITE_CODE_OWNER;
+
+        END;
+/**************************************************************************************************
+REV : 011  MOUSUMI        06/04/2017     (BUG ID : 26844) Need an option to create Multi OU and all operation will be according to the same
+**************************************************************************************************************/
+        IF V_OWNER_SITE_TYPE IN ('OS-OO-CM') THEN
+                -- case I
+                IF  P_SITE_TYPE IN ('MS-OO-CM', 'MS-CO-CM', 'MS-CO-OM-TS') THEN
+                    BEGIN
+                        SELECT    CASE WHEN P_SITE_TYPE IN ('MS-OO-CM', 'MS-CO-CM') THEN
+                                        NULL
+                                     ELSE
+                                        A.TERMCODE
+                                END,
+                                CASE WHEN P_SITE_TYPE IN ('MS-OO-CM', 'MS-CO-CM') THEN
+                                        NULL
+                                     ELSE
+                                        A.SALTRADEGRP_CODE
+                                END,
+                                CASE WHEN P_SITE_TYPE IN ('MS-OO-CM', 'MS-CO-CM') THEN
+                                        NULL
+                                     ELSE
+                                        A.FORMCODE
+                                END,
+                                A.PRICELIST_CODE
+                        INTO STRICT
+                                V_TERMCODE,
+                                V_TRADEGRP_CODE,
+                                V_FORMCODE,
+                                V_PRICELISTCODE
+                        FROM
+                                ADMSITE_OU A
+
+                        WHERE        A.REPLN_ADMSITE_CODE    =   P_SITE_CODE_OWNER
+                        AND        A.ADMSITE_CODE            =    P_SITE_CODE;
+                    EXCEPTION
+                        WHEN no_data_found THEN
+                        NULL;
+                    END;
+                END IF;
+        ELSIF V_OWNER_SITE_TYPE IN ('MS-OO-CM', 'MS-CO-CM', 'MS-CO-OM-TS') THEN
+                -- case I
+                IF  P_SITE_TYPE IN ('MS-OO-CM', 'MS-CO-CM', 'MS-CO-OM-TS','OS-OO-CM') THEN
+                    BEGIN
+                        SELECT    CASE WHEN P_SITE_TYPE IN ('MS-OO-CM', 'MS-CO-CM','OS-OO-CM') THEN
+                                        NULL
+                                     ELSE
+                                        A.TERMCODE
+                                END,
+                                CASE WHEN P_SITE_TYPE IN ('MS-OO-CM', 'MS-CO-CM','OS-OO-CM') THEN
+                                        NULL
+                                     ELSE
+                                        A.SALTRADEGRP_CODE
+                                END,
+                                CASE WHEN P_SITE_TYPE IN ('MS-OO-CM', 'MS-CO-CM','OS-OO-CM') THEN
+                                        NULL
+                                     ELSE
+                                        A.FORMCODE
+                                END,
+                                A.PRICELIST_CODE
+                        INTO STRICT
+                                V_TERMCODE,
+                                V_TRADEGRP_CODE,
+                                V_FORMCODE,
+                                V_PRICELISTCODE
+                        FROM
+                                ADMSITE_OU A
+
+                        WHERE        A.ADMSITE_CODE       =   P_SITE_CODE_OWNER
+                        AND        A.REPLN_ADMSITE_CODE =    P_SITE_CODE;
+                    EXCEPTION
+                        WHEN no_data_found THEN
+                        NULL;
+                    END;
+                END IF;
+        END IF;
+        -- case II
+        IF  V_OWNER_SITE_TYPE IN ('OS-OO-CM') AND P_SITE_TYPE IN ('OS-OO-CM') THEN
+            BEGIN
+                SELECT  NULL,
+                        NULL,
+                        NULL,
+                        A.PRICELIST_CODE
+                INTO STRICT
+                        V_TRADEGRP_CODE,
+                        V_TERMCODE,
+                        V_FORMCODE,
+                        V_PRICELISTCODE
+                FROM
+                        ADMSITE A
+                WHERE   A.CODE     = P_SITE_CODE;
+            EXCEPTION
+                WHEN no_data_found THEN
+                NULL;
+            END;
+        END IF;
+
+        -- case III
+        IF  V_OWNER_SITE_TYPE IN ('OS-OO-CM') AND P_SITE_TYPE IN ('US-CO-OM', 'US-CO-OM-TS') THEN
+            BEGIN
+                SELECT  F.SALTRADEGRP_CODE,
+                        F.TERMCODE,
+                        F.SALFORMCODE,
+                        F.PRICELISTCODE
+                INTO STRICT
+                        V_TRADEGRP_CODE,
+                        V_TERMCODE,
+                        V_FORMCODE,
+                        V_PRICELISTCODE
+                FROM
+                        FINSL_OU_SITE F,
+                        FINSL_OU      U
+                WHERE
+                        F.FINSL_OU_CODE = U.CODE
+                AND     U.ADMOU_CODE    = P_ADMOU_CODE
+                AND     U.ADMSITE_CODE  = P_SITE_CODE_OWNER
+                AND     F.SITE_CODE     = P_SITE_CODE;
+            EXCEPTION
+                WHEN no_data_found THEN
+                BEGIN
+                    SELECT  A.SALTRADEGRP_CODE,
+                            A.TERMCODE,
+                            A.SALFORMCODE,
+                            A.PRICELIST_CODE
+                    INTO STRICT
+                            V_TRADEGRP_CODE,
+                            V_TERMCODE,
+                            V_FORMCODE,
+                            V_PRICELISTCODE
+                    FROM
+                            ADMSITE A
+                    WHERE   A.CODE     = P_SITE_CODE;
+
+                    IF  V_TRADEGRP_CODE IS NULL THEN
+                        BEGIN
+                            SELECT  F.SALTRADEGRP_CODE,
+                                    F.TERMCODE,
+                                    F.SALFORMCODE,
+                                    F.PRICELISTCODE
+                            INTO STRICT
+                                    V_TRADEGRP_CODE,
+                                    V_TERMCODE,
+                                    V_FORMCODE,
+                                    V_PRICELISTCODE
+                            FROM    FINSL_OU    F
+                            WHERE
+                                    F.ADMOU_CODE    = P_ADMOU_CODE
+                            AND        F.SLCODE         = P_PCODE
+                            AND     F.ADMSITE_CODE     = P_SITE_CODE_OWNER;
+
+                            IF  V_TRADEGRP_CODE IS NULL THEN
+                                BEGIN
+                                    SELECT    F.SALTRADEGRP_CODE,
+                                            F.SALTERMCODE,
+                                            F.SALFORMCODE,
+                                            F.PRICELISTCODE
+                                    INTO STRICT
+                                            V_TRADEGRP_CODE,
+                                            V_TERMCODE,
+                                            V_FORMCODE,
+                                            V_PRICELISTCODE
+                                    FROM    FINSL    F
+                                    WHERE    F.SLCODE = P_PCODE;
+                                EXCEPTION
+                                    WHEN no_data_found THEN
+                                    V_TERMCODE      := NULL;
+                                    V_TRADEGRP_CODE := NULL;
+                                    V_FORMCODE         := NULL;
+                                    V_PRICELISTCODE := NULL;
+                                END;
+                            END IF;
+                        EXCEPTION
+                            WHEN no_data_found THEN
+                            BEGIN
+                                SELECT    F.SALTRADEGRP_CODE,
+                                        F.SALTERMCODE,
+                                        F.SALFORMCODE,
+                                        F.PRICELISTCODE
+                                INTO STRICT
+                                        V_TRADEGRP_CODE,
+                                        V_TERMCODE,
+                                        V_FORMCODE,
+                                        V_PRICELISTCODE
+                                FROM    FINSL    F
+                                WHERE    F.SLCODE = P_PCODE;
+                            EXCEPTION
+                                WHEN no_data_found THEN
+                                V_TERMCODE      := NULL;
+                                V_TRADEGRP_CODE := NULL;
+                                V_FORMCODE         := NULL;
+                                V_PRICELISTCODE := NULL;
+                            END;
+                        END;
+                    END IF;
+                EXCEPTION
+                    WHEN no_data_found THEN
+                    BEGIN
+                        SELECT  F.SALTRADEGRP_CODE,
+                                F.TERMCODE,
+                                F.SALFORMCODE,
+                                F.PRICELISTCODE
+                        INTO STRICT
+                                V_TRADEGRP_CODE,
+                                V_TERMCODE,
+                                V_FORMCODE,
+                                V_PRICELISTCODE
+                        FROM    FINSL_OU    F
+                        WHERE
+                                F.ADMOU_CODE    = P_ADMOU_CODE
+                        AND        F.SLCODE         = P_PCODE
+                        AND     F.ADMSITE_CODE     = P_SITE_CODE_OWNER;
+                    EXCEPTION
+                        WHEN no_data_found THEN
+                        BEGIN
+                            SELECT    F.SALTRADEGRP_CODE,
+                                    F.SALTERMCODE,
+                                    F.SALFORMCODE,
+                                    F.PRICELISTCODE
+                            INTO STRICT
+                                    V_TRADEGRP_CODE,
+                                    V_TERMCODE,
+                                    V_FORMCODE,
+                                    V_PRICELISTCODE
+                            FROM    FINSL    F
+                            WHERE    F.SLCODE = P_PCODE;
+                        EXCEPTION
+                            WHEN no_data_found THEN
+                            V_TERMCODE      := NULL;
+                            V_TRADEGRP_CODE := NULL;
+                            V_FORMCODE         := NULL;
+                            V_PRICELISTCODE := NULL;
+                        END;
+                    END;
+                END;
+            END;
+        END IF;
+
+        -- case IV
+        IF  V_OWNER_SITE_TYPE IN ('OS-OO-CM') AND P_SITE_TYPE IN ('US-CO-CM') THEN
+            BEGIN
+                SELECT  NULL,
+                        NULL,
+                        NULL,
+                        F.PRICELISTCODE
+                INTO STRICT
+                        V_TRADEGRP_CODE,
+                        V_TERMCODE,
+                        V_FORMCODE,
+                        V_PRICELISTCODE
+                FROM
+                        FINSL_OU_SITE F,
+                        FINSL_OU      U
+                WHERE
+                        F.FINSL_OU_CODE = U.CODE
+                AND     U.ADMOU_CODE    = P_ADMOU_CODE
+                AND     U.ADMSITE_CODE  = P_SITE_CODE_OWNER
+                AND     F.SITE_CODE     = P_SITE_CODE;
+            EXCEPTION
+                WHEN no_data_found THEN
+                BEGIN
+                    SELECT  NULL,
+                            NULL,
+                            NULL,
+                            A.PRICELIST_CODE
+                    INTO STRICT
+                            V_TRADEGRP_CODE,
+                            V_TERMCODE,
+                            V_FORMCODE,
+                            V_PRICELISTCODE
+                    FROM
+                            ADMSITE A
+                    WHERE   A.CODE     = P_SITE_CODE;
+
+                    IF  V_PRICELISTCODE IS NULL THEN
+                        BEGIN
+                            SELECT  NULL,
+                                    NULL,
+                                    NULL,
+                                    F.PRICELISTCODE
+                            INTO STRICT
+                                    V_TRADEGRP_CODE,
+                                    V_TERMCODE,
+                                    V_FORMCODE,
+                                    V_PRICELISTCODE
+                            FROM    FINSL_OU    F
+                            WHERE
+                                    F.ADMOU_CODE    = P_ADMOU_CODE
+                            AND        F.SLCODE         = P_PCODE
+                            AND     F.ADMSITE_CODE     = P_SITE_CODE_OWNER;
+
+                            IF  V_PRICELISTCODE IS NULL THEN
+                                BEGIN
+                                    SELECT  NULL,
+                                            NULL,
+                                            NULL,
+                                            F.PRICELISTCODE
+                                    INTO STRICT
+                                            V_TRADEGRP_CODE,
+                                            V_TERMCODE,
+                                            V_FORMCODE,
+                                            V_PRICELISTCODE
+                                    FROM    FINSL    F
+                                    WHERE    F.SLCODE = P_PCODE;
+                                EXCEPTION
+                                    WHEN no_data_found THEN
+                                    V_TERMCODE      := NULL;
+                                    V_TRADEGRP_CODE := NULL;
+                                    V_FORMCODE         := NULL;
+                                    V_PRICELISTCODE := NULL;
+                                END;
+                            END IF;
+                        EXCEPTION
+                            WHEN no_data_found THEN
+                            BEGIN
+                                SELECT  NULL,
+                                        NULL,
+                                        NULL,
+                                        F.PRICELISTCODE
+                                INTO STRICT
+                                        V_TRADEGRP_CODE,
+                                        V_TERMCODE,
+                                        V_FORMCODE,
+                                        V_PRICELISTCODE
+                                FROM    FINSL    F
+                                WHERE    F.SLCODE = P_PCODE;
+                            EXCEPTION
+                                WHEN no_data_found THEN
+                                V_TERMCODE      := NULL;
+                                V_TRADEGRP_CODE := NULL;
+                                V_FORMCODE      := NULL;
+                                V_PRICELISTCODE := NULL;
+                            END;
+                        END;
+                    END IF;
+                EXCEPTION
+                    WHEN no_data_found THEN
+                    BEGIN
+                        SELECT  NULL,
+                                NULL,
+                                NULL,
+                                F.PRICELISTCODE
+                        INTO STRICT
+                                V_TRADEGRP_CODE,
+                                V_TERMCODE,
+                                V_FORMCODE,
+                                V_PRICELISTCODE
+                        FROM    FINSL_OU    F
+                        WHERE
+                                F.ADMOU_CODE    = P_ADMOU_CODE
+                        AND     F.SLCODE        = P_PCODE
+                        AND     F.ADMSITE_CODE  = P_SITE_CODE_OWNER;
+                    EXCEPTION
+                        WHEN no_data_found THEN
+                        BEGIN
+                            SELECT  NULL,
+                                    NULL,
+                                    NULL,
+                                    F.PRICELISTCODE
+                            INTO STRICT
+                                    V_TRADEGRP_CODE,
+                                    V_TERMCODE,
+                                    V_FORMCODE,
+                                    V_PRICELISTCODE
+                            FROM    FINSL    F
+                            WHERE   F.SLCODE = P_PCODE;
+                        EXCEPTION
+                            WHEN no_data_found THEN
+                            V_TERMCODE      := NULL;
+                            V_TRADEGRP_CODE := NULL;
+                            V_FORMCODE      := NULL;
+                            V_PRICELISTCODE := NULL;
+                        END;
+                    END;
+                END;
+            END;
+        END IF;
+
+        P_TERMCODE      :=  V_TERMCODE;
+        P_TRADEGRP_CODE :=  V_TRADEGRP_CODE;
+        P_FORMCODE      :=  V_FORMCODE;
+        P_PRICELISTCODE :=  V_PRICELISTCODE;
+
+        extra_param := 1;
+
+        --RETURN;
+    EXCEPTION
+        WHEN OTHERS THEN
+        NULL;
+        extra_param := 1;
+        --RETURN;
+    END;
+
+"""
+  arguments = <
+    {
+      name = p_admou_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_site_code_owner
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_site_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_site_type
+      type = character varying
+      mode = IN
+    }
+
+    {
+      name = p_pcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_termcode
+      type = bigint
+      mode = OUT
+    }
+
+    {
+      name = p_tradegrp_code
+      type = bigint
+      mode = OUT
+    }
+
+    {
+      name = p_formcode
+      type = bigint
+      mode = OUT
+    }
+
+    {
+      name = p_pricelistcode
+      type = bigint
+      mode = OUT
+    }
+
+    {
+      name = extra_param
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+  >
+  language = plpgsql
+}
+

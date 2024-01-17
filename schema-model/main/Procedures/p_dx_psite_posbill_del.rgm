@@ -1,0 +1,82 @@
+procedure "main"."p_dx_psite_posbill_del(text, bigint)" {
+  text = """
+
+DECLARE
+
+	V_LPCARDNO varchar(30);
+	V_LPPOINTSEARNED double precision;
+
+BEGIN
+    DELETE FROM psite_posbillmopdeno
+         WHERE psite_posbill_code = p_sitecuid || '-' || p_posbillid :: text;
+    DELETE FROM psite_posbillmop
+         WHERE psite_posbill_code = p_sitecuid || '-' || p_posbillid :: text;
+	DELETE FROM psite_posbillmop_PARK
+         WHERE psite_posbill_code = p_sitecuid || '-' || p_posbillid :: text;
+   --DELETE FROM psite_posbillcn
+   --      WHERE cni_psite_posbill_code = p_sitecuid || '-' || p_posbillid;
+    DELETE FROM psite_posbilldn
+         WHERE dni_bill_code = p_sitecuid || '-' || p_posbillid :: text;
+   DELETE FROM psite_posbillitemreturn
+   WHERE  RET_STORECUID  = p_sitecuid
+   AND    RET_PSITE_POSBILLITEM_CODE IN (SELECT code FROM psite_posbillitem
+                   WHERE psite_posbill_code = p_sitecuid || '-' || p_posbillid :: text);
+    DELETE FROM psite_posbillitem
+         WHERE psite_posbill_code = p_sitecuid || '-' || p_posbillid :: text;
+	DELETE FROM psite_posbillitem_PARK
+         WHERE psite_posbill_code = p_sitecuid || '-' || p_posbillid :: text;
+	BEGIN
+		SELECT lpcardno, lppointsearned INTO STRICT V_LPCARDNO, V_LPPOINTSEARNED
+        FROM psite_posbill
+       WHERE code = p_sitecuid || '-' || p_posbillid :: text
+         AND lpcard_benefit_point_code IS NOT NULL;
+	EXCEPTION
+            WHEN no_data_found
+            THEN
+                V_LPCARDNO := NULL;
+    END;
+	IF (V_LPCARDNO IS NOT NULL)
+	THEN
+		BEGIN
+			UPDATE lpcard_point
+			 SET earned = coalesce(earned, 0) - coalesce(V_LPPOINTSEARNED, 0),
+				 closing =
+					  coalesce(opening, 0)
+					+ coalesce(earned, 0)
+					- coalesce(V_LPPOINTSEARNED, 0)
+					- coalesce(redeemed, 0)
+		   WHERE cardno = V_LPCARDNO;
+	   END;
+	END IF;
+	DELETE FROM psite_deliveryslipitem
+         WHERE psite_deliveryslip_code IN (
+                  SELECT code
+                    FROM psite_deliveryslip
+                   WHERE psite_posbill_code = p_sitecuid || '-' || p_posbillid :: text);
+	DELETE FROM psite_deliveryslip
+         WHERE psite_posbill_code = p_sitecuid || '-' || p_posbillid :: text;
+    DELETE FROM psite_posreprintbillaudit
+         WHERE psite_posbill_code = p_sitecuid || '-' || p_posbillid :: text;
+    DELETE FROM psite_posbill
+         WHERE code = p_sitecuid || '-' || p_posbillid :: text;
+	DELETE FROM psite_posbill_PARK
+         WHERE code = p_sitecuid || '-' || p_posbillid :: text;
+END;
+"""
+  arguments = <
+    {
+      name = p_sitecuid
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_posbillid
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

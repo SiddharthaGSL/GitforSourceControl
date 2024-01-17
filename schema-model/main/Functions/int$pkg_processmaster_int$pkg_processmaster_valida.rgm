@@ -1,0 +1,366 @@
+function "main"."int$pkg_processmaster_int$pkg_processmaster_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        v_status    char(1);
+        errmsg      varchar(200);
+        errcode     bigint;
+BEGIN
+        -- profile not defined
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), 0, 'PROCESSMASTER', p_userid, 'Invalid User','Profile is not specified to the user.',clock_timestamp()
+        from    hrdemp  e
+        where   e.ecode = p_userid
+        and     e.profcode is null;
+
+        -- role not defined
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), 0, 'PROCESSMASTER', p_userid, 'Invalid User','Role is not specified to the user.',clock_timestamp()
+        from    hrdemp  e
+        where   e.ecode = p_userid
+        and     e.rlcode is null;
+
+        -- chk privilage
+        -- start rev : 006
+        /*
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        select  int$error_log_code.nextval, 0, 'PROCESSMASTER', p_userid, 'Invalid User','User does not have edit privilage.',sysdate
+        from    hrdemp  e,
+                admpriv p
+        where   e.ecode = p_userid
+        and     e.rlcode= p.rlcode
+        and     p.menucode = 821
+        and     p.save  = 'N'
+        and     p.del   = 'N'
+        and     e.rlcode is not null;
+        */
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), 0, 'PROCESSMASTER', p_userid, 'Invalid User','User does not have edit privilage.',clock_timestamp()
+        from (
+                    SELECT  coalesce(count(1),0) edit_priv
+                    from    hrdemp      e,
+                            rolemenu    rl,
+                            rolemenuoperation rp
+                    where   e.ecode = p_userid
+                    and     e.rlcode= rl.roleid
+                    and     rl.mdmenushortcode = 'ProdProcess'
+                    and     rp.rolemenuid = rl.id
+                    and     rp.mdappoperationid = 2
+                    and     e.rlcode is not null
+                ) tmp
+        where   coalesce(tmp.edit_priv,0) = 0;
+        -- END REV : 006
+        
+        -- jobber length
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PROCESSMASTER', userid, 'Length Validation','Jobber length is higher than it''s defined data length.',clock_timestamp()
+        from    int$stg_processmaster a
+        where   length(a.jobber) > 100
+        and     a.jobber is not null
+        and     a.userid = p_userid;
+
+        -- process length
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PROCESSMASTER', userid, 'Length Validation','Process length is higher than it''s defined data length.',clock_timestamp()
+        from    int$stg_processmaster a
+        where   length(a.process) > 100
+        and     a.process is not null
+        and     a.userid = p_userid;
+
+        -- barcode length
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PROCESSMASTER', userid, 'Length Validation','Barcode length is higher than it''s defined data length.',clock_timestamp()
+        from    int$stg_processmaster a
+        where   length(a.barcode) > 50
+        and     a.barcode is not null
+        and     a.userid = p_userid;
+
+        -- article length
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PROCESSMASTER', userid, 'Length Validation','Article length is higher than it''s defined data length.',clock_timestamp()
+        from    int$stg_processmaster a
+        where   length(a.articlename) > 100
+        and     a.articlename is not null
+        and     a.userid = p_userid;
+
+        -- rate length
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PROCESSMASTER', userid, 'Length Validation','Rate length is higher than it''s defined data length.',clock_timestamp()
+        from    int$stg_processmaster a
+        where   length(a.rate :: text) > 29
+        and     coalesce(a.rate,0) > 0
+        and     a.userid = p_userid;
+
+        -- update_pending_receipt length
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PROCESSMASTER', userid, 'Length Validation','Update Pending Receipt length is higher than it''s defined data length.',clock_timestamp()
+        from    int$stg_processmaster a
+        where   length(a.update_pending_receipt) > 1
+        and     update_pending_receipt is not null
+        and     a.userid = p_userid;
+
+        -- update_pending_order length
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PROCESSMASTER', userid, 'Length Validation','Update Pending Order length is higher than it''s defined data length.',clock_timestamp()
+        from    int$stg_processmaster a
+        where   length(a.update_pending_order) > 1
+        and     update_pending_order is not null
+        and     a.userid = p_userid;
+
+        -- jobber is mandatory
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PROCESSMASTER', userid, 'Mandatory Validation','Jobber is mandatory.',clock_timestamp()
+        from    int$stg_processmaster a
+        where   a.jobber is null
+        and     a.userid = p_userid;
+
+        -- process is mandatory
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PROCESSMASTER', userid, 'Mandatory Validation','Process is mandatory.',clock_timestamp()
+        from    int$stg_processmaster a
+        where   a.process is null
+        and     a.userid = p_userid;
+
+        -- rate is mandatory
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PROCESSMASTER', userid, 'Mandatory Validation','Rate is mandatory.',clock_timestamp()
+        from    int$stg_processmaster a
+        where   a.rate is null
+        and     a.userid = p_userid;
+
+        -- update_pending_order is mandatory
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PROCESSMASTER', userid, 'Mandatory Validation','Update pending order is mandatory.',clock_timestamp()
+        from    int$stg_processmaster a
+        where   a.update_pending_order is null
+        and     a.userid = p_userid;
+
+        -- update_pending_receipt is mandatory
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PROCESSMASTER', userid, 'Mandatory Validation','Update pending receipt is mandatory.',clock_timestamp()
+        from    int$stg_processmaster a
+        where   a.update_pending_receipt is null
+        and     a.userid = p_userid;
+
+        -- Jobber doesn't exist.
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PROCESSMASTER', userid, 'Jobber Data Validation','Either Jobber is Extinct or Jobber doesn''t exist.',clock_timestamp()
+        FROM int$stg_processmaster a 
+		LEFT OUTER JOIN ( SELECT  upper(slname)   slname, ext
+		                    from   finsl
+		                ) f ON (upper(a.jobber) = f.slname)
+		WHERE (f.slname is null 
+			   or (f.slname is not null and f.ext = 'Y'))
+		and a.userid = p_userid;
+
+        -- Process doesn't exist.
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PROCESSMASTER', userid, 'Process Data Validation','Either Process is Extinct or Process doesn''t exist.',clock_timestamp()
+        FROM int$stg_processmaster a
+		LEFT OUTER JOIN ( SELECT  upper(prname)   prname, ext
+		                    from    prdpr
+		                ) p ON (upper(a.process) = p.prname)
+		WHERE (p.prname is null 
+			   or (p.prname is not null and p.ext = 'Y'))
+		and a.userid = p_userid;
+		
+        -- Item doesn't exist.
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PROCESSMASTER', userid, 'Item Data Validation','Item doesn''t exist.',clock_timestamp()
+        FROM int$stg_processmaster a
+		LEFT OUTER JOIN ( SELECT  upper(icode) icode
+		                    from    invitem
+							union
+				            select  upper(barcode) icode
+		                    from    invitem
+		                ) i ON (upper(a.barcode) = i.icode)
+		WHERE i.icode is null and a.barcode is not null and a.userid = p_userid;
+
+        -- Article doesn't exist.
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PROCESSMASTER', userid, 'Article Data Validation','Article doesn''t exist.',clock_timestamp()
+        FROM int$stg_processmaster a
+		LEFT OUTER JOIN (SELECT  upper(name)   atname
+		                    from    invarticle
+		                ) r ON (upper(a.articlename) = r.atname)
+		WHERE r.atname is null and a.articlename is not null and a.userid = p_userid;
+
+        -- Rate < 0.
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PROCESSMASTER', userid, 'Rate Data Validation','Invalid Job rate.',clock_timestamp()
+        from    int$stg_processmaster   a
+        where   coalesce(a.rate,0) < 0
+        and     a.userid = p_userid;
+
+        -- UPDATE_PENDING_ORDER not in ('Y', 'N')
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PROCESSMASTER', userid, 'Update Pending Order Data Validation','Invalid option selected.',clock_timestamp()
+        from    int$stg_processmaster   a
+        where   update_pending_order not in ('Y', 'N')
+        and     a.userid = p_userid;
+
+        -- UPDATE_PENDING_RECEIPT not in ('Y', 'N')
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PROCESSMASTER', userid, 'Update Pending Receipt Data Validation','Invalid option selected.',clock_timestamp()
+        from    int$stg_processmaster   a
+        where   update_pending_order not in ('Y', 'N')
+        and     a.userid = p_userid;
+
+        -- Both Barcode and Article Name is null
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PROCESSMASTER', userid, 'Barcode and Article Name Data Validation','Invalid, Either of Barcode or Article Name is required.',clock_timestamp()
+        from    int$stg_processmaster   a
+        where   a.barcode is null
+        and     a.articlename is null
+        and     a.userid = p_userid;
+
+        -- Both Barcode and Article Name is not null
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PROCESSMASTER', userid, 'Barcode and Article Name Data Validation','Invalid, Both Article Name and Barcode not allowed in one record.',clock_timestamp()
+        from    int$stg_processmaster   a
+        where   a.barcode is not null
+        and     a.articlename is not null
+        and     a.userid = p_userid;
+
+        INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), a.lineno, 'PROCESSMASTER', a.userid, 'Data Validation', 'Duplicate row check to be applied for Process,  Jobber, Barocde/ Article Name, unable to proceed.', clock_timestamp()
+        FROM    int$stg_processmaster a
+                ,    (SELECT   jobber,process,barcode,COUNT(1) CNT
+                              FROM    int$stg_processmaster a
+                              WHERE    a.userid = p_userid
+                              and      BARCODE IS NOT NULL
+                              GROUP BY   jobber,process,barcode
+                              HAVING  COUNT(1) > 1
+                       ) b
+        WHERE   a.jobber = b.jobber
+        AND     a.process = b.process
+        AND     a.barcode = b.barcode
+        AND     a.userid = p_userid;
+
+        --COMMIT;
+
+        -- check whether records are valid or not
+        begin
+            select  'S'
+            into STRICT    v_status
+
+            where   exists (
+                            SELECT  'S'
+                            from    int$error_log
+                            where   userid = p_userid
+                            );
+            return('0');
+        exception
+            when no_data_found then
+            return('1');
+        end;
+    exception
+        when others then
+            errcode := SQLSTATE;
+            errmsg := sqlerrm;
+
+            insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            values (nextval('int$error_log_code'), 0, 'PROCESSMASTER', p_userid, errcode, errmsg, clock_timestamp());
+            --COMMIT;
+
+            return('0');
+    end;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+
+function "main"."int$pkg_processmaster_int$pkg_processmaster_validate(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+ 
+DECLARE
+    -- Change this to reflect the dblink connection string
+    --v_conn_str  text := format('port=%s dbname=%s user=%s', current_setting('port'), current_database(), current_user);
+    v_srvname       name;
+    v_connname      text;
+    v_connstr       text;
+    v_conn_result   text;
+    v_query         text;
+
+    v_ret    text;
+BEGIN
+    v_srvname := 'foreign_pgbase';
+    v_connname := replace(uuid_generate_v4()::text,'-','');
+    v_connstr  := v_srvname;
+    
+    --Open the connection  
+    SELECT dblink_connect(v_connname,v_connstr) 
+    INTO v_conn_result;
+	v_query := 'SELECT * FROM int$pkg_processmaster_int$pkg_processmaster_validate_atx ( ' || quote_nullable(p_userid::text) || '::bigint,' || quote_nullable(p_connect_site::text) || '::bigint,' || quote_nullable(p_logging_date::text) || '::timestamp without time zone,' || quote_nullable(p_connect_ou::text) || '::bigint )';
+	SELECT * INTO v_ret FROM dblink(v_connname, v_query) AS p (ret text);
+
+	SELECT dblink_disconnect(v_connname) 
+    INTO v_conn_result;
+	
+	RETURN v_ret;
+EXCEPTION 
+   WHEN OTHERS THEN
+        SELECT dblink_disconnect(v_connname) 
+        INTO v_conn_result;
+
+END;
+"""
+  returnType = text
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

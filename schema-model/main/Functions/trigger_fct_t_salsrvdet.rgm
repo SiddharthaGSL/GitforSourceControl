@@ -1,0 +1,342 @@
+function "main"."trigger_fct_t_salsrvdet()" {
+  text = """
+
+DECLARE
+   ora2pg_rowcount integer;
+v_srvno                SALSRVMAIN.SRVNO%TYPE;
+   v_srvdt                SALSRVMAIN.SRVDT%TYPE;
+   v_docno                SALSRVMAIN.DOCNO%TYPE;
+   v_docdt                SALSRVMAIN.DOCDT%TYPE;
+   v_rem                  SALSRVMAIN.REM%TYPE;
+   v_scheme_docno         SALSRVMAIN.SCHEME_DOCNO%TYPE;
+   v_ycode                FINPOST.YCODE%TYPE;
+   v_admsite_code_owner   SALSRVMAIN.ADMSITE_CODE_OWNER%TYPE;
+   v_ecode                bigint;
+   v_time                 timestamp;
+   v_last_access_ecode    bigint;
+   v_last_access_time     timestamp;
+   v_admou_code           SALSRVMAIN.ADMOU_CODE%TYPE;
+   v_postcode             FINPOST.POSTCODE%TYPE;
+   v_cccode               FINCOSTTAG.CODE%TYPE;
+BEGIN
+  BEGIN
+   /****************************************************************************************************************
+   REVISIONS:
+   No.       Date        Author                   Description
+   --------- ----------  ----------------------   ------------------------------------------------------------------
+   REV : 000 14/08/2019  DIPTIMAN                 (TFS ID : 28287) Created.
+   ***************************************************************************************************************/
+   BEGIN
+      SELECT srvno,
+             srvdt,
+             docno,
+             docdt,
+             REM,
+             scheme_docno,
+             ycode,
+             admsite_code_owner,
+             ecode,
+             time,
+             last_access_ecode,
+             last_access_time,
+             admou_code
+        INTO STRICT v_srvno,
+             v_srvdt,
+             v_docno,
+             v_docdt,
+             v_rem,
+             v_scheme_docno,
+             v_ycode,
+             v_admsite_code_owner,
+             v_ecode,
+             v_time,
+             v_last_access_ecode,
+             v_last_access_time,
+             v_admou_code
+        FROM salsrvmain
+       WHERE srvcode = coalesce(NEW.srvcode, OLD.srvcode);
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         v_srvno := NULL;
+         v_srvdt := NULL;
+         v_rem := NULL;
+         v_scheme_docno := NULL;
+         v_docno := NULL;
+         v_docdt := NULL;
+   END;
+
+   IF OLD.srvcode IS NOT NULL
+   THEN
+      IF coalesce(OLD.srvamt, 0) < 0
+      THEN
+         UPDATE finpost
+            SET entno = v_srvno::varchar,
+                entdt = v_srvdt,
+                glcode = OLD.glcode,
+                slcode = OLD.slcode,
+                docno = v_docno,
+                docdt = v_docdt,
+                nartext = v_rem,
+                scheme_docno = v_scheme_docno,
+                damount = coalesce(damount, 0) + coalesce(OLD.srvamt, 0),
+                admou_code = v_admou_code
+          WHERE     entcode = OLD.srvcode::varchar
+                AND glcode = OLD.glcode
+                AND (   (OLD.slcode IS NULL AND slcode IS NULL)
+                     OR slcode = OLD.slcode)
+                AND enttype = 'SSD'
+                AND servicecode = OLD.servicecode;
+      ELSIF coalesce(OLD.srvamt, 0) > 0
+      THEN
+         UPDATE finpost
+            SET entno = v_srvno::varchar,
+                entdt = v_srvdt,
+                glcode = OLD.glcode,
+                slcode = OLD.slcode,
+                docno = v_docno,
+                docdt = v_docdt,
+                nartext = v_rem,
+                scheme_docno = v_scheme_docno,
+                camount = coalesce(camount, 0) - coalesce(OLD.srvamt, 0),
+                admou_code = v_admou_code
+          WHERE     entcode = OLD.SRVCODE::varchar
+                AND glcode = OLD.glcode
+                AND (   (OLD.slcode IS NULL AND slcode IS NULL)
+                     OR slcode = OLD.slcode)
+                AND enttype = 'SSD'
+                AND servicecode = OLD.servicecode;
+      END IF;
+   END IF;
+
+   IF NEW.srvcode IS NOT NULL
+   THEN
+      IF coalesce(NEW.srvamt, 0) < 0
+      THEN
+         UPDATE finpost
+            SET entno = v_srvno::varchar,
+                entdt = v_srvdt,
+                glcode = NEW.glcode,
+                slcode = NEW.slcode,
+                docno = v_docno,
+                docdt = v_docdt,
+                nartext = v_rem,
+                scheme_docno = v_scheme_docno,
+                damount = coalesce(damount, 0) - coalesce(NEW.srvamt, 0),
+                admou_code = v_admou_code
+          WHERE     entcode = NEW.srvcode::varchar
+                AND glcode = NEW.glcode
+                AND servicecode = NEW.servicecode
+                AND (   (NEW.slcode IS NULL AND slcode IS NULL)
+                     OR slcode = NEW.slcode)
+                AND enttype = 'SSD';
+
+         GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+         THEN
+            INSERT INTO finpost(postcode,
+                                 entcode,
+                                 entno,
+                                 entdt,
+                                 enttype,
+                                 glcode,
+                                 slcode,
+                                 damount,
+                                 ycode,
+                                 nartext,
+                                 scheme_docno,
+                                 servicecode,
+                                 admou_code,
+                                 docno,
+                                 docdt)
+                 VALUES (nextval('erp01'),
+                         NEW.srvcode::varchar,
+                         v_srvno::varchar,
+                         v_srvdt,
+                         'SSD',
+                         NEW.glcode,
+                         NEW.slcode,
+                         -coalesce(NEW.srvamt, 0),
+                         v_ycode,
+                         v_rem,
+                         v_scheme_docno,
+                         NEW.servicecode,
+                         v_admou_code,
+                         v_docno,
+                         v_docdt);
+         END IF;
+      ELSIF coalesce(NEW.srvamt, 0) > 0
+      THEN
+         UPDATE finpost
+            SET entno = v_srvno::varchar,
+                entdt = v_srvdt,
+                glcode = NEW.glcode,
+                slcode = NEW.slcode,
+                nartext = v_rem,
+                docno = v_docno,
+                docdt = v_docdt,
+                scheme_docno = v_scheme_docno,
+                camount = coalesce(camount, 0) + coalesce(NEW.srvamt, 0),
+                admou_code = v_admou_code
+          WHERE     entcode = NEW.srvcode::varchar
+                AND glcode = NEW.glcode
+                AND (   (NEW.slcode IS NULL AND slcode IS NULL)
+                     OR slcode = NEW.slcode)
+                AND enttype = 'SSD'
+                AND servicecode = NEW.servicecode;
+
+         GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+         THEN
+            INSERT INTO finpost(postcode,
+                                 entcode,
+                                 entno,
+                                 entdt,
+                                 enttype,
+                                 glcode,
+                                 slcode,
+                                 camount,
+                                 ycode,
+                                 nartext,
+                                 scheme_docno,
+                                 servicecode,
+                                 admou_code,
+                                 docno,
+                                 docdt)
+                 VALUES (nextval('erp01'),
+                         NEW.srvcode::varchar,
+                         v_srvno::varchar,
+                         v_srvdt,
+                         'SSD',
+                         NEW.glcode,
+                         NEW.slcode,
+                         coalesce(NEW.srvamt, 0),
+                         v_ycode,
+                         v_rem,
+                         v_scheme_docno,
+                         NEW.servicecode,
+                         v_admou_code,
+                         v_docno,
+                         v_docdt);
+         END IF;
+      END IF;
+   END IF;
+
+   IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE'
+   THEN
+      UPDATE finpost
+         SET admsite_code_owner = v_admsite_code_owner,
+             ecode = v_ecode,
+             time = v_time,
+             last_access_ecode = v_last_access_ecode,
+             last_access_time = v_last_access_time
+       WHERE entcode = NEW.srvcode::varchar AND enttype = 'SSD';
+
+      BEGIN
+         SELECT postcode
+           INTO STRICT v_postcode
+           FROM finpost
+          WHERE     entcode = NEW.srvcode::varchar
+                AND enttype = 'SSD'
+                AND glcode = NEW.glcode
+                AND coalesce(slcode, 0) = coalesce(NEW.slcode, 0)
+                AND servicecode = NEW.servicecode;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            NULL;
+      END;
+
+         DELETE FROM fincosttag
+          WHERE postcode =
+                   (SELECT postcode
+                      FROM finpost
+                     WHERE     entcode = NEW.srvcode::varchar
+                           AND enttype = 'SSD'
+                           AND glcode = OLD.glcode
+                           AND coalesce(slcode, 0) = coalesce(OLD.slcode, 0)
+                           AND servicecode = OLD.servicecode)
+      RETURNING CODE INTO V_CCCODE;
+
+      IF v_postcode IS NOT NULL AND NEW.gl_cc_appl = 'Y'
+      THEN
+         INSERT INTO fincosttag(entcode,
+                                 entno,
+                                 entdt,
+                                 enttype,
+                                 glcode,
+                                 slcode,
+                                 costcode,
+                                 damount,
+                                 camount,
+                                 ycode,
+                                 code,
+                                 postcode,
+                                 admsite_code,
+                                 ref_admsite_code,
+                                 admou_code)
+              VALUES (NEW.srvcode::varchar,
+                      v_srvno,
+                      v_srvdt,
+                      'SSD',
+                      NEW.glcode,
+                      NEW.slcode,
+                      NULL,
+                      0,
+                      coalesce(NEW.srvamt, 0),
+                      v_ycode,
+                      v_cccode,
+                      v_postcode,
+                      v_admsite_code_owner,
+                      v_admsite_code_owner,
+                      v_admou_code);
+      --ERRAUDIT('xd','1','1','v_cccode='||v_cccode||',v_postcode='||v_postcode||',gl_cc_appl='||:NEW.gl_cc_appl);
+      END IF;
+   END IF;
+
+   IF TG_OP = 'DELETE'
+   THEN
+      DELETE FROM fincosttag
+       WHERE postcode IN (SELECT postcode
+                   FROM finpost
+                  WHERE     entcode = OLD.srvcode::varchar
+                        AND enttype = 'SSD'
+                        AND glcode = OLD.glcode
+                        AND coalesce(slcode, 0) = coalesce(OLD.slcode, 0)
+                        AND servicecode = OLD.servicecode);
+
+      DELETE FROM finpost
+       WHERE     entcode = OLD.srvcode::varchar
+             AND enttype = 'SSD'
+             AND coalesce(glcode, 0) = coalesce(OLD.glcode, 0)
+             AND coalesce(slcode, 0) = coalesce(OLD.slcode, 0)
+             AND servicecode = OLD.servicecode;
+   END IF;
+
+   DELETE FROM fincosttag
+    WHERE     entcode = OLD.srvcode::varchar
+          AND enttype = 'SSD'
+          AND coalesce(camount, 0) = 0
+          AND coalesce(damount, 0) = 0;
+
+   DELETE FROM finpost
+    WHERE     entcode = OLD.srvcode::varchar
+          AND servicecode = OLD.servicecode
+          AND enttype = 'SSD'
+          AND coalesce(camount, 0) = 0
+          AND coalesce(damount, 0) = 0;
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

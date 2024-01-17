@@ -1,0 +1,101 @@
+view "main"."invstock_onhand_intra" {
+  text = """-
+SELECT var_sbq.stockpointcode,
+    var_sbq.stockpointname,
+    var_sbq.stockpointtype,
+    var_sbq.icode,
+    var_sbq.admsite_code,
+    var_sbq.loccode,
+    var_sbq.gds_refcode_site,
+    var_sbq.gds_refcode_stkpt,
+    0 AS rowcount,
+    sum(COALESCE(var_sbq.qty, (0)::numeric)) AS qty,
+    0 AS qtycount,
+    sum(COALESCE(var_sbq.amount, (0)::numeric)) AS amount,
+    0 AS qtyamount,
+    max(var_sbq.laststkupdtime) AS laststkupdtime,
+    var_sbq.invbatch_serial_code
+   FROM ( SELECT t1.stockpointcode,
+            t1.stockpointname,
+            t1.stockpointtype,
+            t1.icode,
+            t1.admsite_code,
+            t1.loccode,
+            t1.gds_refcode_site,
+            t1.gds_refcode_stkpt,
+            t1.qty,
+            t1.amount,
+            t1.laststkupdtime,
+            t1.invbatch_serial_code
+           FROM main.invstock_onhand_intra_agg t1,
+            main.psite_stockpoint p
+          WHERE ((t1.stockpointcode)::text = (p.code)::text)
+        UNION ALL
+         SELECT i.psite_stockpoint_code AS stockpointcode,
+            p.name AS stockpointname,
+            p.type AS stockpointtype,
+            i.icode,
+            i.admsite_code,
+            i.loccode,
+            concat_ws(''::text, i.icode, '~', i.admsite_code) AS gds_refcode_site,
+            concat_ws(''::text, i.icode, '~', i.admsite_code, '~', i.loccode, '~', COALESCE(i.psite_stockpoint_code, 'NA'::character varying)) AS gds_refcode_stkpt,
+            i.qty,
+            i.amount,
+            i."time" AS laststkupdtime,
+            i.invbatch_serial_code
+           FROM main.invstock_intra_log i,
+            main.psite_stockpoint p
+          WHERE (((i.psite_stockpoint_code)::text = (p.code)::text) AND ((COALESCE((i.logseq)::numeric, (0)::numeric) > ( SELECT COALESCE((log_tag_agg.logseq)::numeric, (0)::numeric) AS "coalesce"
+                   FROM main.log_tag_agg
+                  WHERE (((log_tag_agg.consumer)::text = 'INVSTOCK_ONHAND_INTRA_AGG'::text) AND ((log_tag_agg.logname)::text = 'INVSTOCK_INTRA_LOG'::text)))) OR (i.logseq IS NULL)))) var_sbq
+  GROUP BY var_sbq.stockpointcode, var_sbq.stockpointname, var_sbq.stockpointtype, var_sbq.icode, var_sbq.admsite_code, var_sbq.loccode, var_sbq.gds_refcode_site, var_sbq.gds_refcode_stkpt, var_sbq.invbatch_serial_code;
+"""
+  columns = (
+    column "stockpointcode" {
+      type = "character varying(50)"
+    }
+    column "stockpointname" {
+      type = "character varying(100)"
+    }
+    column "stockpointtype" {
+      type = "character(1)"
+    }
+    column "icode" {
+      type = "character varying(9)"
+    }
+    column "admsite_code" {
+      type = "bigint"
+    }
+    column "loccode" {
+      type = "bigint"
+    }
+    column "gds_refcode_site" {
+      type = "character varying"
+    }
+    column "gds_refcode_stkpt" {
+      type = "character varying"
+    }
+    column "rowcount" {
+      type = "integer"
+    }
+    column "qty" {
+      type = "numeric"
+    }
+    column "qtycount" {
+      type = "integer"
+    }
+    column "amount" {
+      type = "numeric"
+    }
+    column "qtyamount" {
+      type = "integer"
+    }
+    column "laststkupdtime" {
+      type = "timestamp without time zone"
+    }
+    column "invbatch_serial_code" {
+      type = "bigint"
+    }
+  )
+}
+

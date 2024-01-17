@@ -1,0 +1,222 @@
+procedure "main"."int$pkg_sal_srv_inv_calculate_term(bigint, bigint, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+      C1 CURSOR FOR
+           SELECT saltermdet.saltermcode     saltermcode,
+                  saltermdet.chgcode,
+                  saltermdet.rate,
+                  saltermdet.formulae,
+                  LENGTH(saltermdet.formulae) formlen,
+                  saltermdet.SIGN,
+                  salchg.formcode,
+                  salchg.roundoff,
+                  saltermdet.seq,
+                  salchg.basis,
+                  saltermdet.operation_level,
+                  salchg.istax,
+                  salchg.source,
+                  salchg.glcode,
+                  fingl.costapp,
+                  CASE WHEN salchg.glcode IS NULL THEN  salchg.slcode  ELSE salchg.slcode END
+                     slcode
+             FROM saltermdet, salchg, fingl
+            WHERE     saltermdet.chgcode = salchg.salchgcode
+                  AND saltermcode = p_saltermcode
+                  AND fingl.glcode =
+                         CASE WHEN                             salchg.istax='N' THEN  coalesce(salchg.glcode, p_salsrvmain_chg_glcode)  ELSE salchg.glcode END 
+                  --AND FINGL.GLCODE = DECODE(SALCHG.ISTAX,'N',SALCHG.GLCODE,SALCHG.GLCODE)
+                  AND saltermdet.operation_level = 'H'
+         ORDER BY saltermdet.seq;
+
+      dummy_appamt             double precision;
+      v_item_chg               double precision;
+      dummy_totchgamt          double precision;
+      dummy_chkchgamt          double precision;
+      dummy_chk                char(1);
+      dummy_prvchk             char(1);
+      dummy_sign               char(1);
+      v_salsrvdet_tot_srvamt   double precision;
+
+BEGIN
+      DELETE FROM salsrvchg
+       WHERE srvcode = p_srvcode AND operation_level = 'H';
+
+      BEGIN
+         SELECT SUM(srvamt)
+           INTO STRICT v_salsrvdet_tot_srvamt
+           FROM salsrvdet
+          WHERE srvcode = p_srvcode;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            NULL;
+      END;
+
+      -- ADJUST ITEM CHARGE FROM GRSAMT
+      BEGIN
+         SELECT SUM(chgamt)
+           INTO STRICT v_item_chg
+           FROM salsrvchg_item
+          WHERE srvcode = p_srvcode;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            v_item_chg := 0;
+      END;
+
+      FOR C1REC IN C1
+      LOOP
+         dummy_totchgamt := 0;
+
+         FOR i IN 1 .. c1rec.formlen
+         LOOP
+            IF MOD(I, 2) != 0
+            THEN
+               dummy_chk := SUBSTR(c1rec.formulae, i, 1);
+               dummy_chkchgamt := 0;
+
+               IF dummy_chk = 'B'
+               THEN
+                  dummy_chkchgamt :=
+                     coalesce(v_salsrvdet_tot_srvamt, 0) + coalesce(v_item_chg, 0);
+               ELSE
+                  BEGIN
+                     SELECT salsrvchg.chgamt
+                       INTO STRICT dummy_chkchgamt
+                       FROM saltermdet, salsrvchg
+                      WHERE     saltermdet.chgcode = salsrvchg.chgcode
+                            AND salsrvchg.srvcode = p_srvcode
+                            AND saltermdet.saltermcode = c1rec.saltermcode
+                            AND saltermdet.operation_level = 'H'
+                            AND saltermdet.seq = (dummy_chk)::numeric;
+                  EXCEPTION
+                     WHEN no_data_found
+                     THEN
+                        dummy_chkchgamt := 0;
+                  END;
+               END IF;
+
+               dummy_prvchk := SUBSTR(c1rec.formulae, i - 1, 1);
+
+               IF dummy_prvchk = '+'
+               THEN
+                  dummy_totchgamt :=
+                     dummy_totchgamt + coalesce(dummy_chkchgamt, 0);
+               ELSIF dummy_prvchk = '-'
+               THEN
+                  dummy_totchgamt :=
+                     dummy_totchgamt - coalesce(dummy_chkchgamt, 0);
+               ELSE
+                  dummy_totchgamt := coalesce(dummy_chkchgamt, 0);
+               END IF;
+            END IF;
+         END LOOP;
+
+         dummy_appamt := dummy_totchgamt;
+
+         IF c1rec.basis = 'P'
+         THEN
+            dummy_totchgamt :=
+               ROUND ( ( (c1rec.rate / 100) * coalesce(dummy_totchgamt, 0)), 2);
+         ELSE
+            dummy_totchgamt := round((c1rec.rate)::numeric, 2);
+         END IF;
+
+         IF c1rec.SIGN = '-' AND dummy_totchgamt >= 0
+         THEN
+            dummy_totchgamt := -1 * coalesce(dummy_totchgamt, 0);
+         END IF;
+
+         IF dummy_totchgamt < 0
+         THEN
+            dummy_sign := '-';
+         ELSIF dummy_totchgamt > 0
+         THEN
+            dummy_sign := '+';
+         ELSIF dummy_totchgamt = 0
+         THEN
+            dummy_sign := c1rec.SIGN;
+         END IF;
+
+         IF c1rec.roundoff = 'Y'
+         THEN
+            dummy_totchgamt := ROUND(dummy_totchgamt);
+         END IF;
+
+         INSERT INTO salsrvchg(srvcode,
+                                seq,
+                                chgcode,
+                                rate,
+                                SIGN,
+                                chgamt,
+                                basis,
+                                appamt,
+                                formulae,
+                                operation_level,
+                                istax,
+                                source,
+                                without_term_formula,
+                                glcode,
+                                slcode,
+                                code,
+                                gl_cc_appl)
+              VALUES (p_srvcode,
+                      c1rec.seq,
+                      c1rec.chgcode,
+                      c1rec.rate,
+                      dummy_sign,
+                      dummy_totchgamt,
+                      c1rec.basis,
+                      dummy_appamt,
+                      c1rec.formulae,
+                      c1rec.operation_level,
+                      c1rec.istax,
+                      c1rec.source,
+                      'N',
+                      c1rec.glcode,
+                      c1rec.slcode,
+                      nextval('salsrvchg_code'),
+                      c1rec.costapp);
+      END LOOP;
+
+      UPDATE salsrvchg
+         SET srvcode = srvcode
+       WHERE srvcode = p_srvcode;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         NULL;
+   END;
+
+"""
+  arguments = <
+    {
+      name = p_srvcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_saltermcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_salsrvmain_chg_glcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_salsrvmain_chg_slcode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

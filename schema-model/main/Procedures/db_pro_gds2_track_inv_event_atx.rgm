@@ -1,0 +1,169 @@
+procedure "main"."db_pro_gds2_track_inv_event_atx()" {
+  text = """
+
+DECLARE
+
+   V_DISPATCH_SESSION_ID   bigint;
+   V_EXISTS                char(1);
+   V_REC_EXISTS            char(1);
+   V_CODE                  bigint;
+   CUR_INV CURSOR(
+      P_DISPATCH_SESSION_ID    bigint)
+   FOR
+      SELECT DISTINCT EVENT_ID, REFCODE
+        FROM GDS2_EVENT_TRACK_INV
+       WHERE     DISPATCH_SESSION_ID = P_DISPATCH_SESSION_ID
+             -- START REV : 002
+             -- START REV : 001
+             --AND EVENT_ID IN ('INVENTORY_SITE');
+             AND EVENT_ID IN ('INVENTORY_SITE', 'site.inventory.item.updated','site.bininventory.item.updated');
+   -- END REV :  001
+   -- END REV : 002
+   -- START REV :  001
+   CUR_INV_ART CURSOR(
+      P_DISPATCH_SESSION_ID    bigint)
+   FOR
+      SELECT DISTINCT
+             EVENT_ID,
+                I.INVARTICLE_CODE
+             || '~'
+             || TO_NUMBER (
+                   SUBSTR (S.REFCODE, (position('~' in S.REFCODE) + 1)))
+                REFCODE
+        FROM GDS2_EVENT_TRACK_INV S, INVITEM I
+       WHERE     S.DISPATCH_SESSION_ID = P_DISPATCH_SESSION_ID
+             AND SUBSTR (S.REFCODE, 1, (position('~' in S.REFCODE) - 1)) =
+                    I.ICODE
+             AND EVENT_ID = 'INVENTORY_ARTICLE';
+   -- END REV : 001
+   -- START REV : 002
+   CUR_INV_BIN CURSOR(
+      P_DISPATCH_SESSION_ID    bigint)
+   FOR
+      SELECT DISTINCT EVENT_ID, REFCODE
+        FROM GDS2_EVENT_TRACK_INV
+       WHERE     DISPATCH_SESSION_ID = P_DISPATCH_SESSION_ID  -- START REV : 001
+             AND EVENT_ID = 'INVENTORY_BIN';
+   --END REV  : 002
+BEGIN
+   /******************************************************************************
+   NAME: DB_PRO_GDS2_TRACK_INV_EVENT
+
+   PURPOSE:
+
+   REVISIONS:
+   Rev.       Date        Author                   Description
+   ---------  ----------  ----------------------   ---------------------------------------------------
+   Author     XX/XX/XXXX  XXXXXXXXXXXXXXXXXXXXXX   XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+   001        8/11/2019   ANINDYA               (TFS ID :34349 - INVENTORY_ARTICLE GDS Event related changes)
+   002        9/9/2020    ANINDYA               (GIN ID :12552 - INVENTORY_BIN GDS Event related changes)
+   003        29/11/2021  ANINDYA               (GIN ID :OMS -   GDS3 related site.inventory.item.refresh event introduction)
+   ******************************************************************************/
+   SELECT CASE
+             WHEN EXISTS (SELECT 1
+                        FROM GDS2_EVENT_TRACK_INV
+                       WHERE DISPATCH_SESSION_ID IS NOT NULL)
+             THEN
+                'Y'
+             ELSE
+                'N'
+          END
+             AS REC_EXISTS
+     INTO STRICT V_EXISTS
+;
+   IF V_EXISTS = 'N'
+   THEN
+      SELECT CASE
+                WHEN EXISTS (SELECT 1 FROM GDS2_EVENT_TRACK_INV) THEN 'Y'
+                ELSE 'N'
+             END
+                AS REC_EXISTS
+        INTO STRICT V_REC_EXISTS
+;
+   ELSE
+      SELECT DISTINCT DISPATCH_SESSION_ID
+        INTO STRICT V_DISPATCH_SESSION_ID
+        FROM GDS2_EVENT_TRACK_INV
+       WHERE DISPATCH_SESSION_ID IS NOT NULL;
+      V_REC_EXISTS := 'Y';
+   END IF;
+   IF V_REC_EXISTS = 'Y'
+   THEN
+      IF V_EXISTS = 'N'
+      THEN
+         SELECT nextval('seq_gds2_dispatch_session')
+           INTO STRICT V_DISPATCH_SESSION_ID
+;
+         UPDATE GDS2_EVENT_TRACK_INV
+            SET DISPATCH_SESSION_ID = V_DISPATCH_SESSION_ID;
+
+      END IF;
+      FOR C1 IN CUR_INV(V_DISPATCH_SESSION_ID)
+      LOOP
+         BEGIN
+            SELECT nextval('seq_gds2_event_track') INTO STRICT V_CODE;
+            INSERT INTO GDS2_EVENT_TRACK(ID,
+                                          EVENT_ID,
+                                          REFCODE,
+                                          EVENT_TIME)
+                 VALUES (V_CODE,
+                         C1.EVENT_ID,
+                         C1.REFCODE,
+                         clock_timestamp());
+         EXCEPTION
+            WHEN unique_violation
+            THEN
+               NULL;
+         END;
+      END LOOP;
+      -- START REV : 001
+      FOR C2 IN CUR_INV_ART(V_DISPATCH_SESSION_ID)
+      LOOP
+         BEGIN
+            SELECT nextval('seq_gds2_event_track') INTO STRICT V_CODE;
+            INSERT INTO GDS2_EVENT_TRACK(ID,
+                                          EVENT_ID,
+                                          REFCODE,
+                                          EVENT_TIME)
+                 VALUES (V_CODE,
+                         C2.EVENT_ID,
+                         C2.REFCODE,
+                         clock_timestamp());
+         EXCEPTION
+            WHEN unique_violation
+            THEN
+               NULL;
+         END;
+      END LOOP;
+      -- END REV :  001
+      -- START REV :  002
+      FOR C1 IN CUR_INV_BIN(V_DISPATCH_SESSION_ID)
+      LOOP
+         BEGIN
+            SELECT nextval('seq_gds2_event_track') INTO STRICT V_CODE;
+            INSERT INTO GDS2_EVENT_TRACK(ID,
+                                          EVENT_ID,
+                                          REFCODE,
+                                          EVENT_TIME)
+                 VALUES (V_CODE,
+                         C1.EVENT_ID,
+                         C1.REFCODE,
+                         clock_timestamp());
+         EXCEPTION
+            WHEN unique_violation
+            THEN
+               NULL;
+         END;
+      END LOOP;
+      -- END REV : 002
+      DELETE FROM GDS2_EVENT_TRACK_INV
+            WHERE DISPATCH_SESSION_ID = V_DISPATCH_SESSION_ID;
+      COMMIT;
+   END IF;
+END;
+"""
+  arguments = [
+  ]
+  language = plpgsql
+}
+

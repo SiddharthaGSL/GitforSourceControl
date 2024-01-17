@@ -1,0 +1,526 @@
+function "main"."trigger_fct_t_purrtmain()" {
+  text = """
+
+DECLARE
+   ora2pg_rowcount integer;
+V_POSTCODE     FINPOST.POSTCODE%TYPE;
+   -- START REV : 010
+    
+    v_scheme_docno_Length     bigint;
+   -- END REV : 010
+   -- start rev : 013
+    v_admgstin_code admsite.admgstin_code%type;
+    -- end rev : 013
+-- START REV : 015
+   
+   V_SID                        bigint;
+   V_PROGRAM                    varchar(50);
+-- END REV : 015
+BEGIN
+  BEGIN
+   --Rev 9.3.4.0018
+/***********************************************************************************************************************************************************
+REV : 009  MOUSUMI        06/04/2017     (BUG ID : 26844) Need an option to create Multi OU and all operation will be according to the same
+REV : 010  ANINDYA        30/06/2017     (TFS ID: 29634) 16 CHARACTER Restriction in scheme_docno.
+REV : 011  MANASH         07/07/2017     (TFS ID: 30869) [GST] Document numbering scheme related changes.
+REV : 012  MOUSUMI        11/09/2017     (TFS ID: 32662) [GST] GSTAPPL CHANGES
+REV : 013  MOUSUMI        21/02/2018     (TFS ID : 37820) Non-trading flow - Purchase/Sale/Transfer.
+REV : 014  MANASH         13-AUG-2019    (TFS ID : 27108) While going to Adjust from Purchase Return an error log is getting generated.  
+REV : 015  MOUSUMI        30-DEC-2019    (TFS ID : MIGRATION) MIGRATION RELATED CHANGES
+*************************************************************************************************************************************************************/
+    -- start rev : 011
+    select  admgstin_code
+    into STRICT    v_admgstin_code
+    from    admsite
+    where   code = coalesce(NEW.admsite_code, OLD.admsite_code);
+    -- end rev : 011
+   IF TG_OP = 'UPDATE'
+   THEN
+-- START REV : 015
+    IF coalesce(NEW.ENTRY_SOURCE,'@@') <> 'WEB'  THEN
+      -- START REV : 011
+       -- START REV : 012
+        --IF  :NEW.GSTAPPL = 'Y' THEN
+        IF  coalesce(NEW.GSTAPPL,'N') <> 'N' THEN
+       -- END REV : 012
+            UPDATE  GST_DOCNO_CHECK DC
+            SET     SCHEME_DOCNO = NEW.SCHEME_DOCNO,
+                    DOCCODE      = NEW.DOCCODE
+            WHERE   ENTTYPE      = 'PRM'
+            AND     ENTCODE      = NEW.RTCODE
+            AND     YCODE        = NEW.YCODE;
+
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF  ora2pg_rowcount = 0 THEN
+                INSERT
+                INTO    GST_DOCNO_CHECK (
+                            ENTTYPE,ENTCODE,DOCCODE,SCHEME_DOCNO,
+                            ENTDATE,YCODE,ADMSITE_CODE_OWNER,ADMGSTIN_CODE
+                        )
+                VALUES (
+                           'PRM',NEW.RTCODE,NEW.DOCCODE,NEW.SCHEME_DOCNO,
+                           NEW.RTDT,NEW.YCODE,NEW.ADMSITE_CODE,V_ADMGSTIN_CODE
+                        );
+            END IF;
+        END IF;
+        -- END REV : 011
+    END IF; -- REV : 015
+      -- START REV : 006
+      UPDATE finpost
+      SET    admsite_code_owner = NEW.admsite_code,
+             ecode              = NEW.ecode,
+             time               = NEW.time,
+             last_access_ecode  = NEW.last_access_ecode,
+             last_access_time   = NEW.last_access_time
+             ,REF_ADMSITE_CODE   = NEW.REF_ADMSITE_CODE  -- REV : 008
+             ,ADMOU_CODE        = NEW.ADMOU_CODE -- REV : 009
+             -- START REV : 013
+            ,entno              = NEW.rtno::varchar,
+            entdt               = NEW.rtdt,
+            scheme_docno        = NEW.scheme_docno,
+            docno               = NEW.docno,
+            docDT               = NEW.docDT
+            -- END REV : 013
+      WHERE  entcode            = NEW.rtcode::varchar
+      AND    enttype IN ('PRM','PRC','PRD');
+      -- END REV : 006
+   END IF;
+   --End of Rev 9.3.4.0018
+   
+     -- START REV : 015
+      UPDATE finpost
+      SET    admsite_code_owner = NEW.admsite_code,
+             ecode              = NEW.ecode,
+             time               = NEW.time,
+             last_access_ecode  = NEW.last_access_ecode,
+             last_access_time   = NEW.last_access_time
+             ,REF_ADMSITE_CODE   = NEW.REF_ADMSITE_CODE  -- REV : 008
+             ,ADMOU_CODE        = NEW.ADMOU_CODE -- REV : 009
+            ,entno              = NEW.rtno::varchar,
+            entdt               = NEW.rtdt,
+            scheme_docno        = NEW.scheme_docno,
+            docno               = NEW.docno,
+            docDT               = NEW.docDT,
+            NARTEXT             = NEW.REM
+      WHERE  entcode            = NEW.rtcode::varchar
+      AND    enttype IN ('PRM','PRC','PRD');
+     -- END REV : 015
+   IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE'
+   THEN
+      IF coalesce(OLD.adjamt, 0) = 0 THEN
+         UPDATE finpost
+         -- start rev : 005
+         -- SET entno   = :NEW.rtno,
+         SET entno   = NEW.rtno::varchar,
+         -- end rev : 005
+             entdt   = NEW.rtdt,
+             -- START REV : 003
+             scheme_docno = NEW.scheme_docno,
+             -- END REV : 003
+             docno   = NEW.docno,
+             docDT   = NEW.docDT, -- REV : 012
+             glcode  = NEW.glcode,
+             slcode  = NEW.slcode,
+             nartext = NEW.rem,             -- REV : 001
+             damount = 0,
+             camount =
+                CASE
+                   WHEN(  coalesce(damount, 0)
+                         - coalesce(camount, 0)
+                         -- START REV : 013
+                         --- NVL (:OLD.grsamt, 0)
+                         - coalesce(OLD.MAIN_GL_AMT, 0)
+                         -- END REV : 013
+                        ) > 0
+                      THEN (  coalesce(damount, 0)
+                            - coalesce(camount, 0)
+                         -- START REV : 013
+                         --- NVL (:OLD.grsamt, 0)
+                         - coalesce(OLD.MAIN_GL_AMT, 0)
+                         -- END REV : 013
+                           )
+                   ELSE 0
+                END
+         -- start rev : 005
+         --WHERE entcode = :NEW.rtcode
+         ,REF_ADMSITE_CODE   = NEW.REF_ADMSITE_CODE  -- REV : 008
+         ,ADMOU_CODE = NEW.ADMOU_CODE -- REV : 009
+         WHERE entcode = NEW.rtcode::varchar
+         -- end rev : 005
+         AND enttype = 'PRM'
+         AND glcode = OLD.glcode
+         AND ((OLD.slcode IS NULL AND slcode IS NULL) OR slcode = OLD.slcode)
+
+         -- START REV : 005
+         RETURNING POSTCODE INTO  V_POSTCODE;
+         -- END REV : 005
+      UPDATE finpost
+         -- start rev : 005
+         -- SET entno   = :NEW.rtno,
+         SET entno   = NEW.rtno::varchar,
+         -- end rev : 005
+             entdt   = NEW.rtdt,
+         -- START REV : 003
+         scheme_docno = NEW.scheme_docno,
+         -- END REV : 003
+             docno   = NEW.docno,
+             docDT   = NEW.docDT, -- REV : 012
+             glcode  = NEW.glcode,
+             slcode  = NEW.slcode,
+             nartext = NEW.rem,             -- REV : 001
+             damount = 0,
+             camount =
+                CASE
+                   WHEN(  coalesce(damount, 0)
+                         - coalesce(camount, 0)
+                         -- START REV : 013
+                         --+ NVL (:NEW.grsamt, 0)
+                         + coalesce(NEW.MAIN_GL_AMT, 0)
+                         -- END REV : 013
+                        ) > 0
+                      THEN (  coalesce(damount, 0)
+                            - coalesce(camount, 0)
+                         -- START REV : 013
+                         --+ NVL (:NEW.grsamt, 0)
+                         + coalesce(NEW.MAIN_GL_AMT, 0)
+                         -- END REV : 013
+                           )
+                   ELSE 0
+                END
+       -- start rev : 005
+       --WHERE entcode = :NEW.rtcode
+       ,REF_ADMSITE_CODE   = NEW.REF_ADMSITE_CODE  -- REV : 008
+       ,ADMOU_CODE = NEW.ADMOU_CODE -- REV : 009
+       WHERE entcode = NEW.rtcode::varchar
+       -- end rev : 005
+         AND enttype = 'PRM'
+         AND glcode = NEW.glcode
+         AND ((NEW.slcode IS NULL AND slcode IS NULL) OR slcode = NEW.slcode)
+         -- START REV : 005
+         RETURNING POSTCODE INTO  V_POSTCODE;
+         -- END REV : 005
+      GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+      THEN
+            INSERT INTO FINPOST(postcode, entcode, entno,
+                            entdt, enttype, docno, glcode, slcode,
+                            camount, ycode
+                            -- START REV : 001
+                            ,nartext
+                            -- END REV : 001
+                -- START REV : 003
+                            ,scheme_docno
+                            -- END REV : 003
+                            ,REF_ADMSITE_CODE -- REV : 008
+                            ,ADMOU_CODE   -- REV : 009
+                            ,docDT   -- REV : 012
+                           )
+                    VALUES (nextval('erp01'),
+                             -- start rev  005
+                             --:NEW.rtcode,
+                             --:NEW.rtno,
+                             NEW.rtcode::varchar,
+                             NEW.rtno::varchar,
+                             -- end rev : 005
+                            NEW.rtdt, 'PRM', NEW.docno, NEW.glcode, NEW.slcode,
+                            -- START REV : 013
+                           -- NVL (:NEW.grsamt, 0),
+                           coalesce(NEW.MAIN_GL_AMT,0),
+                            -- END REV : 013
+                             NEW.ycode
+                            -- START REV : 001
+                            ,NEW.rem
+                            -- END REV : 001
+                            -- START REV : 003
+                            ,NEW.scheme_docno
+                            -- END REV : 003
+                            ,NEW.REF_ADMSITE_CODE   -- REV : 008
+                            ,NEW.ADMOU_CODE -- REV : 009
+                            ,NEW.docDT -- REV : 012
+                           )
+
+         -- START REV : 005
+         RETURNING POSTCODE INTO  V_POSTCODE;
+         -- END REV : 005
+       END IF;
+
+       UPDATE finpost
+         -- start rev : 005
+         -- SET entno   = :NEW.rtno,
+         SET entno   = NEW.rtno::varchar,
+         -- end rev : 005
+             entdt   = NEW.rtdt,
+         -- START REV : 003
+         scheme_docno = NEW.scheme_docno,
+         -- END REV : 003
+             docno   = NEW.docno,
+             docDT   = NEW.docDT, -- REV : 012
+             glcode  = NEW.pglcode, -- REV : 003
+             slcode  = NEW.pcode,
+             nartext = NEW.rem,             -- REV : 001
+             damount =
+                CASE
+                   WHEN(  coalesce(damount, 0)
+                         - coalesce(camount, 0)
+                         - coalesce(OLD.netamt, 0)
+                        ) > 0
+                      THEN (  coalesce(damount, 0)
+                            - coalesce(camount, 0)
+                            - coalesce(OLD.netamt, 0)
+                           )
+                   ELSE 0
+                END,
+             camount = 0
+         -- start rev : 005
+         --WHERE entcode = :NEW.rtcode
+         ,REF_ADMSITE_CODE   = NEW.REF_ADMSITE_CODE  -- REV : 008
+         ,ADMOU_CODE = NEW.ADMOU_CODE -- REV : 009
+         WHERE entcode = NEW.rtcode::varchar
+         -- end rev : 005
+         AND enttype = 'PRM'
+         AND glcode  = OLD.pglcode -- REV : 003
+         AND slcode  = OLD.pcode;
+
+      UPDATE finpost
+         -- start rev : 005
+         -- SET entno   = :NEW.rtno,
+         SET entno   = NEW.rtno::varchar,
+             entdt   = NEW.rtdt,
+         -- START REV : 003
+         scheme_docno = NEW.scheme_docno,
+         -- END REV : 003
+             docno   = NEW.docno,
+             docDT   = NEW.docDT, -- REV : 012
+             glcode  = NEW.pglcode, -- REV : 003
+             slcode  = NEW.pcode,
+             nartext = NEW.rem,             -- REV : 001
+             damount =
+                CASE
+                   WHEN(  coalesce(damount, 0)
+                         - coalesce(camount, 0)
+                         + coalesce(NEW.netamt, 0)
+                        ) > 0
+                      THEN (  coalesce(damount, 0)
+                            - coalesce(camount, 0)
+                            + coalesce(NEW.netamt, 0)
+                           )
+                   ELSE 0
+                END,
+             camount = 0
+       -- start rev : 005
+       -- WHERE entcode = :NEW.rtcode
+       ,REF_ADMSITE_CODE   = NEW.REF_ADMSITE_CODE  -- REV : 008
+       ,ADMOU_CODE = NEW.ADMOU_CODE -- REV : 009
+        WHERE entcode = NEW.rtcode::varchar
+        -- end rev : 005
+         AND enttype = 'PRM'
+         AND glcode  = NEW.pglcode -- REV : 003
+         AND slcode  = NEW.pcode;
+
+      GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+      THEN
+            INSERT INTO FINPOST(postcode, entcode, entno,
+                            entdt, enttype, docno, glcode, slcode,
+                            damount, ycode
+                            -- START REV : 001
+                            ,nartext
+                            -- END REV : 001
+                -- START REV : 004
+                            ,scheme_docno
+                            -- END REV : 004
+                            ,REF_ADMSITE_CODE   -- REV : 008
+                            ,ADMOU_CODE -- REV : 009
+                            ,docDT   -- REV : 012
+                           )
+                    VALUES (nextval('erp01'),
+                           -- start rev : 005
+                            --:NEW.rtcode,
+                            --:NEW.rtno,
+                            NEW.rtcode::varchar,
+                            NEW.rtno::varchar,
+                            -- end rev : 005
+                            NEW.rtdt, 'PRM', NEW.docno, NEW.pglcode, -- REV : 003
+                            NEW.pcode,
+                            coalesce(NEW.netamt, 0), NEW.ycode
+                            -- START REV : 001
+                            ,NEW.rem
+                            -- END REV : 001
+                            -- START REV : 003
+                            ,NEW.scheme_docno
+                            -- END REV : 003
+                            ,NEW.REF_ADMSITE_CODE  -- REV : 008
+                            ,NEW.ADMOU_CODE -- REV : 009
+                            ,NEW.docDT -- REV : 012
+                           );
+      END IF;
+
+    ELSE
+-- START REV : 002
+        UPDATE FINPOST
+        -- start rev : 005
+        -- SET entno = :NEW.rtno
+        SET entno = NEW.rtno::varchar
+        -- end rev : 005
+               -- START REV : 004
+               ,scheme_docno = NEW.scheme_docno
+               -- END REV : 004
+               ,REF_ADMSITE_CODE   = NEW.REF_ADMSITE_CODE  -- REV : 008
+        -- start rev : 005
+        -- WHERE entcode = :NEW.rtcode
+         WHERE entcode = NEW.rtcode::varchar
+         -- end rev : 005
+         AND enttype = 'PRM'
+         AND glcode = NEW.glcode
+         AND ((NEW.slcode IS NULL AND slcode IS NULL) OR slcode = NEW.slcode);
+
+        UPDATE FINPOST SET entno = NEW.rtno
+               -- START REV : 004
+               ,scheme_docno = NEW.scheme_docno
+               -- END REV : 004
+         -- start rev : 005
+         -- WHERE entcode = :NEW.rtcode
+         ,REF_ADMSITE_CODE   = NEW.REF_ADMSITE_CODE  -- REV : 008
+         ,ADMOU_CODE = NEW.ADMOU_CODE -- REV : 009
+         WHERE entcode = NEW.rtcode::varchar
+         -- end rev : 005
+         AND enttype = 'PRM'
+         AND glcode  = NEW.pglcode -- REV : 003
+         AND slcode  = NEW.pcode;
+-- END REV : 002
+    END IF;
+ END IF;
+
+      -- START REV : 015
+      DELETE    FROM FINCOSTTAG
+      WHERE     ENTCODE = OLD.RTCODE::varchar
+      AND       ENTTYPE = 'PRM'
+      AND       GLCODE  = OLD.GLCODE
+      AND       YCODE   = OLD.YCODE;
+    -- END REV : 015
+ 
+     -- START REV : 005
+        IF NEW.GL_CC_APPL = 'Y' THEN
+
+            IF  V_POSTCODE IS NULL THEN
+                BEGIN
+                   SELECT POSTCODE
+                   INTO STRICT   V_POSTCODE
+                   FROM   FINPOST
+                   WHERE entcode = NEW.rtcode::varchar
+                   AND enttype = 'PRM'
+                   AND  glcode = NEW.glcode
+                   AND  coalesce(CAMOUNT,0) > 0;
+                   -- END REV : 015
+                   -- END REV : 014
+                EXCEPTION WHEN no_data_found THEN
+                NULL;
+                END;
+
+            END IF;
+
+            IF V_POSTCODE IS NOT NULL THEN
+                insert into fincosttag(entcode, entno, entdt, enttype, glcode, ycode,
+                                      costcode,slcode,damount,camount,postcode,admsite_code,
+                                      -- START REV : 007
+                                      ref_admsite_code
+                                      -- END REV : 007
+                                      ,ADMOU_CODE -- REV : 009
+                                   )
+                values (NEW.rtcode::varchar,NEW.rtno::varchar,NEW.rtdt,'PRM',NEW.glcode,NEW.ycode, null, NEW.slcode,0,
+                     -- START REV : 013
+                      --nvl(:new.grsamt,0),
+                        coalesce(NEW.MAIN_GL_AMT,0),
+                     -- END REV : 013
+                      v_postcode,NEW.admsite_code,
+                     -- start rev : 007
+                     NEW.admsite_code
+                     -- end rev : 007
+                     ,NEW.ADMOU_CODE -- REV : 009
+                     );
+
+            END IF;
+        END IF;
+
+     -- END IF;  REV : 015
+      -- END REV : 005
+      IF TG_OP = 'DELETE'
+      THEN
+
+              -- START REV : 015
+			    SELECT PG_BACKEND_PID() INTO STRICT V_SID;
+                SELECT APPLICATION_NAME INTO STRICT V_PROGRAM FROM PG_STAT_ACTIVITY WHERE PID=V_SID;
+                
+
+IF not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+                  THEN
+                     RAISE EXCEPTION 'del_from_wrong_application' USING ERRCODE = '50002';
+                  END IF;
+                 -- END REV : 015
+            DELETE FROM fincosttag
+            WHERE postcode IN (
+                     SELECT postcode
+                       FROM finpost
+
+                      WHERE entcode = OLD.rtcode::varchar
+                      -- end rev : 005
+                        AND enttype = 'PRM'
+                        AND glcode = OLD.glcode
+                        AND (   (OLD.slcode IS NULL AND slcode IS NULL)
+                             OR slcode = OLD.slcode
+                            ));
+
+            DELETE FROM finpost
+
+            WHERE entcode = OLD.rtcode::varchar
+            -- end rev : 005
+              AND enttype = 'PRM';
+      END IF;
+
+-- START REV : 002
+DELETE FROM FINCOSTTAG
+    WHERE (entcode, enttype) in (SELECT entcode, 'PRM' FROM FINPOST
+
+                                  WHERE entcode = OLD.rtcode::varchar
+                                  -- end rev : 005
+                                  AND enttype = 'PRM'
+                                  AND coalesce(damount, 0) = 0
+                                  AND coalesce(camount, 0) = 0
+                                  );
+-- END REV : 002
+    DELETE FROM FINPOST
+
+    WHERE entcode = OLD.rtcode::varchar
+    -- end rev : 005
+      AND enttype = 'PRM'
+      AND coalesce(damount, 0) = 0
+      AND coalesce(camount, 0) = 0;
+
+EXCEPTION
+-- START REV : 015
+   WHEN SQLSTATE '50002' THEN
+      RAISE EXCEPTION '%', 'T_Purrtmain == >> Deletion from other application except GINESYS WEB not allowed.' USING ERRCODE = '45112';
+-- END REV : 015
+    -- START REV : 010
+    WHEN SQLSTATE '50001' THEN
+    RAISE EXCEPTION '%', 'More than 16 chatacter Document number not allowed.' USING ERRCODE = '45001';
+    -- END REV : 010
+   WHEN OTHERS
+   THEN
+      CALL erraudit(USER, 'T_Purrtmain', SQLSTATE::varchar, SQLERRM);
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED  '|| SQLSTATE::varchar|| '  '|| SQLERRM USING ERRCODE = '45001';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

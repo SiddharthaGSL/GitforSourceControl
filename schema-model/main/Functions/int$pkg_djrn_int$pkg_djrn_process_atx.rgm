@@ -1,0 +1,393 @@
+function "main"."int$pkg_djrn_int$pkg_djrn_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        errmsg      varchar(500);
+        vsession    varchar(100);
+        vdetailtbl  varchar(1000);
+        vdetailrec  varchar(500);
+        errcode     bigint;
+        vmaxno      bigint;
+        vcount      bigint;
+        v_status    varchar(1000);
+
+        v_jrncode       finjrnmain.jrncode%type;
+        v_jrnno         finjrnmain.jrnno%type;
+        v_ycode         finjrnmain.ycode%type;
+        v_jrndt         finjrnmain.jrndt%type;
+        v_doccode       finjrnmain.doccode%type;
+        v_scheme_docno  finjrnmain.scheme_docno%type;
+
+        v_reference     finjrnmain.refno%type;
+        v_glcode        bigint;
+        v_damount       double precision;
+        v_camount       double precision;
+        v_tot_damount   double precision;
+        v_tot_camount   double precision;
+        v_main_rem      finjrnmain.nartext%type;
+        v_oucode        bigint;
+        v_tempno        bigint;
+        v_err           varchar(1000);
+        g_mark          varchar(100);-- main fields
+        c_main CURSOR FOR
+            SELECT distinct upper(scheme_doc_format) scheme_doc_format1, upper(scheme_docno) scheme_docno1,
+                   jrn_date, upper(slid) slid1, upper(ref_site_short_name) ref_site_short_name1, reference reference1,
+                   header_narration , jrntype, glcode, slcode, clstype --, SUM(damount, camount,
+                   ,(SELECT ycode from admyear where jrn_date  between dtfr and dtto) ycode, doccode, ref_admsite_code,
+                   SUM(coalesce(AMOUNT,0)) DAMOUNT
+            from   int$stg_djrn
+            where  userid = p_userid
+            GROUP BY upper(scheme_doc_format) , upper(scheme_docno) ,
+                   jrn_date, upper(slid) , upper(ref_site_short_name) , reference ,
+                   header_narration , jrntype, glcode, slcode, clstype --, SUM(damount, camount,
+                   , doccode, ref_admsite_code;
+
+BEGIN
+        v_oucode := p_connect_ou;
+
+        delete FROM admerraudit a
+        where  a.usrname = user
+        and    a.prcname = 'DJRN'
+        and    a.errcode = p_userid::text;
+
+        --CALL erraudit(USER, 'DJRN', p_userid,'1 - Web import Debit Journal creation start');
+
+            FOR j IN c_main LOOP
+
+              g_mark := 'P08';
+
+                IF  J.DOCCODE NOT IN (1, 169) THEN
+                    v_scheme_docno := 'Automatic';
+                END IF;
+
+                select  nextval('erp01')
+                into STRICT    v_jrncode
+;
+
+                --CALL erraudit(USER, 'DJRN', p_userid,'2 - Inserting Finjrnmain - '||v_jrncode::text||'*'||j.reference1||'*'||j.slcode::text);
+
+                insert into finjrnmain (
+                        jrncode, jrnno, jrndt, jrntype, refno, ycode, glcode, slcode,
+                        ecode, time, nartext, doccode, scheme_docno,
+                        release_status, admsite_code_owner, admou_code, ref_admsite_code,ENTRY_SOURCE
+                    )
+                values (
+                        v_jrncode, v_tempno, date_trunc('day', j.jrn_date), 'D', j.reference1, j.ycode, j.glcode, j.slcode,
+                        p_userid, clock_timestamp(), j.header_narration, j.doccode, coalesce(j.scheme_docno1,v_scheme_docno),
+                        'U', p_connect_site, p_connect_ou, j.ref_admsite_code,'EXCEL'
+                    );
+                --CALL erraudit(USER, 'DJRN', p_userid,'3 - Inserting Finjrnmain complete - '||v_jrncode::text);
+               -- ADMERRAUDIT
+                --CALL erraudit(USER, 'DJRN', p_userid,'33 - Inserting Finjrnmain complete - '||j.scheme_doc_format1||'*'||j.scheme_docno1||'*'||j.jrn_date||'*'||j.slid1||'*'||J.ref_site_short_name1||'*'||j.reference1||'*'||j.header_narration);
+
+            -- detail fields
+                DECLARE CDET CURSOR FOR
+                            SELECT det_glcode,slcode,
+                             ledger_narration1, det_gl_cc_appl,
+                             amt
+                            FROM (
+                                SELECT  a.det_glcode det_glcode, CASE WHEN coalesce(a.det_slappl,'N')='Y' THEN a.det_slcode  ELSE null END  slcode,
+                                        a.ledger_narration ledger_narration1, a.det_gl_cc_appl det_gl_cc_appl,
+                                        sum(amount) amt
+                                from    int$stg_djrn a
+                                where   a.userid = p_userid
+                                and      upper(a.scheme_doc_format) = j.scheme_doc_format1
+                                and (j.scheme_docno1 is null or  upper(a.scheme_docno) =  j.scheme_docno1)
+                                and      a.jrn_date   = j.jrn_date
+                                and      upper(a.slid)    = j.slid1
+                                and (j.ref_site_short_name1 is null or upper(a.ref_site_short_name)=  j.ref_site_short_name1)
+                                and (j.reference1 is null or  a.reference   =  j.reference1)
+                                and (j.header_narration is null or a.header_narration  = j.header_narration)
+                                group by a.det_glcode, a.det_slappl, a.det_slcode, a.det_gl_cc_appl, a.ledger_narration
+                                ) alias10;
+
+                -- Detail entry
+                BEGIN
+                for C2 in CDET loop
+
+                --CALL erraudit(USER, 'DJRN', p_userid,'32 - Inserting Finjrndet - '||v_jrncode::text||'*'||C2.slcode::text);
+
+                    --CALL erraudit(USER, 'DJRN', p_userid,'FINJRNDET-'||C2.det_gl_cc_appl||'*'||C2.amt::text);
+                  if coalesce(c2.amt,0) >= 0 then
+                    insert into finjrndet (
+                            jrncode, jrnno, jrndt, jrntype, glcode, slcode,
+                            damount, ycode, nartext, gl_cc_appl
+                        )
+                    VALUES ( V_JRNCODE, v_tempno, j.jrn_date, 'D', C2.det_glcode, C2.slcode,
+                            C2.amt,
+                            j.ycode, C2.ledger_narration1, C2.det_gl_cc_appl
+                            );
+                  else
+                         insert into finjrndet (
+                            jrncode, jrnno, jrndt, jrntype, glcode, slcode,
+                             camount, ycode, nartext, gl_cc_appl
+                        )
+                    VALUES ( V_JRNCODE, v_tempno, j.jrn_date, 'D', C2.det_glcode, C2.slcode,
+                             ABS(C2.amt),
+                            j.ycode, C2.ledger_narration1, C2.det_gl_cc_appl
+                            );
+                  end if;
+                end loop;
+                exception when no_data_found then
+                null;
+                END;
+
+                 --CALL erraudit(USER, 'DJRN', p_userid,'34 - Inserting Finjrndet - '||v_jrncode::text);
+
+                    select sum(damount), sum(camount)
+                    into STRICT   v_damount, v_camount
+                    from   finjrndet
+                    where  jrncode = v_jrncode;
+
+                    update finjrnmain
+                    set    damount = abs(j.damount) --(select DISTINCT ABS(nvl(DAMOUNT,0)) FROM int$stg_djrn a where   a.userid = p_userid
+                                --and     a.jrncode = v_jrncode)
+                    where  jrncode = v_jrncode;
+
+                 update int$stg_djrn a
+                set    JRNCODE = v_jrncode
+                where   a.userid = p_userid
+                and      upper(a.scheme_doc_format) = j.scheme_doc_format1
+                and (j.scheme_docno1 is null or  upper(a.scheme_docno) =  j.scheme_docno1)
+                and      a.jrn_date   = j.jrn_date
+                and      upper(a.slid)    = j.slid1
+                and (j.ref_site_short_name1 is null or upper(a.ref_site_short_name)=  j.ref_site_short_name1)
+                and (j.reference1 is null or  a.reference   =  j.reference1)
+                and (j.header_narration is null or a.header_narration  = j.header_narration);
+
+                    --CALL erraudit(USER, 'DJRN', p_userid,'4 - Inserting Finjrndet Complete - '||v_jrncode::text);
+ -- Cost center insert
+                    declare
+                        v_finpost_row     finpost%rowtype;
+
+                        v_test_jrncode    NUMERIC(12) := NULL;
+
+                        c1 CURSOR FOR
+                            SELECT distinct b.glname, c.slcode sl_slcode, a.*
+                            FROM fingl b, finjrndet a
+LEFT OUTER JOIN finsl c ON (a.slcode = c.slcode)
+WHERE a.jrncode = v_jrncode and a.glcode = b.glcode  and coalesce(a.gl_cc_appl,'N') = 'Y';
+
+                        c2 CURSOR(p_glname varchar, p_sl_slcode numeric, p_jrncode numeric) FOR
+                            SELECT distinct b.glcode, upper(a.sl_slid) sl_slid1, upper(a.ref_site_short_name) ref_site_short_name1,
+                                   c.code ref_admsite_code, c.admou_code admou_code,
+                                   case when a.amount >= 0 then amount else 0 end damount,
+                                   case when a.amount < 0 then abs(amount) else 0 end camount
+                            FROM admsite c, fingl b, int$stg_djrn a
+LEFT OUTER JOIN (SELECT slcode, upper(slname) slname, upper(slid) slid from finsl) d ON (upper(a.DET_SLCODE) = upper (d.SLCODE))
+WHERE upper(a.gl_name) = upper(b.glname) -- and    upper(a.sl_slid) = d.slid (+)
+  and upper(c.shrtname) = upper(a.tag_site_short_name) and upper(b.glname) = upper(p_glname) and coalesce(d.slcode,0) = coalesce(p_sl_slcode,0) and a.jrncode = p_jrncode and coalesce(a.DET_GL_CC_APPL,'N') = 'Y' and userid = p_userid;
+                    begin
+                        for i in c1 loop
+
+                            select *
+                            into STRICT v_finpost_row
+                            from   finpost
+                            where  entcode = v_jrncode::text
+                            and    enttype = 'JDD'
+                            and    glcode = i.glcode
+                            and    coalesce(slcode, 0) = coalesce(i.slcode,0)
+                            and    coalesce(damount,0) = coalesce(i.damount,0)
+                            and    coalesce(camount,0) = coalesce(i.camount,0);
+
+                            for j in c2(i.glname, i.sl_slcode, i.jrncode) loop
+
+                                update fincosttag
+                                set    admsite_code     = j.ref_admsite_code,
+                                       damount          = coalesce(j.damount,0),
+                                       camount          = coalesce(j.camount,0),
+                                       ref_admsite_code = j.ref_admsite_code,
+                                       admou_code       = coalesce(j.admou_code,p_connect_ou)
+                                where  postcode         = v_finpost_row.postcode
+                                and    glcode           = v_finpost_row.glcode
+                                and    coalesce(slcode,0)    = coalesce(v_finpost_row.slcode,0)
+                                and    coalesce(damount,0)   = coalesce(v_finpost_row.damount,0)
+                                and    coalesce(camount,0)   = coalesce(v_finpost_row.camount,0);
+
+                                if  NOT FOUND then
+                                    declare
+                                        v_cnt   bigint;
+                                    begin
+                                        select count(*) into STRICT v_cnt
+                                        from   fincosttag
+                                        where  entcode = v_jrncode::text
+                                        and    glcode  = v_finpost_row.glcode
+                                        and    coalesce(slcode,0) = coalesce(v_finpost_row.slcode,0)
+                                        and    admsite_code = j.ref_admsite_code
+                                        and    postcode = v_finpost_row.postcode
+                                        and    ref_admsite_code = j.ref_admsite_code;
+
+                                        if  v_cnt = 0 then
+                                            --CALL erraudit(USER, 'DJRN', p_userid,'4 - Inserting Fincosttag - '||i.jrncode::text||'*'||coalesce(j.camount,0)::text||'*'||coalesce(j.Damount,0)::text);
+                                            insert into fincosttag(entcode, entno, entdt, enttype,
+                                                 glcode, slcode, damount, camount, ycode,
+                                                 postcode, admsite_code, ref_admsite_code,
+                                                 admou_code)
+                                            values (v_finpost_row.entcode, v_finpost_row.entno, v_finpost_row.entdt, v_finpost_row.enttype,
+                                                 v_finpost_row.glcode, v_finpost_row.slcode, coalesce(j.damount,0), coalesce(j.camount,0), v_finpost_row.ycode,
+                                                 v_finpost_row.postcode, j.ref_admsite_code, j.ref_admsite_code, coalesce(j.admou_code,p_connect_ou));
+                                            --CALL erraudit(USER, 'DJRN', p_userid,'4 - Inserting Fincosttag complete - '||i.jrncode::text);
+                                   end if;
+                               exception
+                                    when no_data_found then null;
+                               end;
+                              end if;
+                          end loop;
+                      end loop;
+                  END;
+             END LOOP;
+
+ DECLARE CF CURSOR FOR SELECT  DISTINCT a.JRNCODE,J.SCHEME_DOCNO,j.JRNDT,j.doccode,J.YCODE,J.DAMOUNT
+     FROM    int$stg_djrn a, finjrnmain j
+     where   a.jrncode =j.jrncode
+     and     a.userid = p_userid;
+
+     V_SCHEME_DOCNO  FINJRNMAIN.SCHEME_DOCNO%TYPE := NULL;
+     BEGIN
+        for c2 in CF loop
+
+                IF  UPPER(c2.SCHEME_DOCNO) = 'AUTOMATIC' THEN
+                 V_SCHEME_DOCNO :=
+                                db_fun_document_number_web(NULL,
+                                        c2.doccode,
+                                        c2.YCODE,
+                                        to_char(c2.JRNDT, 'DD-MM-YYYY'),
+                                        NULL,
+                                        p_connect_site,
+                                        p_connect_ou,
+                                        'FinanceDebtJournal');
+
+                    update finjrnmain
+                    set    scheme_docno = V_SCHEME_DOCNO-- ,
+                         --  jrncode  = c2.jrncode
+                    where  jrncode = c2.jrncode;
+                ELSE
+                   V_SCHEME_DOCNO   :=  C2.scheme_docno;
+                END IF;
+
+                update int$stg_djrn a
+                set    scheme_docno = V_SCHEME_DOCNO
+                where   a.userid = p_userid
+                and  jrncode = c2.jrncode;
+
+            update finjrndet
+            set(jrnno, jrndt, ycode, jrntype) =
+                              (SELECT jrnno, jrndt, ycode, jrntype
+                               from   finjrnmain
+                               where  jrncode = finjrndet.jrncode)
+            where  jrncode = c2.jrncode;
+
+            update fincosttag
+            set(entno, entdt, ycode) =
+                              (SELECT jrnno, jrndt, ycode
+                               from   finjrnmain
+                               where  jrncode = (fincosttag.entcode)::numeric )
+            where  entcode = c2.jrncode::varchar
+            and    enttype = 'JDD';
+
+            -- START REV : 003
+            update finjrnmain
+            set    jrncode = jrncode
+            where  jrncode = c2.jrncode;
+            -- END REV : 003
+            IF  coalesce(C2.DAMOUNT,0) = 0 OR UPPER(v_scheme_docno) = 'AUTOMATIC' AND v_scheme_docno IS NULL THEN
+                ROLLBACK;
+                RAISE EXCEPTION 'insert_violation' USING ERRCODE = '50001';
+                --CALL erraudit(USER, 'DJRN', p_userid,'4 - Generating of Debit journal incomplete');
+            END IF;
+            --else
+           -- --COMMIT;
+           -- END IF;
+            --CALL erraudit(USER, 'DJRN', p_userid,'4 - Generating of Debit journal complete');
+        END LOOP;
+    END;
+        -- log to be added in history table
+        select  nextval('int$error_log_code')
+        into STRICT    vsession
+;
+
+        vdetailtbl := 'create table ginarchive.djrn_'||vsession::TEXT||' as select distinct scheme_docno, jrn_date, slid, ref_site_short_name, reference, header_narration from int$stg_djrn where userid ='||p_userid::TEXT||' order by jrn_date, scheme_docno';
+
+        EXECUTE vdetailtbl;
+
+        vdetailrec := 'select count(1) from ginarchive.djrn_'||vsession::TEXT;
+
+        EXECUTE vdetailrec into STRICT vcount;
+
+          IF coalesce(vcount, 0) = 0
+          THEN
+             RAISE EXCEPTION 'insert_violation' USING ERRCODE = '50001';
+          END IF;
+
+        insert into int$history(code, importedby, importedon, classname, summary, history_detail_tablename, history_detail_row_count)
+        values (nextval('int$history_code'), p_userid, clock_timestamp(), 'DJRN', vcount::TEXT||' Debit Journal(s) imported successfully.', 'ginarchive.djrn_'||vsession, vcount);
+
+      RETURN('1');
+
+   EXCEPTION
+      WHEN SQLSTATE '50001' THEN
+         errcode := -02222;
+         errmsg := 'Data inconsistency';
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'DJRN',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+        when others then
+            errcode := SQLSTATE;
+            errmsg  := sqlerrm;
+
+            -- error log for oracle internal error
+            insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            values (nextval('int$error_log_code'), 0, 'DJRN', p_userid, errcode, errmsg, clock_timestamp());
+            --COMMIT;
+
+            return('0');
+    END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

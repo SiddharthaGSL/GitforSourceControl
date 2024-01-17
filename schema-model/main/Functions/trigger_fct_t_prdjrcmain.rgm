@@ -1,0 +1,162 @@
+function "main"."trigger_fct_t_prdjrcmain()" {
+  text = """
+
+DECLARE
+   -- START REV : 002
+   
+   V_SID                        bigint;
+   V_PROGRAM                    varchar(50);
+-- END REV : 002
+BEGIN
+  BEGIN
+
+   -- START REV : 002
+SELECT PG_BACKEND_PID() INTO STRICT V_SID;
+SELECT APPLICATION_NAME INTO STRICT V_PROGRAM FROM PG_STAT_ACTIVITY WHERE PID=V_SID;
+
+
+   IF TG_OP = 'INSERT'
+   THEN
+      IF     coalesce(NEW.ENTRY_SOURCE, 'XX') <> 'WEB'
+AND not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+      THEN
+         -- END REV : 002
+         IF NEW.LGTCODE IS NOT NULL
+         THEN
+            UPDATE INVLGTNOTE
+               SET LGTRECQTY = coalesce(LGTRECQTY, 0) + coalesce(NEW.LGTRECQTY, 0),
+                   COMPLETION_TIME =
+                      CASE
+                         WHEN coalesce(QTY1, 0) <> 0 AND QTY1 = LGTRECQTY
+                         THEN
+                            statement_timestamp()
+                         ELSE
+                            COMPLETION_TIME
+                      END
+             WHERE LGTCODE = NEW.LGTCODE;
+         END IF;
+
+         IF NEW.INVGATEIN_CODE IS NOT NULL
+         THEN
+            UPDATE INVGATEIN
+               SET TAGQTY = coalesce(TAGQTY, 0) + coalesce(NEW.LGTRECQTY, 0)
+             WHERE CODE = NEW.INVGATEIN_CODE;
+         END IF;
+      END IF;                                                     -- REV : 002
+   END IF;
+
+   IF TG_OP = 'UPDATE'
+   THEN
+      -- START REV : 001
+      IF coalesce(NEW.SRVCODE, coalesce(OLD.SRVCODE, 0)) = 0
+      THEN
+         -- END REV : 001
+         CALL DB_PKG_STOCK$REFLECT(NEW.CODE,
+                               NEW.ENTNO,
+                               NEW.JRC_DATE,
+                               'PRR',
+                               NULL,
+                               NEW.YCODE,
+                               NEW.PCODE,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NEW.PRCODE,
+                               NEW.REFNO,
+                               NULL,
+                               NEW.JRCNO,
+                               NULL,
+                               NEW.ADMOU_CODE,
+                               NEW.ADMSITE_CODE);
+      -- START REV : 001
+      END IF;
+
+      -- END REV : 001
+      -- START REV : 002
+      IF     coalesce(NEW.ENTRY_SOURCE, 'XX') <> 'WEB'
+AND not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+      THEN
+         -- END REV : 002
+         IF OLD.LGTCODE IS NOT NULL
+         THEN
+            UPDATE INVLGTNOTE
+               SET LGTRECQTY = coalesce(LGTRECQTY, 0) - coalesce(OLD.LGTRECQTY, 0),
+                   COMPLETION_TIME =
+                      CASE
+                         WHEN     coalesce(QTY1, 0) <> 0
+                              AND QTY1 =
+                                     (LGTRECQTY - coalesce(OLD.LGTRECQTY, 0))
+                         THEN
+                            statement_timestamp()
+                         ELSE
+                            NULL
+                      END
+             WHERE LGTCODE = OLD.LGTCODE;
+         END IF;
+
+         IF NEW.LGTCODE IS NOT NULL
+         THEN
+            UPDATE INVLGTNOTE
+               SET LGTRECQTY = coalesce(LGTRECQTY, 0) + coalesce(NEW.LGTRECQTY, 0),
+                   COMPLETION_TIME =
+                      CASE
+                         WHEN     coalesce(QTY1, 0) <> 0
+                              AND QTY1 =
+                                     (LGTRECQTY + coalesce(NEW.LGTRECQTY, 0))
+                         THEN
+                            statement_timestamp()
+                         ELSE
+                            COMPLETION_TIME
+                      END
+             WHERE LGTCODE = NEW.LGTCODE;
+         END IF;
+
+         IF OLD.INVGATEIN_CODE IS NOT NULL
+         THEN
+            UPDATE INVGATEIN
+               SET TAGQTY = coalesce(TAGQTY, 0) - coalesce(OLD.LGTRECQTY, 0)
+             WHERE CODE = OLD.INVGATEIN_CODE;
+         END IF;
+
+         IF NEW.INVGATEIN_CODE IS NOT NULL
+         THEN
+            UPDATE INVGATEIN
+               SET TAGQTY = coalesce(TAGQTY, 0) + coalesce(NEW.LGTRECQTY, 0)
+             WHERE CODE = NEW.INVGATEIN_CODE;
+         END IF;
+      END IF;
+   END IF;
+
+   IF TG_OP = 'DELETE'
+   THEN
+IF not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+      THEN
+         RAISE EXCEPTION 'del_from_wrong_application' USING ERRCODE = '50001';
+      END IF;
+   END IF;
+EXCEPTION
+   WHEN SQLSTATE '50001' THEN
+      RAISE EXCEPTION '%', 'T_PRDJRCMAIN == >> Deletion from other application except GINESYS WEB not allowed.' USING ERRCODE = '45112';
+   WHEN OTHERS
+   THEN
+      CALL ERRAUDIT(USER,
+                'T_PRDJRCMAIN',
+                SQLSTATE::varchar,
+                SQLERRM);
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED  ' || SQLSTATE::varchar || '  ' || SQLERRM USING ERRCODE = '45001';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

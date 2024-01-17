@@ -1,0 +1,158 @@
+function "main"."int$pkg_storfranoutpl_db_fun_item_rate_imp(text, timestamp without time zone, bigint, text, bigint, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+      v_discount_factor         double precision;
+      v_basic_rate              double precision;
+      v_tax_rate                double precision;
+      v_taxamt                  double precision;
+      v_net_rate                double precision;
+      v_roundoff                double precision;
+      v_discount                double precision;
+      v_sitecode                bigint;
+      v_psite_admcmptax_code    bigint;
+      v_connct_admcmptax_code   bigint;
+      vslcode                   bigint;
+      v_pricelistcode           bigint;
+
+      errcode                   varchar(50);
+      errmsg                    varchar(2000);
+
+BEGIN
+      BEGIN
+         SELECT code, psite_admcmptax_code, slcode
+           INTO STRICT v_sitecode, v_psite_admcmptax_code, vslcode
+           FROM admsite a
+          WHERE UPPER(a.shrtname) = UPPER(p_site_short_name);
+      -- AND     ADMOU_CODE = P_CONNECT_OU; -- REV : 002
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            NULL;
+      END;
+
+      BEGIN
+         SELECT psite_admcmptax_code
+           INTO STRICT v_connct_admcmptax_code
+           FROM admsite a
+          WHERE UPPER(a.shrtname) = UPPER(p_site_short_name);
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            NULL;
+      END;
+
+      BEGIN
+         SELECT b.pricelistcode
+           INTO STRICT v_pricelistcode
+           FROM admsite a, salpricelistmain b
+          WHERE a.pricelist_code = b.pricelistcode -- AND     ADMOU_CODE = P_CONNECT_OU -- REV : 002
+                                                  AND a.code = v_sitecode;
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            BEGIN
+               SELECT b.pricelistcode
+                 INTO STRICT v_pricelistcode
+                 FROM finsl a, salpricelistmain b
+                WHERE     a.pricelistcode = b.pricelistcode
+                      AND a.slcode = vslcode;
+            EXCEPTION
+               WHEN no_data_found
+               THEN
+                  NULL;
+            END;
+      END;
+
+      call db_pro_item_rate_disc_roff(p_icode::text,
+                                  p_date::timestamp without time zone,
+                                  v_pricelistcode::bigint,
+                                  v_psite_admcmptax_code::bigint,
+                                  v_connct_admcmptax_code::bigint,
+                                  'NEW'::text,
+                                  NULL::bigint,
+                                  p_qty::double precision,
+                                  v_sitecode::bigint,
+                                  p_admsite_code_owner::bigint,
+                                  vslcode::bigint,
+                                  'C'::character,
+                                  NULL::double precision,
+                                  NULL::double precision,
+                                  v_tax_rate::double precision,
+                                  v_taxamt::double precision,
+                                  v_net_rate::double precision,
+                                  v_discount::double precision,
+                                  v_roundoff::double precision,
+                                  v_basic_rate::double precision,
+                                  v_discount_factor::double precision,
+                                  NULL::bigint,
+                                  0::bigint,
+                                  -- START REV : 014
+                                  p_invbatch_serial_code::bigint
+                                  -- END REV : 014
+                                  );
+      RETURN coalesce(V_NET_RATE, 0);
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+         call erraudit(USER,
+                   'db_fun_item_rate_imp',
+                   ERRCODE,
+                   ERRMSG);
+         RAISE EXCEPTION '%', 'Internal error occured.' || errmsg USING ERRCODE = '45111';
+         RETURN(0);
+   END;
+
+   -- Validate Store franchise outright Sale
+"""
+  returnType = bigint
+  arguments = <
+    {
+      name = p_icode
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_qty
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_site_short_name
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_admsite_code_owner
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_invbatch_serial_code
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

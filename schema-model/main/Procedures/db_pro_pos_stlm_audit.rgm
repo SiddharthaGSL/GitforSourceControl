@@ -1,0 +1,1078 @@
+procedure "main"."db_pro_pos_stlm_audit()" {
+  text = """
+
+DECLARE
+
+   V_ERR_TAG   varchar(100);
+
+BEGIN
+  /********************************************************************************************************************************
+        REV NO     OWNER           DATE         DESCRIPTION
+        ---------  ----------      -----------  ---------------------------------------------------------------------
+        REV : 001  ANINDYA         25/07/2020   (TFS ID : XXXX) Wrong audit check when one or morethan one entrytype
+                                                                is missing from  either HO or POS site. Outer join 
+                                                                was missing.  Also for OSALE that check should not be there
+                                                                because , even after settlement OSALE can be inserted 
+                                                                through Online Sale API       
+        rev : 002 manash           18/05/2022   (MNTS : 1557)   Settlement Audit verification is taking much time than expected.
+        rev : 003 Pradipta         17/08/2022   (DEVOPS : 9246)   Settlement Audit verification failed due to OPN check.
+        rev : 004 Pradipta         03/11/2022   (DEVOPS : 10855) Settlement Audit verification failed due to mismatch in TRANSFER check.
+    **********************************************************************************************************************************/
+   V_ERR_TAG := 'Before truncating temp table';
+   EXECUTE 'truncate table temp_psite_posstlm';
+   V_ERR_TAG := 'Inserting data in temp table';
+   INSERT INTO TEMP_PSITE_POSSTLM(CODE, ADMSITE_CODE, STLMFOR)
+      SELECT STLM.CODE, STLM.ADMSITE_CODE, date_trunc('day', STLM.STLMFOR)
+        FROM PSITE_POSSTLM STLM
+       WHERE STLM.VALIDATION_STATE IN ('P', 'E');
+   -- Deleting psite_posstlmaudit_ho data where psite_posstlm.validation_state = 'P' and
+   -- audittype in the following, i.e. flow from POS
+   V_ERR_TAG := 'Error generating in DELETE Process';
+   DELETE FROM PSITE_POSSTLMAUDIT_HO
+    WHERE PSITE_POSSTLM_CODE IN (SELECT CODE
+                                   FROM TEMP_PSITE_POSSTLM);
+   V_ERR_TAG := 'Error generating in DELETE Process';
+   DELETE FROM PSITE_POSSTLMSTOCKINFO_HO
+         WHERE PSITE_POSSTLM_CODE IN (SELECT CODE
+                                        FROM TEMP_PSITE_POSSTLM);
+   UPDATE PSITE_POSSTLM
+      SET VALIDATION_STATE = 'P'
+    WHERE     CODE IN (SELECT CODE
+                         FROM TEMP_PSITE_POSSTLM)
+          AND VALIDATION_STATE = 'E';
+    /*-- DATASENDON column value updation when null but transfer already sent to store
+    UPDATE salinvmain
+      SET datasendon = release_time
+    WHERE     invcode::text IN (SELECT refcode
+                 FROM psite_event_archive
+                WHERE     eventtype = 'TRANSFER'
+                      AND refcode IN (SELECT M.INVCODE::TEXT
+                                FROM SALINVMAIN M, TEMP_PSITE_POSSTLM N
+                               WHERE     M.ADMSITE_CODE = N.ADMSITE_CODE
+                                     AND date_trunc('day', M.INVDT) = N.STLMFOR
+                                     AND M.DATASENDON IS NULL
+                                     AND M.AUTHORIZE_ECODE IS NOT NULL))
+       AND DATASENDON IS NULL
+       AND AUTHORIZE_ECODE IS NOT NULL;*/
+   --COMMIT;
+   -- Start rev 004
+   -- DATASENDON column value null in SITEPUBLISH but transfer already sent to store
+   UPDATE salinvmain
+    SET datasendon = release_time
+   WHERE     invcode IN (SELECT M.INVCODE
+                 FROM SALINVMAIN M, TEMP_PSITE_POSSTLM N, ADMSITE A
+                WHERE     N.ADMSITE_CODE = A.CODE
+                      AND M.ADMSITE_CODE = N.ADMSITE_CODE
+                      --AND date_trunc('day', M.INVDT) <= date_trunc('day', A.OPERATIONSTARTDATE)
+					  AND date_trunc('day', M.INVDT) <= date_trunc('day', n.stlmfor)
+                      AND M.DATASENDON IS NULL
+                      AND M.AUTHORIZE_ECODE IS NOT NULL)
+       AND DATASENDON IS NULL
+       AND AUTHORIZE_ECODE IS NOT NULL;
+   --COMMIT;
+   --End rev 004
+   -- Populating HO data
+   V_ERR_TAG := 'Error generating in GRC Advice Process';
+   -- Temp table has 5 rows but the base table has 3 rows
+   -- This would insert 3 rows
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+        SELECT ADMSITE_CODE,
+               CODE,
+               'GRCAdvice',
+               'GRC Advice',
+               SUM(CNT)
+          FROM (  SELECT M.ADMSITE_CODE,
+                         N.CODE,
+                         'GRCAdvice',
+                         'GRC Advice',
+                         COUNT(1) CNT
+                    FROM SALINVMAIN M, TEMP_PSITE_POSSTLM N
+                   WHERE     M.ADMSITE_CODE = N.ADMSITE_CODE
+                         AND date_trunc('day', M.INVDT) = N.STLMFOR
+                         AND M.DATASENDON IS NOT NULL
+                         AND M.AUTHORIZE_ECODE IS NOT NULL
+                GROUP BY M.ADMSITE_CODE, N.CODE
+
+UNION ALL
+
+                  SELECT M.REPLN_ADMSITE_CODE,
+                         N.CODE,
+                         'GRCAdvice',
+                         'GRC Advice',
+                         COUNT(1) CNT
+                    FROM PSITE_GRT M, TEMP_PSITE_POSSTLM N, ADMSITE S
+                   WHERE     M.REPLN_ADMSITE_CODE = N.ADMSITE_CODE
+                         AND date_trunc('day', M.DOCDT) = N.STLMFOR
+                         AND M.REPLN_ADMSITE_CODE = S.CODE
+                         AND S.SITETYPE LIKE 'MS-%'
+                GROUP BY M.REPLN_ADMSITE_CODE, N.CODE) alias6
+      GROUP BY ADMSITE_CODE, CODE;
+   -- This would insert 2 rows
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+      SELECT ADMSITE_CODE,
+             CODE,
+             'GRCAdvice',
+             'GRC Advice',
+             0
+        FROM TEMP_PSITE_POSSTLM
+       WHERE CODE IN (SELECT CODE FROM TEMP_PSITE_POSSTLM
+                 EXCEPT
+                 SELECT PSITE_POSSTLM_CODE
+                   FROM PSITE_POSSTLMAUDIT_HO A, TEMP_PSITE_POSSTLM B
+                  WHERE     A.PSITE_POSSTLM_CODE = B.CODE
+                        AND A.AUDITTYPE = 'GRCAdvice');
+   V_ERR_TAG := 'Error generating in GRC Process';
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+        SELECT M.ADMSITE_CODE,
+               N.CODE,
+               'GRC',
+               'GRC',
+               COUNT(1)
+          FROM PSITE_GRC M, TEMP_PSITE_POSSTLM N
+         WHERE M.ADMSITE_CODE = N.ADMSITE_CODE AND date_trunc('day', M.DOCDT) = N.STLMFOR
+      GROUP BY M.ADMSITE_CODE, N.CODE;
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+      SELECT ADMSITE_CODE,
+             CODE,
+             'GRC',
+             'GRC',
+             0
+        FROM TEMP_PSITE_POSSTLM
+       WHERE CODE IN (SELECT CODE FROM TEMP_PSITE_POSSTLM
+                 EXCEPT
+                 SELECT PSITE_POSSTLM_CODE
+                   FROM PSITE_POSSTLMAUDIT_HO A, TEMP_PSITE_POSSTLM B
+                  WHERE A.PSITE_POSSTLM_CODE = B.CODE AND A.AUDITTYPE = 'GRC');
+   V_ERR_TAG := 'Error generating in POS Bill Process';
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+        SELECT M.ADMSITE_CODE,
+               N.CODE,
+               'POSBill',
+               'POS Bill',
+               COUNT(1)
+          FROM PSITE_POSBILL M, TEMP_PSITE_POSSTLM N
+         WHERE     M.ADMSITE_CODE = N.ADMSITE_CODE
+               AND date_trunc('day', M.BILLDATE) = N.STLMFOR
+      GROUP BY M.ADMSITE_CODE, N.CODE;
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+      SELECT ADMSITE_CODE,
+             CODE,
+             'POSBill',
+             'POS Bill',
+             0
+        FROM TEMP_PSITE_POSSTLM
+       WHERE CODE IN (SELECT CODE FROM TEMP_PSITE_POSSTLM
+                 EXCEPT
+                 SELECT PSITE_POSSTLM_CODE
+                   FROM PSITE_POSSTLMAUDIT_HO A, TEMP_PSITE_POSSTLM B
+                  WHERE     A.PSITE_POSSTLM_CODE = B.CODE
+                        AND A.AUDITTYPE = 'POSBill');
+   V_ERR_TAG := 'Error generating in POS Bill Void Process';
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+        SELECT M.ADMSITE_CODE,
+               N.CODE,
+               'POSBillVoid',
+               'POS Bill Void',
+               COUNT(1)
+          FROM PSITE_POSBILLVOID M, TEMP_PSITE_POSSTLM N
+         WHERE     M.ADMSITE_CODE = N.ADMSITE_CODE
+               AND date_trunc('day', M.VOIDBILLDATE) = N.STLMFOR
+      GROUP BY M.ADMSITE_CODE, N.CODE;
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+      SELECT ADMSITE_CODE,
+             CODE,
+             'POSBillVoid',
+             'POS Bill Void',
+             0
+        FROM TEMP_PSITE_POSSTLM
+       WHERE CODE IN (SELECT CODE FROM TEMP_PSITE_POSSTLM
+                 EXCEPT
+                 SELECT PSITE_POSSTLM_CODE
+                   FROM PSITE_POSSTLMAUDIT_HO A, TEMP_PSITE_POSSTLM B
+                  WHERE     A.PSITE_POSSTLM_CODE = B.CODE
+                        AND A.AUDITTYPE = 'POSBillVoid');
+   V_ERR_TAG := 'Error generating in Packet Process';
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+        SELECT M.ADMSITE_CODE,
+               N.CODE,
+               'Packet',
+               'Packet',
+               COUNT(1)
+          FROM PSITE_PACKET M, TEMP_PSITE_POSSTLM N
+         WHERE     M.ADMSITE_CODE = N.ADMSITE_CODE
+               AND date_trunc('day', M.PACKETDATE) = N.STLMFOR
+      GROUP BY M.ADMSITE_CODE, N.CODE;
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+      SELECT ADMSITE_CODE,
+             CODE,
+             'Packet',
+             'Packet',
+             0
+        FROM TEMP_PSITE_POSSTLM
+       WHERE CODE IN (SELECT CODE FROM TEMP_PSITE_POSSTLM
+                 EXCEPT
+                 SELECT PSITE_POSSTLM_CODE
+                   FROM PSITE_POSSTLMAUDIT_HO A, TEMP_PSITE_POSSTLM B
+                  WHERE     A.PSITE_POSSTLM_CODE = B.CODE
+                        AND A.AUDITTYPE = 'Packet');
+   V_ERR_TAG := 'Error generating in GRT Process';
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+        SELECT M.ADMSITE_CODE,
+               N.CODE,
+               'GRT',
+               'GRT',
+               COUNT(1)
+          FROM PSITE_GRT M, TEMP_PSITE_POSSTLM N
+         WHERE M.ADMSITE_CODE = N.ADMSITE_CODE AND date_trunc('day', M.DOCDT) = N.STLMFOR
+      GROUP BY M.ADMSITE_CODE, N.CODE;
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+      SELECT ADMSITE_CODE,
+             CODE,
+             'GRT',
+             'GRT',
+             0
+        FROM TEMP_PSITE_POSSTLM
+       WHERE CODE IN (SELECT CODE FROM TEMP_PSITE_POSSTLM
+                 EXCEPT
+                 SELECT PSITE_POSSTLM_CODE
+                   FROM PSITE_POSSTLMAUDIT_HO A, TEMP_PSITE_POSSTLM B
+                  WHERE A.PSITE_POSSTLM_CODE = B.CODE AND A.AUDITTYPE = 'GRT');
+   V_ERR_TAG := 'Error generating in Audit Journal Process';
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+        SELECT M.ADMSITE_CODE,
+               N.CODE,
+               'AuditJournal',
+               'Audit Journal',
+               COUNT(1)
+          FROM PSITE_AUDITJOURNAL M, TEMP_PSITE_POSSTLM N
+         WHERE     M.ADMSITE_CODE = N.ADMSITE_CODE
+               AND date_trunc('day', M.BOOKSTOCKDATE) = N.STLMFOR
+      GROUP BY M.ADMSITE_CODE, N.CODE;
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+      SELECT ADMSITE_CODE,
+             CODE,
+             'AuditJournal',
+             'Audit Journal',
+             0
+        FROM TEMP_PSITE_POSSTLM
+       WHERE CODE IN (SELECT CODE FROM TEMP_PSITE_POSSTLM
+                 EXCEPT
+                 SELECT PSITE_POSSTLM_CODE
+                   FROM PSITE_POSSTLMAUDIT_HO A, TEMP_PSITE_POSSTLM B
+                  WHERE     A.PSITE_POSSTLM_CODE = B.CODE
+                        AND A.AUDITTYPE = 'AuditJournal');
+   V_ERR_TAG := 'Error generating in Local Purchase Process';
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+        SELECT M.ADMSITE_CODE_IN,
+               N.CODE,
+               'LocalPurchase',
+               'Local Purchase',
+               COUNT(1)
+          FROM INVGRCMAIN M, TEMP_PSITE_POSSTLM N
+         WHERE     M.ADMSITE_CODE_IN = N.ADMSITE_CODE
+               AND date_trunc('day', M.GRCDT) = N.STLMFOR
+               AND M.AUTH_ECODE IS NOT NULL
+      GROUP BY M.ADMSITE_CODE_IN, N.CODE;
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+      SELECT ADMSITE_CODE,
+             CODE,
+             'LocalPurchase',
+             'Local Purchase',
+             0
+        FROM TEMP_PSITE_POSSTLM
+       WHERE CODE IN (SELECT CODE FROM TEMP_PSITE_POSSTLM
+                 EXCEPT
+                 SELECT PSITE_POSSTLM_CODE
+                   FROM PSITE_POSSTLMAUDIT_HO A, TEMP_PSITE_POSSTLM B
+                  WHERE     A.PSITE_POSSTLM_CODE = B.CODE
+                        AND A.AUDITTYPE = 'LocalPurchase');
+   V_ERR_TAG := 'Error generating in Local Purchase Return Process';
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+        SELECT M.ADMSITE_CODE,
+               N.CODE,
+               'LocalPurchaseReturn',
+               'Local Purchase Return',
+               COUNT(1)
+          FROM INVGRTMAIN M, TEMP_PSITE_POSSTLM N
+         WHERE     M.ADMSITE_CODE = N.ADMSITE_CODE
+               AND date_trunc('day', M.GRTDT) = N.STLMFOR
+               AND M.AUTH_ECODE IS NOT NULL
+      GROUP BY M.ADMSITE_CODE, N.CODE;
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+      SELECT ADMSITE_CODE,
+             CODE,
+             'LocalPurchaseReturn',
+             'Local Purchase Return',
+             0
+        FROM TEMP_PSITE_POSSTLM
+       WHERE CODE IN (SELECT CODE FROM TEMP_PSITE_POSSTLM
+                 EXCEPT
+                 SELECT PSITE_POSSTLM_CODE
+                   FROM PSITE_POSSTLMAUDIT_HO A, TEMP_PSITE_POSSTLM B
+                  WHERE     A.PSITE_POSSTLM_CODE = B.CODE
+                        AND A.AUDITTYPE = 'LocalPurchaseReturn');
+   V_ERR_TAG := 'Error generating in Local Conversion Issue/Receive Process';
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+        SELECT M.ADMSITE_CODE,
+               N.CODE,
+               'ConversionIssueReceive',
+               'Conversion Issue/Receive',
+               COUNT(1)
+          FROM PRDORD M, TEMP_PSITE_POSSTLM N
+         WHERE     M.ADMSITE_CODE = N.ADMSITE_CODE
+               AND date_trunc('day', M.ORDDT) = N.STLMFOR
+               AND M.AUTH_ECODE IS NOT NULL
+      GROUP BY M.ADMSITE_CODE, N.CODE;
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+      SELECT ADMSITE_CODE,
+             CODE,
+             'ConversionIssueReceive',
+             'ConversionIssueReceive',
+             0
+        FROM TEMP_PSITE_POSSTLM
+       WHERE CODE IN (SELECT CODE FROM TEMP_PSITE_POSSTLM
+                 EXCEPT
+                 SELECT PSITE_POSSTLM_CODE
+                   FROM PSITE_POSSTLMAUDIT_HO A, TEMP_PSITE_POSSTLM B
+                  WHERE     A.PSITE_POSSTLM_CODE = B.CODE
+                        AND A.AUDITTYPE = 'ConversionIssueReceive');
+   V_ERR_TAG := 'Error generating in Local Misc Issue/Receive Process';
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+        SELECT M.ADMSITE_CODE,
+               N.CODE,
+               'MiscIssueReceive',
+               'Misc Issue/Receive',
+               COUNT(1)
+          FROM INVMISCMAIN M, TEMP_PSITE_POSSTLM N
+         WHERE     M.ADMSITE_CODE = N.ADMSITE_CODE
+               AND date_trunc('day', M.MISCDT) = N.STLMFOR
+               AND M.AUTH_ECODE IS NOT NULL
+      GROUP BY M.ADMSITE_CODE, N.CODE;
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+      SELECT ADMSITE_CODE,
+             CODE,
+             'MiscIssueReceive',
+             'Misc Issue/Receive',
+             0
+        FROM TEMP_PSITE_POSSTLM
+       WHERE CODE IN (SELECT CODE FROM TEMP_PSITE_POSSTLM
+                 EXCEPT
+                 SELECT PSITE_POSSTLM_CODE
+                   FROM PSITE_POSSTLMAUDIT_HO A, TEMP_PSITE_POSSTLM B
+                  WHERE     A.PSITE_POSSTLM_CODE = B.CODE
+                        AND A.AUDITTYPE = 'MiscIssueReceive');
+   V_ERR_TAG := 'Error generating in Local PTC Bill Process';
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+        SELECT M.ADMSITE_CODE,
+               N.CODE,
+               'PTCBill',
+               'PTC Bill',
+               COUNT(1)
+          FROM PSITE_PTCBILL M, TEMP_PSITE_POSSTLM N
+         WHERE     M.ADMSITE_CODE = N.ADMSITE_CODE
+               AND date_trunc('day', M.BILLDATE) = N.STLMFOR
+      GROUP BY M.ADMSITE_CODE, N.CODE;
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+      SELECT ADMSITE_CODE,
+             CODE,
+             'PTCBill',
+             'PTC Bill',
+             0
+        FROM TEMP_PSITE_POSSTLM
+       WHERE CODE IN (SELECT CODE FROM TEMP_PSITE_POSSTLM
+                 EXCEPT
+                 SELECT PSITE_POSSTLM_CODE
+                   FROM PSITE_POSSTLMAUDIT_HO A, TEMP_PSITE_POSSTLM B
+                  WHERE     A.PSITE_POSSTLM_CODE = B.CODE
+                        AND A.AUDITTYPE = 'PTCBill');
+   V_ERR_TAG := 'Error generating in Local PTC Bill Void Process';
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+        SELECT M.ADMSITE_CODE,
+               N.CODE,
+               'PTCBillVoid',
+               'PTC Bill Void',
+               COUNT(1)
+          FROM PSITE_PTCBILLVOID M, TEMP_PSITE_POSSTLM N
+         WHERE     M.ADMSITE_CODE = N.ADMSITE_CODE
+               AND date_trunc('day', M.VOIDBILLDATE) = N.STLMFOR
+      GROUP BY M.ADMSITE_CODE, N.CODE;
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+      SELECT ADMSITE_CODE,
+             CODE,
+             'PTCBillVoid',
+             'PTC Bill Void',
+             0
+        FROM TEMP_PSITE_POSSTLM
+       WHERE CODE IN (SELECT CODE FROM TEMP_PSITE_POSSTLM
+                 EXCEPT
+                 SELECT PSITE_POSSTLM_CODE
+                   FROM PSITE_POSSTLMAUDIT_HO A, TEMP_PSITE_POSSTLM B
+                  WHERE     A.PSITE_POSSTLM_CODE = B.CODE
+                        AND A.AUDITTYPE = 'PTCBillVoid');
+   V_ERR_TAG := 'Error generating in Local Deposit/Refund Process';
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+        SELECT M.ADMSITE_CODE,
+               N.CODE,
+               'DepositRefund',
+               'Deposit/Refund',
+               COUNT(1)
+          FROM PSITE_POSDEPREFBILL M, TEMP_PSITE_POSSTLM N
+         WHERE     M.ADMSITE_CODE = N.ADMSITE_CODE
+               AND date_trunc('day', M.BILLDATE) = N.STLMFOR
+      GROUP BY M.ADMSITE_CODE, N.CODE;
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+      SELECT ADMSITE_CODE,
+             CODE,
+             'DepositRefund',
+             'Deposit/Refund',
+             0
+        FROM TEMP_PSITE_POSSTLM
+       WHERE CODE IN (SELECT CODE FROM TEMP_PSITE_POSSTLM
+                 EXCEPT
+                 SELECT PSITE_POSSTLM_CODE
+                   FROM PSITE_POSSTLMAUDIT_HO A, TEMP_PSITE_POSSTLM B
+                  WHERE     A.PSITE_POSSTLM_CODE = B.CODE
+                        AND A.AUDITTYPE = 'DepositRefund');
+   V_ERR_TAG := 'Error generating in Local Deposit/Refund Void Process';
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+        SELECT M.ADMSITE_CODE,
+               N.CODE,
+               'DepositRefundVoid',
+               'Deposit/Refund Void',
+               COUNT(1)
+          FROM PSITE_POSDEPREFBILLVOID M, TEMP_PSITE_POSSTLM N
+         WHERE     M.ADMSITE_CODE = N.ADMSITE_CODE
+               AND date_trunc('day', M.VOIDBILLDATE) = N.STLMFOR
+      GROUP BY M.ADMSITE_CODE, N.CODE;
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+      SELECT ADMSITE_CODE,
+             CODE,
+             'DepositRefundVoid',
+             'Deposit/Refund Void',
+             0
+        FROM TEMP_PSITE_POSSTLM
+       WHERE CODE IN (SELECT CODE FROM TEMP_PSITE_POSSTLM
+                 EXCEPT
+                 SELECT PSITE_POSSTLM_CODE
+                   FROM PSITE_POSSTLMAUDIT_HO A, TEMP_PSITE_POSSTLM B
+                  WHERE     A.PSITE_POSSTLM_CODE = B.CODE
+                        AND A.AUDITTYPE = 'DepositRefundVoid');
+   V_ERR_TAG := 'Error generating in Local GV Bill Process';
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+        SELECT M.ADMSITE_CODE,
+               N.CODE,
+               'GVBill',
+               'GV Bill',
+               COUNT(1)
+          FROM PSITE_POSGVBILL M, TEMP_PSITE_POSSTLM N
+         WHERE     M.ADMSITE_CODE = N.ADMSITE_CODE
+               AND date_trunc('day', M.BILLDATE) = N.STLMFOR
+      GROUP BY M.ADMSITE_CODE, N.CODE;
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+      SELECT ADMSITE_CODE,
+             CODE,
+             'GVBill',
+             'GV Bill',
+             0
+        FROM TEMP_PSITE_POSSTLM
+       WHERE CODE IN (SELECT CODE FROM TEMP_PSITE_POSSTLM
+                 EXCEPT
+                 SELECT PSITE_POSSTLM_CODE
+                   FROM PSITE_POSSTLMAUDIT_HO A, TEMP_PSITE_POSSTLM B
+                  WHERE     A.PSITE_POSSTLM_CODE = B.CODE
+                        AND A.AUDITTYPE = 'GVBill');
+   V_ERR_TAG := 'Error generating in Local POS Order Process';
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+        SELECT M.ADMSITE_CODE,
+               N.CODE,
+               'POSOrder',
+               'POS Order',
+               COUNT(1)
+          FROM PSITE_POSORDER M, TEMP_PSITE_POSSTLM N
+         WHERE     M.ADMSITE_CODE = N.ADMSITE_CODE
+               AND date_trunc('day', M.ORDERDATE) = N.STLMFOR
+      GROUP BY M.ADMSITE_CODE, N.CODE;
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+      SELECT ADMSITE_CODE,
+             CODE,
+             'POSOrder',
+             'POS Order',
+             0
+        FROM TEMP_PSITE_POSSTLM
+       WHERE CODE IN (SELECT CODE FROM TEMP_PSITE_POSSTLM
+                 EXCEPT
+                 SELECT PSITE_POSSTLM_CODE
+                   FROM PSITE_POSSTLMAUDIT_HO A, TEMP_PSITE_POSSTLM B
+                  WHERE     A.PSITE_POSSTLM_CODE = B.CODE
+                        AND A.AUDITTYPE = 'POSOrder');
+   V_ERR_TAG := 'Error generating in STF Process';
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+        SELECT M.ADMSITE_CODE,
+               N.CODE,
+               'STF',
+               'STF',
+               COUNT(1)
+          FROM PSITE_STFDOC M, TEMP_PSITE_POSSTLM N
+         WHERE     M.ADMSITE_CODE = N.ADMSITE_CODE
+               AND date_trunc('day', M.DOCDATE) = N.STLMFOR
+      GROUP BY M.ADMSITE_CODE, N.CODE;
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+      SELECT ADMSITE_CODE,
+             CODE,
+             'STF',
+             'STF',
+             0
+        FROM TEMP_PSITE_POSSTLM
+       WHERE CODE IN (SELECT CODE FROM TEMP_PSITE_POSSTLM
+                 EXCEPT
+                 SELECT PSITE_POSSTLM_CODE
+                   FROM PSITE_POSSTLMAUDIT_HO A, TEMP_PSITE_POSSTLM B
+                  WHERE A.PSITE_POSSTLM_CODE = B.CODE AND A.AUDITTYPE = 'STF');
+   V_ERR_TAG := 'Error generating in REDEMPTIONTOKENADD Process';
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+        SELECT M.ADMSITE_CODE,
+               N.CODE,
+               'REDEMPTIONTOKENADD',
+               'REDEMPTIONTOKENADD',
+               COUNT(1)
+          FROM LPREDEMPTIONTOKEN M, TEMP_PSITE_POSSTLM N
+         WHERE     M.ADMSITE_CODE = N.ADMSITE_CODE
+               AND date_trunc('day', M.RECEIVEDATE) = N.STLMFOR
+      GROUP BY M.ADMSITE_CODE, N.CODE;
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+      SELECT ADMSITE_CODE,
+             CODE,
+             'REDEMPTIONTOKENADD',
+             'REDEMPTIONTOKENADD',
+             0
+        FROM TEMP_PSITE_POSSTLM
+       WHERE CODE IN (SELECT CODE FROM TEMP_PSITE_POSSTLM
+                 EXCEPT
+                 SELECT PSITE_POSSTLM_CODE
+                   FROM PSITE_POSSTLMAUDIT_HO A, TEMP_PSITE_POSSTLM B
+                  WHERE     A.PSITE_POSSTLM_CODE = B.CODE
+                        AND A.AUDITTYPE = 'REDEMPTIONTOKENADD');
+   V_ERR_TAG := 'Error generating in Delivery Slip Process';
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+        SELECT M.ADMSITE_CODE,
+               N.CODE,
+               'DeliverySlip',
+               'Delivery Slip',
+               COUNT(1)
+          FROM PSITE_DELIVERYSLIP M, TEMP_PSITE_POSSTLM N
+         WHERE     M.ADMSITE_CODE = N.ADMSITE_CODE
+               AND date_trunc('day', M.SLIPDATE) = N.STLMFOR
+      GROUP BY M.ADMSITE_CODE, N.CODE;
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+      SELECT ADMSITE_CODE,
+             CODE,
+             'DeliverySlip',
+             'Delivery Slip',
+             0
+        FROM TEMP_PSITE_POSSTLM
+       WHERE CODE IN (SELECT CODE FROM TEMP_PSITE_POSSTLM
+                 EXCEPT
+                 SELECT PSITE_POSSTLM_CODE
+                   FROM PSITE_POSSTLMAUDIT_HO A, TEMP_PSITE_POSSTLM B
+                  WHERE     A.PSITE_POSSTLM_CODE = B.CODE
+                        AND A.AUDITTYPE = 'DeliverySlip');
+   V_ERR_TAG := 'Error generating in Delivery Slip Void Process';
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+        SELECT M.ADMSITE_CODE,
+               N.CODE,
+               'DeliverySlipVoid',
+               'Delivery Slip Void',
+               COUNT(1)
+          FROM PSITE_DELIVERYSLIPVOID M, TEMP_PSITE_POSSTLM N
+         WHERE     M.ADMSITE_CODE = N.ADMSITE_CODE
+               AND date_trunc('day', M.VOIDSLIPDATE) = N.STLMFOR
+      GROUP BY M.ADMSITE_CODE, N.CODE;
+   INSERT INTO PSITE_POSSTLMAUDIT_HO(SITE_CODE,
+                                      PSITE_POSSTLM_CODE,
+                                      AUDITTYPE,
+                                      DESCRIPTION,
+                                      VALUE)
+      SELECT ADMSITE_CODE,
+             CODE,
+             'DeliverySlipVoid',
+             'Delivery Slip Void',
+             0
+        FROM TEMP_PSITE_POSSTLM
+       WHERE CODE IN (SELECT CODE FROM TEMP_PSITE_POSSTLM
+                 EXCEPT
+                 SELECT PSITE_POSSTLM_CODE
+                   FROM PSITE_POSSTLMAUDIT_HO A, TEMP_PSITE_POSSTLM B
+                  WHERE     A.PSITE_POSSTLM_CODE = B.CODE
+                        AND A.AUDITTYPE = 'DeliverySlipVoid');
+   INSERT INTO PSITE_POSSTLMSTOCKINFO_HO(PSITE_POSSTLM_CODE,
+                                          ADMSITE_CODE,
+                                          ENTRYDATE,
+                                          ENTRYTYPE,
+                                          QTY,
+                                          STLMFOR)
+        SELECT N.CODE,
+               N.ADMSITE_CODE,
+               N.STLMFOR,
+               CASE
+                  WHEN ENTTYPE = 'PRC'
+                  THEN
+                     'CONVRC'
+                  WHEN ENTTYPE = 'PIS'
+                  THEN
+                     'CONVIS'
+                  WHEN ENTTYPE = 'GRC' AND SUBENTTYPE IS NULL
+                  THEN
+                     'PUR'
+                  WHEN ENTTYPE = 'GRT' AND SUBENTTYPE IS NULL
+                  THEN
+                     'PURRT'
+                  WHEN ENTTYPE = 'ADJ' AND SUBENTTYPE IN ('ADI', 'AIS')
+                  THEN
+                     'ADJI'
+                  WHEN ENTTYPE = 'ADJ' AND SUBENTTYPE IN ('ADO', 'AOS')
+                  THEN
+                     'ADJO'
+                  WHEN ENTTYPE = 'GRC' AND SUBENTTYPE = 'SII'
+                  THEN
+                     'GRC'
+                  WHEN ENTTYPE = 'STI' AND SUBENTTYPE = 'CII'
+                  THEN
+                     'GRC'
+                  WHEN ENTTYPE = 'GRT' AND SUBENTTYPE = 'SOO'
+                  THEN
+                     'GRT'
+                  WHEN ENTTYPE = 'STO' AND SUBENTTYPE = 'COO'
+                  THEN
+                     'GRT'
+                  WHEN     ENTTYPE = 'SAL'
+                       AND SUBENTTYPE = 'CS'
+                       AND CHANNELTYPE = 'ETL'
+                  THEN
+                     'OSALE'
+                  WHEN     ENTTYPE = 'SAL'
+                       AND SUBENTTYPE = 'SSS'
+                       AND CHANNELTYPE = 'ETL'
+                  THEN
+                     'OSALE'
+                  WHEN ENTTYPE = 'STF' AND SUBENTTYPE = 'DSI'
+                  THEN
+                     'GRC'
+                  WHEN ENTTYPE = 'STF' AND SUBENTTYPE = 'DSO'
+                  THEN
+                     'GRC'
+                  -- start rev : 003
+                  WHEN ENTTYPE = 'SOP' AND SUBENTTYPE IN ('CSO', 'SSO')
+                  THEN
+                     'OPN'
+                  -- end rev : 003
+                  ELSE
+                     ENTTYPE
+               END
+                  ENTTYPE,
+               SUM(QTY) QTY,
+               N.STLMFOR
+          FROM INVSTOCK         V,
+               ADMSITE          A,
+               TEMP_PSITE_POSSTLM N,
+               INVLOC           L
+         WHERE     V.ADMSITE_CODE = A.CODE
+               AND V.ADMSITE_CODE = N.ADMSITE_CODE
+               AND V.LOCCODE = L.LOCCODE
+               AND date_trunc('day', V.ENTDT) = N.STLMFOR
+               -- start rev : 002
+               --AND UPPER (L.LOCTYPE) <> 'T'
+               AND L.LOCTYPE <> 'T'
+               -- end rev : 002
+      GROUP BY N.CODE,
+               N.ADMSITE_CODE,
+               N.STLMFOR,
+               CASE
+                  WHEN ENTTYPE = 'PRC'
+                  THEN
+                     'CONVRC'
+                  WHEN ENTTYPE = 'PIS'
+                  THEN
+                     'CONVIS'
+                  WHEN ENTTYPE = 'GRC' AND SUBENTTYPE IS NULL
+                  THEN
+                     'PUR'
+                  WHEN ENTTYPE = 'GRT' AND SUBENTTYPE IS NULL
+                  THEN
+                     'PURRT'
+                  WHEN ENTTYPE = 'ADJ' AND SUBENTTYPE IN ('ADI', 'AIS')
+                  THEN
+                     'ADJI'
+                  WHEN ENTTYPE = 'ADJ' AND SUBENTTYPE IN ('ADO', 'AOS')
+                  THEN
+                     'ADJO'
+                  WHEN ENTTYPE = 'GRC' AND SUBENTTYPE = 'SII'
+                  THEN
+                     'GRC'
+                  WHEN ENTTYPE = 'STI' AND SUBENTTYPE = 'CII'
+                  THEN
+                     'GRC'
+                  WHEN ENTTYPE = 'GRT' AND SUBENTTYPE = 'SOO'
+                  THEN
+                     'GRT'
+                  WHEN ENTTYPE = 'STO' AND SUBENTTYPE = 'COO'
+                  THEN
+                     'GRT'
+                  WHEN     ENTTYPE = 'SAL'
+                       AND SUBENTTYPE = 'CS'
+                       AND CHANNELTYPE = 'ETL'
+                  THEN
+                     'OSALE'
+                  WHEN     ENTTYPE = 'SAL'
+                       AND SUBENTTYPE = 'SSS'
+                       AND CHANNELTYPE = 'ETL'
+                  THEN
+                     'OSALE'
+                  WHEN ENTTYPE = 'STF' AND SUBENTTYPE = 'DSI'
+                  THEN
+                     'GRC'
+                  WHEN ENTTYPE = 'STF' AND SUBENTTYPE = 'DSO'
+                  THEN
+                     'GRC'
+                  -- start rev : 003
+                  WHEN ENTTYPE = 'SOP' AND SUBENTTYPE IN ('CSO', 'SSO')
+                  THEN
+                     'OPN'
+                  -- end rev : 003
+                  ELSE
+                     ENTTYPE
+               END
+      
+UNION ALL
+
+        SELECT N.CODE,
+               N.ADMSITE_CODE,
+               N.STLMFOR,
+               CASE
+                  -- start rev : 001
+                  --WHEN enttype = 'PKT' AND subenttype = 'PKI' THEN 'PKTI'
+                  ---WHEN enttype = 'PKT' AND subenttype = 'PKO' THEN 'PKTO'
+                  WHEN ENTTYPE = 'PKT' AND SUBENTTYPE IN ('PCI','PKI') THEN 'PKTI'
+                  WHEN ENTTYPE = 'PKT' AND SUBENTTYPE IN ('PKO','PCO') THEN 'PKTO'
+                  -- end rev : 001
+                  WHEN ENTTYPE = 'STF' AND SUBENTTYPE = 'ISO' THEN 'STO'
+                  WHEN ENTTYPE = 'STF' AND SUBENTTYPE = 'ISI' THEN 'STI'
+                  ELSE ENTTYPE
+               END
+                  ENTTYPE,
+               SUM(QTY) QTY,
+               N.STLMFOR
+          FROM INVSTOCK_INTRA V, ADMSITE A, TEMP_PSITE_POSSTLM N
+         WHERE V.ADMSITE_CODE = A.CODE AND V.ADMSITE_CODE = N.ADMSITE_CODE --and  loctype <> 't'
+               AND date_trunc('day', ENTDT) = N.STLMFOR
+      GROUP BY N.CODE,
+               N.ADMSITE_CODE,
+               N.STLMFOR,
+               CASE
+                  -- start rev : 001
+                  --WHEN enttype = 'PKT' AND subenttype = 'PKI' THEN 'PKTI'
+                  ---WHEN enttype = 'PKT' AND subenttype = 'PKO' THEN 'PKTO'
+                  WHEN ENTTYPE = 'PKT' AND SUBENTTYPE IN ('PCI','PKI') THEN 'PKTI'
+                  WHEN ENTTYPE = 'PKT' AND SUBENTTYPE IN ('PKO','PCO') THEN 'PKTO'
+                  -- end rev : 001
+                  WHEN ENTTYPE = 'STF' AND SUBENTTYPE = 'ISO' THEN 'STO'
+                  WHEN ENTTYPE = 'STF' AND SUBENTTYPE = 'ISI' THEN 'STI'
+                  ELSE ENTTYPE
+               END
+      
+UNION ALL
+
+        SELECT N.CODE,
+               N.ADMSITE_CODE,
+               N.STLMFOR,
+               'POS'            ENTTYPE,
+               -1 * SUM(PBI.QTY) QTY,
+               N.STLMFOR
+          FROM PSITE_POSBILL_PARK   PB,
+               PSITE_POSBILLITEM_PARK PBI,
+               ADMSITE              A,
+               TEMP_PSITE_POSSTLM   N,
+               INVITEM I
+         WHERE     PB.CODE = PBI.PSITE_POSBILL_CODE
+               AND PBI.ICODE = I.ICODE
+               AND coalesce(I.NONINVENTORY,'N') = 'N'
+               AND PB.ADMSITE_CODE = A.CODE
+               AND PB.ADMSITE_CODE = N.ADMSITE_CODE
+               AND date_trunc('day', PB.BILLDATE) = N.STLMFOR
+      GROUP BY N.CODE, N.ADMSITE_CODE, N.STLMFOR;
+   --    v_err_tag := 'Updating for Pending status';
+   --    update psite_posstlm
+   --    set    validation_state = 'P'
+   --    where  code in ( select b.psite_posstlm_code
+   --                     from   psite_posstlmaudit_ho b, psite_posstlmaudit_pos c, temp_psite_posstlm stlm
+   --                     where  b.psite_posstlm_code = c.psite_posstlm_code
+   --                     and    b.psite_posstlm_code = stlm.code
+   --                     and    b.audittype = c.audittype
+   --                     and    nvl(b.value,0) <> nvl(c.value,0)
+   --                     and    b.audittype <> 'REDEMPTIONTOKENADD'
+   --                     and    b.audittype <> 'GRCAdvice'
+   --                     and    b.audittype <> 'LocalPurchase'
+   --                     and    b.audittype <> 'LocalPurchaseReturn'
+   --                     and    b.audittype <> 'MiscIssueReceive'
+   --                     and    b.audittype <> 'ConversionIssueReceive'
+   --                   )
+   --    and    validation_state in ('E');
+   --    update psite_posstlm
+   --    set    validation_state = 'P'
+   --    where  code in ( select ps.psite_posstlm_code
+   --                     from psite_posstlmstockinfo_pos ps,
+   --                         psite_posstlmstockinfo_ho hs
+   --                     where  ps.psite_posstlm_code = hs.psite_posstlm_code
+   --                     and    ps.entrytype = hs.entrytype
+   --                     and    ps.qty <> hs.qty
+   --                   )
+   --    and    validation_state in ('E');
+   V_ERR_TAG := 'Updating for Error status';
+   UPDATE PSITE_POSSTLM
+      SET VALIDATION_STATE = 'E'
+    WHERE     CODE IN (SELECT B.PSITE_POSSTLM_CODE
+                    FROM PSITE_POSSTLMAUDIT_HO  B,
+                         PSITE_POSSTLMAUDIT_POS C,
+                         TEMP_PSITE_POSSTLM     STLM
+                   WHERE     B.PSITE_POSSTLM_CODE = C.PSITE_POSSTLM_CODE
+                         AND B.PSITE_POSSTLM_CODE = STLM.CODE
+                         AND B.AUDITTYPE = C.AUDITTYPE
+                         AND coalesce(B.VALUE, 0) <> coalesce(C.VALUE, 0)
+                         AND B.AUDITTYPE <> 'REDEMPTIONTOKENADD'--                     and    b.audittype <> 'GRCAdvice'
+                                                                --                     and    b.audittype <> 'LocalPurchase'
+                                                                --                     and    b.audittype <> 'LocalPurchaseReturn'
+                                                                --                     and    b.audittype <> 'MiscIssueReceive'
+                                                                --                     and    b.audittype <> 'ConversionIssueReceive'
+                 )
+          AND VALIDATION_STATE IN ('P');
+   V_ERR_TAG := 'Entry type wise mismatch found for HO and POS for the date.';
+   -- START REV : 001 
+   --UPDATE psite_posstlm
+   --   SET validation_state = 'E'
+   -- WHERE     code IN
+   --              (SELECT ps.psite_posstlm_code
+   --                 FROM psite_posstlmstockinfo_pos ps,
+   --                     psite_posstlmstockinfo_ho  hs
+   --                WHERE     ps.psite_posstlm_code = hs.psite_posstlm_code
+   --                      AND ps.entrytype = hs.entrytype
+   --                      AND ps.qty <> hs.qty)
+   --       AND validation_state IN ('P');
+   UPDATE PSITE_POSSTLM
+      SET VALIDATION_STATE = 'E'
+    WHERE     CODE IN (SELECT coalesce(PS.PSITE_POSSTLM_CODE,HS.PSITE_POSSTLM_CODE)
+                    FROM PSITE_POSSTLMSTOCKINFO_POS PS FULL OUTER JOIN PSITE_POSSTLMSTOCKINFO_HO HS
+                           ON ( PS.PSITE_POSSTLM_CODE = HS.PSITE_POSSTLM_CODE
+                                AND HS.ENTRYTYPE = PS.ENTRYTYPE
+                              )
+                         WHERE coalesce(PS.QTY,0) <> coalesce(HS.QTY,0)
+                         AND   coalesce(PS.ENTRYTYPE, HS.ENTRYTYPE) <> 'OSALE')
+          AND VALIDATION_STATE IN ('P');
+   -- END REV : 001       
+   V_ERR_TAG := 'Updating for Success status';
+   UPDATE PSITE_POSSTLM
+      SET VALIDATION_STATE = 'S'
+    WHERE     CODE IN (SELECT B.PSITE_POSSTLM_CODE
+                    FROM PSITE_POSSTLMAUDIT_HO  B,
+                         PSITE_POSSTLMAUDIT_POS C,
+                         TEMP_PSITE_POSSTLM     STLM
+                   WHERE     B.PSITE_POSSTLM_CODE = C.PSITE_POSSTLM_CODE
+                         AND B.PSITE_POSSTLM_CODE = STLM.CODE
+                         AND B.AUDITTYPE = C.AUDITTYPE
+                         AND coalesce(B.VALUE, 0) = coalesce(C.VALUE, 0)
+                         AND B.AUDITTYPE <> 'REDEMPTIONTOKENADD'--                     and    b.audittype <> 'GRCAdvice'
+                                                                --                     and    b.audittype <> 'LocalPurchase'
+                                                                --                     and    b.audittype <> 'LocalPurchaseReturn'
+                                                                --                     and    b.audittype <> 'MiscIssueReceive'
+                                                                --                     --Bug.Id.25767
+                                                                --                     and    b.audittype <> 'ConversionIssueReceive'
+                                                                --Bug.Id.25767
+                 )
+          AND VALIDATION_STATE IN ('P');
+   UPDATE PSITE_POSSTLM
+      SET VALIDATION_STATE = 'S'
+    WHERE     CODE IN (SELECT PS.PSITE_POSSTLM_CODE
+                    FROM PSITE_POSSTLMSTOCKINFO_POS PS,
+                         PSITE_POSSTLMSTOCKINFO_HO  HS
+                   WHERE     PS.PSITE_POSSTLM_CODE = HS.PSITE_POSSTLM_CODE
+                         AND PS.ENTRYTYPE = HS.ENTRYTYPE
+                         AND PS.QTY = HS.QTY)
+          AND VALIDATION_STATE IN ('P');
+   --COMMIT;
+EXCEPTION
+   WHEN OTHERS
+   THEN
+      CALL ERRAUDIT(USER,
+                'DB_PRO_PSITE_AUDIT_DATA',
+                SQLSTATE,
+                SQLERRM);
+      --RAISE EXCEPTION '%', 'Error in gathering HO data for sattlement. Status : ' || V_ERR_TAG USING ERRCODE = '45111';
+END;
+"""
+  arguments = [
+  ]
+  language = plpgsql
+}
+

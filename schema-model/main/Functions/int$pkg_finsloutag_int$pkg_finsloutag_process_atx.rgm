@@ -1,0 +1,183 @@
+function "main"."int$pkg_finsloutag_int$pkg_finsloutag_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        errmsg              varchar(500);
+        vsession            varchar(100);
+        vdetailtbl          varchar(1000);
+        vdetailrec          varchar(500);
+        errcode             bigint;
+        vmaxno              bigint;
+        vcount              bigint;
+		v_cnt               bigint := 0;
+
+BEGIN
+   --FINFORM
+   DECLARE C_SITE CURSOR FOR
+   SELECT       B.CODE FINSL_OU_CODE,
+                PT.CODE PUR_TERM_CODE, PT.FINTRADEGRP_CODE PUR_TRADEGRP_CODE,
+                CASE WHEN coalesce(PT.FINTRADEGRP_CODE, B.FINTRADEGRP_CODE) IS NULL THEN  NULL  ELSE CASE WHEN UPPER(A.PUR_FORM_NAME)='NONE' THEN  0  ELSE CASE WHEN PT.FINTRADEGRP_CODE=1 THEN 0  ELSE NULL END  END  END  PUR_FORM_CODE,
+                ST.SALTERMCODE SALE_TERM_CODE, ST.FINTRADEGRP_CODE SALE_TRADEGRP_CODE,
+                CASE WHEN coalesce(ST.FINTRADEGRP_CODE, B.SALTRADEGRP_CODE) IS NULL THEN  NULL  ELSE CASE WHEN UPPER(A.SALE_FORM_NAME)='NONE' THEN  0  ELSE CASE WHEN ST.FINTRADEGRP_CODE=1 THEN 0  ELSE NULL END  END  END  SALE_FORM_CODE,
+                SP.PRICELISTCODE SALE_PRICELIST_CODE
+      FROM admsite s, finsl f, finsl_ou b, int$stg_finsloutag a
+LEFT OUTER JOIN purtermmain pt ON (UPPER(A.PUR_TERM_NAME) = UPPER(PT.NAME))
+LEFT OUTER JOIN saltermmain st ON (UPPER(A.SALE_TERM_NAME) = UPPER(ST.SALTERMNAME))
+LEFT OUTER JOIN salpricelistmain sp ON (UPPER(A.SALE_PRICELIST_NAME) = UPPER(SP.PRICELISTNAME))
+WHERE a.userid = p_userid 
+AND UPPER(A.ORG_SITE_SHORTNAME) = UPPER(S.SHRTNAME) 
+AND UPPER(A.SLID) = UPPER(F.SLID) 
+AND S.CODE = B.ADMSITE_CODE 
+AND F.SLCODE = B.SLCODE;
+
+    -- START REV : 001
+    C1 CURSOR FOR
+        SELECT  DISTINCT  --B.CODE FINSL_OU_CODE,
+                PT.CODE                                                 PUR_TERM_CODE,
+                PT.FINTRADEGRP_CODE                                     PUR_TRADEGRP_CODE,
+                CASE WHEN coalesce(PT.FINTRADEGRP_CODE, B.FINTRADEGRP_CODE) IS NULL THEN  NULL  ELSE CASE WHEN UPPER(A.PUR_FORM_NAME)='NONE' THEN  0  ELSE PF.FORMCODE END  END  PUR_FORM_CODE,
+                ST.SALTERMCODE                                          SALE_TERM_CODE,
+                ST.FINTRADEGRP_CODE                                     SALE_TRADEGRP_CODE,
+                CASE WHEN coalesce(ST.FINTRADEGRP_CODE, B.SALTRADEGRP_CODE) IS NULL THEN  NULL  ELSE CASE WHEN UPPER(A.SALE_FORM_NAME)='NONE' THEN  0  ELSE SF.FORMCODE END  END  SALE_FORM_CODE,
+                SP.PRICELISTCODE                                        SALE_PRICELIST_CODE,
+                SUBSTR(UPPER(A.IN_LGT_APPL),1,1)                        IN_LGT_APPLICABLE,
+                SUBSTR(UPPER(A.OUT_LGT_APPL),1,1)                       OUT_LGT_APPLICABLE,
+                SUBSTR(UPPER(A.IN_PERMIT_APPL),1,1)                     IN_PERMIT_APPLICABLE,
+                SUBSTR(UPPER(A.OUT_PERMIT_APPL),1,1)                    OUT_PERMIT_APPLICABLE,
+                SUBSTR(UPPER(A.GATEIN_APPL),1,1)                        GATEIN_APPLICABLE,
+                IL.LOCCODE                                              IN_STOCKPT_CODE,
+                OL.LOCCODE                                              OUT_STOCKPT_CODE,
+                SUBSTR(UPPER(A.SHIPMENT_TRACKING_APPL),1,1)             SHIPMENT_TRACKING_APPLICABLE,
+                SUBSTR(UPPER(A.BALE_WISE_LRQTY_APPL),1,1)               BALE_WISE_LRQTY_APPLICABLE,
+                F.SLCODE,
+                S.CODE SITE_CODE,
+                S.ADMOU_CODE
+        FROM int$stg_finsloutag a 
+			INNER JOIN admsite s ON UPPER(A.ORG_SITE_SHORTNAME) = UPPER(S.SHRTNAME)
+			--finsl_ou b
+			INNER JOIN finsl f ON UPPER(A.SLID) = UPPER(F.SLID)
+			LEFT JOIN purtermmain pt ON (UPPER(A.PUR_TERM_NAME) = UPPER(PT.NAME))
+			LEFT JOIN finform pf ON (UPPER(A.PUR_FORM_NAME) = UPPER(PF.FORMNAME ))
+			LEFT JOIN saltermmain st ON (UPPER(A.SALE_TERM_NAME) = UPPER(ST.SALTERMNAME))
+			LEFT JOIN finform sf ON (UPPER(A.SALE_FORM_NAME) = UPPER(SF.FORMNAME ))
+			LEFT JOIN salpricelistmain sp ON (UPPER(A.SALE_PRICELIST_NAME) = UPPER(SP.PRICELISTNAME))
+			LEFT JOIN invloc il ON (UPPER(A.IN_STOCKPOINT) = UPPER(IL.LOCNAME ))
+			LEFT JOIN invloc ol ON (UPPER(A.OUT_STOCKPOINT) = UPPER(OL.LOCNAME ))
+WHERE  a.userid = p_userid;
+    -- END REV : 001
+  BEGIN
+
+    FOR I IN C1 LOOP
+        UPDATE FINSL_OU A
+        SET    TERMCODE = coalesce(I.SALE_TERM_CODE, A.TERMCODE),
+               LGT_APPL = coalesce(I.IN_LGT_APPLICABLE, A.LGT_APPL),
+               OUT_LGT_APPL = coalesce(I.OUT_LGT_APPLICABLE, A.OUT_LGT_APPL),
+               PERMIT_APPL = coalesce(I.IN_PERMIT_APPLICABLE, A.PERMIT_APPL),
+               OUT_PERMIT_APPL = coalesce(I.OUT_PERMIT_APPLICABLE, A.OUT_PERMIT_APPL),
+               GATEIN_APPL = coalesce(I.GATEIN_APPLICABLE, A.GATEIN_APPL),
+               FINTRADEGRP_CODE = coalesce(I.PUR_TRADEGRP_CODE, A.FINTRADEGRP_CODE),
+               PURTERMMAIN_CODE = coalesce(I.PUR_TERM_CODE, A.PURTERMMAIN_CODE),
+               PRICELISTCODE = coalesce(I.SALE_PRICELIST_CODE, A.PRICELISTCODE),
+               INLOCCODE = coalesce(I.IN_STOCKPT_CODE, A.INLOCCODE),
+               OUTLOCCODE = coalesce(I.OUT_STOCKPT_CODE, A.OUTLOCCODE),
+               PURFORMCODE = coalesce(I.PUR_FORM_CODE, A.PURFORMCODE),
+               SALTRADEGRP_CODE = coalesce(I.SALE_TRADEGRP_CODE, A.SALTRADEGRP_CODE),
+               SALFORMCODE = coalesce(I.SALE_FORM_CODE, A.SALFORMCODE),
+               SHIPMENT_TRACKING_APPL = coalesce(I.SHIPMENT_TRACKING_APPLICABLE, A.SHIPMENT_TRACKING_APPL),
+               BALE_WISE_LRQTY = coalesce(I.BALE_WISE_LRQTY_APPLICABLE, A.BALE_WISE_LRQTY)
+        WHERE  ADMSITE_CODE = I.SITE_CODE
+        AND    SLCODE = I.SLCODE;
+
+        IF  NOT FOUND THEN
+            INSERT INTO FINSL_OU(CODE, ADMSITE_CODE, SLCODE, ADMOU_CODE, TERMCODE,
+                             LGT_APPL, OUT_LGT_APPL, PERMIT_APPL, OUT_PERMIT_APPL,
+                             GATEIN_APPL, FINTRADEGRP_CODE, PURTERMMAIN_CODE,
+                             PRICELISTCODE, INLOCCODE, OUTLOCCODE, PURFORMCODE,
+                             SALTRADEGRP_CODE, SALFORMCODE, SHIPMENT_TRACKING_APPL,
+                             BALE_WISE_LRQTY)
+            VALUES (nextval('finsl_ou_code'), I.SITE_CODE, I.SLCODE, I.ADMOU_CODE, I.SALE_TERM_CODE,
+                    coalesce(I.IN_LGT_APPLICABLE,'N'), coalesce(I.OUT_LGT_APPLICABLE,'N'), coalesce(I.IN_PERMIT_APPLICABLE,'N'),
+                    coalesce(I.OUT_PERMIT_APPLICABLE,'N'),coalesce(I.GATEIN_APPLICABLE,'N'), I.PUR_TRADEGRP_CODE, I.PUR_TERM_CODE,
+                    I.SALE_PRICELIST_CODE, I.IN_STOCKPT_CODE, I.OUT_STOCKPT_CODE, I.PUR_FORM_CODE,
+                    I.SALE_TRADEGRP_CODE, I.SALE_FORM_CODE, coalesce(I.SHIPMENT_TRACKING_APPLICABLE,'N'),
+                    I.BALE_WISE_LRQTY_APPLICABLE);
+        END IF;
+    END LOOP;
+    -- END REV : 001
+  END;
+      -- log to be added in history table
+      SELECT nextval('int$error_log_code')
+        INTO STRICT vsession
+;
+
+      vdetailtbl :=
+            'create table ginarchive.FINSLOUTAG_'
+         || vsession::text
+         || ' as select distinct ORG_SITE_SHORTNAME, SLID, PUR_FORM_NAME, PUR_TERM_NAME, SALE_FORM_NAME, SALE_PRICELIST_NAME, SALE_TERM_NAME from int$stg_FINSLOUTAG where userid ='
+         || p_userid::text;
+
+      EXECUTE vdetailtbl;
+
+      vdetailrec := 'select count(1) from ginarchive.FINSLOUTAG_' || vsession::text;
+      EXECUTE vdetailrec INTO STRICT V_CNT;
+
+      INSERT INTO int$history(code, importedby, importedon,
+                   classname, summary,
+                   history_detail_tablename, history_detail_row_count
+                  )
+           VALUES (nextval('int$history_code'), p_userid, clock_timestamp(),
+                   'FINSLOUTAG', V_CNT::TEXT || ' record(s) imported successfully.',
+                   'ginarchive.FINSLOUTAG_' || vsession, V_CNT
+                  );
+
+      RETURN('1');
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         -- error log for oracle internal error
+         INSERT INTO int$error_log(code, lineno, classname,
+                      userid, errortype, errordesc, createdon
+                     )
+              VALUES (nextval('int$error_log_code'), 0, 'FINSLOUTAG',
+                      p_userid, errcode, errmsg, clock_timestamp()
+                     );
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

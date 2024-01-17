@@ -1,0 +1,805 @@
+function "main"."trigger_fct_t_finvchdet()" {
+  text = """
+
+
+DECLARE
+   ora2pg_rowcount integer;
+   DEBITAMOUNT               double precision;
+   CREDITAMOUNT               double precision;
+   V_REFNO               FINVCHDET.REFNO%TYPE;
+   V_SCHEME_DOCNO        FINPOST.SCHEME_DOCNO%TYPE;
+   -- START REV : 003
+   V_VCHTYPE             char(1);
+   -- END REV : 003
+   -- START REV : 005
+   V_OUCODE              bigint;
+   -- END REV : 005
+   -- START REV : 006
+   V_ADMSITE_CODE_OWNER  FINPOST.ADMSITE_CODE_OWNER%TYPE;
+   -- END REV : 006
+BEGIN
+  BEGIN
+   -- START REV : 003
+   IF  coalesce(NEW.VCHTYPE, OLD.VCHTYPE) IN ('P','R','B') THEN
+       V_VCHTYPE := 'P';
+   ELSE
+       V_VCHTYPE := coalesce(NEW.VCHTYPE, OLD.VCHTYPE);
+   END IF;
+   -- END REV : 003
+   -- START REV : 003
+   -- SELECT DECODE(NVL(:NEW.VCHTYPE, :OLD.VCHTYPE), 'P', :NEW.REFNO, REFNO)
+   SELECT CASE WHEN V_VCHTYPE='P' THEN  NEW.REFNO  ELSE REFNO END
+   -- END REV : 003
+         ,SCHEME_DOCNO
+         -- start rev : 006
+         ,ADMSITE_CODE_OWNER
+         -- end rev :006
+         -- START REV : 005
+         ,ADMOU_CODE
+         -- END REV : 005
+   INTO STRICT   V_REFNO
+         ,V_SCHEME_DOCNO
+         -- START REV : 006
+         ,V_ADMSITE_CODE_OWNER
+         -- END REV : 006
+         -- START REV : 005
+         ,V_OUCODE
+         -- END REV : 005
+   FROM   FINVCHMAIN
+   WHERE  VCHCODE = coalesce(NEW.VCHCODE, OLD.VCHCODE);
+
+   -- START REV : 001
+   -- as suggested by soumya da
+   --IF NVL(:OLD.ADJAMT, 0) = 0 THEN
+   -- END REV : 001
+      IF OLD.VCHCODE IS NOT NULL THEN
+         BEGIN
+            SELECT coalesce(DAMOUNT, 0)
+                  ,coalesce(CAMOUNT, 0)
+            INTO STRICT   DEBITAMOUNT
+                  ,CREDITAMOUNT
+            FROM   FINPOST
+            WHERE  ENTCODE = OLD.VCHCODE::varchar
+            AND    GLCODE = OLD.GLCODE
+            AND    ((OLD.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = OLD.SLCODE)
+            -- START REV : 003
+            -- AND    ENTTYPE = 'VD' || :OLD.VCHTYPE;
+            AND    ENTTYPE = 'VD' || V_VCHTYPE;
+            -- END REV : 003
+            IF OLD.DAMOUNT > 0 AND DEBITAMOUNT > 0 THEN
+               UPDATE FINPOST
+               SET    ENTNO        = OLD.VCHNO::varchar
+                     ,SCHEME_DOCNO = V_SCHEME_DOCNO
+                     ,ENTDT        = OLD.VCHDT
+                     ,DOCNO        = V_REFNO
+                     ,GLCODE       = OLD.GLCODE
+                     ,SLCODE       = OLD.SLCODE
+                     ,NARTEXT      = OLD.NARTEXT
+                     ,CHQNO        = OLD.CHQNO
+                     ,CHQDT        = OLD.CHQDT
+                     ,DRAWNON      = OLD.DRAWNON
+                     ,BRSDT        = OLD.BRSDT
+                     ,CHQLABEL     = OLD.CHQLABEL
+                     ,DAMOUNT      = coalesce(DEBITAMOUNT, 0) - coalesce(OLD.DAMOUNT, 0)
+                     ,CAMOUNT      = 0
+                     -- START REV : 004
+                     ,REF_ADMSITE_CODE = OLD.REF_ADMSITE_CODE
+                     -- END REV : 004
+               WHERE  ENTCODE = OLD.VCHCODE::varchar
+               AND    GLCODE  = OLD.GLCODE
+               AND    ((OLD.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = OLD.SLCODE)
+               -- START REV : 003
+               -- AND    ENTTYPE = 'VD' || :OLD.VCHTYPE
+               AND    ENTTYPE = 'VD' || V_VCHTYPE
+               -- END REV : 003
+               AND    coalesce(DEBITAMOUNT, 0) - coalesce(OLD.DAMOUNT, 0) > 0;
+
+               GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0 THEN
+                  UPDATE FINPOST
+                  SET    ENTNO        = OLD.VCHNO::varchar
+                        ,SCHEME_DOCNO = V_SCHEME_DOCNO
+                        ,ENTDT        = OLD.VCHDT
+                        ,DOCNO        = V_REFNO
+                        ,GLCODE       = OLD.GLCODE
+                        ,SLCODE       = OLD.SLCODE
+                        ,NARTEXT      = OLD.NARTEXT
+                        ,CHQNO        = OLD.CHQNO
+                        ,CHQDT        = OLD.CHQDT
+                        ,DRAWNON      = OLD.DRAWNON
+                        ,BRSDT        = OLD.BRSDT
+                        ,CHQLABEL     = OLD.CHQLABEL
+                        ,DAMOUNT      = 0
+                        ,CAMOUNT      = -(coalesce(DEBITAMOUNT, 0) - coalesce(OLD.DAMOUNT, 0))
+                         -- START REV : 004
+                         ,REF_ADMSITE_CODE = OLD.REF_ADMSITE_CODE
+                         -- END REV : 004
+                  -- START REV : 002
+                  -- WHERE  ENTCODE      = :OLD.VCHCODE
+                  WHERE  ENTCODE      = OLD.VCHCODE::varchar
+                  -- END REV : 002
+                  AND    GLCODE       = OLD.GLCODE
+                  AND    ((OLD.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = OLD.SLCODE)
+                  -- START REV : 003
+                  -- AND    ENTTYPE = 'VD' || :OLD.VCHTYPE
+                  AND    ENTTYPE = 'VD' || V_VCHTYPE
+                  -- END REV : 003
+                  AND    coalesce(DEBITAMOUNT, 0) - coalesce(OLD.DAMOUNT, 0) < 0;
+
+                  GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0 THEN
+                     UPDATE FINPOST
+                     SET    ENTNO        = OLD.VCHNO::varchar
+                           ,SCHEME_DOCNO = V_SCHEME_DOCNO
+                           ,ENTDT        = OLD.VCHDT
+                           ,DOCNO        = V_REFNO
+                           ,GLCODE       = OLD.GLCODE
+                           ,SLCODE       = OLD.SLCODE
+                           ,NARTEXT      = OLD.NARTEXT
+                           ,CHQNO        = OLD.CHQNO
+                           ,CHQDT        = OLD.CHQDT
+                           ,DRAWNON      = OLD.DRAWNON
+                           ,BRSDT        = OLD.BRSDT
+                           ,CHQLABEL     = OLD.CHQLABEL
+                           ,DAMOUNT      = 0
+                           ,CAMOUNT      = 0
+                     -- START REV : 004
+                           ,REF_ADMSITE_CODE = OLD.REF_ADMSITE_CODE
+                     -- END REV : 004
+                     WHERE  ENTCODE = OLD.VCHCODE::varchar
+                     AND    GLCODE  = OLD.GLCODE
+                     AND    ((OLD.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = OLD.SLCODE)
+                     -- START REV : 003
+                     -- AND    ENTTYPE = 'VD' || :OLD.VCHTYPE
+                     AND    ENTTYPE = 'VD' || V_VCHTYPE
+                     -- END REV : 003
+                     AND    coalesce(DEBITAMOUNT, 0) - coalesce(OLD.DAMOUNT, 0) = 0;
+                  END IF;
+               END IF;
+
+            ELSIF OLD.DAMOUNT > 0 AND CREDITAMOUNT > 0 THEN
+                  UPDATE FINPOST
+                  SET    ENTNO = OLD.VCHNO::varchar
+                        ,SCHEME_DOCNO = V_SCHEME_DOCNO
+                        ,ENTDT = OLD.VCHDT
+                        ,DOCNO = V_REFNO
+                        ,GLCODE = OLD.GLCODE
+                        ,SLCODE = OLD.SLCODE
+                        ,NARTEXT = OLD.NARTEXT
+                        ,CHQNO = OLD.CHQNO
+                        ,CHQDT = OLD.CHQDT
+                        ,DRAWNON = OLD.DRAWNON
+                        ,BRSDT = OLD.BRSDT
+                        ,CHQLABEL = OLD.CHQLABEL
+                        ,DAMOUNT = 0
+                        ,CAMOUNT = coalesce(CREDITAMOUNT, 0) + coalesce(OLD.DAMOUNT, 0)
+                     -- START REV : 004
+                        ,REF_ADMSITE_CODE = OLD.REF_ADMSITE_CODE
+                     -- END REV : 004
+                  WHERE  ENTCODE = OLD.VCHCODE::varchar
+                  AND    GLCODE  = OLD.GLCODE
+                  AND    ((OLD.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = OLD.SLCODE)
+                  -- START REV : 003
+                  -- AND    ENTTYPE = 'VD' || :OLD.VCHTYPE;
+                  AND    ENTTYPE = 'VD' || V_VCHTYPE;
+                  -- END REV : 003
+            ELSIF OLD.CAMOUNT > 0 AND CREDITAMOUNT > 0 THEN
+                  UPDATE FINPOST
+                  SET    ENTNO        = OLD.VCHNO::varchar
+                        ,SCHEME_DOCNO = V_SCHEME_DOCNO
+                        ,ENTDT        = OLD.VCHDT
+                        ,DOCNO        = V_REFNO
+                        ,GLCODE       = OLD.GLCODE
+                        ,SLCODE       = OLD.SLCODE
+                        ,NARTEXT      = OLD.NARTEXT
+                        ,CHQNO        = OLD.CHQNO
+                        ,CHQDT        = OLD.CHQDT
+                        ,DRAWNON      = OLD.DRAWNON
+                        ,BRSDT        = OLD.BRSDT
+                        ,CHQLABEL     = OLD.CHQLABEL
+                        ,DAMOUNT      = 0
+                        ,CAMOUNT      = coalesce(CREDITAMOUNT, 0) - coalesce(OLD.CAMOUNT, 0)
+                     -- START REV : 004
+                        ,REF_ADMSITE_CODE = OLD.REF_ADMSITE_CODE
+                     -- END REV : 004
+                  WHERE  ENTCODE = OLD.VCHCODE::varchar
+                  AND    GLCODE  = OLD.GLCODE
+                  AND    ((OLD.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = OLD.SLCODE)
+                  -- START REV : 003
+                  -- AND    ENTTYPE = 'VD' || :OLD.VCHTYPE
+                  AND    ENTTYPE = 'VD' || V_VCHTYPE
+                  -- END REV : 003
+                  AND    coalesce(CREDITAMOUNT, 0) - coalesce(OLD.CAMOUNT, 0) > 0;
+
+               GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0 THEN
+                  UPDATE FINPOST
+                  SET    ENTNO        = OLD.VCHNO::varchar
+                        ,SCHEME_DOCNO = V_SCHEME_DOCNO
+                        ,ENTDT        = OLD.VCHDT
+                        ,DOCNO        = V_REFNO
+                        ,GLCODE       = OLD.GLCODE
+                        ,SLCODE       = OLD.SLCODE
+                        ,NARTEXT      = OLD.NARTEXT
+                        ,CHQNO        = OLD.CHQNO
+                        ,CHQDT        = OLD.CHQDT
+                        ,DRAWNON      = OLD.DRAWNON
+                        ,BRSDT        = OLD.BRSDT
+                        ,CHQLABEL     = OLD.CHQLABEL
+                        ,DAMOUNT      = -(coalesce(CREDITAMOUNT, 0) - coalesce(OLD.CAMOUNT, 0))
+                        ,CAMOUNT      = 0
+                     -- START REV : 004
+                        ,REF_ADMSITE_CODE = OLD.REF_ADMSITE_CODE
+                     -- END REV : 004
+                  WHERE  ENTCODE = OLD.VCHCODE::varchar
+                  AND    GLCODE  = OLD.GLCODE
+                  AND    ((OLD.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = OLD.SLCODE)
+                  -- START REV : 003
+                  -- AND    ENTTYPE = 'VD' || :OLD.VCHTYPE
+                  AND    ENTTYPE = 'VD' || V_VCHTYPE
+                  -- END REV : 003
+                  AND    coalesce(CREDITAMOUNT, 0) - coalesce(OLD.CAMOUNT, 0) < 0;
+
+                  GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0 THEN
+                     UPDATE FINPOST
+                     SET    ENTNO        = OLD.VCHNO::varchar
+                           ,SCHEME_DOCNO = V_SCHEME_DOCNO
+                           ,ENTDT        = OLD.VCHDT
+                           ,DOCNO        = V_REFNO
+                           ,GLCODE       = OLD.GLCODE
+                           ,SLCODE       = OLD.SLCODE
+                           ,NARTEXT      = OLD.NARTEXT
+                           ,CHQNO        = OLD.CHQNO
+                           ,CHQDT        = OLD.CHQDT
+                           ,DRAWNON      = OLD.DRAWNON
+                           ,BRSDT        = OLD.BRSDT
+                           ,CHQLABEL     = OLD.CHQLABEL
+                           ,DAMOUNT      = 0
+                           ,CAMOUNT      = 0
+                     -- START REV : 004
+                           ,REF_ADMSITE_CODE = OLD.REF_ADMSITE_CODE
+                     -- END REV : 004
+                     WHERE  ENTCODE = OLD.VCHCODE::varchar
+                     AND    GLCODE = OLD.GLCODE
+                     AND    ((OLD.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = OLD.SLCODE)
+                     -- START REV : 003
+                     -- AND    ENTTYPE = 'VD' || :OLD.VCHTYPE
+                     AND    ENTTYPE = 'VD' || V_VCHTYPE
+                     -- END REV : 003
+                     AND    coalesce(CREDITAMOUNT, 0) - coalesce(OLD.CAMOUNT, 0) = 0;
+                  END IF;
+               END IF;
+            ELSIF OLD.CAMOUNT > 0 AND DEBITAMOUNT > 0 THEN
+               UPDATE FINPOST
+               SET    ENTNO        = OLD.VCHNO::varchar
+                     ,SCHEME_DOCNO = V_SCHEME_DOCNO
+                     ,ENTDT        = OLD.VCHDT
+                     ,DOCNO        = V_REFNO
+                     ,GLCODE       = OLD.GLCODE
+                     ,SLCODE       = OLD.SLCODE
+                     ,NARTEXT      = OLD.NARTEXT
+                     ,CHQNO        = OLD.CHQNO
+                     ,CHQDT        = OLD.CHQDT
+                     ,DRAWNON      = OLD.DRAWNON
+                     ,BRSDT        = OLD.BRSDT
+                     ,CHQLABEL     = OLD.CHQLABEL
+                     ,DAMOUNT      = coalesce(DEBITAMOUNT, 0) + coalesce(OLD.CAMOUNT, 0)
+                     ,CAMOUNT      = 0
+                     -- START REV : 004
+                     ,REF_ADMSITE_CODE = OLD.REF_ADMSITE_CODE
+                     -- END REV : 004
+               WHERE  ENTCODE = OLD.VCHCODE::varchar
+               AND    GLCODE  = OLD.GLCODE
+               AND    ((OLD.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = OLD.SLCODE)
+               -- START REV : 003
+               -- AND    ENTTYPE = 'VD' || :OLD.VCHTYPE;
+               AND    ENTTYPE = 'VD' || V_VCHTYPE;
+               -- END REV : 003
+            ELSIF DEBITAMOUNT = 0 AND CREDITAMOUNT = 0 THEN
+               UPDATE FINPOST
+               SET    ENTNO        = OLD.VCHNO::varchar
+                     ,SCHEME_DOCNO = V_SCHEME_DOCNO
+                     ,ENTDT        = OLD.VCHDT
+                     ,DOCNO        = V_REFNO
+                     ,GLCODE       = OLD.GLCODE
+                     ,SLCODE       = OLD.SLCODE
+                     ,NARTEXT      = OLD.NARTEXT
+                     ,CHQNO        = OLD.CHQNO
+                     ,CHQDT        = OLD.CHQDT
+                     ,DRAWNON      = OLD.DRAWNON
+                     ,BRSDT        = OLD.BRSDT
+                     ,CHQLABEL     = OLD.CHQLABEL
+                     ,DAMOUNT      = coalesce(OLD.CAMOUNT, 0)
+                     ,CAMOUNT      = coalesce(OLD.DAMOUNT, 0)
+                     -- START REV : 004
+                     ,REF_ADMSITE_CODE = OLD.REF_ADMSITE_CODE
+                     -- END REV : 004
+               WHERE  ENTCODE = OLD.VCHCODE::varchar
+               AND    GLCODE  = OLD.GLCODE
+               AND    ((OLD.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = OLD.SLCODE)
+               -- START REV : 003
+               -- AND    ENTTYPE = 'VD' || :OLD.VCHTYPE;
+               AND    ENTTYPE = 'VD' || V_VCHTYPE;
+               -- END REV : 003
+            END IF;
+         EXCEPTION
+            WHEN no_data_found THEN
+                 IF coalesce(OLD.DAMOUNT, 0) > 0 THEN
+                    INSERT INTO FINPOST(POSTCODE, ENTCODE, ENTNO
+                              ,ENTDT, ENTTYPE, DOCNO, GLCODE, SLCODE
+                              ,NARTEXT, DAMOUNT, CAMOUNT, YCODE, CHQNO
+                              ,CHQDT, DRAWNON, BRSDT, CHQLABEL, SCHEME_DOCNO
+							 -- START REV : 006
+                              ,ADMSITE_CODE_OWNER
+                              -- END REV : 006
+                            -- START REV : 004
+                              ,REF_ADMSITE_CODE
+                            -- END REV : 004
+                             -- START REV : 005
+                             ,ADMOU_CODE
+                             -- END REV : 005
+                              )
+                    VALUES (nextval('erp01'), OLD.VCHCODE::varchar, OLD.VCHNO::varchar
+                              -- START REV : 003
+                              -- ,:OLD.VCHDT, 'VD' || :OLD.VCHTYPE
+                              ,OLD.VCHDT, 'VD' || V_VCHTYPE
+                              -- END REV : 003
+                              , V_REFNO   -- REV : 002 :OLD.REFNO,
+                              ,OLD.GLCODE, OLD.SLCODE
+                              ,OLD.NARTEXT, 0, coalesce(OLD.DAMOUNT, 0), OLD.YCODE, OLD.CHQNO
+                              ,OLD.CHQDT, OLD.DRAWNON, OLD.BRSDT, OLD.CHQLABEL, V_SCHEME_DOCNO
+                              -- START REV : 006
+                              ,V_ADMSITE_CODE_OWNER
+                              -- END REV : 006
+                             -- START REV : 004
+                              ,OLD.REF_ADMSITE_CODE
+                             -- END REV : 004
+                             -- START REV : 005
+                             ,V_OUCODE
+                             -- END REV : 005
+                              );
+                 ELSIF coalesce(OLD.CAMOUNT, 0) > 0 THEN
+                    INSERT INTO FINPOST(POSTCODE, ENTCODE, ENTNO
+                              ,ENTDT, ENTTYPE, DOCNO, GLCODE, SLCODE
+                              ,NARTEXT, DAMOUNT, CAMOUNT, YCODE, CHQNO
+                              ,CHQDT, DRAWNON, BRSDT, CHQLABEL, SCHEME_DOCNO
+                              -- START REV : 006
+                              ,ADMSITE_CODE_OWNER
+                              -- END REV : 006
+                     -- START REV : 004
+                              ,REF_ADMSITE_CODE
+                     -- END REV : 004
+                                 -- START REV : 005
+                                 ,ADMOU_CODE
+                                 -- END REV : 005
+                              )
+                    VALUES (nextval('erp01'), OLD.VCHCODE::varchar, OLD.VCHNO::varchar
+                              -- START REV : 003
+                              -- ,:OLD.VCHDT, 'VD' || :OLD.VCHTYPE
+                              ,OLD.VCHDT, 'VD' || V_VCHTYPE
+                              -- END REV : 003
+                              , V_REFNO   -- REV : 002 :OLD.REFNO,
+                              ,OLD.GLCODE, OLD.SLCODE
+                              ,OLD.NARTEXT, coalesce(OLD.CAMOUNT, 0), 0, OLD.YCODE, OLD.CHQNO
+                              ,OLD.CHQDT, OLD.DRAWNON, OLD.BRSDT, OLD.CHQLABEL, V_SCHEME_DOCNO
+                              -- START REV : 006
+                              ,V_ADMSITE_CODE_OWNER
+                              -- END REV : 006
+                              -- START REV : 004
+                             ,OLD.REF_ADMSITE_CODE
+                             -- END REV : 004
+                             -- START REV : 005
+                             ,V_OUCODE
+                             -- END REV : 005
+                              );
+                 END IF;
+         END;
+      END IF;
+
+      IF NEW.VCHCODE IS NOT NULL THEN
+         BEGIN
+            SELECT coalesce(DAMOUNT, 0)
+                  ,coalesce(CAMOUNT, 0)
+            INTO STRICT   DEBITAMOUNT
+                  ,CREDITAMOUNT
+            FROM   FINPOST
+            WHERE  ENTCODE = NEW.VCHCODE::varchar
+            AND    GLCODE  = NEW.GLCODE
+            AND    ((NEW.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = NEW.SLCODE)
+            -- START REV : 003
+            -- AND    ENTTYPE = 'VD' || :NEW.VCHTYPE;
+            AND    ENTTYPE = 'VD' || V_VCHTYPE;
+            -- END REV : 003
+            IF  NEW.DAMOUNT > 0 AND DEBITAMOUNT > 0 THEN
+                UPDATE FINPOST
+                SET    ENTNO        = NEW.VCHNO::varchar
+                      ,SCHEME_DOCNO = V_SCHEME_DOCNO
+                      ,ENTDT        = NEW.VCHDT
+                      ,DOCNO        = V_REFNO
+                      ,GLCODE       = NEW.GLCODE
+                      ,SLCODE       = NEW.SLCODE
+                      ,NARTEXT      = NEW.NARTEXT
+                      ,CHQNO        = NEW.CHQNO
+                      ,CHQDT        = NEW.CHQDT
+                      ,DRAWNON      = NEW.DRAWNON
+                      ,BRSDT        = NEW.BRSDT
+                      ,CHQLABEL     = NEW.CHQLABEL
+                      ,DAMOUNT      = coalesce(DEBITAMOUNT, 0) + coalesce(NEW.DAMOUNT, 0)
+                      ,CAMOUNT      = 0
+                     -- START REV : 004
+                     ,REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE
+                     -- END REV : 004
+                WHERE  ENTCODE = NEW.VCHCODE::varchar
+                AND    GLCODE  = NEW.GLCODE
+                AND    ((NEW.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = NEW.SLCODE)
+                -- START REV : 003
+                -- AND    ENTTYPE = 'VD' || :NEW.VCHTYPE;
+                AND    ENTTYPE = 'VD' || V_VCHTYPE;
+                -- END REV : 003
+            ELSIF NEW.DAMOUNT > 0 AND CREDITAMOUNT > 0 THEN
+                UPDATE FINPOST
+                SET    ENTNO        = NEW.VCHNO::varchar
+                      ,SCHEME_DOCNO = V_SCHEME_DOCNO
+                      ,ENTDT        = NEW.VCHDT
+                      ,DOCNO        = V_REFNO
+                      ,GLCODE       = NEW.GLCODE
+                      ,SLCODE       = NEW.SLCODE
+                      ,NARTEXT      = NEW.NARTEXT
+                      ,CHQNO        = NEW.CHQNO
+                      ,CHQDT        = NEW.CHQDT
+                      ,DRAWNON      = NEW.DRAWNON
+                      ,BRSDT        = NEW.BRSDT
+                      ,CHQLABEL     = NEW.CHQLABEL
+                      ,DAMOUNT      = 0
+                      ,CAMOUNT      = coalesce(CREDITAMOUNT, 0) - coalesce(NEW.DAMOUNT, 0)
+                     -- START REV : 004
+                     ,REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE
+                     -- END REV : 004
+                WHERE  ENTCODE = NEW.VCHCODE::varchar
+                AND    GLCODE  = NEW.GLCODE
+                AND    ((NEW.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = NEW.SLCODE)
+                -- START REV : 003
+                -- AND    ENTTYPE = 'VD' || :NEW.VCHTYPE
+                AND    ENTTYPE = 'VD' || V_VCHTYPE
+                -- END REV : 003
+                AND    coalesce(CREDITAMOUNT, 0) - coalesce(NEW.DAMOUNT, 0) > 0;
+
+               GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0 THEN
+                  UPDATE FINPOST
+                  SET    ENTNO        = NEW.VCHNO::varchar
+                        ,SCHEME_DOCNO = V_SCHEME_DOCNO
+                        ,ENTDT        = NEW.VCHDT
+                        ,DOCNO        = V_REFNO
+                        ,GLCODE       = NEW.GLCODE
+                        ,SLCODE       = NEW.SLCODE
+                        ,NARTEXT      = NEW.NARTEXT
+                        ,CHQNO        = NEW.CHQNO
+                        ,CHQDT        = NEW.CHQDT
+                        ,DRAWNON      = NEW.DRAWNON
+                        ,BRSDT        = NEW.BRSDT
+                        ,CHQLABEL     = NEW.CHQLABEL
+                        ,DAMOUNT      = -(coalesce(CREDITAMOUNT, 0) - coalesce(NEW.DAMOUNT, 0))
+                        ,CAMOUNT      = 0
+                     -- START REV : 004
+                        ,REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE
+                     -- END REV : 004
+                  WHERE  ENTCODE = NEW.VCHCODE::varchar
+                  AND    GLCODE  = NEW.GLCODE
+                  AND    ((NEW.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = NEW.SLCODE)
+                  -- START REV : 003
+                  -- AND    ENTTYPE = 'VD' || :NEW.VCHTYPE
+                  AND    ENTTYPE = 'VD' || V_VCHTYPE
+                  -- END REV : 003
+                  AND    coalesce(CREDITAMOUNT, 0) - coalesce(NEW.DAMOUNT, 0) < 0;
+
+                  GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0 THEN
+                     UPDATE FINPOST
+                     SET    ENTNO        = NEW.VCHNO::varchar
+                           ,SCHEME_DOCNO = V_SCHEME_DOCNO
+                           ,ENTDT        = NEW.VCHDT
+                           ,DOCNO        = V_REFNO
+                           ,GLCODE       = NEW.GLCODE
+                           ,SLCODE       = NEW.SLCODE
+                           ,NARTEXT      = NEW.NARTEXT
+                           ,CHQNO        = NEW.CHQNO
+                           ,CHQDT        = NEW.CHQDT
+                           ,DRAWNON      = NEW.DRAWNON
+                           ,BRSDT        = NEW.BRSDT
+                           ,CHQLABEL     = NEW.CHQLABEL
+                           ,DAMOUNT      = 0
+                           ,CAMOUNT      = 0
+                            -- START REV : 004
+                           ,REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE
+                           -- END REV : 004
+                     WHERE  ENTCODE = NEW.VCHCODE::varchar
+                     AND    GLCODE  = NEW.GLCODE
+                     AND    ((NEW.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = NEW.SLCODE)
+                     -- START REV : 003
+                     -- AND    ENTTYPE = 'VD' || :NEW.VCHTYPE
+                     AND    ENTTYPE = 'VD' || V_VCHTYPE
+                     -- END REV : 003
+                     AND    coalesce(CREDITAMOUNT, 0) - coalesce(NEW.DAMOUNT, 0) = 0;
+                  END IF;
+               END IF;
+            ELSIF NEW.CAMOUNT > 0 AND CREDITAMOUNT > 0 THEN
+               UPDATE FINPOST
+               SET    ENTNO        = NEW.VCHNO::varchar
+                     ,SCHEME_DOCNO = V_SCHEME_DOCNO
+                     ,ENTDT        = NEW.VCHDT
+                     ,DOCNO        = V_REFNO
+                     ,GLCODE       = NEW.GLCODE
+                     ,SLCODE       = NEW.SLCODE
+                     ,NARTEXT      = NEW.NARTEXT
+                     ,CHQNO        = NEW.CHQNO
+                     ,CHQDT        = NEW.CHQDT
+                     ,DRAWNON      = NEW.DRAWNON
+                     ,BRSDT        = NEW.BRSDT
+                     ,CHQLABEL     = NEW.CHQLABEL
+                     ,DAMOUNT      = 0
+                     ,CAMOUNT      = coalesce(CREDITAMOUNT, 0) + coalesce(NEW.CAMOUNT, 0)
+                     -- START REV : 004
+                     ,REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE
+                     -- END REV : 004
+               WHERE  ENTCODE = NEW.VCHCODE::varchar
+               AND    GLCODE  = NEW.GLCODE
+               AND    ((NEW.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = NEW.SLCODE)
+               -- START REV : 003
+               -- AND    ENTTYPE = 'VD' || :NEW.VCHTYPE;
+               AND    ENTTYPE = 'VD' || V_VCHTYPE;
+               -- END REV : 003
+            ELSIF  NEW.CAMOUNT > 0 AND DEBITAMOUNT > 0 THEN
+               UPDATE FINPOST
+               SET    ENTNO        = NEW.VCHNO::varchar
+                     ,SCHEME_DOCNO = V_SCHEME_DOCNO
+                     ,ENTDT        = NEW.VCHDT
+                     ,DOCNO        = V_REFNO
+                     ,GLCODE       = NEW.GLCODE
+                     ,SLCODE       = NEW.SLCODE
+                     ,NARTEXT      = NEW.NARTEXT
+                     ,CHQNO        = NEW.CHQNO
+                     ,CHQDT        = NEW.CHQDT
+                     ,DRAWNON      = NEW.DRAWNON
+                     ,BRSDT        = NEW.BRSDT
+                     ,CHQLABEL     = NEW.CHQLABEL
+                     ,DAMOUNT      = coalesce(DEBITAMOUNT, 0) - coalesce(NEW.CAMOUNT, 0)
+                     ,CAMOUNT      = 0
+                     -- START REV : 004
+                     ,REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE
+                     -- END REV : 004
+               WHERE  ENTCODE = NEW.VCHCODE::varchar
+               AND    GLCODE  = NEW.GLCODE
+               AND    ((NEW.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = NEW.SLCODE)
+               -- START REV : 003
+               -- AND    ENTTYPE = 'VD' || :NEW.VCHTYPE
+               AND    ENTTYPE = 'VD' || V_VCHTYPE
+               -- END REV : 003
+               AND    coalesce(DEBITAMOUNT, 0) - coalesce(NEW.CAMOUNT, 0) > 0;
+
+               GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0 THEN
+                  UPDATE FINPOST
+                  SET    ENTNO        = NEW.VCHNO::varchar
+                        ,SCHEME_DOCNO = V_SCHEME_DOCNO
+                        ,ENTDT        = NEW.VCHDT
+                        ,DOCNO        = V_REFNO
+                        ,GLCODE       = NEW.GLCODE
+                        ,SLCODE       = NEW.SLCODE
+                        ,NARTEXT      = NEW.NARTEXT
+                        ,CHQNO        = NEW.CHQNO
+                        ,CHQDT        = NEW.CHQDT
+                        ,DRAWNON      = NEW.DRAWNON
+                        ,BRSDT        = NEW.BRSDT
+                        ,CHQLABEL     = NEW.CHQLABEL
+                        ,DAMOUNT      = 0
+                        ,CAMOUNT      = -(coalesce(DEBITAMOUNT, 0) - coalesce(NEW.CAMOUNT, 0))
+                     -- START REV : 004
+                        ,REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE
+                     -- END REV : 004
+                  WHERE  ENTCODE = NEW.VCHCODE::varchar
+                  AND    GLCODE  = NEW.GLCODE
+                  AND    ((NEW.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = NEW.SLCODE)
+                  -- START REV : 003
+                  -- AND    ENTTYPE = 'VD' || :NEW.VCHTYPE
+                  AND    ENTTYPE = 'VD' || V_VCHTYPE
+                  -- END REV : 003
+                  AND    coalesce(DEBITAMOUNT, 0) - coalesce(NEW.CAMOUNT, 0) < 0;
+
+                  GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0 THEN
+                     UPDATE FINPOST
+                     SET    ENTNO        = NEW.VCHNO::varchar
+                           ,SCHEME_DOCNO = V_SCHEME_DOCNO
+                           ,ENTDT        = NEW.VCHDT
+                           ,DOCNO        = V_REFNO
+                           ,GLCODE       = NEW.GLCODE
+                           ,SLCODE       = NEW.SLCODE
+                           ,NARTEXT      = NEW.NARTEXT
+                           ,CHQNO        = NEW.CHQNO
+                           ,CHQDT        = NEW.CHQDT
+                           ,DRAWNON      = NEW.DRAWNON
+                           ,BRSDT        = NEW.BRSDT
+                           ,CHQLABEL     = NEW.CHQLABEL
+                           ,DAMOUNT      = 0
+                           ,CAMOUNT      = 0
+                     -- START REV : 004
+                           ,REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE
+                     -- END REV : 004
+                     WHERE  ENTCODE = NEW.VCHCODE::varchar
+                     AND    GLCODE  = NEW.GLCODE
+                     AND    ((NEW.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = NEW.SLCODE)
+                     -- START REV : 003
+                     -- AND    ENTTYPE = 'VD' || :NEW.VCHTYPE
+                     AND    ENTTYPE = 'VD' || V_VCHTYPE
+                     -- END REV : 003
+                     AND    coalesce(DEBITAMOUNT, 0) - coalesce(NEW.CAMOUNT, 0) = 0;
+                  END IF;
+               END IF;
+
+            ELSIF DEBITAMOUNT = 0 AND CREDITAMOUNT = 0 THEN
+               UPDATE FINPOST
+               SET    ENTNO        = NEW.VCHNO::varchar
+                     ,SCHEME_DOCNO = V_SCHEME_DOCNO
+                     ,ENTDT        = NEW.VCHDT
+                     ,DOCNO        = V_REFNO
+                     ,GLCODE       = NEW.GLCODE
+                     ,SLCODE       = NEW.SLCODE
+                     ,NARTEXT      = NEW.NARTEXT
+                     ,CHQNO        = NEW.CHQNO
+                     ,CHQDT        = NEW.CHQDT
+                     ,DRAWNON      = NEW.DRAWNON
+                     ,BRSDT        = NEW.BRSDT
+                     ,CHQLABEL     = NEW.CHQLABEL
+                     ,DAMOUNT      = coalesce(NEW.DAMOUNT, 0)
+                     ,CAMOUNT      = coalesce(NEW.CAMOUNT, 0)
+                     -- START REV : 004
+                     ,REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE
+                     -- END REV : 004
+               WHERE  ENTCODE = NEW.VCHCODE::varchar
+               AND    GLCODE  = NEW.GLCODE
+               AND    ((NEW.SLCODE IS NULL
+                           AND SLCODE IS NULL)
+                       OR SLCODE = NEW.SLCODE)
+               -- START REV : 003
+               -- AND    ENTTYPE = 'VD' || :NEW.VCHTYPE;
+               AND    ENTTYPE = 'VD' || V_VCHTYPE;
+               -- END REV : 003
+            END IF;
+         EXCEPTION
+            WHEN no_data_found THEN
+                 INSERT INTO FINPOST(POSTCODE, ENTCODE, ENTNO, ENTDT
+                           ,ENTTYPE, DOCNO, GLCODE, SLCODE, NARTEXT
+                           ,DAMOUNT, CAMOUNT, YCODE, CHQNO
+                           ,CHQDT, DRAWNON, BRSDT, CHQLABEL, SCHEME_DOCNO
+                           -- START REV : 006
+                           ,ADMSITE_CODE_OWNER
+                           -- END REV : 006
+                     -- START REV : 004
+                           ,REF_ADMSITE_CODE
+                     -- END REV : 004
+                             -- START REV : 005
+                             ,ADMOU_CODE
+                             -- END REV : 005
+                           )
+                 VALUES (nextval('erp01'), NEW.VCHCODE::varchar, NEW.VCHNO::varchar, NEW.VCHDT
+                           -- START REV : 003
+                           -- , 'VD' || :NEW.VCHTYPE
+                           , 'VD' || V_VCHTYPE
+                           -- END REV : 003
+                           , V_REFNO -- REV : 002 :NEW.REFNO,
+                           ,NEW.GLCODE, NEW.SLCODE, NEW.NARTEXT
+                           ,coalesce(NEW.DAMOUNT, 0), coalesce(NEW.CAMOUNT, 0), NEW.YCODE, NEW.CHQNO
+                           ,NEW.CHQDT, NEW.DRAWNON, NEW.BRSDT, NEW.CHQLABEL, V_SCHEME_DOCNO
+                           -- START REV : 006
+                           ,V_ADMSITE_CODE_OWNER
+                           -- END REV: 006
+                          -- START REV : 004
+                           ,NEW.REF_ADMSITE_CODE
+                          -- END REV : 004
+                             -- START REV : 005
+                             ,V_OUCODE
+                             -- END REV : 005
+                           );
+         END;
+      END IF;
+
+      DELETE FROM FINPOST
+      WHERE  ENTCODE = OLD.VCHCODE::varchar
+      AND    GLCODE = OLD.GLCODE
+      AND    ((OLD.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = OLD.SLCODE)
+      -- START REV : 003
+      -- AND    ENTTYPE = 'VD' || :OLD.VCHTYPE
+      AND    ENTTYPE = 'VD' || V_VCHTYPE
+      -- END REV : 003
+      AND    coalesce(DAMOUNT, 0) = 0
+      AND    coalesce(CAMOUNT, 0) = 0;
+
+      IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
+         -- START REV : 003
+         -- IF 'VD' || :NEW.VCHTYPE = 'VDC' THEN
+         IF 'VD' || V_VCHTYPE = 'VDC' THEN
+         -- END REV : 003
+            UPDATE FINPOST
+            SET    CHQNO = NEW.CHQNO
+                  ,CHQDT = NEW.CHQDT
+                  ,DRAWNON = NEW.DRAWNON
+                  ,BRSDT = NEW.BRSDT
+                  ,CHQLABEL = NEW.CHQLABEL
+                 -- START REV : 004
+                 ,REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE
+                 -- END REV : 004
+            -- START REV : 002
+            -- WHERE  ENTCODE = :NEW.VCHCODE
+            WHERE  ENTCODE = NEW.VCHCODE::varchar
+            -- END REV : 002
+            AND    ENTTYPE = 'VMC';
+         END IF;
+      END IF;
+   -- START REV : 001
+   --ELSE
+   -- END REV : 001
+      IF OLD.VCHCODE IS NOT NULL THEN
+         UPDATE FINPOST
+         SET    ENTNO        = OLD.VCHNO::varchar
+               ,SCHEME_DOCNO = V_SCHEME_DOCNO
+               ,ENTDT        = OLD.VCHDT
+               ,DOCNO        = V_REFNO
+               ,CHQNO        = OLD.CHQNO
+               ,CHQDT        = OLD.CHQDT
+               ,DRAWNON      = OLD.DRAWNON
+               ,BRSDT        = OLD.BRSDT
+               ,CHQLABEL     = OLD.CHQLABEL
+             -- START REV : 004
+               ,REF_ADMSITE_CODE = OLD.REF_ADMSITE_CODE
+             -- END REV : 004
+         WHERE  ENTCODE = OLD.VCHCODE::varchar
+         AND    GLCODE  = OLD.GLCODE
+         AND    ((OLD.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = OLD.SLCODE)
+         -- START REV : 003
+         -- AND    ENTTYPE = 'VD' || :OLD.VCHTYPE;
+         AND    ENTTYPE = 'VD' || V_VCHTYPE;
+         -- END REV : 003
+      END IF;
+
+      IF NEW.VCHCODE IS NOT NULL THEN
+         UPDATE FINPOST
+         SET    ENTNO        = NEW.VCHNO::varchar
+               ,SCHEME_DOCNO = V_SCHEME_DOCNO
+               ,ENTDT        = NEW.VCHDT
+               ,DOCNO        = V_REFNO
+               ,CHQNO        = NEW.CHQNO
+               ,CHQDT        = NEW.CHQDT
+               ,DRAWNON      = NEW.DRAWNON
+               ,BRSDT        = NEW.BRSDT
+               ,CHQLABEL     = NEW.CHQLABEL
+             -- START REV : 004
+               ,REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE
+             -- END REV : 004
+         WHERE  ENTCODE = NEW.VCHCODE::varchar
+         AND    GLCODE  = NEW.GLCODE
+         AND    ((NEW.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = NEW.SLCODE)
+         -- START REV : 003
+         -- AND    ENTTYPE = 'VD' || :NEW.VCHTYPE;
+         AND    ENTTYPE = 'VD' || V_VCHTYPE;
+         -- END REV : 003
+      END IF;
+   -- START REV : 001
+   --END IF;
+   -- END REV : 001
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

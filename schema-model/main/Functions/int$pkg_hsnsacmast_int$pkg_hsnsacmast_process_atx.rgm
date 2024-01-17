@@ -1,0 +1,165 @@
+function "main"."int$pkg_hsnsacmast_int$pkg_hsnsacmast_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      errmsg       varchar(500);
+      vsession     varchar(100);
+      vdetailtbl   varchar(1000);
+      vdetailrec   varchar(500);
+      errcode      bigint;
+        vmaxno              bigint;
+        vcount              bigint;
+BEGIN
+
+   DECLARE C_HSN CURSOR FOR
+        SELECT NULL CODE,
+            HSN_SAC_CODE,
+            DESCRIPTION,
+            APPL_FOR,
+            EXTINCT,
+            GOVT_IDENTIFIER
+        FROM int$stg_hsnsacmast A
+        WHERE     a.userid = p_userid
+            AND NOT EXISTS (SELECT NULL
+                        FROM INVHSNSACMAIN H
+                        WHERE H.HSN_SAC_CODE = A.HSN_SAC_CODE)
+
+UNION ALL
+
+        SELECT H.CODE CODE,
+            A.HSN_SAC_CODE,
+            A.DESCRIPTION,
+            A.APPL_FOR,
+            A.EXTINCT,
+            A.GOVT_IDENTIFIER
+        FROM int$stg_hsnsacmast A, INVHSNSACMAIN H
+        WHERE a.userid = p_userid
+        AND H.HSN_SAC_CODE = A.HSN_SAC_CODE;
+     --V_MAXSEQ_NO   NUMBER(10);
+     --V_CNT         NUMBER(14) := 0;
+  BEGIN
+   FOR C2 IN C_HSN
+    LOOP
+
+    IF C2.CODE IS NULL THEN
+
+            INSERT INTO  INVHSNSACMAIN(
+                           -- CODE,
+                            CREATEDBY,
+                            CREATEDON,
+                            DESCRIPTION,
+                            EXTINCT,
+                            HSN_SAC_CODE,
+                            ISSYSTEM,
+                            LASTMODIFIEDBY,
+                            LASTMODIFIEDON,
+                            APPL,
+                            GOVT_IDENTIFIER
+                         )
+            VALUES (
+                           -- CODE
+                            p_userid,
+                            clock_timestamp(),
+                            C2.DESCRIPTION,
+                            CASE WHEN UPPER(C2.EXTINCT) IS NULL THEN 'N' WHEN UPPER(C2.EXTINCT)='YES' THEN 'Y' WHEN UPPER(C2.EXTINCT)='NO' THEN 'N' END ,
+                            C2.HSN_SAC_CODE,
+                            'N',
+                            p_userid,
+                            clock_timestamp()
+                            ,CASE WHEN UPPER(C2.APPL_FOR)='GOODS' THEN 'G' WHEN UPPER(C2.APPL_FOR)='SERVICES' THEN 'S'  ELSE 'G' END
+                            ,C2.GOVT_IDENTIFIER
+                         );
+
+    ELSE
+        UPDATE  INVHSNSACMAIN
+        SET
+                CREATEDBY =  CREATEDBY,
+                CREATEDON =  CREATEDON,
+                DESCRIPTION  = C2.DESCRIPTION,
+                EXTINCT      = coalesce(CASE WHEN UPPER(C2.EXTINCT)='YES' THEN 'Y' WHEN UPPER(C2.EXTINCT)='NO' THEN 'N' END ,EXTINCT),
+                APPL         = coalesce(CASE WHEN UPPER(C2.APPL_FOR)='GOODS' THEN 'G' WHEN UPPER(C2.APPL_FOR)='SERVICES' THEN 'S' END ,APPL),
+                LASTMODIFIEDBY = p_userid,
+                LASTMODIFIEDON =  clock_timestamp(),
+                GOVT_IDENTIFIER = C2.GOVT_IDENTIFIER
+         WHERE    CODE = C2.CODE;
+    END IF;
+
+    END LOOP;
+  END;
+
+      -- log to be added in history table
+      SELECT nextval('int$error_log_code')
+        INTO STRICT vsession
+;
+
+      vdetailtbl :=
+            'create table ginarchive.HSNSACMAST_'
+         || vsession
+         || ' as select distinct HSN_SAC_CODE HSN_SAC_ID,DESCRIPTION,GOVT_IDENTIFIER HSN_SAC_CODE from int$stg_HSNSACMAST where userid ='
+         || p_userid::text;
+
+      EXECUTE vdetailtbl;
+      vdetailrec := 'select count(1) from ginarchive.HSNSACMAST_' || vsession::text;
+      EXECUTE vdetailrec
+                   INTO STRICT vcount;
+
+      INSERT INTO int$history(code, importedby, importedon,
+                   classname, summary,
+                   history_detail_tablename, history_detail_row_count
+                  )
+           VALUES (nextval('int$history_code'), p_userid, clock_timestamp(),
+                   'HSNSACMAST', vcount::TEXT || ' Data updated successfully.',
+                   'ginarchive.HSNSACMAST_' || vsession, vcount
+                  );
+
+      RETURN('1');
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         -- error log for oracle internal error
+         INSERT INTO int$error_log(code, lineno, classname,
+                      userid, errortype, errordesc, createdon
+                     )
+              VALUES (nextval('int$error_log_code'), 0, 'HSNSACMAST',
+                      p_userid, errcode, errmsg, clock_timestamp()
+                     );
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

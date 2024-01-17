@@ -1,0 +1,82 @@
+procedure "main"."db_pro_upd_promo_summary(double)" {
+  text = """
+
+DECLARE
+    c1rec CURSOR FOR
+    SELECT
+        pm.code AS promo_code, replace(replace(replace(pd.description, 'Listed MRP', 'XYZ'), 'MRP', 'RSP'), 'XYZ', 'MRP') AS description
+        FROM v_promo_detail AS pd, promo_master AS pm
+        WHERE pd.code = pm.code AND pm.code = p_code AND pm.promo_summary IS NULL;
+BEGIN
+    /*
+    ***********************************************************************************************************
+       NAME: CALCULATE_MRP
+    
+       PURPOSE:
+    
+       REVISIONS:
+       No     Date         Author                   Description
+       ----   ----------   ----------------------   -------------------------------------------------------------
+       002    28-JUL-2020  MANASH                 (CARE ID : 0000496) PROMOTION SAVE ISSUE.
+    
+       NOTES:
+    ************************************************************************************************************
+    */
+    FOR c1 IN c1rec LOOP
+        UPDATE promo_master
+        SET promo_summary = c1.description
+            WHERE code = c1.promo_code;
+    END LOOP;
+	
+    DECLARE
+        c2rec CURSOR FOR
+        WITH RECURSIVE t (code, newdescription, description, curr, prev, seq)
+        AS (SELECT
+            var_sbq_2.code, LTRIM(MAX((description, '<br>')), '<br>') AS newdescription, 
+			var_sbq_2.description, ROW_NUMBER() OVER (PARTITION BY code ORDER BY description) AS curr, ROW_NUMBER() OVER (PARTITION BY code ORDER BY description) - 1 AS prev, var_sbq_2.seq
+            FROM (SELECT
+                code, description, ROW_NUMBER() OVER (PARTITION BY code ORDER BY description) AS curr, ROW_NUMBER() OVER (PARTITION BY code ORDER BY description) - 1 AS prev
+                FROM (SELECT
+                    a.*, SUM(LENGTH(description)) OVER (PARTITION BY code ORDER BY seq) AS running_len
+                    FROM v_promo_detail AS a) AS var_sbq
+                WHERE code = p_code AND running_len <= 3900
+                ORDER BY code, seq) AS var_sbq_2
+            WHERE curr = 1
+        UNION ALL
+        SELECT
+            t_2.code, LTRIM(MAX((t_2.description, '<br>')), '<br>') AS newdescription, t_2.description, ROW_NUMBER() OVER (PARTITION BY t_2.code ORDER BY t_2.description) AS curr, ROW_NUMBER() OVER (PARTITION BY t_2.code ORDER BY t_2.description) - 1 AS prev, t_2.seq
+            FROM (SELECT
+                code, description, ROW_NUMBER() OVER (PARTITION BY t_2.code ORDER BY t_2.description) AS curr, ROW_NUMBER() OVER (PARTITION BY t_2.code ORDER BY t_2.description) - 1 AS prev
+                FROM (SELECT
+                    a.*, SUM(LENGTH(description)) OVER (PARTITION BY code ORDER BY seq) AS running_len
+                    FROM v_promo_detail AS a) AS var_sbq
+                WHERE code = p_code AND running_len <= 3900
+                ORDER BY code, seq) AS t_2, t
+            WHERE t_2.prev = t.curr AND t_2.code = t.code)
+        SELECT
+            code, newdescription::TEXT
+            FROM t
+            WHERE code = p_code
+            GROUP BY code;
+    /* END REV : 002 */
+    BEGIN
+        FOR c2 IN c2rec LOOP
+            UPDATE promo_master
+            SET promo_summary = c2.newdescription
+                WHERE code = c2.code;
+        END LOOP;
+    END;
+/* end rev : 001 */
+END;
+"""
+  arguments = <
+    {
+      name = p_code
+      type = double precision
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

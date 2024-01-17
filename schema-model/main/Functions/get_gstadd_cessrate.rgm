@@ -1,0 +1,85 @@
+function "main"."get_gstadd_cessrate(bigint, timestamp without time zone, character, bigint, text)" {
+  text = """
+
+DECLARE
+
+   /************************************************************************************************************
+      NAME: CALCULATE_MRP
+
+      PURPOSE:
+
+      REVISIONS:
+      No     Date         Author                   Description
+      ----   ----------   ----------------------   -------------------------------------------------------------
+      001    11-JUL-2019    MOUSUMI                [JULY] GST: Kerala Cess Implementation
+      NOTES:
+   *************************************************************************************************************/
+   V_ADDCESS_RATE   double precision;
+
+BEGIN
+    IF P_FINTRADEGRP_CODE = 1 AND  P_CPGSTIN_NO IS NULL THEN
+        BEGIN
+            SELECT SUM(coalesce(AddCessRate,0))
+            INTO STRICT   V_ADDCESS_RATE
+            FROM   INVGSTADDCESSRATE DR
+            WHERE  DR.CODE =
+                           (SELECT DR1.CODE
+                              FROM INVGSTADDCESSRATE DR1
+                             WHERE     DR1.INVGSTRATE_CODE =
+                                          P_INVGSTRATE_CODE
+                                   AND  DR1.GSTStateCode = P_OWNER_GSTIN_STATE_CODE
+                                   AND DR1.EFFECTIVE_DATE =
+                                          (SELECT MAX(
+                                                     EFFECTIVE_DATE)
+                                             FROM INVGSTADDCESSRATE DR2
+                                            WHERE     DR2.INVGSTRATE_CODE =
+                                                         P_INVGSTRATE_CODE
+                                                  AND  DR2.GSTStateCode = P_OWNER_GSTIN_STATE_CODE
+                                                  AND DR2.EFFECTIVE_DATE <=
+                                                         P_ENTRYDATE));
+        EXCEPTION WHEN no_data_found THEN
+                NULL;
+        END;
+    ELSE
+        V_ADDCESS_RATE := 0;
+    END IF;
+   RETURN(coalesce(V_ADDCESS_RATE,0));
+END;
+"""
+  returnType = numeric
+  arguments = <
+    {
+      name = p_invgstrate_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_entrydate
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_owner_gstin_state_code
+      type = character
+      mode = IN
+    }
+
+    {
+      name = p_fintradegrp_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_cpgstin_no
+      type = text
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+  volatility = STABLE
+}
+

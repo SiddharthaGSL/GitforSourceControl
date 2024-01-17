@@ -1,0 +1,289 @@
+view "main"."nrv_dc_list" {
+  text = """-
+SELECT i.scheme_docno AS deliveryno,
+    ad.docname,
+    i.dccode,
+    i.dcbarcode AS packetbarcode,
+    i.dcdt AS deliverydate,
+    i.admsite_code_owner AS ownersitecode,
+    sto.name AS ownersite,
+    sto.shrtname AS ownersiteshortname,
+    s.slname AS customername,
+    s.slid AS customerid,
+    i.admsite_code AS transactionsitecode,
+    stt.name AS transactionsite,
+    stt.shrtname AS transactionsiteshortname,
+        CASE
+            WHEN (i.saletype = 'C'::bpchar) THEN 'Consignment'::text
+            WHEN (i.saletype = 'O'::bpchar) THEN 'Outright'::text
+            ELSE NULL::text
+        END AS mode_of_operation,
+        CASE
+            WHEN (i.status = 'P'::bpchar) THEN 'Pending'::text
+            WHEN (i.status = 'I'::bpchar) THEN 'Invoiced'::text
+            WHEN (i.status = 'C'::bpchar) THEN 'Cancelled'::text
+            ELSE NULL::text
+        END AS status,
+    ((ag.slname)::text ||
+        CASE
+            WHEN (ag.slid IS NULL) THEN NULL::text
+            ELSE ((' ['::text || (ag.slid)::text) || ']'::text)
+        END) AS agent,
+    ((trp.slname)::text ||
+        CASE
+            WHEN (trp.slid IS NULL) THEN NULL::text
+            ELSE ((' ['::text || (trp.slid)::text) || ']'::text)
+        END) AS transporter,
+    trd.name AS tradegroupname,
+    ost.locname AS outstockpoint,
+    ist.locname AS instockpoint,
+    y.yname AS yearname,
+    i.ycode,
+        CASE
+            WHEN ((cr.fname IS NOT NULL) AND (cr.eno IS NOT NULL)) THEN (((((cr.fname)::text || ' ['::text) || (cr.eno)::text) || ']'::text))::character varying
+            ELSE cr.fname
+        END AS created_by,
+    i."time" AS created_on,
+        CASE
+            WHEN ((la.fname IS NOT NULL) AND (la.eno IS NOT NULL)) THEN (((((la.fname)::text || ' ['::text) || (la.eno)::text) || ']'::text))::character varying
+            ELSE la.fname
+        END AS lastmodified_by,
+    i.last_access_time AS lastmodified_time,
+    i.cnldt AS cancellatiodate,
+        CASE
+            WHEN ((cln.fname IS NOT NULL) AND (cln.eno IS NOT NULL)) THEN (((((cln.fname)::text || ' ['::text) || (cln.eno)::text) || ']'::text))::character varying
+            ELSE cln.fname
+        END AS cancellationby,
+    COALESCE(agm.noofattachment, (0)::bigint) AS noofattachment,
+        CASE
+            WHEN (i.invcode IS NULL) THEN 'No'::text
+            ELSE 'Yes'::text
+        END AS invoice_tagged,
+        CASE
+            WHEN (i.linked_psite_packet_id IS NULL) THEN
+            CASE
+                WHEN (i.linked_dccode IS NULL) THEN i.entry_source
+                ELSE 'Auto-Linked'::character varying
+            END
+            ELSE 'Auto-Linked'::character varying
+        END AS entrysource,
+    i.rem AS remarks,
+        CASE
+            WHEN (i.entry_mode = 'A'::bpchar) THEN 'Adhoc'::text
+            WHEN (i.entry_mode = 'O'::bpchar) THEN 'Against Order'::text
+            WHEN (i.entry_mode = 'R'::bpchar) THEN 'Against Reservation'::text
+            ELSE NULL::text
+        END AS entrymode_display,
+    i.entry_mode,
+    im.scheme_docno AS invoice_scheme_no,
+    i.udfstring01,
+    i.udfstring02,
+    i.udfstring03,
+    i.udfstring04,
+    i.udfstring05,
+    i.udfstring06,
+    i.udfstring07,
+    i.udfstring08,
+    i.udfstring09,
+    i.udfstring10,
+    i.udfnum01,
+    i.udfnum02,
+    i.udfnum03,
+    i.udfnum04,
+    i.udfnum05,
+    i.udfdate01,
+    i.udfdate02,
+    i.udfdate03,
+    i.udfdate04,
+    i.udfdate05
+   FROM main.admyear y,
+    main.admsite stt,
+    main.admsite sto,
+    main.invloc ost,
+    main.invloc ist,
+    main.admdocscheme ad,
+    (((((((((main.invdcmain i
+     LEFT JOIN main.salinvmain im ON ((i.invcode = im.invcode)))
+     LEFT JOIN main.finsl s ON ((i.pcode = s.slcode)))
+     LEFT JOIN main.finsl ag ON ((i.agcode = ag.slcode)))
+     LEFT JOIN main.finsl trp ON ((i.trpcode = trp.slcode)))
+     LEFT JOIN main.fintradegrp trd ON ((i.saltradegrp_code = trd.code)))
+     LEFT JOIN main.hrdemp cr ON ((i.ecode = cr.ecode)))
+     LEFT JOIN main.hrdemp cln ON ((i.cnlecode = cln.ecode)))
+     LEFT JOIN main.hrdemp la ON ((i.last_access_ecode = la.ecode)))
+     LEFT JOIN ( SELECT count(*) AS noofattachment,
+            admattached_files.entry_code
+           FROM main.admattached_files
+          WHERE ((admattached_files.entry_type)::text = 'DC'::text)
+          GROUP BY admattached_files.entry_code) agm ON (((i.dccode)::numeric = (agm.entry_code)::numeric)))
+  WHERE ((i.doccode = ad.doccode) AND (i.admsite_code_owner = sto.code) AND (i.admsite_code = stt.code) AND (i.ycode = y.ycode) AND (i.outloccode = ost.loccode) AND (i.inloccode = ist.loccode));
+"""
+  columns = (
+    column "deliveryno" {
+      type = "character varying(25)"
+    }
+    column "docname" {
+      type = "character varying(100)"
+    }
+    column "dccode" {
+      type = "bigint"
+    }
+    column "packetbarcode" {
+      type = "character varying(25)"
+    }
+    column "deliverydate" {
+      type = "timestamp(0) without time zone"
+    }
+    column "ownersitecode" {
+      type = "bigint"
+    }
+    column "ownersite" {
+      type = "character varying(100)"
+    }
+    column "ownersiteshortname" {
+      type = "character varying(25)"
+    }
+    column "customername" {
+      type = "character varying(100)"
+    }
+    column "customerid" {
+      type = "character varying(25)"
+    }
+    column "transactionsitecode" {
+      type = "bigint"
+    }
+    column "transactionsite" {
+      type = "character varying(100)"
+    }
+    column "transactionsiteshortname" {
+      type = "character varying(25)"
+    }
+    column "mode_of_operation" {
+      type = text
+    }
+    column "status" {
+      type = text
+    }
+    column "agent" {
+      type = text
+    }
+    column "transporter" {
+      type = text
+    }
+    column "tradegroupname" {
+      type = "character varying(100)"
+    }
+    column "outstockpoint" {
+      type = "character varying(100)"
+    }
+    column "instockpoint" {
+      type = "character varying(100)"
+    }
+    column "yearname" {
+      type = "character varying(100)"
+    }
+    column "ycode" {
+      type = "bigint"
+    }
+    column "created_by" {
+      type = "character varying"
+    }
+    column "created_on" {
+      type = "timestamp(0) without time zone"
+    }
+    column "lastmodified_by" {
+      type = "character varying"
+    }
+    column "lastmodified_time" {
+      type = "timestamp(0) without time zone"
+    }
+    column "cancellatiodate" {
+      type = "timestamp(0) without time zone"
+    }
+    column "cancellationby" {
+      type = "character varying"
+    }
+    column "noofattachment" {
+      type = "bigint"
+    }
+    column "invoice_tagged" {
+      type = text
+    }
+    column "entrysource" {
+      type = "character varying"
+    }
+    column "remarks" {
+      type = "character varying(500)"
+    }
+    column "entrymode_display" {
+      type = text
+    }
+    column "entry_mode" {
+      type = "character(1)"
+    }
+    column "invoice_scheme_no" {
+      type = "character varying(25)"
+    }
+    column "udfstring01" {
+      type = "character varying(500)"
+    }
+    column "udfstring02" {
+      type = "character varying(500)"
+    }
+    column "udfstring03" {
+      type = "character varying(500)"
+    }
+    column "udfstring04" {
+      type = "character varying(500)"
+    }
+    column "udfstring05" {
+      type = "character varying(500)"
+    }
+    column "udfstring06" {
+      type = "character varying(500)"
+    }
+    column "udfstring07" {
+      type = "character varying(500)"
+    }
+    column "udfstring08" {
+      type = "character varying(500)"
+    }
+    column "udfstring09" {
+      type = "character varying(500)"
+    }
+    column "udfstring10" {
+      type = "character varying(500)"
+    }
+    column "udfnum01" {
+      type = "numeric(20,3)"
+    }
+    column "udfnum02" {
+      type = "numeric(20,3)"
+    }
+    column "udfnum03" {
+      type = "numeric(20,3)"
+    }
+    column "udfnum04" {
+      type = "numeric(20,3)"
+    }
+    column "udfnum05" {
+      type = "numeric(20,3)"
+    }
+    column "udfdate01" {
+      type = "timestamp(0) without time zone"
+    }
+    column "udfdate02" {
+      type = "timestamp(0) without time zone"
+    }
+    column "udfdate03" {
+      type = "timestamp(0) without time zone"
+    }
+    column "udfdate04" {
+      type = "timestamp(0) without time zone"
+    }
+    column "udfdate05" {
+      type = "timestamp(0) without time zone"
+    }
+  )
+}
+

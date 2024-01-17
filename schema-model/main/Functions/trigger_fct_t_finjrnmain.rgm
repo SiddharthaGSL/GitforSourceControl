@@ -1,0 +1,243 @@
+function "main"."trigger_fct_t_finjrnmain()" {
+  text = """
+
+DECLARE
+   ora2pg_rowcount integer;
+L_TABLE_NAME   varchar(50);
+BEGIN
+  BEGIN
+   /*************************************************************************************************************************************************
+         REV NO         OWNER                   DATE            DESCRIPTION
+        ------------   ----------          -----------     ---------------------------------------------------------------------------------------------
+        REV : 006       ANINDYA DAS        17-SEP-2020     (TFS ID : Finance Migration) To make it compatible with new EF-Core application framework
+                                                                                        where for non-fk relation entitiy it was not not possible to
+                                                                                        maintain a particular operation sequence (DML operation sequence)
+                                                                                        so, at edit mode at the time of modification or deletion the DML
+                                                                                        to delete record from fintag is coming after UPDATE statement against
+                                                                                        FINJRNMAIN / FINJRNDET. Siince this trigger was written in such a manner,
+                                                                                        that any modification will take place only when ADJAMT = 0 to impose
+                                                                                        business functionality, so in the case when record from FINTAG is getting deleted
+                                                                                        after FINJRNMAIN modification and as because ADJAMT update is happening from
+                                                                                        FINTAG trigger, so ADJAMT still remains <> 0 and that particular portion of the
+                                                                                        trigger is not working. To resolve this problem IF ADJAMT = 0 check is commented out
+                                                                                        with this revision.
+        REV : 007       MANASH              14-SEP-2021     (MNTS : 1178)               Reference of TDS journal is not updated in document adjustment module 
+                                                                                        after modification of TDS journal.
+   *************************************************************************************************************************************************/
+   IF TG_OP = 'INSERT'
+   THEN
+      IF NEW.JRNCODE IS NULL
+      THEN
+         SELECT nextval('erp01') INTO STRICT NEW.JRNCODE;
+      END IF;
+   END IF;
+
+   IF TG_OP = 'UPDATE'
+   THEN
+      CASE
+         WHEN NEW.JRNTYPE = 'D'
+         THEN
+            L_TABLE_NAME := 'FINJRNMAIN_D';
+         WHEN NEW.JRNTYPE = 'J'
+         THEN
+            CASE
+               WHEN NEW.IS_INTERPARTY = 'N'
+               THEN
+                  L_TABLE_NAME := 'FINJRNMAIN_J';
+               ELSE
+                  L_TABLE_NAME := 'FINJRNMAIN_I';
+            END CASE;
+         WHEN NEW.JRNTYPE = 'C'
+         THEN
+            L_TABLE_NAME := 'FINJRNMAIN_C';
+         -- START REV : 001
+         WHEN NEW.JRNTYPE IN ('T', 'R')
+         THEN
+            L_TABLE_NAME := 'FINJRNMAIN_T';
+         -- END REV : 001
+         ELSE
+            NULL;
+      END CASE;
+
+      -- START REV : 002
+      UPDATE FINPOST
+         SET ADMSITE_CODE_OWNER = NEW.ADMSITE_CODE_OWNER,
+             ECODE = NEW.ECODE,
+             TIME = NEW.TIME,
+             -- START REV : 007
+             DOCNO = NEW.REFNO,
+             -- END REV : 007
+             LAST_ACCESS_ECODE = NEW.LAST_ACCESS_ECODE,
+             LAST_ACCESS_TIME = NEW.LAST_ACCESS_TIME
+       WHERE ENTCODE = NEW.JRNCODE::varchar
+       AND   ENTTYPE IN ('JM' || NEW.JRNTYPE, 'JD' || NEW.JRNTYPE);
+   -- END REV : 002
+   END IF;
+
+   -- START REV : 006
+   --IF NVL(:OLD.ADJAMT, 0) = 0 THEN
+   -- END REV : 006
+   -- START REV : 001
+   -- IF :OLD.JRNCODE IS NOT NULL AND :OLD.JRNTYPE <> 'J' THEN
+   IF OLD.JRNCODE IS NOT NULL AND OLD.JRNTYPE NOT IN ('J', 'T', 'R')
+   THEN
+      -- END REV : 001
+      UPDATE FINPOST
+         SET ENTNO = OLD.JRNNO::varchar,
+             SCHEME_DOCNO = OLD.SCHEME_DOCNO,
+             ENTDT = OLD.JRNDT,
+             DOCNO = OLD.REFNO,
+             NARTEXT = OLD.NARTEXT,
+             GLCODE = OLD.GLCODE,
+             DAMOUNT = coalesce(DAMOUNT, 0) - coalesce(OLD.DAMOUNT, 0),
+             CAMOUNT = coalesce(CAMOUNT, 0) - coalesce(OLD.CAMOUNT, 0),
+             REF_ADMSITE_CODE = OLD.REF_ADMSITE_CODE             -- REV : 003
+                                                     ,
+             ADMOU_CODE = OLD.ADMOU_CODE                         -- REV : 005
+       WHERE     ENTCODE = OLD.JRNCODE::varchar
+             AND (   (OLD.SLCODE IS NULL AND SLCODE IS NULL)
+                  OR SLCODE = OLD.SLCODE)
+             AND ENTTYPE = 'JM' || OLD.JRNTYPE;
+   END IF;
+
+   -- START REV : 001
+   -- IF :NEW.JRNCODE IS NOT NULL AND :NEW.JRNTYPE <> 'J' THEN
+   IF NEW.JRNCODE IS NOT NULL AND NEW.JRNTYPE NOT IN ('J', 'T', 'R')
+   THEN
+      -- END REV : 001
+      UPDATE FINPOST
+         SET ENTNO = NEW.JRNNO::varchar,
+             SCHEME_DOCNO = NEW.SCHEME_DOCNO,
+             ENTDT = NEW.JRNDT,
+             DOCNO = NEW.REFNO,
+             NARTEXT = NEW.NARTEXT,
+             GLCODE = NEW.GLCODE,
+             DAMOUNT = coalesce(DAMOUNT, 0) + coalesce(NEW.DAMOUNT, 0),
+             CAMOUNT = coalesce(CAMOUNT, 0) + coalesce(NEW.CAMOUNT, 0),
+             REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE             -- REV : 003
+                                                     ,
+             ADMOU_CODE = NEW.ADMOU_CODE                         -- REV : 005
+       WHERE     ENTCODE = NEW.JRNCODE::varchar
+             AND (   (NEW.SLCODE IS NULL AND SLCODE IS NULL)
+                  OR SLCODE = NEW.SLCODE)
+             AND ENTTYPE = 'JM' || NEW.JRNTYPE;
+
+      GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+      THEN
+         INSERT INTO FINPOST(POSTCODE,
+                              ENTCODE,
+                              ENTNO,
+                              ENTDT,
+                              ENTTYPE,
+                              DOCNO,
+                              GLCODE,
+                              SLCODE,
+                              DAMOUNT,
+                              CAMOUNT,
+                              YCODE,
+                              NARTEXT,
+                              SCHEME_DOCNO,
+                              REF_ADMSITE_CODE                    -- REV : 003
+                                              ,
+                              ADMOU_CODE                          -- REV : 005
+                                        )
+              VALUES (nextval('erp01'),
+                      NEW.JRNCODE::varchar,
+                      NEW.JRNNO::varchar,
+                      NEW.JRNDT,
+                      'JM' || NEW.JRNTYPE,
+                      NEW.REFNO,
+                      NEW.GLCODE,
+                      NEW.SLCODE,
+                      coalesce(NEW.DAMOUNT, 0),
+                      coalesce(NEW.CAMOUNT, 0),
+                      NEW.YCODE,
+                      NEW.NARTEXT,
+                      NEW.SCHEME_DOCNO,
+                      NEW.REF_ADMSITE_CODE                       -- REV : 003
+                                           ,
+                      NEW.ADMOU_CODE                             -- REV : 005
+                                     );
+      END IF;
+   END IF;
+
+   -- START REV : 001
+   -- IF :OLD.JRNTYPE <> 'J' THEN
+   IF OLD.JRNTYPE NOT IN ('J', 'T', 'R')
+   THEN
+      -- END REV : 001
+      DELETE FROM FINPOST
+       WHERE     ENTCODE = OLD.JRNCODE::varchar
+             AND GLCODE = OLD.GLCODE
+             AND (   (OLD.SLCODE IS NULL AND SLCODE IS NULL)
+                  OR SLCODE = OLD.SLCODE)
+             AND ENTTYPE = 'JM' || OLD.JRNTYPE
+             AND coalesce(DAMOUNT, 0) = 0
+             AND coalesce(CAMOUNT, 0) = 0;
+   END IF;
+
+   -- START REV : 006
+   --ELSE
+   -- END REV : 006
+   -- START REV : 001
+   -- IF :OLD.JRNCODE IS NOT NULL AND :OLD.JRNTYPE <> 'J' THEN
+   IF OLD.JRNCODE IS NOT NULL AND OLD.JRNTYPE NOT IN ('J', 'T', 'R')
+   THEN
+      -- START REV : 001
+      UPDATE FINPOST
+         SET ENTNO = OLD.JRNNO::varchar,
+             SCHEME_DOCNO = OLD.SCHEME_DOCNO,
+             DOCNO = OLD.REFNO,
+             NARTEXT = OLD.NARTEXT,
+             REF_ADMSITE_CODE = OLD.REF_ADMSITE_CODE,
+             ADMOU_CODE = OLD.ADMOU_CODE                         -- REV : 055
+       WHERE     ENTCODE = OLD.JRNCODE::varchar
+             AND (   (OLD.SLCODE IS NULL AND SLCODE IS NULL)
+                  OR SLCODE = OLD.SLCODE)
+             AND ENTTYPE = 'JM' || OLD.JRNTYPE;
+   END IF;
+
+   -- START REV : 001
+   -- IF :NEW.JRNCODE IS NOT NULL AND :NEW.JRNTYPE <> 'J' THEN
+   IF NEW.JRNCODE IS NOT NULL AND NEW.JRNTYPE NOT IN ('J', 'T', 'R')
+   THEN
+      -- END REV : 001
+      UPDATE FINPOST
+         SET ENTNO = NEW.JRNNO::varchar,
+             SCHEME_DOCNO = NEW.SCHEME_DOCNO,
+             DOCNO = NEW.REFNO,
+             NARTEXT = NEW.NARTEXT,
+             REF_ADMSITE_CODE = NEW.REF_ADMSITE_CODE,
+             ADMOU_CODE = NEW.ADMOU_CODE                         -- REV : 055
+       WHERE     ENTCODE = NEW.JRNCODE::varchar
+             AND (   (NEW.SLCODE IS NULL AND SLCODE IS NULL)
+                  OR SLCODE = NEW.SLCODE)
+             AND ENTTYPE = 'JM' || NEW.JRNTYPE;
+   END IF;
+-- START REV : 006
+--END IF;
+-- END REV : 006
+EXCEPTION
+   WHEN OTHERS
+   THEN
+      CALL ERRAUDIT(USER,
+                'T_FINJRNMAIN',
+                SQLSTATE::varchar,
+                SQLERRM || '~' || NEW.JRNCODE || '~' || NEW.JRNTYPE);
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED  ' || SQLSTATE::varchar || '  ' || SQLERRM USING ERRCODE = '45001';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

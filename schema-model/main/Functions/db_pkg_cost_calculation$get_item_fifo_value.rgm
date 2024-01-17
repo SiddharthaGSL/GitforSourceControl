@@ -1,0 +1,253 @@
+function "main"."db_pkg_cost_calculation$get_item_fifo_value(bigint, character varying, timestamp without time zone, character, double, bigint, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+        /* Cursor to get in-pool */
+
+        C_REC CURSOR(
+            P_ICODE         TEMP_FIFO_IN_STOCK.ICODE%TYPE,
+            P_ASON         timestamp,
+            P_FIFO_LEVEL     TEMP_FIFO_IN_STOCK.FIFO_LEVEL%TYPE,
+            P_ADMSITE_CODE     TEMP_FIFO_IN_STOCK.ADMSITE_CODE%TYPE,
+            P_ADMOU_CODE     TEMP_FIFO_IN_STOCK.ADMOU_CODE%TYPE
+        ) FOR
+            SELECT    ENTDT,
+                coalesce(QTY,0) QTY,
+                CASE WHEN P_FIFO_LEVEL='C' THEN
+                        coalesce(COSTRATE,0)
+                    WHEN P_FIFO_LEVEL='S' THEN
+                        coalesce(RATE,0)
+                END     RATE
+            FROM    INVSTOCK
+            WHERE    ICODE=P_ICODE
+            AND    (
+                    /* Company level OU wise */
+
+                        (
+                            P_FIFO_LEVEL='C'
+                            AND
+                            -- START REV : 012
+                            --ADMOU_CODE=P_ADMOU_CODE
+                            coalesce(ADMOU_CODE,P_ADMOU_CODE)=P_ADMOU_CODE
+                            -- END REV : 012
+                            AND
+                            ADMSITE_CODE=P_ADMSITE_CODE
+                            AND
+                            UPD_COST='Y'
+                        )
+                    OR
+                    /* Site level site wise */
+
+                    (P_FIFO_LEVEL='S' AND ADMSITE_CODE=P_ADMSITE_CODE AND SITE_UPD_COST='Y')
+                )
+            AND    ENTDT<=P_ASON
+            -- ERS_CODE desc for get descending rows for a particular date
+            ORDER BY ENTDT DESC, STOCKCODE DESC;
+
+        V_STK double precision;
+		
+        /* TYPE T_NUMBER IS TABLE OF bigint INDEX BY integer;
+        TYPE T_DATE IS TABLE OF timestamp INDEX BY integer;
+		T_IN_QTY T_NUMBER;
+        T_IN_RATE T_NUMBER;
+        T_IN_DATE T_DATE; */
+		
+		
+		T_NUMBER type_t_number[];
+		T_DATE   type_t_date[];
+		
+        V_CNT bigint;
+        V_ADJ_QTY double precision;
+        V_TEMP_QTY double precision;
+        V_AMT double precision;
+        V_FLG char(1);
+        V_INVDISDET_ERS_CODE bigint;
+        V_CUR_QTY double precision;
+        --START REV : 004
+        V_LAST_IN_RATE double precision;
+        V_INPOOL_FOUND char(1) := 'N';
+        --END REV : 004
+BEGIN
+-- 	    T_NUMBER[1] := T_IN_QTY;
+--   		T_NUMBER[2] := T_IN_RATE;
+-- 		T_DATE[1] := T_IN_DATE;
+
+		
+        PERFORM set_config('db_pkg_cost_calculation.v_purpose', 'Reporting', false);
+
+        -- ABS is done because negetive qty's fifo will be calculated.
+        V_CUR_QTY := ABS(coalesce(P_QTY,0));
+        -- Stock null means stock is not provided, stock will be calculated seperately.
+        -- When this function is called and stock is known.
+        -- Stock will be passed through this parameter, if no any stock then 0 must be send otherwise stock will be recalculate.
+        IF P_STOCK IS NULL THEN
+            -- Calculating stock
+            V_STK := db_pkg_cost_calculation_get_item_stock_ason(P_ICODE, P_ASON, P_FIFO_LEVEL, P_ADMSITE_CODE, P_ADMOU_CODE);
+        ELSE
+            V_STK := coalesce(P_STOCK,0);
+        END IF;
+        PERFORM set_config('db_pkg_cost_calculation.v_calculation', 'Icode-'||P_ICODE||' Calculate Qty-'||V_CUR_QTY::varchar||', Stock-'||coalesce(V_STK,0)::varchar||', ', false);
+		
+		
+        FOR CUR IN C_REC(P_ICODE, P_ASON, P_FIFO_LEVEL, P_ADMSITE_CODE, P_ADMOU_CODE) LOOP
+            V_LAST_IN_RATE := CUR.RATE;
+            V_INPOOL_FOUND := 'Y';
+            EXIT;
+        END LOOP;
+
+        -- If stock is positive, then rate will come from in-pool
+        IF coalesce(V_STK,0)>0 AND coalesce(V_CUR_QTY,0)>0 THEN
+		
+            SELECT ARRAY_REMOVE(T_NUMBER[1].T_IN_QTY);
+            SELECT ARRAY_REMOVE(T_NUMBER[2].T_IN_RATE);
+            SELECT ARRAY_REMOVE(T_DATE[1].T_IN_DATE);
+            V_CNT := 0;
+            V_ADJ_QTY := coalesce(V_STK,0);
+
+            -- Collecting in-pool rate until in-pool-qty matched with stock-qty
+            FOR CUR IN C_REC(P_ICODE, P_ASON, P_FIFO_LEVEL, P_ADMSITE_CODE, P_ADMOU_CODE) LOOP
+                IF V_ADJ_QTY <= 0 THEN
+                    EXIT;
+                ELSE
+                    V_CNT := V_CNT + 1;
+                    IF coalesce(CUR.QTY,0)<=V_ADJ_QTY THEN
+                        T_NUMBER[1].T_IN_QTY := CUR.QTY;
+                        T_NUMBER[2].T_IN_RATE := CUR.RATE;
+                        T_DATE[1].T_IN_DATE := CUR.ENTDT;
+                        V_ADJ_QTY := V_ADJ_QTY - coalesce(CUR.QTY,0);
+                    ELSE
+                        T_NUMBER[1].T_IN_QTY := CUR.QTY;
+                        T_NUMBER[2].T_IN_RATE := CUR.RATE;
+                        T_DATE[1].T_IN_DATE := CUR.ENTDT;
+                        V_ADJ_QTY := 0;
+                    END IF;
+                END IF;
+            END LOOP;
+            V_ADJ_QTY := 0;
+            V_AMT := 0;
+            V_FLG := 'N';
+            -- If there is any in-pool record found, distribute it in reverse order upto required qty
+            IF T_IN_QTY.COUNT>0 THEN
+                FOR I IN REVERSE T_IN_QTY.FIRST .. T_IN_QTY.COUNT LOOP
+                    --V_LAST_IN_RATE := T_IN_RATE(I);
+                    IF coalesce(V_ADJ_QTY,0) < coalesce(V_CUR_QTY,0) THEN
+                        V_FLG := 'Y';
+                        IF coalesce(V_CUR_QTY,0)-coalesce(V_ADJ_QTY,0)<coalesce(T_IN_QTY(I),0) THEN
+                            PERFORM set_config('db_pkg_cost_calculation.v_calculation', SUBSTR(current_setting('db_pkg_cost_calculation.v_calculation')::varchar(4000)||' '||T_IN_DATE(I)::varchar||'-'||coalesce(V_CUR_QTY,0)-coalesce(V_ADJ_QTY,0)::varchar||' @ '|| T_IN_RATE(I)::varchar ||' + ',1,4000), false);
+                            V_AMT := coalesce(V_AMT,0)+((coalesce(V_CUR_QTY,0)-coalesce(V_ADJ_QTY,0)) * T_IN_RATE(I));
+                            V_ADJ_QTY := coalesce(V_CUR_QTY,0);
+                        ELSE
+                            PERFORM set_config('db_pkg_cost_calculation.v_calculation', SUBSTR(current_setting('db_pkg_cost_calculation.v_calculation')::varchar(4000)||' '||T_IN_DATE(I)::varchar||'-'||coalesce(T_IN_QTY(I),0)::varchar||' @ '|| T_IN_RATE(I)::varchar ||' + ',1,4000), false);
+                            V_AMT := coalesce(V_AMT,0)+(coalesce(T_IN_QTY(I),0) * T_IN_RATE(I));
+                            V_ADJ_QTY := coalesce(T_IN_QTY(I),0) + coalesce(V_ADJ_QTY,0);
+                        END IF;
+                    ELSE
+                        EXIT;
+                    END IF;
+                END LOOP;
+            END IF;
+            -- If any in-pool-qty found and sufficient for required-qty then return fifo-rate
+            -- and if any balanced-qty found then site wise last in rate for company level
+            -- and party's rate for site level will be considered as item's fifo-rate
+            IF V_FLG = 'Y' THEN
+                IF coalesce(V_CUR_QTY,0) <= coalesce(V_ADJ_QTY,0) THEN
+                    RETURN db_pkg_cost_calculation_check_zero_rate(0, round((V_AMT/V_CUR_QTY)::numeric,3));
+                ELSE
+                    IF P_FIFO_LEVEL = 'C' THEN
+                        --START REV : 004
+                            --V_CALCULATION := SUBSTR(V_CALCULATION||'Balanced-'||TO_CHAR(NVL(V_CUR_QTY-V_ADJ_QTY,0))||'@ Costrate-',1,4000);
+                            --RETURN db_pkg_cost_calculation_check_zero_rate(0, ROUND((NVL(V_AMT,0)+((V_CUR_QTY-V_ADJ_QTY)*NVL(db_pkg_cost_calculation_get_item_costrate(P_ICODE),0)))/V_CUR_QTY,3));
+                            PERFORM set_config('db_pkg_cost_calculation.v_calculation', SUBSTR(current_setting('db_pkg_cost_calculation.v_calculation')::varchar(4000)||'Balanced-'||coalesce(V_CUR_QTY-V_ADJ_QTY,0)::varchar||'@ Last in Rate ('||coalesce(V_LAST_IN_RATE,0)||')of site : '||P_ADMSITE_CODE||'-',1,4000), false);
+                            RETURN db_pkg_cost_calculation_check_zero_rate(0, ROUND((coalesce(V_AMT,0)+((V_CUR_QTY-V_ADJ_QTY)*coalesce(V_LAST_IN_RATE,0)))::NUMERIC/V_CUR_QTY,3));
+                        --END REV : 004
+                    ELSE
+                        PERFORM set_config('db_pkg_cost_calculation.v_calculation', SUBSTR(current_setting('db_pkg_cost_calculation.v_calculation')::varchar(4000)||'Balanced-'||coalesce(V_CUR_QTY-V_ADJ_QTY,0)::varchar||'@ DB_FUN_ITEM_RATE-',1,4000), false);
+                        RETURN db_pkg_cost_calculation_check_zero_rate(0, ROUND((coalesce(V_AMT,0)+((V_CUR_QTY-V_ADJ_QTY)*coalesce(DB_FUN_ITEM_RATE(P_ASON,P_PCODE,P_ICODE,'P'),0)))::NUMERIC/V_CUR_QTY,3));
+                    END IF;
+                END IF;
+            END IF;
+        END IF;
+        -- if stock is in negetive or required qty is in negetive
+        -- then item's costrate for company level and party's rate for site level
+        IF coalesce(V_CUR_QTY,0)= 0 THEN
+            PERFORM set_config('db_pkg_cost_calculation.v_calculation', current_setting('db_pkg_cost_calculation.v_calculation')::varchar(4000)||'Calculated Qty-'||coalesce(V_CUR_QTY,0)::varchar||' @ 0', false);
+            CALL db_pkg_cost_calculation_track_for_zero_costrate(0, current_setting('db_pkg_cost_calculation.v_calculation')::varchar(4000));
+            RETURN 0;
+        ELSE
+            IF P_FIFO_LEVEL = 'C' THEN
+                IF V_INPOOL_FOUND = 'N' THEN
+                    PERFORM set_config('db_pkg_cost_calculation.v_calculation', current_setting('db_pkg_cost_calculation.v_calculation')::varchar(4000)||'Calculated Qty-'||coalesce(V_CUR_QTY,0)::varchar||'@ Costrate-', false);
+                    RETURN db_pkg_cost_calculation_check_zero_rate(0, ROUND((coalesce(V_CUR_QTY*db_pkg_cost_calculation_get_item_costrate(P_ICODE),0)/V_CUR_QTY)::NUMERIC,3));
+                ELSIF V_INPOOL_FOUND = 'Y' THEN
+                    PERFORM set_config('db_pkg_cost_calculation.v_calculation', SUBSTR(current_setting('db_pkg_cost_calculation.v_calculation')::varchar(4000)||'Calculated Qty-'||coalesce(V_CUR_QTY,0)::varchar||'@ Last in Rate ('||coalesce(V_LAST_IN_RATE,0)||')of site : '||P_ADMSITE_CODE||'-',1,4000), false);
+                    RETURN db_pkg_cost_calculation_check_zero_rate(0, ROUND((coalesce(V_CUR_QTY*coalesce(V_LAST_IN_RATE,0),0)/V_CUR_QTY)::NUMERIC,3));
+                END IF;
+            ELSE
+                PERFORM set_config('db_pkg_cost_calculation.v_calculation', current_setting('db_pkg_cost_calculation.v_calculation')::varchar(4000)||'Calculated Qty-'||coalesce(V_CUR_QTY,0)::varchar||'@ DB_FUN_ITEM_RATE-', false);
+                RETURN db_pkg_cost_calculation_check_zero_rate(0, ROUND((coalesce(V_CUR_QTY*DB_FUN_ITEM_RATE(P_ASON,P_PCODE,P_ICODE,'P'),0)/V_CUR_QTY)::NUMERIC,3));
+            END IF;
+        END IF;
+    EXCEPTION WHEN OTHERS THEN
+        CALL ERRAUDIT(USER, 'DB_PKG_COST_CALCULATION$GET_ITEM_FIFO_VALUE()', SQLSTATE, SQLERRM||current_setting('db_pkg_cost_calculation.v_calculation')::varchar(4000));
+        RETURN 0;
+    END;
+
+"""
+  returnType = bigint
+  arguments = <
+    {
+      name = p_admou_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_icode
+      type = character varying
+      mode = IN
+    }
+
+    {
+      name = p_ason
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_fifo_level
+      type = character
+      mode = IN
+    }
+
+    {
+      name = p_qty
+      type = double precision
+      mode = IN
+    }
+
+    {
+      name = p_stock
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_admsite_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_pcode
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+  >
+  language = plpgsql
+}
+

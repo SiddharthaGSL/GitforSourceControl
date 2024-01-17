@@ -1,0 +1,58 @@
+function "main"."trigger_fct_t_invitem_gds2()" {
+  text = """
+
+DECLARE
+   V_ISENABLED   bigint;
+   V_SUB_COUNT   bigint;
+   V_SUB_CNT     bigint;
+BEGIN
+    SELECT COUNT(1)
+    INTO STRICT  V_ISENABLED
+    FROM  GDS2_SUBSCR_EVENT
+    WHERE EVENT_ID = 'ITEM';
+
+   SELECT COUNT(1)
+     INTO STRICT V_SUB_CNT
+     FROM GDS2_SUBSCR_EVENT
+    WHERE EVENT_ID IN ('item.added');
+
+   SELECT COUNT(1)
+     INTO STRICT V_SUB_COUNT
+     FROM GDS2_SUBSCR_EVENT
+    WHERE EVENT_ID IN ('item.updated', 'item.extinct.marked','item.extinct.unmarked');
+
+   IF coalesce(V_ISENABLED,0) > 0
+            THEN
+                CALL DB_PKG_GDS2_EVENT$TRACK('ITEM', NEW.ICODE);
+            END IF;
+
+   IF TG_OP = 'INSERT' THEN
+      IF coalesce(V_SUB_CNT,0) > 0
+            THEN
+                CALL DB_PKG_GDS2_EVENT$TRACK('item.added', NEW.ICODE);
+            END IF;
+   END IF;
+
+   IF TG_OP = 'UPDATE' THEN            
+      IF coalesce(V_SUB_COUNT,0) > 0
+            THEN
+                CALL DB_PKG_GDS2_EVENT$TRACK('item.updated', NEW.ICODE);
+            END IF;
+      IF coalesce(V_SUB_COUNT,0) > 0 AND coalesce(OLD.EXT, 'N') = 'N' AND coalesce(NEW.EXT, 'N') = 'Y'
+            THEN
+                CALL DB_PKG_GDS2_EVENT$TRACK('item.extinct.marked', NEW.ICODE);
+            END IF;
+      IF coalesce(V_SUB_COUNT,0) > 0 AND coalesce(OLD.EXT, 'N') = 'Y' AND coalesce(NEW.EXT, 'N') = 'N'
+            THEN
+                CALL DB_PKG_GDS2_EVENT$TRACK('item.extinct.unmarked', NEW.ICODE);
+            END IF;
+   END IF;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

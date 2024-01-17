@@ -1,0 +1,243 @@
+procedure "main"."p_posgv_consolidation(timestamp without time zone, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+   v_pcode                         bigint;
+   v_debtors_glcode                bigint;
+   v_consignment_glcode            bigint;
+   v_gvcontrol_glcode              bigint;
+   v_gvdiscount_glcode             bigint;
+   v_admou_code                    bigint;
+   v_journalcode                   bigint;
+   v_ycode                         bigint;
+   v_stlmfor                       timestamp;
+   v_roundoff                      double precision;
+   v_netpayable                    double precision;
+   v_roundoffglcode                bigint;
+   v_posstlmcode                   varchar(50);
+   v_gvissuepayment_journal_code   bigint;
+   v_creditnote_glcode             bigint;
+   v_redemption_glcode             bigint;
+   v_cnt                           bigint;
+-- Rev : Temporary
+   v_gj_exist                      bigint;
+   v_sitename                      varchar(100);
+   V_SUM_DAMT                      double precision;
+   V_SUM_CAMT                      double precision;
+-- Rev : Temporary
+--PRAGMA AUTONOMOUS_TRANSACTION;
+  c1 RECORD;
+
+BEGIN
+/********************************************************************************************************************************
+     REV NO     OWNER           DATE         DESCRIPTION
+     ---------  ----------      -----------  ---------------------------------------------------------------------
+     REV : 001  ANINDYA         21/05/2017   (TFS ID : ) Multi OU related changes
+     REV : 002  MOUSUMI         19/03/2018   (TFS ID : xxxx ) Auto Settlement
+**********************************************************************************************************************************/
+-- Rev : Temporary
+   SELECT   COUNT(1)
+   INTO STRICT     v_gj_exist
+   FROM     gvissue_journal
+   WHERE    admsite_code = p_admsite_code
+   AND      date_trunc('day', docdate) = date_trunc('day', p_stlmfor)
+   AND      remarks = 'Auto Generated through Settlement posting';
+   SELECT  name
+   INTO STRICT    v_sitename
+   FROM    admsite
+   WHERE   code = p_admsite_code;
+   IF  coalesce(v_gj_exist,0) > 0
+   THEN
+       RAISE EXCEPTION '%', 'GINESYS Critical Exception:'||chr(10)
+                                        ||'GV Journal document already posted for ' ||v_sitename||'for '||date_trunc('day', p_stlmfor)||chr(10)
+                                        ||'This is a critical exception. Please contact GINESYS support immediately.'||chr(10)
+                                        ||'IMPORTANT: Do not make any further settlement postings for any site until GINESYS support engineer attends the issue.' USING ERRCODE = '45000';
+   END IF;
+-- Rev : Temporary
+   --v_stlmfor := TO_DATE(TO_CHAR(p_stlmfor, 'DD-MON-YY'), 'DD-MON-RR');
+   v_stlmfor := p_stlmfor;
+   SELECT code
+     INTO STRICT v_posstlmcode
+     FROM psite_posstlm
+    WHERE date_trunc('day', stlmfor) = date_trunc('day', p_stlmfor)
+          AND admsite_code = p_admsite_code;
+   SELECT slcode pcode, admou_code
+     INTO STRICT v_pcode, v_admou_code
+     FROM admsite
+    WHERE code = p_admsite_code;
+--   SELECT gvcontrol_glcode, gvdiscount_glcode, creditnote_glcode,
+--          redemption_glcode
+--     INTO v_gvcontrol_glcode, v_gvdiscount_glcode, v_creditnote_glcode,
+--          v_redemption_glcode
+--     FROM admou
+--    WHERE code = v_admou_code;
+    -- START REV : 001
+    IF  v_admou_code IS NULL
+    THEN
+       SELECT count(DISTINCT ADMOU_CODE)
+       into STRICT   v_cnt
+       FROM   ADMSITE
+       WHERE  CODE IN (SELECT REPLN_ADMSITE_CODE
+                       FROM   ADMSITE_OU
+                       WHERE  ADMSITE_CODE = p_admsite_code
+                       AND    coalesce(EXT,'N') = 'N')
+         and admou_code is not null;
+       IF  coalesce(v_cnt,0) > 0
+       THEN
+           IF  v_cnt = 1
+           THEN
+                SELECT DISTINCT admou_code
+                INTO STRICT   v_admou_code
+                  from   admsite
+                  where  code IN (SELECT repln_admsite_code
+                                 from   admsite_ou
+                                 WHERE  admsite_code = p_admsite_code
+                                 AND coalesce(EXT, 'N') = 'N')
+                   and admou_code is not null;
+          ELSE
+                SELECT DEFAULT_ADMOU_CODE
+                INTO STRICT   v_admou_code
+                FROM   ADMCMP;
+          END IF;
+        ELSE
+               SELECT DEFAULT_ADMOU_CODE
+                INTO STRICT   v_admou_code
+                FROM   ADMCMP;
+        END IF;
+    END IF;
+    -- END REV : 001
+    SELECT gvcontrol_glcode, gvdiscount_glcode,redemption_glcode
+     INTO STRICT v_gvcontrol_glcode, v_gvdiscount_glcode,v_redemption_glcode
+     FROM admou
+    WHERE code = v_admou_code;
+   IF  v_pcode IS NOT NULL
+   THEN
+       SELECT glcode debtors_glcode
+         INTO STRICT v_debtors_glcode
+         FROM finsl
+        WHERE slcode = v_pcode;
+   END IF;
+-- START REV : 002
+/*DELETE FROM TEMP_POSBILLITEMMOP_STLM;
+  INSERT INTO  TEMP_POSBILLITEMMOP_STLM
+   SELECT *
+   FROM  psite_posbillmop_PARK
+   WHERE ADMSITE_CODE = P_ADMSITE_CODE
+   AND   PSITE_POSBILL_CODE IN (SELECT CODE FROM PSITE_POSBILL_PARK
+                                WHERE TRUNC(BILLDATE) = v_stlmfor
+                                AND  ADMSITE_CODE = p_admsite_code
+                                );*/
+-- END REV : 002
+   SELECT ycode
+     INTO STRICT v_ycode
+     FROM admyear
+    WHERE p_stlmfor BETWEEN dtfr AND dtto;
+   SELECT nextval('erp01')
+     INTO STRICT v_journalcode
+;
+   SELECT count(1)
+   into STRICT   v_cnt
+        FROM psite_posgvbill
+       WHERE admsite_code = p_admsite_code AND date_trunc('day', billdate) = v_stlmfor;
+   if coalesce(v_cnt,0) > 0
+   then
+   INSERT INTO gvissue_journal(code, doccode, scheme_docno, docdate, admou_code,
+                admsite_code, customer_slcode, debtor_glcode,
+                gvcontrol_glcode, gvdiscount_glcode, grossamt, discountamt,
+                netamt, ycode, remarks, status, psite_posstlm_code, createdby,
+                createdon, lastmodifiedby, lastmodifiedon)
+      SELECT v_journalcode, 1, v_posstlmcode, v_stlmfor, v_admou_code,
+             p_admsite_code, v_pcode, v_debtors_glcode, v_gvcontrol_glcode,
+             v_gvdiscount_glcode, SUM(grossamt), SUM(discountamt),
+             SUM(netamt), v_ycode,
+             'Auto Generated through Settlement posting', 'O', v_posstlmcode,
+             p_settledbyid, clock_timestamp(), p_settledbyid, clock_timestamp()
+        FROM psite_posgvbill
+       WHERE admsite_code = p_admsite_code AND date_trunc('day', billdate) = v_stlmfor;
+   FOR c1 IN
+      (SELECT   v_journalcode gvissue_journal_code, ma.mop_glcode glcode,
+                coalesce(g.costapp, 'N') gl_cc_appl, ma.mop_slcode slcode,
+                SUM(coalesce(pbm.baseamt, 0)) amount
+                -- START REV : 002
+           --FROM psite_posbillmop pbm,
+             FROM psite_posbillmop pbm, psite_posgvbill pb, (SELECT psite_mop_code, admsite_code,
+                        CASE
+                           WHEN m.TYPE IN ('RED')
+                              THEN v_redemption_glcode
+                           ELSE pma.mop_glcode
+                        END mop_glcode,
+                        mop_slcode
+                   FROM psite_mop_assign pma, psite_mop m
+                  WHERE pma.psite_mop_code = m.code) ma
+LEFT OUTER JOIN fingl g ON (coalesce(ma.mop_glcode, -10) = g.glcode)
+WHERE pbm.psite_posbill_code = pb.code
+	   AND pbm.psite_mop_code = ma.psite_mop_code
+	   AND pbm.admsite_code = ma.admsite_code 
+	   AND date_trunc('day', pb.billdate) = v_stlmfor
+	   AND pbm.admsite_code = p_admsite_code
+	   AND pbm.paymentsource = 'POSGVBill'
+	   GROUP BY ma.mop_glcode, coalesce(g.costapp, 'N'), ma.mop_slcode)
+   LOOP
+      SELECT nextval('gvissuepayment_journal_code') code
+        INTO STRICT v_gvissuepayment_journal_code
+;
+      INSERT INTO gvissuepayment_journal(code, gvissue_journal_code,
+                   glcode, gl_cc_appl, slcode, amount
+                  )
+           VALUES (v_gvissuepayment_journal_code, c1.gvissue_journal_code,
+                   c1.glcode, c1.gl_cc_appl, c1.slcode, c1.amount
+                  );
+   END LOOP;
+        SELECT SUM(coalesce(DAMOUNT,0)),SUM(coalesce(CAMOUNT,0))
+        INTO STRICT V_SUM_DAMT,V_SUM_CAMT
+        FROM FINPOST
+        WHERE ENTTYPE = 'GVJ'
+        AND ENTCODE = v_journalcode::varchar;
+        IF  V_SUM_DAMT <> V_SUM_CAMT THEN
+            for c1 in (SELECT glcode,coalesce(DAMOUNT,0) damt,coalesce(CAMOUNT,0) camt
+                        FROM FINPOST
+                        WHERE ENTTYPE = 'GVJ'
+                        AND ENTCODE = v_journalcode::varchar)
+            loop
+             CALL ERRAUDIT('stlm', 'settlement-GV', '2000001', v_stlmfor||'-'||p_admsite_code::TEXT||'-'||c1.glcode::TEXT||'-'||c1.damt::TEXT||'-'||c1.camt::TEXT);
+            end loop;
+            RAISE EXCEPTION '%', 'GINESYS Critical Exception:'||chr(10)
+                                    ||'GV MOP Amount Mismatch in ' ||v_sitename||' for '||date_trunc('day', p_stlmfor)||chr(10)
+                                    ||'This is a critical exception. Please contact GINESYS support immediately.'||chr(10)
+                                    ||'IMPORTANT: Do not make any further settlement postings for any site until GINESYS support engineer attends the issue.'
+                                     USING ERRCODE = '45001';
+        END IF;
+   UPDATE gvissue_journal
+     SET  status = 'C'
+    WHERE code = v_journalcode;
+   UPDATE gvleaves
+      SET gvissue_journal_code = v_journalcode
+    WHERE issued_admsite_code = p_admsite_code AND date_trunc('day', issuedon) =
+                                                                     v_stlmfor;
+  end if;
+END;
+"""
+  arguments = <
+    {
+      name = p_stlmfor
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_admsite_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_settledbyid
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

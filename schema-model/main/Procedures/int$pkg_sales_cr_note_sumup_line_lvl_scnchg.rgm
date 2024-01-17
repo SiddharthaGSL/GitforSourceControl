@@ -1,0 +1,154 @@
+procedure "main"."int$pkg_sales_cr_note_sumup_line_lvl_scnchg(bigint, bigint, timestamp without time zone, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+      V_INVCODE        bigint := ARGINVCODE;
+      V_INVNO          bigint := ARGINVNO;
+      V_INVDT          timestamp := ARGINVDT;
+      V_YCODE          bigint := ARGYCODE;
+      V_ITEM_LVL_SEQ   bigint := 1;
+      V_FORMCODE       bigint;
+
+      C3 CURSOR FOR
+           SELECT I.JRNCODE,
+                  I.CHGCODE,
+                  I.RATE,
+                  I.SIGN,
+                  I.GLCODE,
+                  coalesce(F.COSTAPP, 'N')    COSTAPP,
+                  I.SLCODE,
+                  I.BASIS,
+                  I.ISTAX,
+                  I.SOURCE,
+                  I.FORMULAE,
+                  round((SUM(I.CHGAMT))::numeric, 2) CHGAMT,
+                  round((SUM(I.APPAMT))::numeric, 2) APPAMT,
+                  SUM(I.SEQ)             SEQ,
+                  GST_COMPONENT                                    -- REV : 053
+             FROM salinvjrnchg_item i
+LEFT OUTER JOIN fingl f ON (I.GLCODE = F.GLCODE)
+WHERE I.JRNCODE = V_INVCODE  GROUP BY I.JRNCODE,
+                  I.CHGCODE,
+                  I.RATE,
+                  I.SIGN,
+                  I.GLCODE,
+                  coalesce(F.COSTAPP, 'N'),
+                  I.SLCODE,
+                  I.BASIS,
+                  I.ISTAX,
+                  I.SOURCE,
+                  I.FORMULAE,
+                  GST_COMPONENT                                    -- REV : 053
+         ORDER BY SUM(I.SEQ);
+
+      V_SEQ            integer := 1;
+      --V_ITEM_LVL_SEQ   bigint := 1;
+      V_TERMED         char(1);
+      V_CNT            smallint := 0;
+
+   
+BEGIN
+      DELETE FROM SALINVJRNCHG
+            WHERE JRNCODE = ARGINVCODE AND OPERATION_LEVEL = 'L';
+
+      -- WRITE_LOG('END SUMUP = INSERT INTO SALINVCHG',2);
+      FOR C3REC IN C3
+      LOOP
+         BEGIN
+            SELECT 'Y', SEQ
+              INTO STRICT V_TERMED, V_SEQ
+              FROM SALTERMDET
+             WHERE SALTERMCODE = ARGTERMCODE AND CHGCODE = C3REC.CHGCODE;
+         EXCEPTION
+            WHEN no_data_found
+            THEN
+               V_TERMED := 'N';
+               V_SEQ := 999;
+         END;
+
+         INSERT INTO SALINVJRNCHG(JRNCODE,
+                                   SEQ,
+                                   SALCHGCODE,
+                                   RATE,
+                                   SIGN,
+                                   GLCODE,
+                                   SLCODE,
+                                   BASIS,
+                                   ISTAX,
+                                   SOURCE,
+                                   FORMULAE,
+                                   CHGAMT,
+                                   APPAMT,
+                                   OPERATION_LEVEL,
+                                   GL_CC_APPL,
+                                   WITHOUT_TERM_FORMULA,
+                                   GST_COMPONENT                  -- REV : 053
+                                                )
+              VALUES (C3REC.JRNCODE,
+                      V_SEQ,
+                      C3REC.CHGCODE,
+                      C3REC.RATE,
+                      C3REC.SIGN,
+                      C3REC.GLCODE,
+                      C3REC.SLCODE,
+                      C3REC.BASIS,
+                      C3REC.ISTAX,
+                      C3REC.SOURCE,
+                      C3REC.FORMULAE,
+                      C3REC.CHGAMT,
+                      C3REC.APPAMT,
+                      'L',
+                      C3REC.COSTAPP,
+                      CASE WHEN V_TERMED='N' THEN  'Y'  ELSE 'N' END ,
+                      C3REC.GST_COMPONENT                         -- REV : 053
+                                         );
+
+         V_SEQ := coalesce(V_SEQ, 0) + 1;
+      END LOOP;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         CALL ERRAUDIT(USER,
+                   'SUMUP_LINE_LVL_SCNCHG',
+                   SQLSTATE::varchar,
+                   SQLERRM);
+         RAISE EXCEPTION '%', 'ERROR ENCOUNTERED ' || SQLSTATE::varchar || '  ' || SQLERRM USING ERRCODE = '45105';
+   END;
+
+"""
+  arguments = <
+    {
+      name = arginvcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = arginvno
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = arginvdt
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = argycode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = argtermcode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

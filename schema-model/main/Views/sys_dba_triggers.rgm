@@ -1,0 +1,146 @@
+view "main"."sys_dba_triggers" {
+  text = """-
+SELECT (n.nspname)::character varying(128) AS owner,
+    (trg.tgname)::character varying(128) AS trigger_name,
+    (
+        CASE ((trg.tgtype)::integer & 66)
+            WHEN 2 THEN ('BEFORE'::text ||
+            CASE ((trg.tgtype)::integer & 1)
+                WHEN 1 THEN ' EACH ROW'::text
+                ELSE 'STATEMENT'::text
+            END)
+            WHEN 64 THEN 'INSTEAD OF'::text
+            ELSE ('AFTER'::text ||
+            CASE ((trg.tgtype)::integer & 1)
+                WHEN 1 THEN ' EACH ROW'::text
+                ELSE 'STATEMENT'::text
+            END)
+        END)::character varying(16) AS trigger_type,
+    (
+        CASE ((trg.tgtype)::integer & ((28)::smallint)::integer)
+            WHEN 32 THEN 'TRUNCATE'::text
+            WHEN 16 THEN 'UPDATE'::text
+            WHEN 8 THEN 'DELETE'::text
+            WHEN 4 THEN 'INSERT'::text
+            WHEN 20 THEN 'INSERT OR UPDATE'::text
+            WHEN 28 THEN 'INSERT OR UPDATE OR DELETE'::text
+            WHEN 24 THEN 'UPDATE OR DELETE'::text
+            WHEN 12 THEN 'INSERT OR DELETE'::text
+            ELSE NULL::text
+        END)::character varying(246) AS triggering_event,
+    (ns.nspname)::character varying(128) AS table_owner,
+    (
+        CASE ((trg.tgtype)::integer & 66)
+            WHEN 64 THEN 'VIEW'::text
+            ELSE 'TABLE'::text
+        END)::character varying(18) AS base_object_type,
+    (tbl.relname)::character varying(128) AS table_name,
+    (( SELECT string_agg((a.attname)::text, ', '::text) AS string_agg
+           FROM pg_attribute a
+          WHERE ((a.attrelid = tbl.oid) AND (a.attnum = ANY ((trg.tgattr)::smallint[])))))::character varying(4000) AS column_name,
+    'REFERENCING NEW AS NEW OLD AS OLD'::character varying(422) AS referencing_names,
+    (
+        CASE
+            WHEN pg_has_role(tbl.relowner, 'USAGE'::text) THEN (regexp_match(pg_get_triggerdef(trg.oid), '.{35,} WHEN \((.+)\) EXECUTE PROCEDURE'::text))[1]
+            ELSE NULL::text
+        END)::character varying(4000) AS when_clause,
+    (
+        CASE
+            WHEN (trg.tgenabled = 'D'::"char") THEN 'DISABLED'::text
+            ELSE 'ENABLED'::text
+        END)::character varying(8) AS status,
+    (obj_description(trg.oid))::character varying(400) AS description,
+    'PL/SQL'::character varying(11) AS action_type,
+    (((n.nspname)::text || '.'::text) || (proc.proname)::text) AS trigger_body,
+    'NO'::character varying(3) AS crossedition,
+    'NO'::character varying(3) AS before_statement,
+    'NO'::character varying(3) AS before_row,
+    'NO'::character varying(3) AS after_row,
+    'NO'::character varying(3) AS after_statement,
+    'NO'::character varying(3) AS instead_of_row,
+    (
+        CASE ((trg.tgtype)::integer & 66)
+            WHEN 2 THEN 'YES'::text
+            WHEN 64 THEN 'NO'::text
+            ELSE 'YES'::text
+        END)::character varying(3) AS fire_once,
+    'NO'::character varying(3) AS apply_server_only
+   FROM ((((pg_trigger trg
+     JOIN pg_proc proc ON ((proc.oid = trg.tgfoid)))
+     JOIN pg_namespace n ON ((n.oid = proc.pronamespace)))
+     JOIN pg_class tbl ON ((trg.tgrelid = tbl.oid)))
+     JOIN pg_namespace ns ON ((ns.oid = tbl.relnamespace)))
+  WHERE ((NOT trg.tgisinternal) AND (( SELECT pg_user.usesuper
+           FROM pg_user
+          WHERE (pg_user.usename = USER)) OR pg_has_role('rds_superuser'::name, 'member'::text)));
+"""
+  columns = (
+    column "owner" {
+      type = "character varying(128)"
+    }
+    column "trigger_name" {
+      type = "character varying(128)"
+    }
+    column "trigger_type" {
+      type = "character varying(16)"
+    }
+    column "triggering_event" {
+      type = "character varying(246)"
+    }
+    column "table_owner" {
+      type = "character varying(128)"
+    }
+    column "base_object_type" {
+      type = "character varying(18)"
+    }
+    column "table_name" {
+      type = "character varying(128)"
+    }
+    column "column_name" {
+      type = "character varying(4000)"
+    }
+    column "referencing_names" {
+      type = "character varying(422)"
+    }
+    column "when_clause" {
+      type = "character varying(4000)"
+    }
+    column "status" {
+      type = "character varying(8)"
+    }
+    column "description" {
+      type = "character varying(400)"
+    }
+    column "action_type" {
+      type = "character varying(11)"
+    }
+    column "trigger_body" {
+      type = text
+    }
+    column "crossedition" {
+      type = "character varying(3)"
+    }
+    column "before_statement" {
+      type = "character varying(3)"
+    }
+    column "before_row" {
+      type = "character varying(3)"
+    }
+    column "after_row" {
+      type = "character varying(3)"
+    }
+    column "after_statement" {
+      type = "character varying(3)"
+    }
+    column "instead_of_row" {
+      type = "character varying(3)"
+    }
+    column "fire_once" {
+      type = "character varying(3)"
+    }
+    column "apply_server_only" {
+      type = "character varying(3)"
+    }
+  )
+}
+

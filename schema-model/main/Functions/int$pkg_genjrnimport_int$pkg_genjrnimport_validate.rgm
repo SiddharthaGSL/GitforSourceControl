@@ -1,0 +1,1020 @@
+function "main"."int$pkg_genjrnimport_int$pkg_genjrnimport_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status   char(1);
+      errmsg     varchar(200);
+      errcode    bigint;
+      g_mark     varchar(100);
+      --  v_oucode    number(12);
+BEGIN
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'GENJRNIMPORT',
+                userid,
+                'Mandatory Validation',
+                'Column is Mandatory.',
+                clock_timestamp()
+           FROM int$stg_genjrnimport a
+          WHERE jrndt IS NULL AND a.userid = p_userid;
+
+      -- scheme_doc_format is null
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'GENJRNIMPORT',
+                userid,
+                'Mandatory Validation',
+                'Column is Mandatory.',
+                clock_timestamp()
+           FROM int$stg_genjrnimport a
+          WHERE scheme_doc_format IS NULL AND a.userid = p_userid;
+
+      -- gl_name is null
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'GENJRNIMPORT',
+                userid,
+                'Mandatory Validation',
+                'Column is Mandatory.',
+                clock_timestamp()
+           FROM int$stg_genjrnimport a
+          WHERE gl_name IS NULL AND a.userid = p_userid;
+
+      g_mark := 'V19';
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'GENJRNIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Journal Date.',
+                clock_timestamp()
+           FROM int$stg_genjrnimport a
+          WHERE date_trunc('day', jrndt) > date_trunc('day', clock_timestamp()) AND a.userid = p_userid;
+
+      g_mark := 'V21';
+
+      -- JRNDT checking for the following -
+      -- Year extinct,
+      DECLARE
+         v_dtfr           timestamp;
+         v_dtto           timestamp;
+         v_yr_ext         char(1);
+         v_day_status     char(1);
+         v_locdays        hrdemp.locdays%TYPE;
+         v_last_dt_lock   char(1);
+
+         c1 CURSOR FOR
+            SELECT DISTINCT date_trunc('day', jrndt) jrndt
+              FROM int$stg_genjrnimport
+             WHERE userid = p_userid;
+      BEGIN
+         FOR i IN c1
+         LOOP
+            -- Ycode related checking, min trans date checking, lockday checking, Year exists or not, Day status related checking
+            BEGIN
+               SELECT ext, dtfr, dtto
+                 INTO STRICT v_yr_ext, v_dtfr, v_dtto
+                 FROM admyear
+                WHERE i.jrndt BETWEEN dtfr AND dtto;
+
+               IF coalesce(v_yr_ext, 'N') = 'Y'
+               THEN
+                  INSERT INTO int$error_log(code,
+                                             lineno,
+                                             classname,
+                                             userid,
+                                             errortype,
+                                             errordesc,
+                                             createdon)
+                     SELECT nextval('int$error_log_code'),
+                            lineno,
+                            'GENJRNIMPORT',
+                            userid,
+                            'Data Validation',
+                            'Year of the Date is not open / extinct',
+                            clock_timestamp()
+                       FROM int$stg_genjrnimport
+                      WHERE date_trunc('day', jrndt) = i.jrndt AND userid = p_userid;
+               ELSE
+                  IF i.jrndt < v_dtfr
+                  THEN
+                     INSERT INTO int$error_log(code,
+                                                lineno,
+                                                classname,
+                                                userid,
+                                                errortype,
+                                                errordesc,
+                                                createdon)
+                        SELECT nextval('int$error_log_code'),
+                               lineno,
+                               'GENJRNIMPORT',
+                               userid,
+                               'Data Validation',
+                                  'Date can not be less than start date of current accounting year date '
+                               || TO_CHAR(v_dtfr, 'DD/MM/YYYY'),
+                               clock_timestamp()
+                          FROM int$stg_genjrnimport
+                         WHERE date_trunc('day', jrndt) = i.jrndt AND userid = p_userid;
+                  ELSE
+                     BEGIN
+                        SELECT locdays, allow_last_fy_day_mode
+                          INTO STRICT v_locdays, v_last_dt_lock
+                          FROM hrdemp
+                         WHERE ecode = p_userid;
+
+                        IF v_locdays IS NOT NULL
+                        THEN
+                           IF coalesce(
+                                 db_fun_chk_last_dt_lock(v_last_dt_lock,
+                                                          clock_timestamp()),
+                                 0) <> 0
+                           THEN
+                              INSERT INTO int$error_log(code,
+                                                         lineno,
+                                                         classname,
+                                                         userid,
+                                                         errortype,
+                                                         errordesc,
+                                                         createdon)
+                                 SELECT nextval('int$error_log_code'),
+                                        lineno,
+                                        'GENJRNIMPORT',
+                                        userid,
+                                        'Data Validation',
+                                        'user do not have priviledge to igonre lock days on the last day of accounting year',
+                                        clock_timestamp()
+                                   FROM int$stg_genjrnimport
+                                  WHERE     date_trunc('day', jrndt) = i.jrndt
+                                        AND userid = p_userid;
+                           ELSE
+                              IF date_trunc('day', i.jrndt) <
+                                    (date_trunc('day', clock_timestamp()) - v_locdays)
+                              THEN
+                                 INSERT INTO int$error_log(code,
+                                                            lineno,
+                                                            classname,
+                                                            userid,
+                                                            errortype,
+                                                            errordesc,
+                                                            createdon)
+                                    SELECT nextval('int$error_log_code'),
+                                           lineno,
+                                           'GENJRNIMPORT',
+                                           userid,
+                                           'Data Validation',
+                                           'User lock days logic fails',
+                                           clock_timestamp()
+                                      FROM int$stg_genjrnimport
+                                     WHERE     date_trunc('day', jrndt) = i.jrndt
+                                           AND userid = p_userid;
+                              END IF;
+                           END IF;
+                        END IF;
+                     EXCEPTION
+                        WHEN no_data_found
+                        THEN
+                           INSERT INTO int$error_log(code,
+                                                      lineno,
+                                                      classname,
+                                                      userid,
+                                                      errortype,
+                                                      errordesc,
+                                                      createdon)
+                              SELECT nextval('int$error_log_code'),
+                                     lineno,
+                                     'GENJRNIMPORT',
+                                     userid,
+                                     'Data Validation',
+                                     'User not exists',
+                                     clock_timestamp()
+                                FROM int$stg_genjrnimport
+                               WHERE     date_trunc('day', jrndt) = i.jrndt
+                                     AND userid = p_userid;
+                     END;
+                  END IF;
+               END IF;
+            EXCEPTION
+               WHEN no_data_found
+               THEN
+                  INSERT INTO int$error_log(code,
+                                             lineno,
+                                             classname,
+                                             userid,
+                                             errortype,
+                                             errordesc,
+                                             createdon)
+                     SELECT nextval('int$error_log_code'),
+                            lineno,
+                            'GENJRNIMPORT',
+                            userid,
+                            'Data Validation',
+                            'Year not exists',
+                            clock_timestamp()
+                       FROM int$stg_genjrnimport
+                      WHERE date_trunc('day', jrndt) = i.jrndt AND userid = p_userid;
+            END;
+
+            -- day status related checking
+            -- START REV : 002
+            -- Day check
+            INSERT INTO int$error_log(code,
+                                       lineno,
+                                       classname,
+                                       userid,
+                                       errortype,
+                                       errordesc,
+                                       createdon)
+               SELECT nextval('int$error_log_code'),
+                      0,
+                      'GENJRNIMPORT',
+                      p_userid,
+                      'Mandatory Validation',
+                      'Finance Month is Closed no entry is possible for the date',
+                      clock_timestamp()
+                 FROM admmonth a, admou_month b
+                WHERE     a.mcode = b.admmonth_code
+                      AND i.jrndt BETWEEN dtfr AND dtto
+                      AND b.admou_code = p_connect_ou
+                      AND b.fin_month_status = 'C';
+
+         END LOOP;
+      END;
+
+      g_mark := 'V22';
+
+      -- scheme_doc_format chking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'GENJRNIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Scheme Doc format.',
+                clock_timestamp()
+           FROM int$stg_genjrnimport a
+          WHERE     UPPER(a.scheme_doc_format) NOT IN
+                       (SELECT UPPER(a.docname)
+                          FROM admdocscheme a, admmenu_docscheme b
+                         WHERE     a.doccode = b.doccode
+                               --START REV : 009
+                               --AND b.menucode = 25
+                               AND    b.mdmenushortcode = 'FinanceGenJournal'
+                               --END REV : 009
+                               AND coalesce(a.ext, 'N') = 'N'
+                               AND (   0 =
+                                          (SELECT COUNT(*)
+                                             FROM admdocscheme    c,
+                                                  admou_docscheme d
+                                            WHERE     c.doccode = d.doccode
+                                                  AND d.admsite_code =
+                                                         p_connect_site
+                                                  AND coalesce(c.ext, 'N') = 'N')
+                                    OR a.doccode IN (SELECT e.doccode
+                                             FROM admdocscheme    e,
+                                                  admou_docscheme f
+                                            WHERE     e.doccode = f.doccode
+                                                  AND f.admsite_code =
+                                                         p_connect_site
+                                                  AND coalesce(e.ext, 'N') = 'N')))
+                AND a.userid = p_userid;
+
+      g_mark := 'V23';
+
+      -- scheme_docno chking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'GENJRNIMPORT',
+                userid,
+                'Data Validation',
+                'Scheme Doc No is missing for "Manual" type document scheme format',
+                clock_timestamp()
+           FROM int$stg_genjrnimport a
+          WHERE (    UPPER(a.scheme_doc_format) IN ('MANUAL (GENERAL)', 'MANUAL (EXCISE)')
+                     AND a.scheme_docno IS NULL)
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'GENJRNIMPORT',
+                userid,
+                'Data Validation',
+                'Scheme Doc No should be null, as it would be auto generated',
+                clock_timestamp()
+           FROM int$stg_genjrnimport a
+          WHERE (    UPPER(a.scheme_doc_format) NOT IN ('MANUAL (GENERAL)', 'MANUAL (EXCISE)')
+                     AND a.scheme_docno IS NOT NULL)
+                AND a.userid = p_userid;
+
+      g_mark := 'V24';
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'GENJRNIMPORT',
+                p_userid,
+                'Data Validation',
+                'Scheme Doc No already exists',
+                clock_timestamp()
+
+          WHERE EXISTS (SELECT COUNT(DISTINCT a.scheme_docno)
+                      FROM int$stg_genjrnimport a, finjrnmain b
+                     WHERE     UPPER(a.scheme_docno) =
+                                  UPPER(b.scheme_docno)
+                           AND userid = p_userid
+                    HAVING COUNT(DISTINCT a.scheme_docno) > 1);
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'GENJRNIMPORT',
+                p_userid,
+                'Data Validation',
+                'Journal remarks is different - ' || journal_ref,
+                clock_timestamp()
+           FROM (  SELECT journal_ref, COUNT(DISTINCT journal_remarks)
+                     FROM int$stg_genjrnimport
+                    WHERE userid = p_userid
+                 GROUP BY journal_ref
+                   HAVING COUNT(DISTINCT journal_remarks) > 1) alias5;
+
+      -- END REV : 003
+      -- START REV : 006
+      -- multiple JRNDT
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'GENJRNIMPORT',
+                p_userid,
+                'Data Validation',
+                   'Multiple dates for single reference number ('
+                || journal_ref
+                || ') not allowed. Blank reference number is also considered as value.',
+                clock_timestamp()
+           FROM (  SELECT journal_ref, COUNT(DISTINCT JRNDT)
+                     FROM int$stg_genjrnimport
+                    WHERE userid = p_userid
+                 GROUP BY journal_ref
+                   HAVING COUNT(DISTINCT JRNDT) > 1) alias5;
+
+      -- END REV : 006
+      -- invalid gl name
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'GENJRNIMPORT',
+                userid,
+                'Data Validation',
+                'GL Name either is not a non-extinct type or not available in GL Master or it is not a general type Ledger',
+                clock_timestamp()
+           FROM int$stg_genjrnimport a
+          WHERE     UPPER(gl_name) NOT IN (SELECT UPPER(g.glname) glname
+                          FROM fingl g
+                         WHERE g.srctype = 'G' AND g.ext = 'N')
+                AND userid = p_userid;
+
+      -- invalid sl_slid
+      -- case - 0
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'GENJRNIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid SLID',
+                clock_timestamp()
+           FROM int$stg_genjrnimport
+          WHERE     UPPER(sl_slid) NOT IN (SELECT UPPER(slid)
+                                              FROM finsl
+                                             WHERE ext = 'N')
+                AND userid = p_userid;
+
+      DECLARE
+         c1 CURSOR FOR
+            SELECT DISTINCT b.*, a.gl_name, a.sl_slid
+              FROM int$stg_genjrnimport a, fingl b
+             WHERE     UPPER(a.gl_name) = UPPER(b.glname)
+                   AND a.userid = p_userid;
+      BEGIN
+         FOR i IN c1
+         LOOP
+            IF coalesce(i.slapp, 'N') = 'N'
+            THEN
+               IF i.sl_slid IS NOT NULL
+               THEN
+                  INSERT INTO int$error_log(code,
+                                             lineno,
+                                             classname,
+                                             userid,
+                                             errortype,
+                                             errordesc,
+                                             createdon)
+                     SELECT nextval('int$error_log_code'),
+                            lineno,
+                            'GENJRNIMPORT',
+                            userid,
+                            'Data Validation',
+                            'SLID not Applicable for the GL',
+                            clock_timestamp()
+                       FROM int$stg_genjrnimport
+                      WHERE     gl_name = i.gl_name
+                            AND sl_slid = i.sl_slid
+                            AND userid = p_userid;
+               END IF;
+            ELSE
+               -- slapp = 'Y'
+               IF i.sl_slid IS NULL
+               THEN
+                  INSERT INTO int$error_log(code,
+                                             lineno,
+                                             classname,
+                                             userid,
+                                             errortype,
+                                             errordesc,
+                                             createdon)
+                     SELECT nextval('int$error_log_code'),
+                            lineno,
+                            'GENJRNIMPORT',
+                            userid,
+                            'Data Validation',
+                            'SLID missing for sub-ledger applicable GL',
+                            clock_timestamp()
+                       FROM int$stg_genjrnimport
+                      WHERE     gl_name = i.gl_name
+                            AND sl_slid IS NULL
+                            AND userid = p_userid;
+               ELSE
+                  INSERT INTO int$error_log(code,
+                                             lineno,
+                                             classname,
+                                             userid,
+                                             errortype,
+                                             errordesc,
+                                             createdon)
+                     SELECT nextval('int$error_log_code'),
+                            lineno,
+                            'GENJRNIMPORT',
+                            userid,
+                            'Data Validation',
+                            'Invalid SLID / SLID not Applicable for the GL / extinct SLID / SLID not defined for the GL.',
+                            clock_timestamp()
+                       FROM int$stg_genjrnimport
+                      WHERE     gl_name = i.gl_name
+                            AND sl_slid = i.sl_slid
+                            AND UPPER(i.sl_slid) NOT IN (SELECT UPPER(finsl.slid)
+                                      FROM finsl, fingl, finsl_gl
+                                     WHERE     finsl.slcode = finsl_gl.slcode
+                                           AND fingl.glcode = finsl_gl.glcode
+                                           AND finsl_gl.glcode = i.glcode
+                                           AND finsl.ext = 'N'
+                                           AND finsl_gl.ext = 'N')
+                            AND userid = p_userid;
+               END IF;
+            END IF;
+         END LOOP;
+      END;
+
+      g_mark := 'V35';
+
+      -- invalid amount  (amt = 0)
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'GENJRNIMPORT',
+                p_userid,
+                'Data Validation',
+                'Amount is zero.',
+                clock_timestamp()
+           FROM int$stg_genjrnimport
+          WHERE amount = 0;
+
+      g_mark := 'V36';
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'GENJRNIMPORT',
+                p_userid,
+                'Data Validation',
+                   'Summation of Debit and Credit Amount is not zero - '
+                || journal_ref,
+                clock_timestamp()
+           FROM (  SELECT journal_ref
+                     FROM int$stg_genjrnimport a
+                    WHERE a.userid = p_userid
+                 GROUP BY journal_ref
+                   HAVING coalesce(SUM(coalesce(a.amount, 0)), 0) <> 0) alias6;
+
+      -- END REV : 003
+      g_mark := 'V37';
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'GENJRNIMPORT',
+                p_userid,
+                'Data Validation',
+                   'Amount with different sign not allowed for same GL / SL combination - '
+                || journal_ref,
+                clock_timestamp()
+           FROM (  SELECT gl_name,
+                          sl_slid,
+                          journal_ref,
+                          COUNT(DISTINCT SIGN(amount))
+                     FROM int$stg_genjrnimport
+                    WHERE userid = p_userid
+                 GROUP BY gl_name, sl_slid, journal_ref
+                   HAVING COUNT(DISTINCT SIGN(amount)) > 1) alias7;
+
+      -- END REV : 003
+      -- invalid ref_admsite_shrtname
+      -- case - 0
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'GENJRNIMPORT',
+                userid,
+                'Data Validation',
+                'Reference Site Short Name is not available in Site Master.',
+                clock_timestamp()
+           FROM int$stg_genjrnimport a
+LEFT OUTER JOIN (SELECT UPPER(s.shrtname) shrtname
+                   FROM admsite s) st ON (UPPER(a.ref_admsite_shrtname) = st.shrtname)
+WHERE st.shrtname IS NULL AND a.ref_admsite_shrtname IS NOT NULL AND a.userid = p_userid;
+
+      -- case - I
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'GENJRNIMPORT',
+                userid,
+                'Data Validation',
+                'Invalid Reference Site Short Name or it is null',
+                clock_timestamp()
+           FROM int$stg_genjrnimport a,
+                (SELECT UPPER(g.glname) glname
+                   FROM fingl g
+                  WHERE g.ext = 'N' AND g.srctype = 'G' AND g.costapp = 'Y')
+                gl
+          WHERE     UPPER(a.gl_name) = gl.glname
+                AND a.ref_admsite_shrtname IS NULL
+                AND a.userid = p_userid;
+
+      DECLARE
+         c1 CURSOR
+         FOR
+            SELECT DISTINCT a.gl_name,
+                            a.sl_slid,
+                            a.ref_admsite_shrtname,
+                            b.glcode,
+                            b.glname,
+                            b.srctype,
+                            b.costapp,
+                            b.slapp,
+                            c.slcode
+              FROM int$stg_genjrnimport a
+LEFT OUTER JOIN (SELECT UPPER(glname) glname,
+                           glcode,
+                           srctype,
+                           costapp,
+                           slapp
+                      FROM fingl) b ON (UPPER(a.gl_name) = b.glname)
+LEFT OUTER JOIN (SELECT UPPER(slid) slid, slname, slcode FROM finsl) c ON (UPPER(a.sl_slid) = c.slid)
+WHERE b.costapp = 'Y' AND a.userid = p_userid;
+      BEGIN
+
+         FOR i IN c1
+         LOOP
+            INSERT INTO int$error_log(code,
+                                       lineno,
+                                       classname,
+                                       userid,
+                                       errortype,
+                                       errordesc,
+                                       createdon)
+               SELECT nextval('int$error_log_code'),
+                      lineno,
+                      'GENJRNIMPORT',
+                      userid,
+                      'Data Validation',
+                      -- start rev : 011
+                      --'Reference Site Short Name is not applicable..',
+                        'Reference site is either not applicable or extinct.',
+                      -- end rev : 011
+                      clock_timestamp()
+                 FROM int$stg_genjrnimport t1
+                WHERE     gl_name = i.gl_name
+                      AND coalesce(sl_slid, 'x4x') = coalesce(i.sl_slid, 'x4x')
+                      -- START REV : 011
+                      and upper(t1.ref_admsite_shrtname) =  upper(i.ref_admsite_shrtname)
+                      -- END REV : 011
+                      AND UPPER(i.ref_admsite_shrtname) NOT IN
+                             (SELECT UPPER(t.shrtname)
+                                FROM (SELECT s.shrtname, s.admou_code
+                                        FROM admsite       s,
+                                             fingl_site    gl,
+                                             hrdemp_ou     ou,
+                                             finsl_gl      a,
+                                             finsl_gl_site b
+                                       WHERE     s.code = gl.admsite_code
+                                             AND gl.glcode = i.glcode
+                                             AND ou.hrdemp_code = p_userid
+                                             AND (   ou.admou_code IS NULL
+                                                  OR ou.admou_code =
+                                                        p_connect_ou)
+                                             AND ou.admsite_code = s.code
+                                             AND gl.glcode = a.glcode
+                                             AND a.code = b.finsl_gl_code
+                                             AND s.code = b.admsite_code
+                                             AND a.glcode = i.glcode
+                                             AND coalesce(a.slcode, 0) =
+                                                    coalesce(i.slcode, 0)
+                                             AND s.sitetype IN ('OS-OO-CM')
+                                             AND s.code NOT IN (SELECT ref_admsite_code
+                                                       FROM global_fincosttag)
+                                             AND b.ext = 'N'
+                                             AND s.ext = 'N'
+
+UNION
+
+                                      SELECT s.shrtname, s.admou_code
+                                        FROM admsite       s,
+                                             fingl_site    gl,
+                                             finsl_gl      a,
+                                             finsl_gl_site b
+                                       WHERE     s.code = gl.admsite_code
+                                             AND gl.glcode = a.glcode
+                                             AND a.code = b.finsl_gl_code
+                                             AND s.code = b.admsite_code
+                                             AND gl.glcode = i.glcode
+                                             AND a.glcode = i.glcode
+                                             AND a.slcode = i.slcode
+                                             AND (   s.admou_code IS NULL
+                                                  OR s.admou_code =
+                                                        p_connect_ou)
+                                             AND s.sitetype NOT IN ('OS-OO-CM')
+                                             AND s.code NOT IN (SELECT ref_admsite_code
+                                                       FROM global_fincosttag)
+                                             AND b.ext = 'N'
+                                             AND s.ext = 'N'
+                                      
+UNION
+
+                                      SELECT s.shrtname, s.admou_code
+                                        FROM admsite    s,
+                                             fingl_site gl,
+                                             hrdemp_ou  ou
+                                       WHERE     s.code = gl.admsite_code
+                                             AND gl.glcode = i.glcode
+                                             AND s.admou_code = p_connect_ou
+                                             AND ou.hrdemp_code = p_userid
+                                             AND (   ou.admou_code IS NULL
+                                                  OR ou.admou_code =
+                                                        p_connect_ou)
+                                             AND ou.admsite_code = s.code
+                                             AND i.slcode IS NULL
+                                             AND s.sitetype IN ('OS-OO-CM')
+                                             AND s.code NOT IN (SELECT ref_admsite_code
+                                                       FROM global_fincosttag)
+                                             AND s.ext = 'N'
+                                      
+UNION
+
+                                      SELECT s.shrtname, s.admou_code
+                                        FROM admsite s, fingl_site gl
+                                       WHERE     s.code = gl.admsite_code
+                                             AND gl.glcode = i.glcode
+                                             AND (   s.admou_code IS NULL
+                                                  OR s.admou_code =
+                                                        p_connect_ou)
+                                             AND i.slcode IS NULL
+                                             AND s.sitetype NOT IN ('OS-OO-CM')
+                                             AND s.code NOT IN (SELECT ref_admsite_code
+                                                       FROM global_fincosttag)
+                                             AND s.ext = 'N') t
+LEFT OUTER JOIN admou a ON (t.admou_code = a.code) )
+                      AND userid = p_userid;
+         END LOOP;
+      -- end rev : 005
+      END;
+
+      g_mark := 'V41';
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'GENJRNIMPORT',
+                p_userid,
+                'Data Validation',
+                   'Different Ledger Narration text for same Ledger and Sub Ledger - '
+                || journal_ref,
+                clock_timestamp()
+           FROM (  SELECT journal_ref, COUNT(DISTINCT ledger_nartext)
+                     FROM int$stg_genjrnimport
+                    WHERE userid = p_userid
+                 GROUP BY gl_name, sl_slid, journal_ref
+                   HAVING COUNT(DISTINCT ledger_nartext) > 1) alias5;
+
+      -- END REV : 003
+      -- row level validation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'GENJRNIMPORT',
+                p_userid,
+                'Data Validation',
+                'Duplicate Sub-ledger and Site Combination.',
+                clock_timestamp()
+           FROM (                                           -- START REV : 003
+                 -- select  row_number() over (partition by gl_name,sl_slid,ref_admsite_shrtname order by gl_name,sl_slid,ref_admsite_shrtname) row_cnt
+                 SELECT ROW_NUMBER()
+                           OVER (PARTITION BY gl_name,
+                                              sl_slid,
+                                              ref_admsite_shrtname,
+                                              journal_ref
+                                 ORDER BY
+                                    gl_name,
+                                    sl_slid,
+                                    ref_admsite_shrtname,
+                                    journal_ref)
+                           row_cnt
+                   -- END REV : 003
+                   FROM int$stg_genjrnimport a
+                  WHERE a.userid = p_userid) t
+          WHERE row_cnt > 1;
+		  
+          insert
+          into  int$error_log(code,lineno,classname,userid,errortype,errordesc,createdon)
+          SELECT    nextval('int$error_log_code'),
+                    lineno,
+                    'GENJRNIMPORT',
+                    p_userid,
+                    'Data Validation',
+                    'Amount cannot be 0 or null.',
+                    clock_timestamp()
+           from     int$stg_genjrnimport a
+           where    a.gl_name is not null
+           and      coalesce(a.amount,0) = 0
+           and      a.userid = p_userid;
+
+      -- check whether records are valid or not
+      BEGIN
+         SELECT 'S'
+           INTO STRICT v_status
+           
+          WHERE EXISTS (SELECT 'S'
+                      FROM int$error_log
+                     WHERE userid = p_userid);
+
+         RETURN('0');
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            RETURN('1');
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'GENJRNIMPORT',
+                      p_userid,
+                      errcode,
+                      errmsg || ',' || g_mark,
+                      clock_timestamp());
+
+         --COMMIT;
+
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+
+function "main"."int$pkg_genjrnimport_int$pkg_genjrnimport_validate(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+ 
+DECLARE
+  -- Change this to reflect the dblink connection string
+    --v_conn_str  text := format('port=%s dbname=%s user=%s', current_setting('port'), current_database(), current_user);
+    v_srvname       name;
+    v_connname      text;
+    v_connstr       text;
+    v_conn_result   text;
+    v_query         text;
+    v_ret    text;
+BEGIN
+	v_srvname := 'foreign_pgbase';
+    v_connname := replace(uuid_generate_v4()::text,'-','');
+    v_connstr  := v_srvname;
+    
+    --Open the connection  
+    SELECT dblink_connect(v_connname,v_connstr) 
+    INTO v_conn_result;
+
+	v_query := 'SELECT * FROM int$pkg_genjrnimport_int$pkg_genjrnimport_validate_atx ( ' || quote_nullable(p_userid::text) || '::bigint,' || quote_nullable(p_connect_site::text) || '::bigint,' || quote_nullable(p_logging_date::text) || '::timestamp without time zone,' || quote_nullable(p_connect_ou::text) || '::bigint )';
+	SELECT * INTO v_ret FROM dblink(v_connname, v_query) AS p (ret text);
+
+	
+	SELECT dblink_disconnect(v_connname) 
+    INTO v_conn_result;
+	
+	RETURN v_ret;
+EXCEPTION 
+   WHEN OTHERS THEN
+        SELECT dblink_disconnect(v_connname) 
+        INTO v_conn_result;
+
+END;
+"""
+  returnType = text
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

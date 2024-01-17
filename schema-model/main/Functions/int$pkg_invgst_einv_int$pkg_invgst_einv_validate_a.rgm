@@ -1,0 +1,683 @@
+function "main"."int$pkg_invgst_einv_int$pkg_invgst_einv_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status      char(1);
+      errmsg        varchar(200);
+      errcode       bigint;V_MAXSEQ_NO   bigint := NULL;
+      V_MARK        varchar(100);
+
+  i RECORD;
+
+BEGIN
+      -- 12/27/2019 10:41:00 AM
+      -- update int$stg_invgst_einv
+      -- set    ack_datetime = to_date(ack_date_time, 'dd/mm/yyyy hh:mi:ss am');
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'INVGST_EINV',
+                userid,
+                'Data Validation',
+                   a.ack_date_time
+                || ': Inappropiate date format. Valid date format is ''dd-mm-yyyy hh:mi:ss''(24hrs format)',
+                clock_timestamp()
+           FROM int$stg_invgst_einv a
+          WHERE     db_func_is_date(ack_date_time) = 0
+                AND a.ack_date_time IS NOT NULL
+                AND a.userid = p_userid;
+
+      FOR i
+         IN (SELECT *
+               FROM int$stg_invgst_einv
+              WHERE     db_func_is_date(ack_date_time) = 1
+                    AND ack_date_time IS NOT NULL
+                    AND userid = p_userid)
+      LOOP
+         UPDATE int$stg_invgst_einv
+            SET ack_datetime =
+                   TO_DATE(i.ack_date_time, 'dd-mm-yyyy hh24:mi:ss')
+          WHERE lineno = i.lineno AND userid = p_userid;
+      END LOOP;
+
+      -- START REV: 002
+      -- IDENTIFYING WHETHER THE DOCUMENTS HAVE ALREADY BEEN UPDATED OR NOT
+      UPDATE  int$stg_invgst_einv
+      SET ALREADY_EXISTS_EINVOICE_TABLE = 1
+      WHERE UPPER(GINESYS_DOC_NO) IN (SELECT UPPER(a.ginesys_doc_no)
+                           FROM int$stg_invgst_einv a, INVGST_EINVOICE b
+                          WHERE coalesce(UPPER(a.ginesys_doc_no), 'x') = coalesce(UPPER(b.scheme_docno), 'x')
+                                AND UPPER(action) = 'UPDATE'
+                                AND a.userid = p_userid
+                         );
+
+      -- If no records to update, give error
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'INVGST_EINV',
+                userid,
+                'Data Validation',
+                'There is no new record/document to update. Cannot proceed.',
+                clock_timestamp()
+           FROM int$stg_invgst_einv a
+          WHERE     0 = (SELECT COUNT(1)
+                         from int$stg_invgst_einv 
+                         where coalesce(ALREADY_EXISTS_EINVOICE_TABLE, 0) = 0 
+                         AND userid = p_userid)
+               AND UPPER(coalesce(a.IGNORE_UPDATED_DOCS, 'NO')) = 'YES';
+
+      -- IGNORE_UPDATED_DOCS SHOULD BE EITHER NULL OR YES OR NO
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'INVGST_EINV',
+                userid,
+                'Data Validation',
+                a.ginesys_doc_no || ': IGNORE_UPDATED_DOCS should be either YES or NO.',
+                clock_timestamp()
+           FROM int$stg_invgst_einv a
+          WHERE     a.IGNORE_UPDATED_DOCS IS NOT NULL
+                AND UPPER(a.IGNORE_UPDATED_DOCS) NOT IN ('YES', 'NO')
+                AND a.userid = p_userid;
+      -- END REV: 002
+      -- GINESYS_DOC_NO
+      V_MARK := 1;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'INVGST_EINV',
+                userid,
+                'Data Validation',
+                a.ginesys_doc_no || ': Ginesys_Doc_No, must be valid.',
+                clock_timestamp()
+           FROM int$stg_invgst_einv a LEFT OUTER JOIN finpost b
+			ON (UPPER(a.ginesys_doc_no) = UPPER(b.scheme_docno))
+		   WHERE b.entcode IS NULL AND a.ginesys_doc_no IS NOT NULL AND a.userid = p_userid;
+
+      		V_MARK := 1.1;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'INVGST_EINV',
+                userid,
+                'Data Validation',
+                   a.ginesys_doc_no
+                || ': Duplicate Ginesys_Doc_No number found, unable to proceed.',
+                clock_timestamp()
+           FROM int$stg_invgst_einv a
+          WHERE     UPPER(a.ginesys_doc_no) IN (SELECT UPPER(ginesys_doc_no1)
+                          FROM (  SELECT UPPER(ginesys_doc_no) ginesys_doc_no1,
+                                         COUNT(*)
+                                    FROM int$stg_invgst_einv
+                                   WHERE userid = p_userid
+                                GROUP BY UPPER(ginesys_doc_no)
+                                  HAVING COUNT(*) > 1) alias9)
+                AND a.userid = p_userid;
+
+      V_MARK := 1.2;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'INVGST_EINV',
+                userid,
+                'Data Validation',
+                a.ginesys_doc_no || ': Ginesys_Doc_No can not be left blank.',
+                clock_timestamp()
+           FROM int$stg_invgst_einv a
+          WHERE a.ginesys_doc_no IS NULL AND a.userid = p_userid;
+
+      V_MARK := 1.3;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'INVGST_EINV',
+                userid,
+                'Data Validation',
+                   a.ginesys_doc_no
+                || ': Transaction is not in a released state, unable to update.',
+                clock_timestamp()
+           FROM int$stg_invgst_einv a,
+                (SELECT DISTINCT scheme_docno, release_status
+                   FROM finpost
+                  WHERE enttype IN ('SIM'        -- Sales Invoice (SALINVMAIN)
+                                         ,
+                                    'CTM'         -- Transfer Out (SALINVMAIN)
+                                         ,
+                                    'SRM'          -- Sales Return (SALRTMAIN)
+                                         ,
+                                    'CRM' -- Consignment/Stock Transfer Return (SALRTMAIN) not in FR
+                                         ,
+                                    'SDM'  -- Sales Debit Note (SALINVJRNMAIN)
+                                         ,
+                                    'SCM' -- Sales Credit Note (SALINVJRNMAIN)
+                                         ,
+                                    'SSM' -- Sale Service Invoice (SALSRVMAIN)
+                                         ,
+                                    'CSM' -- Retail Sale - Owned Store Sale (SALCSMAIN)
+                                         ,
+                                    'CSM' -- Retail Sale - E-com - Fulfilled by Seller (SALCSMAIN)
+                                         ,
+                                    'PIM'     -- Purchase Invoice (PURINVMAIN)
+                                         ,
+                                    'PIM'  -- Consignment Invoice (PURINVMAIN)
+                                         ,
+                                    'PRM'       -- Purchase Return (PURRTMAIN)
+                                         ,
+                                    'PDM' -- Purchase Debit Note (PURINVJRNMAIN)
+                                         ,
+                                    'PCM' -- Purchase Credit Note (PURINVJRNMAIN)
+                                         ,
+                                    'PSM' -- Purchase Service Invoice (PURSRVMAIN)
+                                         ,
+                                    'PJM' -- Purchase Service Debit Note (PURSRVJRNMAIN)
+                                         )) b
+          WHERE     UPPER(a.ginesys_doc_no) = UPPER(b.scheme_docno)
+                AND coalesce(b.release_status, 'U') <> 'P'
+                AND a.userid = p_userid;
+
+      V_MARK := 1.4;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'INVGST_EINV',
+                userid,
+                'Data Validation',
+                   a.ginesys_doc_no
+                || ': E-invoice details are already updated against the specified document. Note: In case you want to update, kindly delete and then update.',
+                clock_timestamp()
+           FROM int$stg_invgst_einv a, invgst_einvoice b
+          WHERE     coalesce(a.ginesys_doc_no, 'x') = coalesce(b.scheme_docno, 'x')
+                AND UPPER(action) = 'UPDATE'
+                -- START REV : 002
+                AND UPPER(coalesce(a.IGNORE_UPDATED_DOCS, 'NO')) = 'NO'
+                -- END REV : 002
+;
+
+      -- IRN
+      V_MARK := 2;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'INVGST_EINV',
+                userid,
+                'Data Validation',
+                a.irn || ': Duplicate IRN found, unable to proceed.',
+                clock_timestamp()
+           FROM int$stg_invgst_einv a
+          WHERE     UPPER(a.irn) IN (SELECT UPPER(irn1)
+                          FROM (  SELECT UPPER(irn) irn1, COUNT(*)
+                                    FROM int$stg_invgst_einv
+                                   WHERE userid = p_userid AND irn IS NOT NULL
+                                GROUP BY UPPER(irn)
+                                  HAVING COUNT(*) > 1) alias9)
+                AND UPPER(action) = 'UPDATE'
+                AND a.userid = p_userid;
+
+      V_MARK := 2.2;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'INVGST_EINV',
+                userid,
+                'Data Validation',
+                a.irn || ': IRN already exist, unable to proceed.',
+                clock_timestamp()
+           FROM int$stg_invgst_einv a, invgst_einvoice b
+          WHERE     UPPER(coalesce(a.irn, 'x')) = UPPER(coalesce(b.irn, 'x'))
+                AND UPPER(a.action) = 'UPDATE'
+                -- START REV: 002
+                AND coalesce(a.ALREADY_EXISTS_EINVOICE_TABLE, 0) = 0
+                -- END REV: 002
+;
+
+      V_MARK := 2.3;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'INVGST_EINV',
+                userid,
+                'Data Validation',
+                a.irn || ': IRN not valid, it must be of 64 character.',
+                clock_timestamp()
+           FROM int$stg_invgst_einv a
+          WHERE     LENGTH(coalesce(a.irn, 'x')) <> 64
+                AND UPPER(a.action) = 'UPDATE'
+                AND a.irn IS NOT NULL
+                AND a.userid = p_userid;
+
+      V_MARK := 2.4;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'INVGST_EINV',
+                userid,
+                'Data Validation',
+                   a.irn
+                || ': IRN not valid, it can not contain any thing other than alpha numeric.',
+                clock_timestamp()
+           FROM int$stg_invgst_einv a
+          WHERE (   db_func_is_number(coalesce(a.irn, 'x')) = 'TRUE'
+                     OR db_func_is_date(coalesce(a.irn, 'x')) = 1
+                     OR -- START REV : 001
+                        -- NVL(LENGTH(TRIM(TRANSLATE(a.irn,'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ `~!@#$%^&*()_=|/?><',' '))),0)=0
+                        coalesce(
+                           LENGTH(
+                              trim(both TRANSLATE(
+                                    a.irn,
+                                    'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ ',
+                                    ' '))),
+                           0) = 0
+                     OR   LENGTH(a.irn)
+                        - coalesce(
+                             LENGTH(
+                                trim(both TRANSLATE(a.irn,
+                                              '`~!@#$%^&*()-+_=|/\?><',
+                                              ' '))),
+                             0) != 0-- END REV : 001
+                    )
+                AND a.action = 'UPDATE'
+                AND a.irn IS NOT NULL
+                AND a.userid = p_userid;
+
+      -- ACK_NO
+      V_MARK := 3;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'INVGST_EINV',
+                userid,
+                'Data Validation',
+                   a.ack_no::TEXT
+                || ': Duplicate acknowledge number found, unable to proceed.',
+                clock_timestamp()
+           FROM int$stg_invgst_einv a
+          WHERE     a.ack_no IN (SELECT ack_no1
+                          FROM (  SELECT ack_no ack_no1, COUNT(*)
+                                    FROM int$stg_invgst_einv
+                                   WHERE     userid = p_userid
+                                         AND ack_no IS NOT NULL
+                                GROUP BY ack_no
+                                  HAVING COUNT(*) > 1) alias5)
+                AND UPPER(action) = 'UPDATE'
+                AND ack_no IS NOT NULL
+                AND a.userid = p_userid;
+
+      V_MARK := 3.2;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'INVGST_EINV',
+                userid,
+                'Data Validation',
+                   a.ack_no::TEXT
+                || ': Acknowledgement number already exist, unable to proceed.',
+                clock_timestamp()
+           FROM int$stg_invgst_einv a, invgst_einvoice b
+          WHERE     a.ack_no = b.ack_no
+                AND a.ack_no IS NOT NULL
+                -- START REV: 002
+                AND coalesce(a.ALREADY_EXISTS_EINVOICE_TABLE, 0) = 0
+                -- END REV: 002
+                AND UPPER(action) = 'UPDATE';
+
+      V_MARK := 3.3;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'INVGST_EINV',
+                userid,
+                'Data Validation',
+                   a.ack_no::TEXT
+                || ': Acknowledgement number should be a positive integer only.',
+                clock_timestamp()
+           FROM int$stg_invgst_einv a
+          WHERE (a.ack_no IS NOT NULL AND a.ack_no <= 0)
+                AND a.action = 'UPDATE'
+                AND a.userid = p_userid;
+
+      -- ACTION
+      V_MARK := 4;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'INVGST_EINV',
+                userid,
+                'Data Validation',
+                a.action || ': Action can not be left blank.',
+                clock_timestamp()
+           FROM int$stg_invgst_einv a
+          WHERE a.action IS NULL AND a.userid = p_userid;
+
+      V_MARK := 4.1;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'INVGST_EINV',
+                userid,
+                'Data Validation',
+                a.action || ': IRN is mandatory with UPDATE action.',
+                clock_timestamp()
+           FROM int$stg_invgst_einv a
+          WHERE     UPPER(a.action) = 'UPDATE'
+                AND a.irn IS NULL
+                AND a.userid = p_userid;
+
+      V_MARK := 4.2;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'INVGST_EINV',
+                userid,
+                'Data Validation',
+                   a.action
+                || ': Acknowledgement number and datetime should co-exist.',
+                clock_timestamp()
+           FROM int$stg_invgst_einv a
+          WHERE     (   (ack_no IS NULL AND ack_datetime IS NOT NULL)
+                     OR (ack_no IS NOT NULL AND ack_datetime IS NULL))
+                AND UPPER(a.action) = 'UPDATE'
+                AND a.userid = p_userid;
+
+      V_MARK := 4.3;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'INVGST_EINV',
+                userid,
+                'Data Validation',
+                   a.action
+                || ': IRN, Acknowledgement number, Acknowledge datetime and Signed QR code are not allowed with DELETE action.',
+                clock_timestamp()
+           FROM int$stg_invgst_einv a
+          WHERE     UPPER(a.action) = 'DELETE'
+                AND (   a.irn IS NOT NULL
+                     OR a.ack_no IS NOT NULL
+                     OR a.ack_datetime IS NOT NULL
+                     OR a.signed_qr_data IS NOT NULL)
+                AND a.userid = p_userid;
+
+      V_MARK := 4.4;
+      /*
+      insert into int$error_log (code, lineno, classname, userid, errortype, errordesc, createdon)
+      --select int$error_log_code.nextval, lineno, 'INVGST_EINV', userid, 'Data Validation', a.action||': IRN, Acknowledgement number, Acknowledge datetime are mandatory with UPDATE action.', sysdate
+      select int$error_log_code.nextval, lineno, 'INVGST_EINV', userid, 'Data Validation', a.action||': IRN is mandatory with UPDATE action.', sysdate
+      from   int$stg_invgst_einv a
+      where  upper (a.action) = 'UPDATE'
+      and    a.irn is null
+      and    a.userid = p_userid;
+      */
+      V_MARK := 4.5;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'INVGST_EINV',
+                userid,
+                'Data Validation',
+                   a.action
+                || ': E-invoice details are already updated against the specified document. Note: In case you want to update, kindly delete and then update.',
+                clock_timestamp()
+           FROM int$stg_invgst_einv a, invgst_einvoice b
+          WHERE     coalesce(a.irn, 'x') = coalesce(b.irn, 'x')
+                AND UPPER(a.action) = 'UPDATE'
+                AND a.irn IS NOT NULL
+                -- START REV : 002
+                AND UPPER(coalesce(a.IGNORE_UPDATED_DOCS, 'NO')) = 'NO'
+                -- END REV : 002
+                AND a.userid = p_userid;
+
+      V_MARK := 4.6;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'INVGST_EINV',
+                userid,
+                'Data Validation',
+                a.action || ': Valid value for action is UPDATE or DELETE.',
+                clock_timestamp()
+           FROM int$stg_invgst_einv a
+          WHERE     UPPER(a.action) NOT IN ('UPDATE', 'DELETE')
+                AND a.userid = p_userid;
+
+      V_MARK := 5;
+
+      -- START REV : 003        
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'INVGST_EINV',
+                userid,
+                'Data Validation',
+                   a.ginesys_doc_no
+                || ': E-Invoice has been generated via auto-integration. You cannot modify it manually.',
+                clock_timestamp()
+           FROM int$stg_invgst_einv a, invgst_einvoice b
+          WHERE     coalesce(a.ginesys_doc_no, 'x') = coalesce(b.scheme_docno, 'x')
+                AND UPPER(action) IN ('UPDATE', 'DELETE')
+                AND UPPER(ENTRY_MODE) = 'AUTO'
+       -- START REV : 003 
+;
+
+      -- Check whether records are valid or not
+      BEGIN
+         SELECT 'S'
+           INTO STRICT v_status
+           
+          WHERE EXISTS (SELECT 'S'
+                      FROM int$error_log
+                     WHERE userid = p_userid);
+
+         RETURN('0');
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            RETURN('1');
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'INVGST_EINV',
+                      p_userid,
+                      errcode,
+                      errmsg || '-' || v_mark,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

@@ -1,0 +1,90 @@
+function "main"."trigger_fct_t_prdwipdet_bi()" {
+  text = """
+
+DECLARE
+   vnCmpCode bigint;
+   -- START REV : 002
+   V_ENTDT                  INVSTOCK.ENTDT%TYPE;
+   V_ADMSITE_CODE           INVSTOCK.ADMSITE_CODE%TYPE;
+   V_WIPTXN_TYPE            PRDWIPMAIN.WIPTXN_TYPE%TYPE;
+   -- END REV : 002
+   -- START REV : 003
+   V_JOBTYPE                PRDJOBMAIN.JOBTYPE%TYPE;
+   -- END REV : 003
+   -- start rev : 004
+   v_rate   prdwipdet.costrate%type;
+   -- end rev : 004 
+BEGIN
+   /*******************************************************************************************************************
+     REV NO      DATE           OWNER            DESCRIPTION
+     ---------   -----------    -----------      ---------------------------------------------------------------------
+     REV : 001   10-OCT-2017    DIPTIMAN         (TFS ID : 32259) Reference family code introduced.
+     REV : 002   13-NOV-2017    DIPTIMAN         (TFS ID : 32259) COGS costrate related changes.
+     REV : 003   26-JUN-2018    DIPTIMAN         (TFS ID : 41330) Rate related changes.
+     REV : 004   20-SEP-2022    MANASH           (DEVOPS : 7719)  At the time of initial WIP transaction entry, 
+                                                                  rate is updated and same is visible on LR document
+                                                                  and E-way bill.
+     REV : 005   11-MAY-2018    ANINDYA          (TFS ID : BATCH_SERIAL) Batch Serial related impact.
+   *******************************************************************************************************************/
+   IF TG_OP = 'INSERT'
+   THEN
+      IF  NEW.CODE IS NULL THEN
+          SELECT  nextval('prdwipdet_code')
+          INTO STRICT    NEW.CODE
+;
+      END IF;
+
+      -- START REV : 001
+      IF  NEW.REF_FAMILY_CODE IS NULL THEN
+          SELECT nextval('ref_family_code')
+          INTO STRICT   NEW.REF_FAMILY_CODE
+;
+      END IF;
+      -- END REV : 001
+      -- START REV : 002
+      SELECT ADMSITE_CODE, WIP_DATE, WIPTXN_TYPE
+      INTO STRICT   V_ADMSITE_CODE, V_ENTDT, V_WIPTXN_TYPE
+      FROM   PRDWIPMAIN
+      WHERE  CODE = NEW.WIPTXN_CODE;
+
+      -- START REV : 003
+      SELECT JOBTYPE
+      INTO STRICT   V_JOBTYPE
+      FROM   PRDJOBMAIN
+      WHERE  CODE = NEW.JOBCODE;
+      -- END REV : 003
+      IF    V_WIPTXN_TYPE = 'I' THEN -- PRI
+            -- START REV : 003
+            -- :NEW.COSTRATE := NVL(db_pkg_cogs.GET_ITEM_LAST_IN_RATE(V_ADMSITE_CODE, :NEW.COMPONENT_ICODE, V_ENTDT),0);
+            IF  V_JOBTYPE = 'AN' THEN -- AN=Adhoc Reprocess
+                -- start rev : 004
+                --:NEW.COSTRATE := NVL(DB_PKG_COGS.GET_ITEM_LAST_IN_RATE(V_ADMSITE_CODE, :NEW.COMPONENT_ICODE, V_ENTDT),0);
+                v_rate        := coalesce(DB_PKG_COGS$GET_ITEM_LAST_IN_RATE(V_ADMSITE_CODE, NEW.COMPONENT_ICODE, V_ENTDT, NULL, NEW.INVBATCH_SERIAL_CODE),0);
+                NEW.costrate := v_rate;
+                NEW.rate     := v_rate;
+                -- end rev : 004
+            ELSE
+                -- Raw material issue
+                IF  NEW.ASSEMBLY_ICODE <> NEW.COMPONENT_ICODE THEN
+                    -- start rev : 004
+                    --:NEW.COSTRATE := NVL(DB_PKG_COGS.GET_ITEM_LAST_IN_RATE(V_ADMSITE_CODE, :NEW.COMPONENT_ICODE, V_ENTDT),0);
+                    v_rate        := coalesce(DB_PKG_COGS$GET_ITEM_LAST_IN_RATE(V_ADMSITE_CODE, NEW.COMPONENT_ICODE, V_ENTDT, NULL, NEW.INVBATCH_SERIAL_CODE),0);
+                    NEW.costrate := v_rate;
+                    NEW.rate     := v_rate;
+                    -- end rev : 004
+                END IF;
+            END IF;
+            -- END REV : 003
+      -- ELSIF V_WIPTXN_TYPE = 'R' THEN -- PRT
+      END IF;
+      -- END REV : 002
+   END IF;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

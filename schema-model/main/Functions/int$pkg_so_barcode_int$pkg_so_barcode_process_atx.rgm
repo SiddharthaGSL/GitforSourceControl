@@ -1,0 +1,493 @@
+function "main"."int$pkg_so_barcode_int$pkg_so_barcode_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        errmsg                  varchar(2000);
+        vsession                varchar(100);
+        vdetailtbl              varchar(2000);
+        vdetailrec              varchar(500);
+        errcode                 text;
+        --vmaxno                  number;
+        vcount                  bigint;
+        v_null_GL_cnt           bigint;
+        v_status                varchar(2000);
+        v_menucode              bigint := 99;
+        v_det_cnt               bigint;
+
+        v_ordcode               salordmain.ordcode%type;
+        v_ordno                 salordmain.ordno%type;
+        v_orddt                 timestamp;
+        v_ycode                 salordmain.ycode%type;
+        v_grsamt                salordmain.grsamt%type;
+        v_chgamt                salordmain.chgamt%type;
+        v_netamt                salordmain.netamt%type;
+        v_doccode               salordmain.doccode%type;
+        v_scheme_docno          salordmain.scheme_docno%type;
+
+        v_tempno                bigint;
+        v_err                   varchar(1000);
+        g_mark                  varchar(100);
+        v_str                   varchar(4000);
+        v_no                    bigint;
+
+        --chg_GL_exp              exception;
+
+        V_DETQTY                   double precision;
+        v_error                 bigint;
+
+        --insert_violation        exception;
+		V_ADMSITE_CODE_OWNER   bigint := NULL;
+
+        c1 CURSOR FOR
+            SELECT distinct ordcode, saletype
+            from   int$stg_so_barcode
+            WHERE  userid = p_userid
+            order by 1;
+
+        -- main fields
+        c_main CURSOR(p_ordcode bigint) FOR
+            SELECT distinct scheme_doc_format, scheme_docno, orddt, ref_doc_no, dest_site_shrtname,
+                   transporter_slid, agent_slid, reserve_inventory, remarks, 
+                   ordcode, pcode, docno, docdt, agcode, agrate, trpcode, duedt, 
+                   ycode, saletype, doccode, admou_code, admsite_code, sitetype, 
+                   chng_term_hdr, chng_term_line, glcode, slcode, pricetype, 
+                   pricelistcode, discount_factor, price_roundoff, roundoff_limit, 
+                   incl_vat_in_dist, discount_mode, discount_basis, saltermcode, 
+                   grsamt, chgamt, netamt, saltradegrp_code, 
+                   -- START REV : 003
+                   --formcode,
+                   coalesce(FORMCODE,0) formcode,
+                   -- END REV : 003 
+                   cmptax_code_basis, reserve_inv
+            from   int$stg_so_barcode a
+            where  userid = p_userid 
+            and    ordcode = p_ordcode;
+
+        -- detail fields
+        c_det CURSOR(p_ordcode bigint) FOR
+            SELECT *
+            from   int$stg_so_barcode
+            WHERE  userid = p_userid
+            and    ordcode = p_ordcode;
+
+  i RECORD;
+BEGIN
+        g_mark := 'P01';
+        -- Deleting all log against the Purchase of Service creation for the user
+        DELETE FROM admerraudit a
+        WHERE  a.usrname = user
+        and    a.prcname = 'SO_BARCODE' 
+        and    a.errcode = p_userid :: text;
+
+        call erraudit(USER, 'SO_BARCODE', p_userid,'1 - Web import Purchase of Service creation start');
+
+        -- Updating ordcode in int$stg_SO_BARCODE
+        FOR i IN (  SELECT DISTINCT upper(scheme_doc_format) scheme_doc_format1,
+                           upper(scheme_docno) scheme_docno1,
+                           orddt,
+                           upper(dest_site_shrtname) dest_site_shrtname1,
+                           upper(ref_doc_no) ref_doc_no1,
+                           upper(transporter_slid) transporter_slid1, 
+                           upper(agent_slid) agent_slid1,
+                           upper(reserve_inv) reserve_inv1,
+                           upper(remarks) remarks1
+                    FROM   int$stg_SO_BARCODE
+                    WHERE  userid = p_userid
+                    ORDER BY 1)
+        LOOP
+            select nextval('erp01') into STRICT v_ordcode;
+
+            /*v_status :=
+                       ' update int$stg_SO_BARCODE a'
+                    || ' set    ordcode = '|| v_ordcode::text||','
+                    || '        ycode = (select ycode from admyear where '''||to_char(i.orddt, 'dd-mon-rr')||''' between dtfr and dtto)'
+                    || ' where  orddt = '''||to_char(i.orddt, 'dd-mon-rr')||''''
+                    || ' and    upper(scheme_doc_format) = '''||i.scheme_doc_format1||''''
+                    || ' and    ('''||i.scheme_docno1||''' is null or upper(a.scheme_docno) = '''||i.scheme_docno1||''')'
+                    || ' and    upper(dest_site_shrtname) = '''||i.dest_site_shrtname1||''''
+                    || ' and    ('''||i.ref_doc_no1||''' is null or upper(a.ref_doc_no) = '''||upper(i.ref_doc_no1)||''')'
+                    || ' and    ('''||i.transporter_slid1||''' is null or a.transporter_slid = '''||i.transporter_slid1||''')'
+                    || ' and    ('''||i.agent_slid1||''' is null or a.agent_slid = '''||i.agent_slid1||''')'
+                    || ' and    ('''||i.reserve_inv1||''' is null or upper(a.reserve_inv) = '''||upper(i.reserve_inv1)||''')'
+                   -- START REV : 001
+                    || ' and    ('''||REPLACE(i.remarks1,'''','@')||''' is null or REPLACE (upper(a.remarks),'''''''',''@'') = '''||REPLACE(i.remarks1,'''','@')||''')'
+                   -- END REV : 001 
+                    || ' and    userid = '|| p_userid::text;*/
+					
+			   v_status :=
+                       ' update int$stg_SO_BARCODE a'
+                    || ' set    ordcode = '
+		    || quote_nullable(v_ordcode::text)
+		    ||','
+                    || ' ycode = (select ycode from admyear where '
+		    ||quote_nullable(to_char(i.orddt, 'YYYY-MM-DD'))
+		    ||' between dtfr and dtto)'
+                    || ' where  orddt = '
+		    ||quote_nullable(to_char(i.orddt, 'YYYY-MM-DD'))
+		    ||''
+                    || ' and    upper(scheme_doc_format) = '
+		    ||quote_nullable(i.scheme_doc_format1)
+		    ||''
+                    || ' and    ('
+		    ||quote_nullable(i.scheme_docno1)
+		    ||' is null or upper(a.scheme_docno) = '
+		    ||quote_nullable(i.scheme_docno1)
+		    ||')'
+                    || ' and    upper(dest_site_shrtname) = '
+		    ||quote_nullable(i.dest_site_shrtname1)
+		    ||''
+                    || ' and    ('
+		    ||quote_nullable(i.ref_doc_no1)
+		    ||' is null or upper(a.ref_doc_no) = '
+		    ||quote_nullable(upper(i.ref_doc_no1))
+		    ||')'
+                    || ' and    ('
+		    ||quote_nullable(i.transporter_slid1)
+		    ||' is null or a.transporter_slid = '
+		    ||quote_nullable(i.transporter_slid1)
+		    ||')'
+                    || ' and    ('
+		    ||quote_nullable(i.agent_slid1)
+		    ||' is null or a.agent_slid = '
+		    ||quote_nullable(i.agent_slid1)
+		    ||')'
+                    || ' and    ('
+		    ||quote_nullable(i.reserve_inv1)
+		    ||' is null or upper(a.reserve_inv) = '
+		    ||quote_nullable(upper(i.reserve_inv1))
+		    ||')'
+                   -- START REV : 001
+                    || ' and    ('
+		    ||quote_nullable(REPLACE(i.remarks1,'''','@'))
+		    ||' is null or REPLACE (upper(a.remarks),'''''''',''@'') = '
+		    ||quote_nullable(REPLACE(i.remarks1,'''','@'))
+		    ||')'
+                   -- END REV : 001 
+                    || ' and    userid = '
+		    || p_userid::text;
+			  		
+            call erraudit(USER, 'SO_BARCODE', p_userid, '2 - Updating ordcode - ' || v_status);
+
+            v_status := db_fun_commit_statement(USER, v_status);
+        END LOOP;
+
+        FOR i IN c1 LOOP
+            FOR j IN c_main(i.ordcode) LOOP
+              /*  db_pkg_genentryno.set_oucode (j.admou_code);
+                db_pkg_genentryno.set_sitecode (j.admsite_code);
+                db_pkg_genentryno.set_menucode (v_menucode);
+                db_pkg_genentryno.initialize_globals (j.ycode);
+
+                v_tempno := db_pkg_genentryno.get_tempno;*/
+                call erraudit(USER, 'SO_BARCODE', p_userid, '71 - Inserting main entry ... '|| i.saletype||'*'||i.ordcode::text|| '*'|| j.ycode::text);
+
+                v_scheme_docno := coalesce(j.scheme_docno,'AUTOMATIC');
+
+               --  ERRAUDIT(778,778,778,j.reserve_inv);
+                 -- ADMERRAUDIT
+                
+                insert into salordmain(ordcode, ordno, orddt, pcode, docno, docdt, 
+                         agcode, agrate, trpcode, duedt, stat, 
+                         authorcode, REM, YCODE, EXT, ECODE, TIME, 
+                         saletype, doccode, scheme_docno, admou_code, 
+                         admsite_code, pricetype, pricelistcode, 
+                         discount_factor, price_roundoff, roundoff_limit, 
+                         admsite_code_owner, incl_vat_in_dist, discount_mode, 
+                         discount_basis, saltermcode, saltradegrp_code, 
+                         formcode, cmptax_code_basis, reserve_inv,
+                         ENTRY_SOURCE)
+                values (i.ordcode, v_tempno, j.orddt, j.pcode, j.ref_doc_no, j.docdt,
+                        j.agcode, j.agrate, j.trpcode, j.duedt, 'N', 
+                        null, j.remarks, j.ycode, 'N', p_userid, clock_timestamp(), 
+                        j.saletype, j.doccode, v_scheme_docno, p_connect_ou, 
+                        j.admsite_code, j.pricetype, j.pricelistcode, 
+                        j.discount_factor, j.price_roundoff, j.roundoff_limit, 
+                        p_connect_site, j.incl_vat_in_dist, j.discount_mode, 
+                        j.discount_basis, j.saltermcode, j.saltradegrp_code, 
+                        -- start rev : 003
+                        --j.formcode, 
+                        coalesce(j.formcode,0),
+                        -- end rev : 003
+                        j.cmptax_code_basis, j.reserve_inv,
+                        'EXCEL');
+
+                for k in c_det(i.ordcode) loop
+                
+                    
+                    if  i.saletype = 'C' then
+                        insert into salorddet(ordcode, icode, ordqty, rate, 
+                              oqty, invqty, REM, factor, discount,
+                              basic_rate, roundoff, netamt)
+                        values (i.ordcode, k.det_icode, k.qty, k.det_rate, 
+                                null, null, k.item_remarks, k.det_factor, k.det_discount,
+                                k.det_basic_rate, k.det_roundoff,
+                                round ((coalesce(k.qty, 0) * coalesce(k.det_rate, 0)), 2));
+                    elsif i.saletype = 'O' then
+                        insert into salorddet(ordcode, icode, ordqty, rate,
+                              oqty, invqty, REM, factor, discount,
+                              basic_rate, roundoff,
+                              netamt, rsp)
+                        VALUES (i.ordcode, k.det_icode, k.qty, k.det_rate, 
+                                k.qty, null, k.item_remarks, k.det_factor, k.det_discount,
+                                k.det_basic_rate, k.det_roundoff,
+                                ROUND ((coalesce(k.qty, 0) * coalesce(k.det_rate, 0)), 2),
+                                coalesce(k.det_rsp,0));
+                    end if;
+                end loop; -- end of dettail loop
+                update salorddet
+                set    ordcode = ordcode
+                where  ordcode = i.ordcode;
+
+                v_det_cnt := 0;
+
+                begin
+                    select count(*)
+                    into STRICT   v_det_cnt
+                    from   salorddet
+                    where  ordcode = i.ordcode;
+                exception
+                    when no_data_found then null;
+                end;
+
+                if coalesce(v_det_cnt, 0) = 0 then
+                   rollback;
+                   --g_error := 'Detail record not found';
+                   raise exception 'insert_violation'using errcode = 50002 ;
+                end if;
+
+                if  i.saletype = 'O' then
+                    call erraudit(USER, 'SO_BARCODE', p_userid, '73 - Calculating line level charge ... ');
+
+                --  BEGIN
+                     CALL int$pkg_so_barcode_calculate_term_item(
+                                i.ordcode, 
+                                j.orddt, 
+                                j.saltradegrp_code, 
+                                j.saltermcode, 
+                                j.formcode, 
+                                j.pcode, 
+                                j.glcode, --v_salsrvmain_chg_glcode,
+                                j.slcode, --v_salsrvmain_chg_slcode,
+                                j.admsite_code, 
+                                p_connect_site,
+                                v_error
+                            );
+                     
+                    IF v_error = 1  THEN
+                        ROLLBACK;
+                        RAISE EXCEPTION 'chg_gl_exp' USING ERRCODE = '50001';
+                         EXIT;
+                    END IF;
+
+                    CALL int$pkg_so_barcode_calculate_term(
+                                i.ordcode,
+                                j.saltermcode, 
+                                j.glcode, --v_salsrvmain_chg_glcode,
+                                j.slcode --v_salsrvmain_chg_slcode,
+                            );
+
+                    v_null_GL_cnt := null;
+
+                    select count(*) into STRICT v_null_GL_cnt
+                    from   salordchg
+                    where  ordcode = i.ordcode
+                    and    glcode is null;
+
+                    if  coalesce(v_null_GL_cnt,0) > 0 and j.glcode is null then
+                       insert into global_temp_storage(code_1) values (i.ordcode);
+                    end if;
+
+                    CALL int$pkg_so_barcode_loc_proc_insert_excise_data(i.ordcode);
+                end if; -- End of charges for outright sites
+            end loop; -- end of main loop;
+        end loop; -- end of order code
+        
+        -- Now all data inserted with proper validation
+        -- Now you may generate the scheme_docno, otherwise it may skipped.
+        -- site wise entry
+ FOR i IN c1 LOOP
+            v_scheme_docno := NULL;
+            v_grsamt := NULL;
+            v_chgamt := NULL;
+            v_netamt := NULL;
+            v_ycode  := NULL;
+
+            SELECT DISTINCT ycode, orddt
+            INTO    v_ycode, v_orddt
+            FROM   int$stg_so_barcode
+            WHERE  ordcode = i.ordcode;
+
+            /*db_pkg_genentryno.set_oucode (p_connect_ou);
+            db_pkg_genentryno.set_sitecode (p_connect_site);
+            db_pkg_genentryno.set_menucode (v_menucode);
+            db_pkg_genentryno.initialize_globals (v_ycode);
+            
+            db_pkg_genentryno.set_entcode (i.ordcode);*/
+            
+            -- Update main entry
+            select round((sum(coalesce(ordqty, 0) * coalesce(rate, 0)))::numeric, 2)
+            into STRICT   v_grsamt
+            from   salorddet
+            where  ordcode = i.ordcode;
+
+            select round((coalesce(sum(coalesce(chgamt, 0)), 0))::numeric, 2)
+            into STRICT   v_chgamt
+            from   salordchg
+            where  ordcode = i.ordcode;
+
+            v_netamt := coalesce(v_grsamt, 0) + coalesce(v_chgamt, 0);
+
+            
+            select scheme_docno,DOCCODE,ADMSITE_CODE_OWNER,YCODE
+            into    v_scheme_docno,V_DOCCODE,V_ADMSITE_CODE_OWNER,V_YCODE
+            from   salordmain
+            where  ordcode = i.ordcode;
+
+            
+            IF  UPPER(V_SCHEME_DOCNO) = 'AUTOMATIC' THEN
+                
+                        V_SCHEME_DOCNO :=
+                                db_fun_document_number_web(NULL,
+                                        V_doccode,
+                                        V_YCODE,
+                                        to_char(v_orddt,'DD-MM-YYYY'),
+                                        NULL,
+                                        V_ADMSITE_CODE_OWNER,
+                                        p_connect_ou,
+                                        'SalesOrder');
+                        
+                    update salordmain
+                    set    scheme_docno = v_scheme_docno 
+                    where  ORDCODE = i.ordcode;
+
+                END IF;
+
+            update salordmain
+            set    grsamt = v_grsamt,
+                   chgamt = v_chgamt,
+                   netamt = v_netamt,
+                   ycode  = ycode--,
+                  -- ordno = db_pkg_genentryno.g_tempno
+            where ordcode = i.ordcode;
+
+            
+            UPDATE int$stg_so_barcode
+            SET    scheme_docno = v_scheme_docno
+            WHERE  ordcode = i.ordcode;
+
+            IF UPPER(v_scheme_docno) = 'AUTOMATIC' AND v_scheme_docno IS NULL THEN
+            ROLLBACK;
+            RAISE exception 'insert_violation' using errcode = 50002;
+            call erraudit(USER, 'SO_BARCODE', p_userid,'4 - Generating of SO/TO incomplete');
+            END IF;
+        END LOOP;
+
+        -- log to be added in history table
+        select nextval('int$error_log_code') into STRICT vsession;
+
+        vdetailtbl :=
+            'CREATE TABLE ginarchive.SO_BARCODE_'|| vsession::text|| ' AS
+                select scheme_docno, orddt ord_dt, ref_doc_no, dest_site_shrtname, transporter_slid, agent_slid, reserve_inventory, remarks
+                FROM   int$stg_so_barcode a
+                WHERE  userid = '|| p_userid::text||' '||
+               'GROUP BY scheme_docno, orddt, ref_doc_no, dest_site_shrtname, transporter_slid, agent_slid, reserve_inventory, remarks '||
+               'ORDER BY 2, 1';
+
+        EXECUTE vdetailtbl;
+
+        vdetailrec := 'SELECT count(1) FROM ginarchive.SO_BARCODE_' || vsession::text;
+
+        EXECUTE vdetailrec INTO STRICT vcount;
+
+        IF coalesce(vcount, 0) = 0 THEN
+           --null;
+           RAISE exception 'insert_violation' using errcode = 50002;
+        END IF;
+
+        insert into int$history(code, importedby, importedon, classname, summary, history_detail_tablename, history_detail_row_count)
+        values (nextval('int$history_code'), p_userid, clock_timestamp(), 'SO_BARCODE',
+                   vcount::TEXT || ' Sales order(s) imported successfully.',
+                   'ginarchive.SO_BARCODE_' || vsession::text, vcount);
+
+        --COMMIT;
+
+        return('1');
+    exception
+      when SQLSTATE '50001' 
+	  THEN
+	     errcode := -02221;
+		 
+		    --Error log for Oracle Internal Error
+            insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            values (nextval('int$error_log_code'), 0, 'SO_BARCODE', p_userid, errcode, 'Charge Ledger / Subledger not tagged with connected site', clock_timestamp());
+            --COMMIT;
+            return('0');
+
+      WHEN SQLSTATE '50002'
+      THEN
+         errcode := -02222;
+         errmsg := 'Data inconsistency';
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'SO_BARCODE',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         RETURN('0');
+
+        when others then
+            null;
+            errcode := SQLSTATE;
+            errmsg := SQLERRM;
+
+            --Error log for Oracle Internal Error
+            insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            values (nextval('int$error_log_code'), 0, 'SO_BARCODE', p_userid, errcode, errmsg, clock_timestamp());
+
+            --COMMIT;
+            return('0');
+    END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

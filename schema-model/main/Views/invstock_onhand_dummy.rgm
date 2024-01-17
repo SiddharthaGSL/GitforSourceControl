@@ -1,0 +1,57 @@
+view "main"."invstock_onhand_dummy" {
+  text = """-
+SELECT var_sbq.admsite_code,
+    var_sbq.loccode,
+    var_sbq.icode,
+    sum(var_sbq.qty) AS qty,
+    sum(var_sbq.costamount) AS costamount,
+    sum(var_sbq.amount) AS amount,
+    var_sbq.key
+   FROM ( SELECT invstock_onhand_agg.admsite_code,
+            invstock_onhand_agg.loccode,
+            invstock_onhand_agg.icode,
+            invstock_onhand_agg.qty,
+            invstock_onhand_agg.costamount,
+            invstock_onhand_agg.amount,
+            invstock_onhand_agg.key
+           FROM main.invstock_onhand_agg
+        UNION ALL
+         SELECT invstock_log.admsite_code,
+            invstock_log.loccode,
+            invstock_log.icode,
+            sum(COALESCE(invstock_log.qty, (0)::numeric)) AS qty,
+            sum(COALESCE(invstock_log.costamount, (0)::numeric)) AS costamount,
+            sum(COALESCE(invstock_log.amount, (0)::numeric)) AS amount,
+            concat_ws(''::text, invstock_log.loccode, '~', invstock_log.icode, '~', invstock_log.admsite_code) AS onhand_key
+           FROM main.invstock_log
+          WHERE (COALESCE((invstock_log.logseq)::numeric, (0)::numeric) > (( SELECT log_tag_agg.logseq
+                   FROM main.log_tag_agg
+                  WHERE (((log_tag_agg.consumer)::text = 'INVSTOCK_ONHAND_AGG'::text) AND ((log_tag_agg.logname)::text = 'INVSTOCK_LOG'::text))))::numeric)
+          GROUP BY invstock_log.loccode, invstock_log.icode, invstock_log.admsite_code) var_sbq
+  GROUP BY var_sbq.admsite_code, var_sbq.loccode, var_sbq.icode, var_sbq.key;
+"""
+  columns = (
+    column "admsite_code" {
+      type = "bigint"
+    }
+    column "loccode" {
+      type = "bigint"
+    }
+    column "icode" {
+      type = "character varying(9)"
+    }
+    column "qty" {
+      type = "numeric"
+    }
+    column "costamount" {
+      type = "numeric"
+    }
+    column "amount" {
+      type = "numeric"
+    }
+    column "key" {
+      type = "character varying"
+    }
+  )
+}
+

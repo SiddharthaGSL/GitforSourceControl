@@ -1,0 +1,1644 @@
+procedure "main"."p_pos_consolidation(timestamp without time zone, bigint, integer, timestamp with time zone, timestamp with time zone)" {
+  text = """
+
+DECLARE
+
+   v_saletype                      char(1);
+   v_pcode                         bigint;
+   v_debtors_glcode                bigint;
+   v_consignment_glcode            bigint;
+   v_consignment_transfer_glcode   bigint;
+   v_consignment_transfer_slcode   bigint;
+   v_consignment_sales_glcode      bigint;
+   v_consignment_sales_slcode      bigint;
+   v_store_loccode                 bigint;
+   v_admou_code                    bigint;
+   v_cscode                        bigint;
+   v_ycode                         bigint;
+   v_stlmfor                       timestamp;
+   v_roundoff                      double precision;
+   v_netpayable                    double precision;
+   v_roundoffglcode                bigint;
+   v_posstlmcode                   varchar(50);
+   v_salcsmop_code                 bigint;
+   --   v_creditnote_glcode             NUMBER;
+   --   v_debitnote_glcode              NUMBER;
+   v_redemption_glcode             bigint;
+   v_gvcontrol_glcode              bigint;
+   -- Rev : Temporary
+   v_cs_exist                      bigint;
+   v_ss_exist                      bigint;
+   v_sitename                      varchar(100);
+   v_slcode                        bigint;
+   v_sum_damt                      double precision;
+   v_sum_camt                      double precision;
+   v_admsite_code_owner            bigint;
+   -- START REV : 001
+   v_cnt                           bigint;
+   V_status                        char(1) := NULL;
+   -- END REV : 001
+   v_sitetype                      varchar(30) := NULL;
+   v_sale_post_method              char(1) := NULL;
+   V_DET_NETAMT                    numeric(20);
+   V_DET_GLAMT                     numeric(20);
+   V_DET_NET                       numeric(20);
+   V_DET_roundoff                  numeric(20);
+   V_TEMP_1                        numeric(20);
+   V_TEMP_2                        numeric(20);
+   V_TEMP_3                        numeric(20);
+-- Rev : Temporary
+--PRAGMA AUTONOMOUS_TRANSACTION;
+  c1 RECORD;
+
+BEGIN
+   /********************************************************************************************************************************
+        REV NO     OWNER           DATE         DESCRIPTION
+        ---------  ----------      -----------  ---------------------------------------------------------------------
+        REV : 001  ANINDYA         21/05/2017   (TFS ID : XXXXX)    Multi OU related changes
+        REV : 002  MOUSUMI         14/03/2018   (TFS ID : 37820)    Non trading
+        REV : 003  MOUSUMI         19/03/2018   (TFS ID : 38829)    Auto Settlement
+        REV : 004  SIDDHARTHA      03/01/2019   (TFS ID : 8709)     Promotion details to be captured in Online Sale transactions
+        REV : 005  ANINDYA         18/04/2022   (TFS ID : OMS)      Multiple stockpoint LOCCODE in a sigle invoice header
+        REV : 006  SIDDHARTHA      22/12/2022   (TFS ID : XXXXX)    Batch Serial Related Changes
+   **********************************************************************************************************************************/
+   -- Rev : Temporary
+   SELECT COUNT(1)
+     INTO STRICT v_cs_exist
+     FROM salcsmain
+    WHERE     admsite_code = p_admsite_code
+          AND date_trunc('day', csdate) = date_trunc('day', p_stlmfor)
+          AND remarks = 'Auto created';
+   SELECT COUNT(1)
+     INTO STRICT v_ss_exist
+     FROM salssmain
+    WHERE     admsite_code = p_admsite_code
+          AND date_trunc('day', ssdate) = date_trunc('day', p_stlmfor)
+          AND remarks = 'Auto created';
+   SELECT NAME
+     INTO STRICT v_sitename
+     FROM admsite
+    WHERE code = p_admsite_code;
+   -- START REV :  001
+   SELECT store_loccode, admou_code
+     INTO STRICT v_store_loccode, v_admou_code
+     FROM ADMSITE
+    WHERE code = p_admsite_code;
+   IF v_admou_code IS NULL
+   THEN
+      SELECT COUNT(DISTINCT ADMOU_CODE)
+        INTO STRICT v_cnt
+        FROM ADMSITE
+       WHERE     CODE IN (SELECT REPLN_ADMSITE_CODE
+                       FROM ADMSITE_OU
+                      WHERE     ADMSITE_CODE = p_admsite_code
+                            AND coalesce(EXT, 'N') = 'N')
+             AND admou_code IS NOT NULL;
+      IF coalesce(v_cnt, 0) > 0
+      THEN
+         IF v_cnt = 1
+         THEN
+            SELECT DISTINCT admou_code
+              INTO STRICT v_admou_code
+              FROM admsite
+             WHERE     code IN (SELECT repln_admsite_code
+                             FROM admsite_ou
+                            WHERE     admsite_code = p_admsite_code
+                                  AND coalesce(EXT, 'N') = 'N')
+                   AND admou_code IS NOT NULL;
+            SELECT default_ho_site
+              INTO STRICT v_admsite_code_owner
+              FROM admou
+             WHERE code = v_admou_code;
+         ELSE
+            SELECT DEFAULT_ADMOU_CODE INTO STRICT v_admou_code FROM ADMCMP;
+            SELECT default_ho_site
+              INTO STRICT v_admsite_code_owner
+              FROM admou
+             WHERE code = v_admou_code;
+         END IF;
+      ELSE
+         SELECT DEFAULT_ADMOU_CODE INTO STRICT v_admou_code FROM ADMCMP;
+         SELECT default_ho_site
+           INTO STRICT v_admsite_code_owner
+           FROM admou
+          WHERE code = v_admou_code;
+      END IF;
+   ELSE
+      SELECT default_ho_site
+        INTO STRICT v_admsite_code_owner
+        FROM admou
+       WHERE code = v_admou_code;
+   END IF;
+   --SELECT default_ho_site
+   -- INTO v_admsite_code_owner
+   --FROM admou
+   -- WHERE code = (Select admou_code from admsite where code = p_admsite_code);
+   -- END REV : 001
+   IF coalesce(v_cs_exist, 0) > 0 OR coalesce(v_ss_exist, 0) > 0
+   THEN
+      RAISE EXCEPTION '%', 'GINESYS Critical Exception:'
+         || CHR(10)
+         || 'Consignment/Seconday Sale document already posted for '
+         || v_sitename
+         || 'for '
+         || date_trunc('day', p_stlmfor)
+         || CHR(10)
+         || 'This is a critical exception. Please contact GINESYS support immediately.'
+         || CHR(10)
+         || 'IMPORTANT: Do not make any further settlement postings for any site until GINESYS support engineer attends the issue.' USING ERRCODE = '45000';
+   END IF;
+   -- Rev : Temporary
+   --v_stlmfor := TO_DATE(TO_CHAR(p_stlmfor, 'DD-MON-YY'), 'DD-MON-RR');
+   v_stlmfor := p_stlmfor;
+   SELECT code, status                                            -- REV : 003
+     INTO STRICT v_posstlmcode, V_status                                 -- REV : 003
+     FROM psite_posstlm
+    WHERE     date_trunc('day', stlmfor) = date_trunc('day', p_stlmfor)
+          AND admsite_code = p_admsite_code;
+   SELECT slcode, sitetype                                        -- rev : 002
+     INTO STRICT v_slcode, v_sitetype                                    -- REV : 002
+     FROM admsite
+    WHERE code = p_admsite_code;
+   IF v_slcode IS NOT NULL
+   THEN
+      SELECT saletype,
+             slcode pcode,
+             glcode debtors_glcode,
+             consignment_glcode,
+             consignment_trnsfr_glcode,
+             consignment_trnsfr_slcode,
+             consignment_sales_glcode,
+             consignment_sales_slcode
+        INTO STRICT v_saletype,
+             v_pcode,
+             v_debtors_glcode,
+             v_consignment_glcode,
+             v_consignment_transfer_glcode,
+             v_consignment_transfer_slcode,
+             v_consignment_sales_glcode,
+             v_consignment_sales_slcode
+        FROM finsl
+       WHERE slcode = v_slcode;
+   ELSE
+      SELECT 'C' saletype,
+             transferin_glcode,
+             transferout_glcode,
+             transferout_slcode,
+             consignmentsale_glcode,
+             consignmentsale_slcode
+        INTO STRICT v_saletype,
+             v_consignment_glcode,
+             v_consignment_transfer_glcode,
+             v_consignment_transfer_slcode,
+             v_consignment_sales_glcode,
+             v_consignment_sales_slcode
+        FROM admou
+       WHERE code = (SELECT admou_code
+                       FROM admsite
+                      WHERE code = p_admsite_code);
+   END IF;
+   --  START REV : 001
+   --SELECT loccode, admou_code
+   -- INTO v_store_loccode, v_admou_code
+   -- FROM invloc
+   --WHERE loccode = (SELECT store_loccode
+   --                   FROM admsite
+   --                  WHERE code = p_admsite_code);
+   -- END REV : 001
+   --   SELECT creditnote_glcode, debitnote_glcode, redemption_glcode,
+   --          gvcontrol_glcode
+   --     INTO v_creditnote_glcode, v_debitnote_glcode, v_redemption_glcode,
+   --          v_gvcontrol_glcode
+   --     FROM admou
+   --    WHERE code = v_admou_code;
+   SELECT redemption_glcode, gvcontrol_glcode
+     INTO STRICT v_redemption_glcode, v_gvcontrol_glcode
+     FROM admou
+    WHERE code = v_admou_code;
+   SELECT ycode
+     INTO STRICT v_ycode
+     FROM admyear
+    WHERE p_stlmfor BETWEEN dtfr AND dtto;
+   SELECT nextval('erp01') INTO STRICT v_cscode;
+   DELETE FROM TEMP_POSBILL_STLM;
+   DELETE FROM TEMP_POSBILLITEM_STLM;
+   DELETE FROM TEMP_POSBILLITEMMOP_STLM;
+   IF V_status IN ('O', 'R')
+   THEN
+      INSERT INTO TEMP_POSBILL_STLM
+         SELECT *
+           -- start rev : 003
+           -- FROM PSITE_POSBILL
+           FROM PSITE_POSBILL_PARK
+
+          WHERE     date_trunc('day', BILLDATE) = v_stlmfor
+                AND ADMSITE_CODE = p_admsite_code;
+      INSERT INTO TEMP_POSBILLITEM_STLM
+         SELECT *
+           -- START REV : 003
+           --FROM PSITE_POSBILLITEM
+           FROM PSITE_POSBILLITEM_PARK
+
+          WHERE     ADMSITE_CODE = P_ADMSITE_CODE
+                AND PSITE_POSBILL_CODE IN (SELECT CODE
+                                             FROM TEMP_POSBILL_STLM);
+      -- START REV : 003
+      INSERT INTO TEMP_POSBILLITEMMOP_STLM
+         SELECT *
+           FROM psite_posbillmop_PARK
+          WHERE     ADMSITE_CODE = P_ADMSITE_CODE
+                AND PSITE_POSBILL_CODE IN (SELECT CODE
+                                             FROM TEMP_POSBILL_STLM);
+   -- END REV : 003
+   -- START REV : 003
+   ELSIF V_status IN ('U', 'C')
+   THEN
+      INSERT INTO TEMP_POSBILL_STLM
+         SELECT *
+           FROM PSITE_POSBILL
+          WHERE     date_trunc('day', BILLDATE) = v_stlmfor
+                AND ADMSITE_CODE = p_admsite_code;
+      INSERT INTO TEMP_POSBILLITEM_STLM
+         SELECT *
+           FROM PSITE_POSBILLITEM
+          WHERE     ADMSITE_CODE = P_ADMSITE_CODE
+                AND PSITE_POSBILL_CODE IN (SELECT CODE
+                                             FROM TEMP_POSBILL_STLM);
+      INSERT INTO TEMP_POSBILLITEMMOP_STLM
+         SELECT *
+           FROM psite_posbillmop
+          WHERE     ADMSITE_CODE = P_ADMSITE_CODE
+                AND PSITE_POSBILL_CODE IN (SELECT CODE
+                                             FROM TEMP_POSBILL_STLM);
+   END IF;
+   -- END REV : 003
+   SELECT COUNT(*) INTO STRICT V_TEMP_1 FROM TEMP_POSBILL_STLM;
+   SELECT COUNT(*) INTO STRICT V_TEMP_2 FROM TEMP_POSBILLITEM_STLM;
+   SELECT COUNT(*) INTO STRICT V_TEMP_3 FROM TEMP_POSBILLITEMMOP_STLM;
+   -- start rev : 002
+   IF coalesce(V_TEMP_1, 0) > 0
+   THEN
+      IF v_saletype = 'C'
+      THEN
+         INSERT INTO salcsmain(cscode,
+                                csno,
+                                csdate,
+                                doccode,
+                                scheme_docno,
+                                pcode,
+                                debtors_glcode,
+                                consignment_glcode,
+                                consignment_trnsfr_glcode,
+                                consignment_trnsfr_slcode,
+                                consignment_sales_glcode,
+                                consignment_sales_slcode,
+                                admou_code,
+                                admsite_code,
+                                outloccode,
+                                -- start rev : 005
+                                return_loccode,
+                                damaged_loccode,
+                                -- end rev : 005
+                                grsamt,
+                                discount,
+                                netamt,
+                                site_costamt,
+                                remarks,
+                                ycode,
+                                TIME,
+                                ecode,
+                                last_access_time,
+                                last_access_ecode,
+                                adjamt,
+                                psite_posstlm_code,
+                                status,
+                                release_status,
+                                release_time,
+                                release_ecode,
+                                admsite_code_owner,
+                                refno)
+              VALUES (v_cscode,
+                      erplastno('SALCSMAIN', v_ycode),
+                      v_stlmfor,
+                      1,
+                      v_posstlmcode,
+                      v_pcode,
+                      v_debtors_glcode,
+                      v_consignment_glcode,
+                      v_consignment_transfer_glcode,
+                      v_consignment_transfer_slcode,
+                      v_consignment_sales_glcode,
+                      v_consignment_sales_slcode,
+                      v_admou_code,
+                      p_admsite_code,
+                      v_store_loccode,
+                      -- start rev : 005
+                      v_store_loccode,
+                      v_store_loccode,
+                      -- end rev : 005
+                      NULL,
+                      NULL,
+                      NULL,
+                      NULL,
+                      'Auto created',
+                      v_ycode,
+                      p_settledon::timestamp with time zone,
+                      p_settledbyid::bigint,
+                      p_lastaccesson::timestamp with time zone,
+                      p_settledbyid::bigint,
+                      NULL,
+                      v_posstlmcode,
+                      'O',
+                      -- START REV : 003
+                      -- 'P', p_lastaccesson,p_settledbyid,
+                      CASE WHEN V_status='C' THEN  'P'  ELSE 'U' END ,
+                      CASE WHEN V_status='C' THEN  p_lastaccesson::timestamp with time zone  ELSE NULL END ,
+                      CASE WHEN V_status='C' THEN  p_settledbyid::bigint  ELSE NULL END ,
+                      -- END REV : 003
+                      v_admsite_code_owner,
+                      'POS Consolidated');
+         INSERT INTO salcsdet(cscode,
+                               icode,
+                               qty,
+                               mrp,
+                               rate,
+                               grsamt,
+                               discount,
+                               netamt,
+                               taxamt,
+                               taxdetcode,
+                               taxpercent,
+                               taxableamt,
+                               taxdescription,
+                               psite_stockpoint_code,
+                               site_costrate,
+                               remarks,
+                               promoamt,
+                               idiscountamt,
+                               mdiscountamt,
+                               lpdiscountamt,
+                               extaxamt,
+                               gwchg,
+                               codchg,
+                               shipchg,
+                               TAXREGIME,
+                               IGSTRATE,
+                               IGSTAMT,
+                               CGSTRATE,
+                               CGSTAMT,
+                               SGSTRATE,
+                               SGSTAMT,
+                               CESSRATE,
+                               CESSAMT,
+                               -- START REV : 002
+                               GLCODE,
+                               SLCODE,
+                               GL_CC_APPL,
+                               -- END REV : 002
+                               -- START REV : 003
+                               PROMOCODE,
+                               PROMONO,
+                               PROMONAME,
+                               PROMOSTARTDATE,
+                               PROMOENDDATE,
+                               -- END REV : 003
+                               -- START REV : 004
+                               MEMODISCOUNTAMT,
+                               MEMODISCOUNTTYPE,
+                               MEMOPROMOCODE,
+                               MEMOPROMONO,
+                               MEMOPROMONAME,
+                               MEMOPROMOSTARTDATE,
+                               MEMOPROMOENDDATE,
+                               MEMOPROMOSLABFROM,
+                               MEMOPROMOSLABTO,
+                               MEMODISCOUNTDESC,
+                               MEMOCOUPONCODE,
+                               MEMOCOUPONOFFERCODE,
+                               -- END REV : 004
+                               --START REV : 006
+                               INVBATCH_SERIAL_CODE
+                               --END REV : 006
+							  -- start rev : 007
+                               ,hsn_sac_code
+                               -- end rev : 007
+                               )
+            SELECT v_cscode,
+                   q.icode,
+                   q.qty,
+                   q.mrp,
+                   q.rsp,
+                   q.grossamt,
+                   q.discountamt,
+                   q.netamt,
+                   q.taxamt,
+                   q.taxdetcode,
+                   q.taxpercent,
+                   (coalesce(q.netamt, 0) - coalesce(q.taxamt, 0)) taxableamt,
+                   q.taxdescription,
+                   q.psite_stockpoint_code,
+                   /*
+                   db_pkg_cost_calculation.get_item_fifo_value (v_admou_code,
+                                                                q.icode,
+                                                                v_stlmfor,
+                                                                'S',
+                                                                q.qty,
+                                                                NULL,
+                                                                p_admsite_code,
+                                                                v_pcode
+                                                               )
+                    */
+                   NULL,
+                   NULL,
+                   promoamt,
+                   idiscountamt,
+                   mdiscountamt,
+                   lpdiscountamt,
+                   extaxamt,
+                   0,
+                   0,
+                   0,
+                   TAXREGIME,
+                   IGSTRATE,
+                   IGSTAMT,
+                   CGSTRATE,
+                   CGSTAMT,
+                   SGSTRATE,
+                   SGSTAMT,
+                   CESSRATE,
+                   CESSAMT,
+                   -- START REV : 002
+                   GLCODE,
+                   SLCODE,
+                   GL_CC_APPL,
+                   -- END REV : 002
+                   -- START REV : 003
+                   PROMOCODE,
+                   PROMONO,
+                   PROMONAME,
+                   PROMOSTARTDATE,
+                   PROMOENDDATE,
+                   -- END REV : 003
+                   -- START REV : 004
+                   MEMODISCOUNTAMT,
+                   MEMODISCOUNTTYPE,
+                   MEMOPROMOCODE,
+                   MEMOPROMONO,
+                   MEMOPROMONAME,
+                   MEMOPROMOSTARTDATE,
+                   MEMOPROMOENDDATE,
+                   MEMOPROMOSLABFROM,
+                   MEMOPROMOSLABTO,
+                   MEMODISCOUNTDESC,
+                   MEMOCOUPONCODE,
+                   MEMOCOUPONOFFERCODE,
+                   -- END REV : 004
+                   -- START REV : 006
+                   INVBATCH_SERIAL_CODE
+                   -- END REV : 006
+				   -- start rev : 007
+                   ,hsn_sac_code
+                   -- end rev : 007
+              FROM (  SELECT pbi.icode,
+                             SUM(coalesce(pbi.qty, 0))         qty,
+                             pbi.mrp,
+                             pbi.rsp,
+                             SUM(coalesce(pbi.grossamt, 0))    grossamt,
+                             SUM(coalesce(pbi.discountamt, 0)) discountamt,
+                             SUM(coalesce(pbi.netamt, 0))      netamt,
+                             SUM(coalesce(pbi.taxamt, 0))      taxamt,
+                             pbi.taxdetcode,
+                             pbi.taxpercent,
+                             pbi.taxdescription,
+                             pb.psite_stockpoint_code,
+                             SUM(coalesce(pbi.promoamt, 0))    promoamt,
+                             SUM(coalesce(pbi.idiscountamt, 0)) idiscountamt,
+                             SUM(coalesce(pbi.mdiscountamt, 0)) mdiscountamt,
+                             SUM(coalesce(pbi.lpdiscountamt, 0)) lpdiscountamt,
+                             SUM(coalesce(pbi.extaxamt, 0))    extaxamt,
+                             pbi.TAXREGIME,
+                             pbi.IGSTRATE,
+                             SUM(coalesce(pbi.IGSTAMT, 0))     IGSTAMT,
+                             pbi.CGSTRATE,
+                             SUM(coalesce(pbi.CGSTAMT, 0))     CGSTAMT,
+                             pbi.SGSTRATE,
+                             SUM(coalesce(pbi.SGSTAMT, 0))     SGSTAMT,
+                             pbi.CESSRATE,
+                             SUM(coalesce(pbi.CESSAMT, 0))     CESSAMT,
+                             -- START REV : 002
+                             I.GLCODE,
+                             I.SLCODE,
+                             GL.COSTAPP                     GL_CC_APPL,
+                             -- END REV : 002
+                             -- START REV : 003
+                             pbi.PROMOCODE,
+                             pbi.PROMONO,
+                             pbi.PROMONAME,
+                             pbi.PROMOSTARTDATE,
+                             pbi.PROMOENDDATE,
+                             -- END REV : 003
+                             -- START REV : 004
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.MDISCOUNTAMT
+                            END MEMODISCOUNTAMT,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.MDISCOUNTPROCESS
+                            END MEMODISCOUNTTYPE,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMOCODE
+                            END MEMOPROMOCODE,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMONO
+                            END MEMOPROMONO,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMONAME
+                            END MEMOPROMONAME,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMOSTARTDATE
+                            END MEMOPROMOSTARTDATE,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMOENDDATE
+                            END MEMOPROMOENDDATE,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMOSLABRANGEFROM
+                            END MEMOPROMOSLABFROM,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMOSLABRANGETO
+                            END MEMOPROMOSLABTO,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.MDISCOUNTDESC
+                            END MEMODISCOUNTDESC,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.MPSITE_DISCOUNT_CODE
+                            END MEMOCOUPONCODE,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.COUPONOFFER_CODE
+                            END MEMOCOUPONOFFERCODE,
+                             -- END REV : 004
+                             -- START REV : 006
+                            INVBATCH_SERIAL_CODE
+                             -- END REV : 006
+							-- start rev : 007
+                               ,pbi.hsn_sac_code
+                             -- end rev : 007
+                        FROM temp_posbillitem_stlm pbi, temp_posbill_stlm pb, invitem i
+LEFT OUTER JOIN fingl gl ON (I.GLCODE = GL.GLCODE)
+WHERE pbi.psite_posbill_code = pb.code AND coalesce(pbi.qty, 0) > 0 AND PBI.ICODE = I.ICODE               -- REV : 002
+  GROUP BY pbi.icode,
+                             pbi.mrp,
+                             pbi.rsp,
+                             pbi.taxdetcode,
+                             pbi.taxpercent,
+                             pbi.taxdescription,
+                             pb.psite_stockpoint_code,
+                             pbi.TAXREGIME,
+                             pbi.IGSTRATE,
+                             pbi.CGSTRATE,
+                             pbi.SGSTRATE,
+                             pbi.CESSRATE,
+                             -- START REV : 002
+                             I.GLCODE,
+                             I.SLCODE,
+                             GL.COSTAPP,
+                             -- END REV : 002
+                             -- START REV : 003
+                             pbi.PROMOCODE,
+                             pbi.PROMONO,
+                             pbi.PROMONAME,
+                             pbi.PROMOSTARTDATE,
+                             pbi.PROMOENDDATE,
+                             -- END REV : 003
+                             -- START REV : 004
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.MDISCOUNTAMT
+                            END,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.MDISCOUNTPROCESS
+                            END,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMOCODE
+                            END,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMONO
+                            END,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMONAME
+                            END,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMOSTARTDATE
+                            END,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMOENDDATE
+                            END,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMOSLABRANGEFROM
+                            END,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMOSLABRANGETO
+                            END,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.MDISCOUNTDESC
+                            END,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.MPSITE_DISCOUNT_CODE
+                            END,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.COUPONOFFER_CODE
+                            END,
+                            -- END REV : 004
+                            -- START REV : 006
+                            INVBATCH_SERIAL_CODE
+                            -- END REV : 006
+							-- start rev : 007
+                               ,pbi.hsn_sac_code
+                             -- end rev : 007
+                   ) q;
+         INSERT INTO salcsdet(cscode,
+                               icode,
+                               qty,
+                               mrp,
+                               rate,
+                               grsamt,
+                               discount,
+                               netamt,
+                               taxamt,
+                               taxdetcode,
+                               taxpercent,
+                               taxableamt,
+                               taxdescription,
+                               psite_stockpoint_code,
+                               site_costrate,
+                               remarks,
+                               promoamt,
+                               idiscountamt,
+                               mdiscountamt,
+                               lpdiscountamt,
+                               extaxamt,
+                               gwchg,
+                               codchg,
+                               shipchg,
+                               TAXREGIME,
+                               IGSTRATE,
+                               IGSTAMT,
+                               CGSTRATE,
+                               CGSTAMT,
+                               SGSTRATE,
+                               SGSTAMT,
+                               CESSRATE,
+                               CESSAMT,
+                               -- START REV : 002
+                               GLCODE,
+                               SLCODE,
+                               GL_CC_APPL,
+                               -- END REV : 002
+                               -- START REV : 003
+                               PROMOCODE,
+                               PROMONO,
+                               PROMONAME,
+                               PROMOSTARTDATE,
+                               PROMOENDDATE,
+                               -- END REV : 003
+                               -- START REV : 004
+                               MEMODISCOUNTAMT,
+                               MEMODISCOUNTTYPE,
+                               MEMOPROMOCODE,
+                               MEMOPROMONO,
+                               MEMOPROMONAME,
+                               MEMOPROMOSTARTDATE,
+                               MEMOPROMOENDDATE,
+                               MEMOPROMOSLABFROM,
+                               MEMOPROMOSLABTO,
+                               MEMODISCOUNTDESC,
+                               MEMOCOUPONCODE,
+                               MEMOCOUPONOFFERCODE,
+                               -- END REV : 004
+                               -- START REV : 006
+                               INVBATCH_SERIAL_CODE
+                               -- END REV : 006
+							  -- start rev : 007
+                               ,hsn_sac_code
+                               -- end rev : 007
+                               )
+            SELECT v_cscode,
+                   q.icode,
+                   q.qty,
+                   q.mrp,
+                   q.rsp,
+                   q.grossamt,
+                   q.discountamt,
+                   q.netamt,
+                   q.taxamt,
+                   q.taxdetcode,
+                   q.taxpercent,
+                   (coalesce(q.netamt, 0) - coalesce(q.taxamt, 0)) taxableamt,
+                   q.taxdescription,
+                   q.psite_stockpoint_code,
+                   /*
+                   db_pkg_cost_calculation.get_item_fifo_value (v_admou_code,
+                                                                q.icode,
+                                                                v_stlmfor,
+                                                                'S',
+                                                                q.qty,
+                                                                NULL,
+                                                                p_admsite_code,
+                                                                v_pcode
+                                                               )
+                   */
+                   NULL,
+                   NULL,
+                   promoamt,
+                   idiscountamt,
+                   mdiscountamt,
+                   lpdiscountamt,
+                   extaxamt,
+                   0,
+                   0,
+                   0,
+                   TAXREGIME,
+                   IGSTRATE,
+                   IGSTAMT,
+                   CGSTRATE,
+                   CGSTAMT,
+                   SGSTRATE,
+                   SGSTAMT,
+                   CESSRATE,
+                   CESSAMT,
+                   -- START REV : 002
+                   GLCODE,
+                   SLCODE,
+                   GL_CC_APPL,
+                   -- END REV : 002
+                   -- START REV : 003
+                   PROMOCODE,
+                   PROMONO,
+                   PROMONAME,
+                   PROMOSTARTDATE,
+                   PROMOENDDATE,
+                   -- END REV : 003
+                   -- START REV : 004
+                   MEMODISCOUNTAMT,
+                   MEMODISCOUNTTYPE,
+                   MEMOPROMOCODE,
+                   MEMOPROMONO,
+                   MEMOPROMONAME,
+                   MEMOPROMOSTARTDATE,
+                   MEMOPROMOENDDATE,
+                   MEMOPROMOSLABFROM,
+                   MEMOPROMOSLABTO,
+                   MEMODISCOUNTDESC,
+                   MEMOCOUPONCODE,
+                   MEMOCOUPONOFFERCODE,
+                   -- END REV : 004
+                   -- START REV : 006
+                   INVBATCH_SERIAL_CODE
+                   -- END REV : 006
+				   -- start rev : 007
+                   ,hsn_sac_code
+                   -- end rev : 007
+              FROM (  SELECT pbi.icode,
+                             SUM(coalesce(pbi.qty, 0))         qty,
+                             pbi.mrp,
+                             pbi.rsp,
+                             SUM(coalesce(pbi.grossamt, 0))    grossamt,
+                             SUM(coalesce(pbi.discountamt, 0)) discountamt,
+                             SUM(coalesce(pbi.netamt, 0))      netamt,
+                             SUM(coalesce(pbi.taxamt, 0))      taxamt,
+                             pbi.taxdetcode,
+                             pbi.taxpercent,
+                             pbi.taxdescription,
+                             pb.psite_stockpoint_code,
+                             SUM(coalesce(pbi.promoamt, 0))    promoamt,
+                             SUM(coalesce(pbi.idiscountamt, 0)) idiscountamt,
+                             SUM(coalesce(pbi.mdiscountamt, 0)) mdiscountamt,
+                             SUM(coalesce(pbi.lpdiscountamt, 0)) lpdiscountamt,
+                             SUM(coalesce(pbi.extaxamt, 0))    extaxamt,
+                             pbi.TAXREGIME,
+                             pbi.IGSTRATE,
+                             SUM(coalesce(pbi.IGSTAMT, 0))     IGSTAMT,
+                             pbi.CGSTRATE,
+                             SUM(coalesce(pbi.CGSTAMT, 0))     CGSTAMT,
+                             pbi.SGSTRATE,
+                             SUM(coalesce(pbi.SGSTAMT, 0))     SGSTAMT,
+                             pbi.CESSRATE,
+                             SUM(coalesce(pbi.CESSAMT, 0))     CESSAMT,
+                             -- START REV : 002
+                             I.GLCODE,
+                             I.SLCODE,
+                             GL.COSTAPP                     GL_CC_APPL,
+                             -- END REV : 002
+                             -- START REV : 003
+                             pbi.PROMOCODE,
+                             pbi.PROMONO,
+                             pbi.PROMONAME,
+                             pbi.PROMOSTARTDATE,
+                             pbi.PROMOENDDATE,
+                              -- END REV : 003
+                             -- START REV : 004
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.MDISCOUNTAMT
+                            END MEMODISCOUNTAMT,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.MDISCOUNTPROCESS
+                            END MEMODISCOUNTTYPE,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMOCODE
+                            END MEMOPROMOCODE,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMONO
+                            END MEMOPROMONO,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMONAME
+                            END MEMOPROMONAME,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMOSTARTDATE
+                            END MEMOPROMOSTARTDATE,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMOENDDATE
+                            END MEMOPROMOENDDATE,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMOSLABRANGEFROM
+                            END MEMOPROMOSLABFROM,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMOSLABRANGETO
+                            END MEMOPROMOSLABTO,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.MDISCOUNTDESC
+                            END MEMODISCOUNTDESC,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.MPSITE_DISCOUNT_CODE
+                            END MEMOCOUPONCODE,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.COUPONOFFER_CODE
+                            END MEMOCOUPONOFFERCODE,
+                             -- END REV : 004
+                            -- START REV : 006
+                            INVBATCH_SERIAL_CODE
+                            -- END REV : 006
+							-- start rev : 007
+                               ,pbi.hsn_sac_code
+                             -- end rev : 007
+                        FROM temp_posbillitem_stlm pbi, temp_posbill_stlm pb, invitem i
+LEFT OUTER JOIN fingl gl ON (I.GLCODE = GL.GLCODE)
+WHERE pbi.psite_posbill_code = pb.code AND coalesce(pbi.qty, 0) < 0 AND PBI.ICODE = I.ICODE  GROUP BY pbi.icode,
+                             pbi.mrp,
+                             pbi.rsp,
+                             pbi.taxdetcode,
+                             pbi.taxpercent,
+                             pbi.taxdescription,
+                             pb.psite_stockpoint_code,
+                             pbi.TAXREGIME,
+                             pbi.IGSTRATE,
+                             pbi.CGSTRATE,
+                             pbi.SGSTRATE,
+                             pbi.CESSRATE,
+                             -- START REV : 002
+                             I.GLCODE,
+                             I.SLCODE,
+                             GL.COSTAPP,
+                             -- END REV : 002
+                             -- START REV : 003
+                             pbi.PROMOCODE,
+                             pbi.PROMONO,
+                             pbi.PROMONAME,
+                             pbi.PROMOSTARTDATE,
+                             pbi.PROMOENDDATE,
+                              -- END REV : 003
+                             -- START REV : 004
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.MDISCOUNTAMT
+                            END,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.MDISCOUNTPROCESS
+                            END,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMOCODE
+                            END,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMONO
+                            END,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMONAME
+                            END,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMOSTARTDATE
+                            END,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMOENDDATE
+                            END,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMOSLABRANGEFROM
+                            END,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.PROMOSLABRANGETO
+                            END,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.MDISCOUNTDESC
+                            END,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.MPSITE_DISCOUNT_CODE
+                            END,
+                            CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                                ELSE pb.COUPONOFFER_CODE
+                            END,
+                             -- END REV : 004
+                            -- START REV : 006
+                            INVBATCH_SERIAL_CODE
+                            -- END REV : 006
+							-- start rev : 007
+                               ,pbi.hsn_sac_code
+                             -- end rev : 007
+                   ) q;
+         FOR c1
+            IN (  SELECT v_cscode                 cscode,
+                         pbm.psite_mop_code       psite_mop_code,
+                         ma.mop_glcode            glcode,
+                         coalesce(g.costapp, 'N')     gl_cc_appl,
+                         ma.mop_slcode            slcode,
+                         SUM(coalesce(pbm.baseamt, 0)) amount
+                    -- START REV : 003
+                    --FROM psite_posbillmop pbm,
+                    FROM temp_posbillitemmop_stlm pbm, (SELECT psite_mop_code,
+                                 admsite_code,
+                                 CASE
+                                    WHEN m.TYPE IN ('RED')
+                                    THEN
+                                       v_redemption_glcode
+                                    WHEN m.TYPE IN ('GVH')
+                                    THEN
+                                       v_gvcontrol_glcode
+                                    ELSE
+                                       pma.mop_glcode
+                                 END
+                                    mop_glcode,
+                                 mop_slcode
+                            FROM psite_mop_assign pma, psite_mop m
+                           WHERE pma.psite_mop_code = m.code) ma
+LEFT OUTER JOIN fingl g ON (coalesce(ma.mop_glcode, -10) = g.glcode)
+WHERE pbm.psite_mop_code = ma.psite_mop_code AND pbm.admsite_code = ma.admsite_code  AND pbm.paymentsource = 'POSBill' AND date_trunc('day', pbm.billdate) = v_stlmfor AND pbm.admsite_code = p_admsite_code GROUP BY pbm.psite_mop_code,
+                         ma.mop_glcode,
+                         coalesce(g.costapp, 'N'),
+                         ma.mop_slcode)
+         LOOP
+            SELECT nextval('salcsmop_code') code INTO STRICT v_salcsmop_code;
+            INSERT INTO salcsmop(code,
+                                  cscode,
+                                  psite_mop_code,
+                                  glcode,
+                                  gl_cc_appl,
+                                  slcode,
+                                  amount)
+                 VALUES (v_salcsmop_code,
+                         c1.cscode,
+                         c1.psite_mop_code,
+                         c1.glcode,
+                         c1.gl_cc_appl,
+                         c1.slcode,
+                         c1.amount);
+         END LOOP;
+         /*
+                 INSERT INTO salcsdet
+                           (cscode, icode, qty, mrp, rate, grsamt, discount, netamt,
+                            taxamt, remarks)
+                  SELECT   v_cscode, pbi.icode, NVL (pbi.qty, 0), pbi.mrp,
+                           pbi.rsp, NVL (pbi.grossamt, 0),
+                           NVL (pbi.discountamt, 0), NVL (pbi.netamt, 0),
+                           NVL (pbi.taxamt, 0), NULL
+                      FROM psite_posbillitem pbi, psite_posstlmsession pss
+                     WHERE pbi.psite_possession_code = pss.psite_possession_code
+                       AND pss.psite_posstlm_code = p_posstlmcode;
+                  --GROUP BY pbi.psite_posbill_code, pbi.icode, pbi.mrp, pbi.rsp;
+               UPDATE salcsdet cd
+                  SET cd.site_costrate =
+                         db_pkg_cost_calculation.get_item_fifo_value (v_admou_code,
+                                                                      cd.icode,
+                                                                      v_stlmfor,
+                                                                      'S',
+                                                                      cd.qty,
+                                                                      NULL,
+                                                                      p_admsite_code,
+                                                                      v_pcode
+                                                                     )
+                WHERE cscode = v_cscode;
+         */
+         --UPDATE salcsdet
+         --SET site_costamt = NVL (site_costrate, 0) * NVL (qty, 0)
+         --WHERE cscode = v_cscode;
+         SELECT SUM(coalesce(roundoff, 0)), SUM(coalesce(netpayable, 0))
+           INTO STRICT v_roundoff, v_netpayable
+           FROM temp_posbill_stlm pb;
+         SELECT roundoff_glcode
+           INTO STRICT v_roundoffglcode
+           FROM admou
+          WHERE code = v_admou_code;
+         -- START REV : 002
+         /*IF v_sitetype IN ('MS-OO-CM', 'OS-OO-CM', 'MS-CO-CM')
+         THEN
+
+                 v_sale_post_method := 'E';
+               UPDATE salcsmain
+                  SET MAIN_GL_AMT =
+                         (SELECT sum(nvl(t1.grsamt,0)) - sum(nvl(t1.discount,0)) + sum(nvl(t1.taxamt,0))-- + sum(nvl(t1.roundoff,0))
+                          FROM salcsdet t1
+                          WHERE cscode = v_cscode
+                          AND   GLCODE IS NULL
+                         )
+                WHERE cscode = v_cscode;
+
+         ELSE
+
+                 v_sale_post_method := 'I';
+               UPDATE salcsmain
+                  SET MAIN_GL_AMT =
+                         (SELECT sum(nvl(t1.grsamt,0)) + sum(nvl(t1.taxamt,0)) - sum(nvl(t1.discount,0))
+                          FROM salcsdet t1
+                          WHERE cscode = v_cscode
+                          AND   GLCODE IS NULL
+                         )
+                WHERE cscode = v_cscode;
+
+         END IF;*/
+         UPDATE salcsmain
+            SET MAIN_GL_AMT =
+                   (SELECT SUM(coalesce(t1.netamt, 0)) -- + sum(nvl(t1.roundoff,0))
+                      FROM salcsdet t1
+                     WHERE t1.cscode = v_cscode AND t1.GLCODE IS NULL)
+          WHERE cscode = v_cscode;
+         -- END REV : 002
+         UPDATE salcsmain
+            SET(grsamt,
+                 discount,
+                 netamt,
+                 site_costamt,
+                 status,
+                 roundoff_glcode,
+                 roundoff,
+                 netpayable,
+                 extaxamt,
+                 qty) =
+                   (SELECT SUM(coalesce(grsamt, 0)),
+                           SUM(coalesce(discount, 0)),
+                           SUM(coalesce(netamt, 0)),
+                           SUM(coalesce(site_costamt, 0)),
+                           'C',
+                           v_roundoffglcode,
+                           v_roundoff,
+                           v_netpayable,
+                           SUM(coalesce(extaxamt, 0)),
+                           SUM(coalesce(qty, 0))
+                      FROM salcsdet
+                     WHERE cscode = v_cscode)
+          WHERE cscode = v_cscode;
+         SELECT SUM(coalesce(damount, 0)), SUM(coalesce(camount, 0))
+           INTO STRICT v_sum_damt, v_sum_camt
+           FROM finpost
+
+          WHERE enttype IN ('CSM', 'CSD') AND entcode = v_cscode::varchar;
+         -- END REV : 002
+         IF v_sum_damt <> v_sum_camt
+         THEN
+            FOR c1
+               IN (SELECT glcode,
+                          coalesce(damount, 0) damt,
+                          coalesce(camount, 0) camt
+                     FROM finpost
+
+                    WHERE     enttype IN ('CSD', 'CSM')
+                          AND entcode = v_cscode::varchar-- END REV : 002
+                  )
+            LOOP
+               CALL erraudit(
+                  'stlm',
+                  'settlement',
+                  '2000001',
+                     v_stlmfor
+                  || '-'
+                  || p_admsite_code::TEXT
+                  || '-'
+                  || c1.glcode::TEXT
+                  || '-'
+                  || c1.damt::TEXT
+                  || '-'
+                  || c1.camt::TEXT);
+            END LOOP;
+            RAISE EXCEPTION '%', 'GINESYS Critical Exception:'
+               || CHR(10)
+               || 'POS MOP Amount Mismatch in '
+               || v_sitename
+               || ' for '
+               || date_trunc('day', p_stlmfor)
+               || CHR(10)
+               || 'This is a critical exception. Please contact GINESYS support immediately.'
+               || CHR(10)
+               || 'IMPORTANT: Do not make any further settlement postings for any site until GINESYS support engineer attends the issue.' USING ERRCODE = '45001';
+         END IF;
+      END IF;
+      IF v_saletype = 'O'
+      THEN
+         INSERT INTO salssmain(sscode,
+                                ssno,
+                                ssdate,
+                                doccode,
+                                scheme_docno,
+                                pcode,
+                                admou_code,
+                                admsite_code,
+                                outloccode,
+                                -- start rev : 005 
+                                return_loccode,
+                                damaged_loccode,
+                                -- end rev : 005
+                                remarks,
+                                ycode,
+                                TIME,
+                                ecode,
+                                last_access_time,
+                                last_access_ecode,
+                                psite_posstlm_code,
+                                status,
+                                refno)
+              VALUES (v_cscode,
+                      erplastno('SALSSMAIN', v_ycode),
+                      v_stlmfor,
+                      1,
+                      v_posstlmcode,
+                      v_pcode,
+                      v_admou_code,
+                      p_admsite_code,
+                      v_store_loccode,
+                      -- start rev : 005
+                      v_store_loccode,
+                      v_store_loccode,
+                      -- end rev : 005
+                      'Auto created',
+                      v_ycode,
+                      p_settledon::timestamp with time zone,
+                      p_settledbyid::bigint,
+                      p_lastaccesson::timestamp with time zone,
+                      p_settledbyid::bigint,
+                      v_posstlmcode,
+                      'C',
+                      'POS Consolidated');
+         INSERT INTO salssdet(sscode,
+                               icode,
+                               qty,
+                               mrp,
+                               rate,
+                               grsamt,
+                               discount,
+                               netamt,
+                               taxamt,
+                               taxdetcode,
+                               remarks,
+                               psite_stockpoint_code,
+                               promoamt,
+                               idiscountamt,
+                               mdiscountamt,
+                               lpdiscountamt,
+                               extaxamt,
+                               TAXREGIME,
+                               IGSTRATE,
+                               IGSTAMT,
+                               CGSTRATE,
+                               CGSTAMT,
+                               SGSTRATE,
+                               SGSTAMT,
+                               CESSRATE,
+                               CESSAMT,
+                               -- START REV : 003
+                               PROMOCODE,
+                               PROMONO,
+                               PROMONAME,
+                               PROMOSTARTDATE,
+                               PROMOENDDATE,
+                               -- END REV : 003
+                               -- START REV : 004
+                               MEMODISCOUNTAMT,
+                               MEMODISCOUNTTYPE,
+                               MEMOPROMOCODE,
+                               MEMOPROMONO,
+                               MEMOPROMONAME,
+                               MEMOPROMOSTARTDATE,
+                               MEMOPROMOENDDATE,
+                               MEMOPROMOSLABFROM,
+                               MEMOPROMOSLABTO,
+                               MEMODISCOUNTDESC,
+                               MEMOCOUPONCODE,
+                               MEMOCOUPONOFFERCODE,
+                               -- END REV : 004
+                               -- START REV : 006
+                               INVBATCH_SERIAL_CODE
+                               -- END REV : 006
+							   -- start rev : 007
+                               ,hsn_sac_code
+                               -- end rev : 007
+                               )
+              SELECT v_cscode,
+                     pbi.icode,
+                     SUM(coalesce(pbi.qty, 0)),
+                     pbi.mrp,
+                     pbi.rsp,
+                     SUM(coalesce(pbi.grossamt, 0)),
+                     SUM(coalesce(pbi.discountamt, 0)),
+                     SUM(coalesce(pbi.netamt, 0)),
+                     SUM(coalesce(pbi.taxamt, 0)),
+                     pbi.taxdetcode,
+                     NULL,
+                     pb.psite_stockpoint_code,
+                     SUM(coalesce(pbi.promoamt, 0))    promoamt,
+                     SUM(coalesce(pbi.idiscountamt, 0)) idiscountamt,
+                     SUM(coalesce(pbi.mdiscountamt, 0)) mdiscountamt,
+                     SUM(coalesce(pbi.lpdiscountamt, 0)) lpdiscountamt,
+                     SUM(coalesce(pbi.extaxamt, 0))    extaxamt,
+                     pbi.TAXREGIME,
+                     pbi.IGSTRATE,
+                     SUM(coalesce(pbi.IGSTAMT, 0))     IGSTAMT,
+                     pbi.CGSTRATE,
+                     SUM(coalesce(pbi.CGSTAMT, 0))     CGSTAMT,
+                     pbi.SGSTRATE,
+                     SUM(coalesce(pbi.SGSTAMT, 0))     SGSTAMT,
+                     pbi.CESSRATE,
+                     SUM(coalesce(pbi.CESSAMT, 0))     CESSAMT,
+                     -- START REV : 003
+                     pbi.PROMOCODE,
+                     pbi.PROMONO,
+                     pbi.PROMONAME,
+                     pbi.PROMOSTARTDATE,
+                     pbi.PROMOENDDATE,
+                     -- END REV : 003
+                     -- START REV : 004
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.MDISCOUNTAMT
+                    END MEMODISCOUNTAMT,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE NULL
+                    END MEMODISCOUNTTYPE,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMOCODE
+                    END MEMOPROMOCODE,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMONO
+                    END MEMOPROMONO,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMONAME
+                    END MEMOPROMONAME,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMOSTARTDATE
+                    END MEMOPROMOSTARTDATE,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMOENDDATE
+                    END MEMOPROMOENDDATE,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMOSLABRANGEFROM
+                    END MEMOPROMOSLABFROM,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMOSLABRANGETO
+                    END MEMOPROMOSLABTO,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.MDISCOUNTDESC
+                    END MEMODISCOUNTDESC,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.MPSITE_DISCOUNT_CODE
+                    END MEMOCOUPONCODE,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.COUPONOFFER_CODE
+                    END MEMOCOUPONOFFERCODE,
+                      -- END REV : 004
+                    -- START REV : 006
+                    INVBATCH_SERIAL_CODE
+                    -- END REV : 006
+					-- start rev : 007
+                    ,pbi.hsn_sac_code
+                    -- end rev : 007
+                FROM temp_posbillitem_stlm pbi, temp_posbill_stlm pb
+               WHERE pbi.psite_posbill_code = pb.code AND coalesce(pbi.qty, 0) > 0
+            GROUP BY pbi.icode,
+                     pbi.mrp,
+                     pbi.rsp,
+                     pbi.taxdetcode,
+                     NULL,
+                     pb.psite_stockpoint_code,
+                     pbi.TAXREGIME,
+                     pbi.IGSTRATE,
+                     pbi.CGSTRATE,
+                     pbi.SGSTRATE,
+                     pbi.CESSRATE,
+                     -- START REV : 003
+                     pbi.PROMOCODE,
+                     pbi.PROMONO,
+                     pbi.PROMONAME,
+                     pbi.PROMOSTARTDATE,
+                     pbi.PROMOENDDATE,
+                     -- END REV : 003
+                     -- START REV : 004
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.MDISCOUNTAMT
+                    END,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE NULL
+                    END,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMOCODE
+                    END,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMONO
+                    END,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMONAME
+                    END,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMOSTARTDATE
+                    END,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMOENDDATE
+                    END,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMOSLABRANGEFROM
+                    END,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMOSLABRANGETO
+                    END,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.MDISCOUNTDESC
+                    END,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.MPSITE_DISCOUNT_CODE
+                    END,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.COUPONOFFER_CODE
+                    END,
+                    -- END REV : 004
+                   -- START REV : 006
+                   INVBATCH_SERIAL_CODE
+                   -- END REV : 006
+				   -- start rev : 007
+                   ,pbi.hsn_sac_code;
+                   -- end rev : 007
+         INSERT INTO salssdet(sscode,
+                               icode,
+                               qty,
+                               mrp,
+                               rate,
+                               grsamt,
+                               discount,
+                               netamt,
+                               taxamt,
+                               taxdetcode,
+                               remarks,
+                               psite_stockpoint_code,
+                               promoamt,
+                               idiscountamt,
+                               mdiscountamt,
+                               lpdiscountamt,
+                               extaxamt,
+                               TAXREGIME,
+                               IGSTRATE,
+                               IGSTAMT,
+                               CGSTRATE,
+                               CGSTAMT,
+                               SGSTRATE,
+                               SGSTAMT,
+                               CESSRATE,
+                               CESSAMT,
+                               -- START REV : 003
+                               PROMOCODE,
+                               PROMONO,
+                               PROMONAME,
+                               PROMOSTARTDATE,
+                               PROMOENDDATE,
+                               -- END REV : 003
+                               -- START REV : 004
+                               MEMODISCOUNTAMT,
+                               MEMODISCOUNTTYPE,
+                               MEMOPROMOCODE,
+                               MEMOPROMONO,
+                               MEMOPROMONAME,
+                               MEMOPROMOSTARTDATE,
+                               MEMOPROMOENDDATE,
+                               MEMOPROMOSLABFROM,
+                               MEMOPROMOSLABTO,
+                               MEMODISCOUNTDESC,
+                               MEMOCOUPONCODE,
+                               MEMOCOUPONOFFERCODE,
+                               -- END REV : 004
+                               -- START REV : 006
+                               INVBATCH_SERIAL_CODE
+                               -- END REV : 006
+							   -- start rev : 007
+                               ,hsn_sac_code
+                               -- end rev : 007
+                               )
+              SELECT v_cscode,
+                     pbi.icode,
+                     SUM(coalesce(pbi.qty, 0)),
+                     pbi.mrp,
+                     pbi.rsp,
+                     SUM(coalesce(pbi.grossamt, 0)),
+                     SUM(coalesce(pbi.discountamt, 0)),
+                     SUM(coalesce(pbi.netamt, 0)),
+                     SUM(coalesce(pbi.taxamt, 0)),
+                     pbi.taxdetcode,
+                     NULL,
+                     pb.psite_stockpoint_code,
+                     SUM(coalesce(pbi.promoamt, 0))    promoamt,
+                     SUM(coalesce(pbi.idiscountamt, 0)) idiscountamt,
+                     SUM(coalesce(pbi.mdiscountamt, 0)) mdiscountamt,
+                     SUM(coalesce(pbi.lpdiscountamt, 0)) lpdiscountamt,
+                     SUM(coalesce(pbi.extaxamt, 0))    extaxamt,
+                     pbi.TAXREGIME,
+                     pbi.IGSTRATE,
+                     SUM(coalesce(pbi.IGSTAMT, 0))     IGSTAMT,
+                     pbi.CGSTRATE,
+                     SUM(coalesce(pbi.CGSTAMT, 0))     CGSTAMT,
+                     pbi.SGSTRATE,
+                     SUM(coalesce(pbi.SGSTAMT, 0))     SGSTAMT,
+                     pbi.CESSRATE,
+                     SUM(coalesce(pbi.CESSAMT, 0))     CESSAMT,
+                     -- START REV : 003
+                     pbi.PROMOCODE,
+                     pbi.PROMONO,
+                     pbi.PROMONAME,
+                     pbi.PROMOSTARTDATE,
+                     pbi.PROMOENDDATE,
+                     -- END REV : 003
+                     -- START REV : 004
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.MDISCOUNTAMT
+                    END MEMODISCOUNTAMT,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.MDISCOUNTPROCESS
+                    END MEMODISCOUNTTYPE,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMOCODE
+                    END MEMOPROMOCODE,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMONO
+                    END MEMOPROMONO,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMONAME
+                    END MEMOPROMONAME,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMOSTARTDATE
+                    END MEMOPROMOSTARTDATE,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMOENDDATE
+                    END MEMOPROMOENDDATE,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMOSLABRANGEFROM
+                    END MEMOPROMOSLABFROM,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMOSLABRANGETO
+                    END MEMOPROMOSLABTO,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.MDISCOUNTDESC
+                    END MEMODISCOUNTDESC,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.MPSITE_DISCOUNT_CODE
+                    END MEMOCOUPONCODE,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.COUPONOFFER_CODE
+                    END MEMOCOUPONOFFERCODE,
+                      -- END REV : 004
+                    -- START REV : 006
+                    INVBATCH_SERIAL_CODE
+                    -- END REV : 006
+					-- start rev : 007
+                    ,pbi.hsn_sac_code
+                    -- end rev : 007
+                FROM temp_posbillitem_stlm pbi, temp_posbill_stlm pb
+               WHERE pbi.psite_posbill_code = pb.code AND coalesce(pbi.qty, 0) < 0
+            GROUP BY pbi.icode,
+                     pbi.mrp,
+                     pbi.rsp,
+                     pbi.taxdetcode,
+                     NULL,
+                     pb.psite_stockpoint_code,
+                     pbi.TAXREGIME,
+                     pbi.IGSTRATE,
+                     pbi.CGSTRATE,
+                     pbi.SGSTRATE,
+                     pbi.CESSRATE,
+                     -- START REV : 003
+                     pbi.PROMOCODE,
+                     pbi.PROMONO,
+                     pbi.PROMONAME,
+                     pbi.PROMOSTARTDATE,
+                     pbi.PROMOENDDATE,
+                     -- END REV : 003
+                     -- START REV : 004
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.MDISCOUNTAMT
+                    END,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.MDISCOUNTPROCESS
+                    END,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMOCODE
+                    END,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMONO
+                    END,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMONAME
+                    END,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMOSTARTDATE
+                    END,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMOENDDATE
+                    END,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMOSLABRANGEFROM
+                    END,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.PROMOSLABRANGETO
+                    END,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.MDISCOUNTDESC
+                    END,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.MPSITE_DISCOUNT_CODE
+                    END,
+                    CASE WHEN pbi.MDISCOUNTAMT = 0 THEN NULL
+                        ELSE pb.COUPONOFFER_CODE
+                    END,
+                   -- END REV : 004
+                   -- START REV : 006
+                   INVBATCH_SERIAL_CODE
+                   -- END REV : 006
+				   -- start rev : 007
+                   ,pbi.hsn_sac_code
+                   -- end rev : 007
+;
+         SELECT SUM(roundoff), SUM(netpayable)
+           INTO STRICT v_roundoff, v_netpayable
+           FROM temp_posbill_stlm pb;
+         UPDATE salssmain
+            SET roundoff = v_roundoff, netpayable = v_netpayable
+          WHERE sscode = v_cscode;
+         UPDATE salssmain
+            SET(extaxamt,
+                 qty,
+                 grsamt,
+                 discount,
+                 netamt) =
+                   (SELECT SUM(coalesce(extaxamt, 0)),
+                           SUM(coalesce(qty, 0)),
+                           SUM(coalesce(grsamt, 0)),
+                           SUM(coalesce(discount, 0)),
+                           SUM(coalesce(netamt, 0))
+                      FROM salssdet
+                     WHERE sscode = v_cscode)
+          WHERE sscode = v_cscode;
+      /*
+             INSERT INTO salssdet
+                        (sscode, icode, qty, mrp, rate, grsamt, discount, netamt,
+                         taxamt, remarks)
+               SELECT   v_cscode, pbi.icode, NVL (pbi.qty, 0), pbi.mrp,
+                        pbi.rsp, NVL (pbi.grossamt, 0),
+                        NVL (pbi.discountamt, 0), NVL (pbi.netamt, 0),
+                        NVL (pbi.taxamt, 0), NULL
+                   FROM psite_posbillitem pbi, psite_posstlmsession pss
+                  WHERE pbi.psite_possession_code = pss.psite_possession_code
+                    AND pss.psite_posstlm_code = p_posstlmcode;
+               --GROUP BY pbi.psite_posbill_code, pbi.icode, pbi.mrp, pbi.rsp;
+      */
+      END IF;
+   END IF;                                                        -- REV : 002
+--COMMIT;
+END;
+"""
+  arguments = <
+    {
+      name = p_stlmfor
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_admsite_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_settledbyid
+      type = integer
+      mode = IN
+    }
+
+    {
+      name = p_settledon
+      type = timestamp with time zone
+      mode = IN
+    }
+
+    {
+      name = p_lastaccesson
+      type = timestamp with time zone
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

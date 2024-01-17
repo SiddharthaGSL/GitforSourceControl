@@ -1,0 +1,469 @@
+function "main"."int$pkg_apvchimport_int$pkg_apvchimport_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      errmsg           varchar(500);
+      vsession         varchar(100);
+      vdetailtbl       varchar(1000);
+      vdetailrec       varchar(500);
+      errcode          bigint;
+      vmaxno           bigint;
+      vcount           bigint;
+
+      v_vchcode        finvchmain.vchcode%TYPE;
+      v_vchno          finvchmain.vchno%TYPE;
+      v_ycode          smallint;
+      v_vchdt          timestamp;
+      v_doccode        bigint;
+      v_scheme_docno   finvchmain.scheme_docno%TYPE;
+      v_refno          finvchmain.refno%TYPE;
+      v_glcode         bigint;
+      v_damount        double precision;
+      --v_camount        NUMBER (20, 2);
+      v_tot_damount    double precision;
+      v_tot_camount    double precision;
+      v_main_rem       finvchmain.nartext%TYPE;
+      v_oucode         bigint;
+      v_tempno         bigint;
+      v_err            varchar(1000);x1 CURSOR FOR
+         SELECT DISTINCT voucher_ref voucher_ref
+           FROM int$stg_APVCHIMPORT
+          WHERE userid = p_userid;
+
+      -- main fields
+      y1 CURSOR(v_voucher_ref text)
+      FOR
+         SELECT DISTINCT vchdt,
+                         scheme_doc_format,
+                         scheme_docno,
+                         bank_cash_glname,
+                         voucher_ref,
+                         voucher_remarks,
+						 -- start rev : 006
+                         ref_admsite_shrtname
+                         -- end rev : 006
+           FROM int$stg_APVCHIMPORT
+          WHERE userid = p_userid AND voucher_ref = v_voucher_ref;
+
+      -- detail fields
+      z1 CURSOR(
+         v_voucher_ref    text)
+      FOR
+           SELECT sl_slid,
+                  voucher_ref,
+                  SUM(amount) det_amt,
+                  REF_ADMSITE_SHRTNAME,
+                  S.CODE     REF_ADMSITE_CODE
+             FROM int$stg_APVCHIMPORT, ADMSITE S
+            WHERE     userid = p_userid
+                  AND voucher_ref = v_voucher_ref
+                  AND UPPER(REF_ADMSITE_SHRTNAME) = UPPER(S.SHRTNAME)
+         GROUP BY sl_slid,
+                  voucher_ref,
+                  REF_ADMSITE_SHRTNAME,
+                  S.CODE;
+
+BEGIN
+      UPDATE int$stg_APVCHIMPORT
+         SET voucher_ref = 'xnullx'
+       WHERE userid = p_userid AND voucher_ref IS NULL;
+
+      DELETE FROM admerraudit a
+       WHERE     a.usrname = USER
+             AND a.prcname = 'APVCHIMPORT'
+             AND a.errcode = p_userid::TEXT;
+
+      /*CALL erraudit(USER,
+                'APVCHIMPORT',
+                p_userid,
+                '1 - Start voucher importing ... ');*/
+
+      FOR x IN x1
+      LOOP
+         /*CALL erraudit(
+            USER,
+            'APVCHIMPORT',
+            p_userid,
+            '2 - Voucher importing for voucher ref - ' || x.voucher_ref);*/
+
+         FOR y IN y1(x.voucher_ref)
+         LOOP
+            v_ycode := NULL;
+            v_vchdt := NULL;
+            v_doccode := NULL;
+            v_refno := NULL;
+            v_main_rem := NULL;
+            v_glcode := NULL;
+            v_scheme_docno := NULL;
+            v_tot_damount := NULL;
+            v_tot_camount := NULL;
+            v_damount := NULL;
+            --v_camount         := null;
+            v_vchdt := y.vchdt;
+            v_refno := y.voucher_ref;
+            v_main_rem := y.voucher_remarks;
+            v_scheme_docno := y.scheme_docno;
+
+            BEGIN
+               SELECT ycode
+                 INTO STRICT v_ycode
+                 FROM admyear y
+                WHERE v_vchdt BETWEEN dtfr AND dtto AND ext = 'N';
+            EXCEPTION
+               WHEN no_data_found
+               THEN
+                  v_ycode := NULL;
+               WHEN too_many_rows
+               THEN
+                  v_ycode := NULL;
+            END;
+
+            SELECT doccode
+              INTO STRICT v_doccode
+              FROM admdocscheme
+             WHERE UPPER(docname) =
+                      (SELECT DISTINCT UPPER(scheme_doc_format)
+                         FROM int$stg_APVCHIMPORT
+                        WHERE     userid = p_userid
+                              AND voucher_ref = y.voucher_ref);
+
+            SELECT glcode
+              INTO STRICT v_glcode
+              FROM fingl
+             WHERE UPPER(glname) =
+                      (SELECT DISTINCT UPPER(bank_cash_glname)
+                         FROM int$stg_APVCHIMPORT
+                        WHERE     userid = p_userid
+                              AND voucher_ref = y.voucher_ref);
+
+            SELECT coalesce(SUM(coalesce(amount, 0)), 0)
+              INTO STRICT v_tot_damount
+              FROM int$stg_APVCHIMPORT
+             WHERE     userid = p_userid
+                   AND voucher_ref = y.voucher_ref
+                   AND coalesce(amount, 0) >= 0;
+
+            IF v_doccode NOT IN (1, 169)
+            THEN
+               v_scheme_docno := 'Automatic';
+            
+
+            /*CALL erraudit(
+               USER,
+               'APVCHIMPORT',
+               p_userid,
+               '3 - Information gathered for voucher ref - ' || x.voucher_ref);*/
+            -- END REV : 003
+            -- START REV : 004
+            /*
+            db_pkg_genentryno.set_oucode(v_oucode);
+            db_pkg_genentryno.set_sitecode(p_connect_site);
+            db_pkg_genentryno.set_menucode(25);
+            db_pkg_genentryno.initialize_globals(v_ycode);
+
+            v_tempno := db_pkg_genentryno.get_tempno;
+
+            */
+            v_oucode := p_connect_ou;
+            V_SCHEME_DOCNO :=
+               db_fun_document_number_web(NULL,
+                                           v_doccode,
+                                           v_ycode,
+                                           to_char(v_vchdt,'DD-MM-YYYY'),
+                                           NULL,
+                                           p_connect_site,
+                                           v_oucode,
+                                           'FinanceAPVoucher');
+										   
+			UPDATE  int$stg_apvchimport 
+            	SET     scheme_docno                = v_scheme_docno 
+            WHERE voucher_ref  =  y.voucher_ref
+            AND 	bank_cash_glname     =  y.bank_cash_glname
+            AND 	voucher_remarks      =  y.voucher_remarks
+            AND 	ref_admsite_shrtname =  y.ref_admsite_shrtname
+            AND 	vchdt                =  trunc(v_vchdt)
+            AND 	userid               =  p_userid;
+
+			END IF;
+            -- END REV : 004
+            SELECT nextval('erp01') INTO STRICT v_vchcode;
+
+            /*CALL erraudit(
+               USER,
+               'APVCHIMPORT',
+               p_userid,
+                  '4 - Insert into finvchmain for voucher ref - '
+               || x.voucher_ref);*/
+
+            INSERT INTO finvchmain (vchcode,
+                                       vchno,
+                                       vchdt,
+                                       vchtype,
+                                       refno,
+                                       glcode,
+                                       damount,
+                                       camount,
+                                       ycode,
+                                       ecode,
+                                       time,
+                                       nartext,
+                                       doccode,
+                                       scheme_docno,
+                                       creation_dt,
+                                       release_status,
+                                       admsite_code_owner,
+                                       admou_code,
+                                       ISADVANCE            -- START REV : 003
+                                                ,
+                                       entry_source           -- END REV : 003
+                                                   )
+                 VALUES (v_vchcode,
+                         v_tempno,
+                         date_trunc('day', v_vchdt),
+                         'P',
+                         v_refno,
+                         v_glcode,
+                         0,
+                         v_tot_damount,
+                         v_ycode,
+                         p_userid,
+                         clock_timestamp(),
+                         v_main_rem,
+                         v_doccode,
+                         v_scheme_docno,
+                         date_trunc('day', clock_timestamp()),
+                         'U',
+                         p_connect_site,
+                         P_CONNECT_OU,
+                         'Y'                                -- START REV : 003
+                            ,
+                         'EXCEL'                              -- END REV : 003
+                                );
+
+            -- START REV : 003
+            -- Detail entry
+            /*CALL erraudit(
+               USER,
+               'APVCHIMPORT',
+               p_userid,
+                  '5 - Finvchmain compleated for voucher ref - '
+               || x.voucher_ref);*/
+
+            FOR z IN z1(x.voucher_ref)
+            LOOP
+               -- END REV : 003
+              /*CALL erraudit(
+                  USER,
+                  'APVCHIMPORT',
+                  p_userid,
+                  '6 - Finvchdet inserting voucher ref - ' || x.voucher_ref);*/
+
+               --  ERRAUDIT(23,23,23,z.voucher_ref||'*'||Z.REF_ADMSITE_SHRTNAME||'*'||z.sl_slid);
+               INSERT INTO finvchdet (vchcode,
+                                        vchno,
+                                        vchdt,
+                                        vchtype,
+                                        glcode,
+                                        slcode,
+                                        chqno,
+                                        chqdt,
+                                        drawnon,
+                                        damount,
+                                        camount,
+                                        ycode,
+                                        chqlabel,
+                                        nartext,
+                                        gl_cc_appl,
+                                        bookcode,
+                                        payment_mode,
+                                        ISREVERSAL,
+                                        REF_ADMSITE_CODE,
+                                        TDS_APP)
+                  SELECT v_vchcode,
+                         v_tempno,
+                         date_trunc('day', v_vchdt),
+                         'P',
+                         glcode,
+                         slcode,
+                         chq_no,
+                         chq_date,
+                         drawn_on,
+                         amt,
+                         0,
+                         v_ycode,
+                         chq_label,
+                         ledger_nartext,
+                         costapp,
+                         BOOKCODE,
+                         payment_mode,
+                         ISREVERSAL,
+                         Z.REF_ADMSITE_CODE,
+                         'N'
+                    FROM (SELECT SL.glcode,
+                                 SLCODE,
+                                 a.instrument_no   chq_no,
+                                 a.instrument_date chq_date,
+                                 CASE WHEN trim(both UPPER(a.payment_mode))='CHEQUE' THEN  SL.CHQLABEL  ELSE NULL END
+                                    chq_label,
+                                 CASE WHEN                                     trim(both UPPER(a.payment_mode))='CHEQUE' THEN  CASE WHEN                                                  a.drawn_on IS NULL THEN  CASE WHEN                                                           BOOKCODE IS NULL THEN  NULL  ELSE (SELECT GLNAME                                                             FROM FINGL G,                                                                  FINCHQMAIN                                                                  CQM                                                            WHERE     CQM.BOOKCODE =                                                                         CQ.BOOKCODE                                                                  AND CQM.GLCODE =                                                                         G.GLCODE) END   ELSE a.drawn_on END   ELSE NULL END 
+                                    drawn_on,
+                                 a.ledger_nartext,
+                                 amount            amt,
+                                 CASE
+                                    WHEN UPPER(a.payment_mode) = 'CHEQUE'
+                                    THEN
+                                       'C'
+                                    WHEN UPPER(a.payment_mode) = 'NEFT/RTGS'
+                                    THEN
+                                       'R'
+                                    ELSE
+                                       'H'
+                                 END
+                                    payment_mode,
+                                 GL.COSTAPP        COSTAPP,
+                                 BOOKCODE,
+                                 CASE WHEN UPPER(a.ISREVERSAL)='YES' THEN  'Y' WHEN UPPER(a.ISREVERSAL)='NO' THEN  'N' END 
+                                    ISREVERSAL
+                            FROM int$stg_apvchimport a INNER JOIN finsl sl ON 
+						  UPPER(a.sl_slid) = UPPER(sl.slid)
+						  LEFT OUTER JOIN fingl gl ON (SL.GLCODE = GL.GLCODE)
+						  LEFT OUTER JOIN finchqdet cq ON UPPER (a.instrument_no) =UPPER (CQ.CHQNO)
+						WHERE a.userid = p_userid AND a.voucher_ref = z.voucher_ref
+						  AND UPPER(A.REF_ADMSITE_SHRTNAME) = UPPER(Z.REF_ADMSITE_SHRTNAME) 
+						  AND UPPER(a.sl_slid) = UPPER(z.sl_slid) ) alias19;
+
+              /*CALL erraudit(
+                  USER,
+                  'APVCHIMPORT',
+                  p_userid,
+                     '61 - Finvchdet insertion completed for voucher ref - '
+                  || x.voucher_ref);*/
+
+               -- Update cheque detail
+               DECLARE
+                  c1 CURSOR FOR
+                     SELECT *
+                       FROM finvchdet
+                      WHERE vchcode = v_vchcode AND chqno IS NOT NULL;
+               BEGIN
+                  FOR i IN c1
+                  LOOP
+                     UPDATE finchqdet
+                        SET vchcode = i.vchcode, stat = 'I'
+                      WHERE     chqno = i.chqno
+                            AND bookcode IN (SELECT DISTINCT m.bookcode
+                                      FROM finchqmain m, finchqdet d
+                                     WHERE     m.bookcode = d.bookcode
+                                           AND m.glcode = v_glcode
+                                           AND d.chqno = i.chqno);
+                  END LOOP;
+               END;
+            -- START REV : 003
+            END LOOP;                                          -- Detail entry
+           CALL erraudit(
+               USER,
+               'APVCHIMPORT',
+               p_userid,
+                  '7 - Finvchdet insertion completed for voucher ref - '
+               || x.voucher_ref);
+         -- END REV : 003
+         -- Generate the scheme docno
+         -- START REV : 004
+         END LOOP;
+      END LOOP;
+
+      UPDATE finvchmain
+         SET refno  = NULL
+       WHERE refno = 'xnullx';
+
+      -- log to be added in history table
+      SELECT nextval('int$error_log_code') INTO STRICT vsession;
+
+      vdetailtbl :=
+            'create table ginarchive.APVCHIMPORT_'
+         || vsession
+         || ' as select distinct scheme_docno, VOUCHER_REF,vchdt,bank_cash_glname from int$stg_APVCHIMPORT where userid ='
+         || p_userid::text;
+
+      EXECUTE vdetailtbl;
+
+      vdetailrec :=
+         'select count(1) from ginarchive.APVCHIMPORT_' || vsession::text;
+
+      EXECUTE vdetailrec INTO STRICT vcount;
+
+      INSERT INTO int$history(code,
+                               importedby,
+                               importedon,
+                               classname,
+                               summary,
+                               history_detail_tablename,
+                               history_detail_row_count)
+           VALUES (nextval('int$history_code'),
+                   p_userid,
+                   clock_timestamp(),
+                   'APVCHIMPORT',
+                   vcount::TEXT || ' Row updated successfully.',
+                   'ginarchive.APVCHIMPORT_' || vsession,
+                   vcount);
+
+      RETURN('1');
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         -- error log for oracle internal error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'APVCHIMPORT',
+                      p_userid,
+                      errcode,
+                      errmsg, --|| ' ~ ' || COALESCE(g_mark,''),
+                      clock_timestamp());
+
+         --COMMIT;
+
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

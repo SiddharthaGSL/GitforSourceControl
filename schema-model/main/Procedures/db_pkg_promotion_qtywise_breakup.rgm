@@ -1,0 +1,136 @@
+procedure "main"."db_pkg_promotion_qtywise_breakup(character, bigint, timestamp without time zone)" {
+  text = """
+
+DECLARE
+
+		V_TOTQTY double precision;
+		V_QTY double precision;
+		V_SEQ bigint;
+		V_ERRMSG varchar(2000);
+		V_CNT bigint;
+	
+  REC RECORD;
+BEGIN
+		PERFORM set_config('db_pkg_promotion.g_mark', 'Deleting from GLOBAL_PROMO_RESOLVE', false);
+		DELETE FROM GLOBAL_PROMO_RESOLVE;
+
+		IF P_DOCTYPE = 'T' THEN
+			PERFORM set_config('db_pkg_promotion.g_mark', 'Preparing Sample Testing for breakup.', false);
+			DELETE	FROM GLOBAL_SAMPLE_TESTING
+			WHERE	coalesce(SALPROMO_AUTO_INCLUDE,'N') = 'Y';
+			-- START REV : 007
+			--DELETE FROM GLOBAL_SAMPLE_TESTING_VCH;
+			-- END REV : 007
+			UPDATE	GLOBAL_SAMPLE_TESTING T
+			SET(T.SALPROMO_CODE, T.SALPROMO_NO, T.SALPROMO_NAME)=
+				(SELECT CODE, NO, NAME FROM PROMO_MASTER WHERE NO=T.SALPROMO_NO AND coalesce(BUY_GET_STATUS,'N')<>'G'
+				
+UNION ALL
+
+				SELECT NULL, NULL, NULL  WHERE coalesce(BUY_GET_STATUS,'N')='G')
+			WHERE	T.SALPROMO_NO IS NOT NULL;
+		END IF;
+
+		V_SEQ := 0;
+
+		PERFORM set_config('db_pkg_promotion.g_mark', 'Starting Qty Wise breakup.', false);
+		FOR REC IN (
+			SELECT	CODE ERS_CODE
+                    ,SALPROMO_NO
+                    ,SALPROMO_CODE
+                    ,SALPROMO_NAME
+                    ,ICODE
+                    ,coalesce(ISQTY,0) QTY
+                    ,coalesce(MRP,0) MRP
+                    ,coalesce(LISTED_MRP,0) LISTED_MRP
+                    ,coalesce(WSP,0) WSP
+                    ,coalesce(EFF_COSTRATE,0) EFF_COSTRATE
+                    ,NULL CODE
+                    ,NULL NO
+                    ,NULL DT
+                    ,NULL LOCCODE
+                    ,NULL MRPBASIS
+                    ,NULL YCODE
+                    ,NULL IDISCOUNTCODE
+                    ,NULL IDISCOUNT_TYPE
+                    ,NULL IDISCOUNT_FACTOR
+                    ,NULL ECODE
+                    ,NULL ISMEASUREDQTY
+                    ,NULL REMARKS
+                    ,NULL ISMETAL
+                    ,NULL ITEM_NAME
+                    ,NULL PRICE_TERMS
+                    ,NULL PRICE_BASIS
+                    ,NULL INVMETAL_CODE
+                    ,NULL NET_WEIGHT
+                    ,NULL GRS_WEIGHT
+                    ,NULL METAL_RATE
+                    ,NULL JOB_COST_BASIS
+                    ,NULL JOB_COST_AMT
+                    ,NULL OTHER_CHG
+                    ,NULL D_VALUE
+                    ,NULL C_VALUE
+                    ,NULL O_VALUE
+                    ,NULL METAL_DISC_FACTOR
+                    ,NULL STONE_DISC_FACTOR
+                    ,NULL JOB_COST_DISC_FACTOR
+                    ,NULL METAL_DISC_AMT
+                    ,NULL STONE_DISC_AMT
+                    ,NULL JOB_COST_DISC_AMT
+			FROM	GLOBAL_SAMPLE_TESTING
+			WHERE	P_DOCTYPE = 'T'
+			-- START REV : 001
+			--ORDER BY 2, 7, 1
+			-- To give maximum benefit to customer
+			ORDER BY 2, 7 DESC, 1
+			-- END REV : 001
+		) LOOP
+			V_TOTQTY := CEIL(REC.QTY);
+			V_QTY := 0;
+			PERFORM set_config('db_pkg_promotion.g_mark', 'Breaking qty for Promotion-'||REC.SALPROMO_NO||', Icode-'||REC.ICODE||', Qty-'||V_TOTQTY, false);
+			FOR I IN 1..V_TOTQTY LOOP
+				V_SEQ := V_SEQ + 1;
+				INSERT INTO GLOBAL_PROMO_RESOLVE(SEQ, STATUS, CURRENTLY_PROCESSING, ERS_CODE, ICODE, QTY, RATE, MRP, LISTED_MRP, WSP, SALPROMO_SALEPRICE, SALPROMO_PROMOPRICE, SALPROMO_NO, PROMO_CODE, SALPROMO_NAME, CODE, NO, DT, LOCCODE, MRPBASIS, YCODE, IDISCOUNTCODE, IDISCOUNT_TYPE, IDISCOUNT_FACTOR, ECODE, ISMEASUREDQTY, REM,ISMETAL, ITEM_NAME, PRICE_TERMS, PRICE_BASIS, INVMETAL_CODE, NET_WEIGHT, GRS_WEIGHT, METAL_RATE, JOB_COST_BASIS, JOB_COST_AMT, OTHER_CHG, D_VALUE, C_VALUE, O_VALUE
+				 -- START REV : 009
+				 ,METAL_DISC_FACTOR,STONE_DISC_FACTOR,JOB_COST_DISC_FACTOR, METAL_DISC_AMT, STONE_DISC_AMT, JOB_COST_DISC_AMT
+				 -- END REV : 009
+				)
+				VALUES
+				(V_SEQ, 'N', 'N', REC.ERS_CODE, REC.ICODE, CASE WHEN REC.QTY<I THEN REC.QTY-(I-1) ELSE 1 END, REC.EFF_COSTRATE, REC.MRP, REC.LISTED_MRP, REC.WSP, REC.MRP, REC.MRP, REC.SALPROMO_NO, REC.SALPROMO_CODE, REC.SALPROMO_NAME, REC.CODE, REC.NO, REC.DT, REC.LOCCODE, REC.MRPBASIS, REC.YCODE, REC.IDISCOUNTCODE, REC.IDISCOUNT_TYPE, REC.IDISCOUNT_FACTOR, REC.ECODE, REC.ISMEASUREDQTY, REC.REMARKS, REC.ISMETAL, REC.ITEM_NAME, REC.PRICE_TERMS, REC.PRICE_BASIS, REC.INVMETAL_CODE, REC.NET_WEIGHT, REC.GRS_WEIGHT, REC.METAL_RATE, REC.JOB_COST_BASIS, REC.JOB_COST_AMT, REC.OTHER_CHG, REC.D_VALUE, REC.C_VALUE, REC.O_VALUE
+				 -- START REV : 009
+				 ,REC.METAL_DISC_FACTOR, REC.STONE_DISC_FACTOR, REC.JOB_COST_DISC_FACTOR, REC.METAL_DISC_AMT, REC.STONE_DISC_AMT, REC.JOB_COST_DISC_AMT
+				 -- END REV : 009
+				);
+			END LOOP;
+		END LOOP;
+
+	EXCEPTION WHEN OTHERS THEN
+		V_ERRMSG := SQLERRM;
+		CALL ERRAUDIT(USER, 'DB_PKG_PROMOTION.QTYWISE_BREAKUP()', SQLSTATE::varchar, V_ERRMSG||' ==> '||current_setting('db_pkg_promotion.g_mark')::varchar(2000));
+		RAISE EXCEPTION '%', 'Failed while breaking qty. '||V_ERRMSG||' ==> '||current_setting('db_pkg_promotion.g_mark')::varchar(2000)  USING ERRCODE = '45001';
+	END;
+
+"""
+  arguments = <
+    {
+      name = p_doctype
+      type = character
+      mode = IN
+    }
+
+    {
+      name = p_doccode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logindate
+      type = timestamp without time zone
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

@@ -1,0 +1,55 @@
+procedure "main"."p_psite_grc_revert(bigint, text)" {
+  text = """
+
+DECLARE
+
+  V_SITECUID  varchar(20);
+  v_grcdocid  bigint;
+  v_event_track_cnt bigint;
+  v_event_cnt  bigint;
+
+BEGIN
+   SELECT psite_initial
+     INTO STRICT v_sitecuid
+     FROM admsite
+    WHERE code = P_ADMSITE_CODE;
+   	 SELECT CAST ( REPLACE (P_GRCDOCID, v_sitecuid || '-','') AS NUMERIC)
+     INTO STRICT v_grcdocid
+	 
+;
+     SELECT count(1)
+     into STRICT   v_event_track_cnt
+     FROM   PSITE_EVENT_TRACKING
+     WHERE  ADMSITE_CODE = P_ADMSITE_CODE
+     AND    REFCODE = V_GRCDOCID::varchar
+     AND    EVENTTYPE =  'GRCREVERT';
+     SELECT count(1)
+     into STRICT   v_event_cnt
+     FROM   PSITE_EVENT_TRACKING
+     WHERE  ADMSITE_CODE = P_ADMSITE_CODE
+     AND    REFCODE = V_GRCDOCID::varchar
+     AND    EVENTTYPE =  'GRCREVERT';
+     IF (coalesce(v_event_track_cnt,0) + coalesce(v_event_cnt,0)) > 0
+     THEN
+        RAISE EXCEPTION '%', 'Revert request against this document already sent. Acknowledgement pending' USING ERRCODE = '45251';
+     END IF;
+     CALL db_pkg_npos_event$track(P_ADMSITE_CODE, 'GRCREVERT', v_grcdocid);
+END;
+"""
+  arguments = <
+    {
+      name = p_admsite_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_grcdocid
+      type = text
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

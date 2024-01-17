@@ -1,0 +1,97 @@
+view "main"."v_gst_gstr2_nil" {
+  text = """-
+SELECT q.document_gstin,
+    q.month_year,
+    0 AS inter_exempted,
+    0 AS intra_exempted,
+    sum(
+        CASE
+            WHEN ((q.tradegroupcode = (2)::numeric) AND ((COALESCE(ct.name, 'Unregistered'::character varying))::text = 'Composite'::text)) THEN q.amt
+            ELSE (0)::numeric
+        END) AS inter_compounding,
+    sum(
+        CASE
+            WHEN ((q.tradegroupcode = (1)::numeric) AND ((COALESCE(ct.name, 'Unregistered'::character varying))::text = 'Composite'::text)) THEN q.amt
+            ELSE (0)::numeric
+        END) AS intra_compounding,
+    sum(
+        CASE
+            WHEN (((q.invhsnsacmain_code)::numeric <> ALL (ARRAY[(1)::numeric, (2)::numeric])) AND (q.tradegroupcode = (2)::numeric) AND ((COALESCE(ct.name, 'Unregistered'::character varying))::text <> 'Composite'::text)) THEN q.amt
+            ELSE (0)::numeric
+        END) AS inter_nil,
+    sum(
+        CASE
+            WHEN (((q.invhsnsacmain_code)::numeric = ANY (ARRAY[(1)::numeric, (2)::numeric])) AND (q.tradegroupcode = (2)::numeric) AND ((COALESCE(ct.name, 'Unregistered'::character varying))::text <> 'Composite'::text)) THEN q.amt
+            ELSE (0)::numeric
+        END) AS inter_nongst,
+    sum(
+        CASE
+            WHEN (((q.invhsnsacmain_code)::numeric <> ALL (ARRAY[(1)::numeric, (2)::numeric])) AND (q.tradegroupcode = (1)::numeric) AND ((COALESCE(ct.name, 'Unregistered'::character varying))::text <> 'Composite'::text)) THEN q.amt
+            ELSE (0)::numeric
+        END) AS intra_nil,
+    sum(
+        CASE
+            WHEN (((q.invhsnsacmain_code)::numeric = ANY (ARRAY[(1)::numeric, (2)::numeric])) AND (q.tradegroupcode = (1)::numeric) AND ((COALESCE(ct.name, 'Unregistered'::character varying))::text <> 'Composite'::text)) THEN q.amt
+            ELSE (0)::numeric
+        END) AS intra_nongst
+   FROM ((( SELECT gv.document_gstin,
+            gv.document_gst_state_code,
+            gv.cp_gstin,
+            gv.cp_gst_state_code,
+            gv.invhsnsacmain_code,
+            gv.tradegroupcode,
+            to_char(gv.entdt, 'MM-YYYY'::text) AS month_year,
+            gv.taxableamt AS amt,
+            gv.cp_slcode
+           FROM main.v_gst_ent_hsn gv
+          WHERE ((gv.enttype = ANY (ARRAY['PIM'::text, 'PSM'::text, 'SRT'::text, 'SGI'::text])) AND (gv.totaltaxrate = (0)::numeric) AND ((gv.tradegroupcode)::numeric = ANY (ARRAY[(1)::numeric, (2)::numeric])))
+        UNION ALL
+         SELECT gv.document_gstin,
+            gv.document_gst_state_code,
+            gv.cp_gstin,
+            gv.cp_gst_state_code,
+            gv.invhsnsacmain_code,
+            gv.tradegroupcode,
+            gv.month_year,
+            gv.amt,
+            gv.cp_slcode
+           FROM main.v_gst_ent_nongst gv
+          WHERE ((gv.enttype = ANY (ARRAY['PIM'::text, 'PSM'::text, 'SRT'::text, 'SGI'::text])) AND (gv.tradegroupcode = ANY (ARRAY[(1)::numeric, (2)::numeric])))) q
+     LEFT JOIN main.finsl sl ON ((q.cp_slcode = (sl.slcode)::numeric)))
+     LEFT JOIN main.admgstcategory ct ON ((sl.cp_category_code = ct.code)))
+  GROUP BY q.document_gstin, q.month_year;
+"""
+  columns = (
+    column "document_gstin" {
+      type = "character varying(15)"
+    }
+    column "month_year" {
+      type = text
+    }
+    column "inter_exempted" {
+      type = "integer"
+    }
+    column "intra_exempted" {
+      type = "integer"
+    }
+    column "inter_compounding" {
+      type = "numeric"
+    }
+    column "intra_compounding" {
+      type = "numeric"
+    }
+    column "inter_nil" {
+      type = "numeric"
+    }
+    column "inter_nongst" {
+      type = "numeric"
+    }
+    column "intra_nil" {
+      type = "numeric"
+    }
+    column "intra_nongst" {
+      type = "numeric"
+    }
+  )
+}
+

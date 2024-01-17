@@ -1,0 +1,82 @@
+procedure "main"."p_mlsp_dsr_weekly(timestamp without time zone, refcursor)" {
+  text = """
+
+DECLARE
+
+   v_day         varchar(10);
+   v_startdate   timestamp;
+   v_enddate     timestamp;
+
+BEGIN
+/******************************************************************************
+001        22/02/2019         JIT CHATTERJEE (Reviewed by Mousumi di)               
+(Bug 12338 - There has been introduced a new status which is 'U' for auto settlement. For the new status, the report data was not generating for the DSR report )
+******************************************************************************/
+   SELECT TO_CHAR(p_reportdate, 'DAY')
+     INTO STRICT v_day
+;
+   IF rtrim(ltrim(v_day)) = 'MONDAY'
+   THEN
+      SELECT (p_reportdate - 7)
+        INTO STRICT v_startdate
+;
+   ELSE
+      SELECT NEXT_DAY(p_reportdate - 7, 'MONDAY')
+        INTO STRICT v_startdate
+;
+   END IF;
+   SELECT (p_reportdate - 1)
+     INTO STRICT v_enddate
+;
+   OPEN refcur FOR
+      SELECT   q.sitename, q.cuid, SUM(noofinv)noofinv, SUM(q.saleamt) saleamt,
+               SUM(stm.footfall) footfall,
+               CASE
+                  WHEN SUM(coalesce(stm.footfall, 0)) = 0
+                     THEN 0
+                  ELSE ROUND ((SUM(noofinv) / SUM(stm.footfall)) * 100,
+                              3
+                             )
+               END conv_perc,
+               CASE
+                  WHEN SUM(noofinv) = 0
+                     THEN 0
+                  ELSE round((SUM(q.saleamt) / SUM(noofinv))::numeric, 2)
+               END avg_saleamt
+          FROM (SELECT   date_trunc('day', pb.billdate) billdate, COUNT(1) noofinv,
+                         s.NAME sitename, s.psite_initial cuid,
+                         s.code sitecode, SUM(coalesce(pb.netpayable, 0))
+                                                                      saleamt
+                    FROM psite_posbill pb, admsite s
+                   WHERE pb.admsite_code = s.code
+                     AND s.sitetype IN ('MS-CO-CM', 'MS-OO-CM')
+                GROUP BY date_trunc('day', pb.billdate), s.NAME, s.psite_initial, s.code) q,
+               (SELECT   SUM(coalesce(footfall, 0)) footfall, admsite_code,
+                         date_trunc('day', stlmfor) stlm
+                    FROM psite_posstlm
+                   WHERE status IN ('O','C','U') --REV:001
+                     AND date_trunc('day', stlmfor) BETWEEN date_trunc('day', v_startdate) AND date_trunc('day', v_enddate)
+                GROUP BY admsite_code, date_trunc('day', stlmfor)) stm
+         WHERE q.sitecode = stm.admsite_code
+           AND q.billdate = stm.stlm
+           AND date_trunc('day', q.billdate) BETWEEN date_trunc('day', v_startdate) AND date_trunc('day', v_enddate)
+      GROUP BY q.sitename, q.cuid;
+END;
+"""
+  arguments = <
+    {
+      name = p_reportdate
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = refcur
+      type = refcursor
+      mode = INOUT
+    }
+
+  >
+  language = plpgsql
+}
+

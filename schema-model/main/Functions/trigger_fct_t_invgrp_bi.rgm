@@ -1,0 +1,117 @@
+function "main"."trigger_fct_t_invgrp_bi()" {
+  text = """
+
+/*******************************************************************************************************************
+   No.            Date          Author                  Description
+   ---------   ----------    ----------------------  ------------------------------------------------------------------
+   REV : 001   31/12/2008       ABHI                      (BUG ID : 981) Deafult Article is not getting created if the node
+                                               is shifted to level 3 by edit option
+   REV : 002   09/04/2011        MANASH                  (BUG ID : 3146) Tax name is not polulating from Inventory Group.
+*********************************************************************************************************************/
+-- START REV : 001
+DECLARE
+  V_COUNT bigint;
+-- END REV : 001
+BEGIN
+  BEGIN
+   IF TG_OP = 'INSERT'
+   THEN
+      IF NEW.LEV = 3
+      THEN
+         INSERT INTO INVARTICLE(code,
+                      NAME,
+                      grpcode, taxcode, cat1prompt,
+                      cat2prompt, cat3prompt, cat4prompt,
+                      cat5prompt, cat6prompt, doc, mrprangefrom, mrprangeto
+                     )
+              VALUES (nextval('invarticle_code'),
+                         UPPER(NEW.lev1grpname)
+                      || '-'
+                      || UPPER(NEW.lev2grpname)
+                      || '-'
+                      || UPPER(NEW.grpname),
+                      NEW.grpcode, NEW.taxcode, NEW.ATTR1PROMPT,
+                      NEW.ATTR2PROMPT, NEW.ATTR3PROMPT, NEW.ATTR4PROMPT,
+                      NEW.ATTR5PROMPT, NEW.ATTR6PROMPT, statement_timestamp(), 0, 99999.00
+                     );
+      END IF;
+   END IF;
+   -- START REV : 001
+   IF TG_OP = 'UPDATE'
+   THEN
+          IF OLD.PARCODE <> NEW.PARCODE AND NEW.LEV = 3
+             THEN
+                BEGIN
+                   SELECT COUNT(*)
+                 INTO STRICT    V_COUNT
+                 FROM   INVARTICLE
+                 WHERE  GRPCODE = NEW.GRPCODE;
+              EXCEPTION
+                WHEN OTHERS THEN
+                    V_COUNT := 0;
+              END;
+                IF coalesce(V_COUNT,0) = 0
+              THEN
+                    INSERT INTO INVARTICLE(code,
+                          NAME,
+                          grpcode, taxcode, cat1prompt,
+                          cat2prompt, cat3prompt, cat4prompt,
+                          cat5prompt, cat6prompt, doc, mrprangefrom, mrprangeto
+                         )
+                  VALUES (nextval('invarticle_code'),
+                             UPPER(NEW.lev1grpname)
+                          || '-'
+                          || UPPER(NEW.lev2grpname)
+                          || '-'
+                          || UPPER(NEW.grpname),
+                          NEW.grpcode, NEW.taxcode, NEW.ATTR1PROMPT,
+                      NEW.ATTR2PROMPT, NEW.ATTR3PROMPT, NEW.ATTR4PROMPT,
+                      NEW.ATTR5PROMPT, NEW.ATTR6PROMPT, statement_timestamp(), 0, 99999.00
+                         );
+              ELSIF coalesce(V_COUNT,0) = 1
+              THEN
+                      UPDATE INVARTICLE
+                       SET NAME      = UPPER(NEW.lev1grpname)
+                                          || '-'
+                                         || UPPER(NEW.lev2grpname)
+                                         || '-'
+                                         || UPPER(NEW.grpname),
+                           taxcode      =      NEW.taxcode,
+                           cat1prompt =   NEW.ATTR1PROMPT,
+                           cat2prompt =      NEW.ATTR2PROMPT,
+                           cat3prompt =   NEW.ATTR3PROMPT,
+                           cat4prompt =   NEW.ATTR4PROMPT,
+                           cat5prompt =      NEW.ATTR5PROMPT,
+                           cat6prompt =      NEW.ATTR6PROMPT
+                     WHERE grpcode       = NEW.grpcode;
+              END IF;
+
+       -- START REV : 002
+       ELSIF (OLD.grpcode = NEW.grpcode) and (coalesce(OLD.TAXCODE, 0) <> coalesce(NEW.TAXCODE, 0)) THEN
+        UPDATE    INVARTICLE
+        SET    TAXCODE = NEW.TAXCODE
+        WHERE    GRPCODE    = coalesce(NEW.GRPCODE, OLD.GRPCODE);
+       -- END REV : 002
+       END IF;
+
+    END IF;
+EXCEPTION
+   WHEN OTHERS
+   THEN
+      CALL erraudit(USER, 't_invgrp_bi', SQLSTATE::varchar, SQLERRM);
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED  '
+                               || SQLSTATE::varchar
+                               || '  '
+                               || SQLERRM
+                               USING ERRCODE = '45101';
+    -- END REV : 001
+  END;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

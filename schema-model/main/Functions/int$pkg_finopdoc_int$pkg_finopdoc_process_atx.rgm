@@ -1,0 +1,138 @@
+function "main"."int$pkg_finopdoc_int$pkg_finopdoc_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        errmsg              varchar(500);
+        vsession            varchar(100);
+        vdetailtbl          varchar(1000);
+        vdetailrec          varchar(500);
+        errcode             bigint;
+        vmaxno              bigint;
+        vcount              bigint;
+        v_entcode           finopdoc.entcode%type;c1_loop RECORD;
+
+BEGIN
+        insert
+        into    finopdoc (
+                    entcode,entno,entdt,enttype,docno,docdt,duedt,glcode,slcode,damount,camount,ycode,nartext,
+                    scheme_docno,admsite_code_owner,agcode,ecode,time,agcomvalue,agrate,ref_admsite_code,
+                    chqno,chqdt,drawnon,chqlabel,cash_discount_applicable,cash_discount_percentage,
+                    cash_discount_period,cash_discount_appamt
+                    -- START REV : 003
+                    ,admou_code
+                    -- END REV : 003
+                )
+        SELECT  nextval('erp01'),
+                ((
+                    SELECT coalesce(max(f.entno),0) from finopdoc f where f.enttype = a.enttype
+                ) + row_number() over (partition by a.enttype order by a.enttype)),a.entdt,a.enttype,a.docno,a.docdt,a.duedt,
+                g.glcode,f.slcode,case when a.amount > 0 then abs(a.amount) else 0 end, case when a.amount < 0 then abs(a.amount) else 0 end,
+                1,a.nartext,a.scheme_docno,s.code,ag.slcode,p_userid,clock_timestamp(),a.agcomvalue,a.agrate,a.ref_admsite_code,
+                a.chqno,a.chqdt,a.drawnon,a.chqlabel,case when upper(a.cash_discount_applicable) = 'YES' then 'Y' else 'N'end,a.cash_discount_percentage,a.cash_discount_period,
+                a.cash_discount_appamt
+                -- START REV : 003
+                ,p_connect_ou
+                -- END REV : 003
+        FROM admsite s, fingl g, finsl f, int$stg_finopdoc a
+LEFT OUTER JOIN (
+                    select  upper(sl.slid) slid,
+                            sl.slcode
+                    from    finsl   sl
+                ) ag ON (upper(a.agent_slid) = ag.slid)
+WHERE a.userid                       = p_userid and upper(a.gl_name)               = upper(g.glname) and upper(a.sl_slid)               = upper(f.slid) and upper(a.owner_site_short_name) = upper(s.shrtname);
+
+        --COMMIT;
+
+        for c1_loop in (
+                       SELECT   sl.slcode,gl.glcode
+                                ,GL.COSTAPP   COSTAPP -- REV : 006
+                       from     int$stg_finopdoc a,
+                                fingl            gl,
+                                finsl            sl
+                       where    a.userid  = p_userid
+                       and      upper(gl_name) = upper(gl.glname)
+                       and      upper(a.sl_slid)=upper(sl.slid)
+                    )
+        loop
+            -- START REV : 004
+            -- db_pro_pop_subledger_opening(c1_loop.slcode,c1_loop.glcode);
+           -- START REV : 006
+           -- db_pro_pop_subledger_opening(c1_loop.slcode, c1_loop.glcode, p_connect_ou);
+              CALL db_pro_pop_subledger_opening(c1_loop.slcode, c1_loop.glcode,C1_LOOP.COSTAPP, p_connect_ou);
+           -- END REV : 006
+            -- END REV : 004
+            --COMMIT;
+        end loop;
+
+        -- log to be added in history table
+        select  nextval('int$error_log_code')
+        into STRICT    vsession
+;
+
+        -- start rev : 002
+        --vdetailtbl := 'create table finopdoc_'||vsession||' as select distinct entdt,enttype,docno,docdt from int$stg_finopdoc where userid ='|| p_userid::text;
+        --vdetailtbl := 'create table finopdoc_'||vsession||' as select distinct entdt,enttype,docno,docdt from int$stg_finopdoc where userid ='|| p_userid::text;
+        vdetailtbl := 'create table ginarchive.finopdoc_'||vsession||' as select distinct entdt,enttype,docno,docdt from int$stg_finopdoc where userid ='|| p_userid::text;
+        -- end rev : 002
+        EXECUTE vdetailtbl;
+
+        -- start rev : 002
+        --vdetailrec := 'select count(1) from finopdoc_'||vsession;
+        vdetailrec := 'select count(1) from ginarchive.finopdoc_'||vsession;
+        -- end rev : 002
+        EXECUTE vdetailrec into STRICT vcount;
+
+        insert into int$history(code, importedby, importedon, classname, summary, history_detail_tablename, history_detail_row_count)
+        -- start rev : 002
+        --values (int$history_code.nextval, p_userid, sysdate, 'FINOPDOC', vcount::TEXT||' Data updated successfully.', 'finopdoc_'||vsession, vcount);
+        values (nextval('int$history_code'), p_userid, clock_timestamp(), 'FINOPDOC', vcount::TEXT||' Data updated successfully.', 'ginarchive.finopdoc_'||vsession, vcount);
+        -- end rev : 002
+        --COMMIT;
+
+        return('1');
+
+    exception
+        when others then
+            errcode := SQLSTATE;
+            errmsg  := sqlerrm;
+
+            -- error log for oracle internal error
+            insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            values (nextval('int$error_log_code'), 0, 'FINOPDOC', p_userid, errcode, 'INT$PKG_FINOPDOC_PROCESS'||'==>'||errmsg, clock_timestamp());
+            --COMMIT;
+
+            return('0');
+    end;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

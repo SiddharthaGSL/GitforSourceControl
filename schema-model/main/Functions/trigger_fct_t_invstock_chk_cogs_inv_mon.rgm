@@ -1,0 +1,159 @@
+function "main"."trigger_fct_t_invstock_chk_cogs_inv_mon()" {
+  text = """
+
+DECLARE
+    V_COGS_STATE                char(1);
+    
+    
+    
+    V_INV_MON_CLS_CHK_STATE     char(1);
+    V_INV_MON_CLS_CHK_DT        timestamp;
+    V_INV_MONTH_STATUS          ADMOU_MONTH.INV_MONTH_STATUS%TYPE;
+
+    -- parameters for data manupulation at stock other than relect package.
+    
+    V_OWNER             varchar(50);
+    V_NAME              varchar(50);
+    V_LINE              integer;
+    V_TYPE              varchar(50);
+BEGIN
+  BEGIN
+/**************************************************************************************************************************************************
+      PURPOSE: Cost Calculation
+
+     REV NO         OWNER           DATE            DESCRIPTION
+     ------------   ----------      -----------     ---------------------------------------------------------------------------------------------
+     REV : 000      MANASH          14-APR-2017     (TFS ID : 21200) Inventory Valuation Revamp.
+     REV : 001      MANASH          13-JUN-2017     (TFS ID : 29959) Stock not get reverted after DC cancel.
+     REV : 002      MANASH          15-jun-2017     (TFS ID : 30069) User is getting an error when deleting the sales return.
+     REV : 003      MOUSUMI         05-SEP-2017     (TFS ID : 31941)  PADN
+     REV : 004      DIPTIMAN        18-SEP-2017     (TFS ID : 32061) COGS related changes.
+     REV : 005      MANASH          26-APR-2018     (TFS ID : 30316) Cannot Provide Opening Stock and when we are trying to provide
+                                                                     opening stock for a closed month it is giving system error.
+      REV : 006     MOUSUMI         27/AUG/2020     (TFS ID : 84371 ) MIGRATION
+*************************************************************************************************************************************************/
+    -- START REV : 005
+    IF  coalesce(NEW.ENTTYPE,OLD.ENTTYPE) = 'SOP' THEN
+        BEGIN
+            SELECT  OM.INV_MONTH_STATUS
+            INTO STRICT    V_INV_MONTH_STATUS
+            FROM    ADMOU_MONTH OM,
+                    ADMMONTH    MN
+            WHERE   OM.ADMOU_CODE   = coalesce(OLD.ADMOU_CODE,NEW.ADMOU_CODE)
+            AND     coalesce(OLD.ADMOU_CODE,NEW.ADMOU_CODE) IS NOT NULL
+            AND     OM.ADMMONTH_CODE = MN.MCODE
+            AND (coalesce(OLD.ENTDT, NEW.ENTDT)+1) BETWEEN MN.DTFR AND MN.DTTO;
+        EXCEPTION
+            WHEN no_data_found THEN
+            V_INV_MONTH_STATUS := 'O';
+            WHEN too_many_rows THEN
+            V_INV_MONTH_STATUS := 'O';
+        END;
+
+        IF  coalesce(V_INV_MONTH_STATUS,'O') = 'C' THEN
+            RAISE EXCEPTION 'my_inv_mon_exp' USING ERRCODE = '50002';
+        END IF;
+
+    ELSE
+    -- END REV : 005
+        -- we have restricted data manupulation at stock other than relect package.
+        /*CALL OWA_UTIL.WHO_CALLED_ME(V_OWNER,V_NAME,V_LINE,V_TYPE);
+		
+		--SELECT current_query();
+
+        -- START REV : 001
+        --IF  NVL(UPPER(V_NAME),'@') NOT IN ('P_PSITE_GRC_DEL','P_PSITE_GRT_DEL','DB_PKG_STOCK','DB_PKG_PRODUCTION_COST_CALC','P_PUR_PURRT_REVERT','DB_PKG_COST_CALCULATION') THEN
+        IF  coalesce(UPPER(V_NAME),'@') NOT IN (
+                                                'DB_PRO_CANCEL_DC',
+                                                'P_PSITE_GRC_DEL',
+                                                'P_PSITE_GRT_DEL',
+                                                'DB_PKG_STOCK',
+                                                'DB_PKG_PRODUCTION_COST_CALC',
+                                                'P_PUR_PURRT_REVERT',
+                                                'DB_PKG_COST_CALCULATION'
+                                                -- start rev : 002
+                                                ,'DB_PRO_DEL_ADJ_SALRTDET'
+                                                -- end rev : 002
+                                                ,'P_GRC_ZERO_QTY_DEL'
+                                                -- START REV : 004
+                                                ,'DB_PKG_COGS'
+                                                ,'DB_PKG_COGS_TEST'
+                                                -- END REV : 004
+                                                ,'P_SI_STK_TS_DEL' -- REV : 006
+                                            ) THEN
+        -- END REV : 001
+            RAISE EXCEPTION 'my_wrong_user_exp' USING ERRCODE = '50004';
+        ELSE*/
+            -- checking inv month closing validation routine started or not
+            V_INV_MON_CLS_CHK_STATE := DB_PKG_GINESYS_CONTEXT.GET_ATTRIBUTE('INV_MN_CLS');
+            V_INV_MON_CLS_CHK_DT    := DB_PKG_GINESYS_CONTEXT.GET_ATTRIBUTE('INV_MN_CLS_DT');
+
+            -- if started and entry date within that period then restrict entry
+            IF (coalesce(V_INV_MON_CLS_CHK_STATE,'@') = 'S' AND TO_CHAR(coalesce(OLD.ENTDT, NEW.ENTDT),'YYYYMMDD') <= V_INV_MON_CLS_CHK_DT)
+                AND (coalesce(UPPER(V_NAME),'@') NOT IN ('DB_PKG_PRODUCTION_COST_CALC','DB_PKG_COST_CALCULATION')) THEN
+                RAISE EXCEPTION 'my_inv_mon_cls_chk' USING ERRCODE = '50003';
+            ELSE
+                V_COGS_STATE := DB_PKG_GINESYS_CONTEXT.GET_ATTRIBUTE('COGS_STATE');
+
+                IF  coalesce(V_COGS_STATE,'N') = 'R' AND coalesce(UPPER(V_NAME),'@') <> 'DB_PKG_COST_CALCULATION' THEN
+                    IF  coalesce(NEW.COGS_CODE,1) <> 0 THEN
+                        RAISE EXCEPTION 'my_cogs_exp' USING ERRCODE = '50001';
+                    ELSE
+                        NEW.COGS_CODE := NULL;
+                    END IF;
+                ELSE
+                    BEGIN
+                        SELECT  OM.INV_MONTH_STATUS
+                        INTO STRICT    V_INV_MONTH_STATUS
+                        FROM    ADMOU_MONTH OM,
+                                ADMMONTH    MN
+                        WHERE   OM.ADMOU_CODE   = coalesce(OLD.ADMOU_CODE,NEW.ADMOU_CODE)
+                        AND     coalesce(OLD.ADMOU_CODE,NEW.ADMOU_CODE) IS NOT NULL
+                        AND     OM.ADMMONTH_CODE = MN.MCODE
+                        AND     coalesce(OLD.ENTDT, NEW.ENTDT) BETWEEN MN.DTFR AND MN.DTTO;
+                    EXCEPTION
+                        WHEN no_data_found THEN
+                        V_INV_MONTH_STATUS := 'O';
+                        WHEN too_many_rows THEN
+                        V_INV_MONTH_STATUS := 'O';
+                    END;
+
+                   -- START REV : 004
+                   -- IF  NVL(V_INV_MONTH_STATUS,'O') = 'C' AND (NVL(UPPER(V_NAME),'@') NOT IN ('DB_PKG_PRODUCTION_COST_CALC','DB_PKG_COST_CALCULATION')) THEN
+                   IF  coalesce(V_INV_MONTH_STATUS,'O') = 'C' AND (coalesce(UPPER(V_NAME),'@') NOT IN ('DB_PKG_PRODUCTION_COST_CALC','DB_PKG_COST_CALCULATION','DB_PKG_COGS','DB_PKG_COGS_TEST')) THEN
+                   -- END REV : 004
+                        RAISE EXCEPTION 'my_inv_mon_exp' USING ERRCODE = '50002';
+                    END IF;
+                END IF;
+            END IF;
+        END IF;
+    -- START REV : 005
+    --END IF;
+    -- END REV : 005
+EXCEPTION
+    WHEN SQLSTATE '50003' THEN
+    RAISE EXCEPTION '%', 'T_INVSTOCK_CHK_COGS_INV_MON == >> Internal error occured. Closing process of inventory month is going on, uanble to pass entry.'||'~'||V_NAME USING ERRCODE = '45111';
+    WHEN SQLSTATE '50004' THEN
+    RAISE EXCEPTION '%', 'T_INVSTOCK_CHK_COGS_INV_MON == >> Internal error occured. Stock updation from backend is restricted.'||'~'||V_NAME USING ERRCODE = '45112';
+    CALL ERRAUDIT(USER,'T_INVSTOCK_CHK_COGS',100,'T_INVSTOCK_CHK_COGS_INV_MON == >> Internal error occured. Stock updation from backend is restricted.'||'~'||V_NAME);
+    WHEN SQLSTATE '50001' THEN
+    RAISE EXCEPTION '%', 'T_INVSTOCK_CHK_COGS_INV_MON == >> Internal error occured. COGS is in running state, unable to update Stock.'||'~'||V_NAME USING ERRCODE = '45113';
+    WHEN SQLSTATE '50002' THEN
+    RAISE EXCEPTION '%', 'T_INVSTOCK_CHK_COGS_INV_MON == >> Internal error occured. Invetory Month is already closed, unable to update Stock.'||'~'||OLD.ENTDT||'~'||NEW.ENTDT||'~'||V_NAME USING ERRCODE = '45114';
+    WHEN OTHERS THEN
+    CALL ERRAUDIT(USER,'T_INVSTOCK_CHK_COGS',SQLSTATE,SQLERRM);
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

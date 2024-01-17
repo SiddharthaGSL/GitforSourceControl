@@ -1,0 +1,236 @@
+function "main"."int$pkg_partygstupd_int$pkg_partygstupd_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status   char(1);
+      errmsg     varchar(200);
+      errcode    bigint;
+BEGIN
+
+       -- SLID should be provided.
+       INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                       createdon)
+             SELECT nextval('int$error_log_code'), lineno, 'PARTYGSTUPD', userid,
+                    'Party Validation', 'SLID is mandatory.', clock_timestamp()
+               FROM int$stg_PARTYGSTUPD a
+              WHERE a.SLID IS NULL
+                AND a.userid = p_userid;
+
+     -- SLID should be valid
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc,createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PARTYGSTUPD', userid, 'Party Validation', 'Party not found or is extinct.', clock_timestamp()
+        FROM int$stg_partygstupd a
+		LEFT OUTER JOIN finsl s ON (upper(a.SLID) = upper(s.SLID))
+		WHERE (
+		                    s.SLCODE is null
+		                    or
+		                    s.ext = 'Y'
+		                ) and a.userid = p_userid;
+
+      -- SLID should have AR/AP ledger tagged to it
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc,createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PARTYGSTUPD', userid, 'Party Validation', 'Only parties with AR/AP ledger are allowed here.', clock_timestamp()
+        from    int$stg_PARTYGSTUPD   a,
+                finsl                 s
+        where   upper(a.SLID) = upper(s.SLID)
+        and     S.GLCODE IS NULL
+        and     a.userid = p_userid;
+
+      -- Multiple SLs found for this SLID, unable to proceed
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                       createdon)
+             SELECT nextval('int$error_log_code'), a.lineno, 'PARTYGSTUPD', A.USERID,
+                    'Party Validation', 'Multiple parties found for this SLID, unable to proceed.', clock_timestamp()
+               FROM int$stg_PARTYGSTUPD a
+                    ,(
+                        SELECT  lineno, upper(b.SLID), count(1)
+                        FROM    int$stg_PARTYGSTUPD a
+                                ,finsl       b
+                        WHERE   upper(a.SLID) = upper(b.SLID)
+                        AND     a.userid = p_userid
+                        AND     A.SLID IS NOT NULL
+                        GROUP BY
+                                lineno, upper(b.SLID)
+                        HAVING COUNT(1) > 1
+                    ) b
+            WHERE   A.SLID IS NOT NULL
+            AND     a.lineno = b.lineno
+            AND     a.userid = p_userid;
+
+      -- TDS Agency cannot be updated
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc,createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PARTYGSTUPD', userid, 'Party Validation', 'GSTIN information cannot be updated for TDS Agency.', clock_timestamp()
+        from    int$stg_PARTYGSTUPD   a,
+                finsl                 s,
+                admcls                c
+        where   upper(a.SLID) = upper(s.SLID)
+        and     S.CLSCODE = C.CLSCODE
+        and     C.CLSTYPE = 'D'
+        and     a.userid = p_userid;
+
+      --Same SLID more than once in excel
+      INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc,
+                   createdon)
+         SELECT nextval('int$error_log_code'), a.lineno, 'PARTYGSTUPD', userid,
+                'Party Validation',
+                'Same SLID specified more than once in the excel.',
+                clock_timestamp()
+           FROM int$stg_PARTYGSTUPD a,
+                (SELECT   UPPER(a.SLID), COUNT(1)
+                     FROM int$stg_PARTYGSTUPD a
+                    WHERE a.SLID is not null
+                      AND a.userid = p_userid
+                 GROUP BY UPPER(a.SLID)
+                   HAVING COUNT(1) > 1) b
+          WHERE UPPER(a.SLID) = UPPER(a.SLID)
+          and   a.SLID is not null
+          AND a.userid = p_userid;
+
+      --Updating staging data
+      UPDATE int$stg_PARTYGSTUPD
+      SET SLID = UPPER(SLID), GST_IDENTIFICATION_NO = UPPER(GST_IDENTIFICATION_NO), GST_CATEGORY = UPPER(GST_CATEGORY)
+      WHERE userid = p_userid;
+
+      --GST CATEGORY should be valid
+       insert into int$error_log(code, lineno, classname, userid, errortype, errordesc,createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'SUPLIERIMPORT', userid, 'Data Validation', 'Invalid GST Category', clock_timestamp()
+        FROM int$stg_partygstupd a
+		LEFT OUTER JOIN (
+		                    SELECT  upper(gc.name) cat_name
+		                    from    admgstcategory gc
+		                ) gst_cat ON (upper(a.gst_category) = gst_cat.cat_name)
+		WHERE a.gst_category is not null and gst_cat.cat_name is null and a.userid = p_userid;
+
+        -- GST Identification No. is required
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc,createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PARTYGSTUPD', userid, 'GSTIN Validation', 'GST Identification No. is required for vendors.', clock_timestamp()
+        from    int$stg_PARTYGSTUPD   a,
+                finsl                 s,
+                admcls                c
+        where   upper(a.SLID) = upper(s.SLID)
+        and     S.CLSCODE = C.CLSCODE
+        and     C.CLSTYPE <> 'C'
+        and     a.gst_identification_no is null
+        and     a.userid = p_userid;
+
+        -- GST Identification No. length validation
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc,createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PARTYGSTUPD', userid, 'GSTIN Validation', 'GST Identification No. should have exactly 15 characters.', clock_timestamp()
+        from    int$stg_PARTYGSTUPD a
+        where   a.gst_identification_no is not null
+        and     length(a.gst_identification_no) <> 15
+        and     a.userid = p_userid;
+
+        -- GST Identification No. masking validation
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc,createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PARTYGSTUPD', userid, 'GSTIN Validation', 'GST Identification No. is invalid as per Government prescribed format.', clock_timestamp()
+        from    int$stg_PARTYGSTUPD a
+        where   a.gst_identification_no is not null
+        and     db_fun_check_gstin_no(a.gst_identification_no) = 'F'
+        and     a.userid = p_userid;
+
+        -- GST Identification No. state code validation
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc,createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PARTYGSTUPD', userid, 'GSTIN Validation', 'State code is invalid.', clock_timestamp()
+        FROM int$stg_partygstupd a
+		LEFT OUTER JOIN admgststate gs ON (substr(a.gst_identification_no,1,2) = gs.code)
+		WHERE a.gst_identification_no is not null  and gs.code is null and a.userid = p_userid;
+
+        -- GST Identification date validation cannot be provided when GSTIN is null
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc,createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PARTYGSTUPD', userid, 'GSTIN Validation', 'GSTIN is required for specifying GST Reg. date.', clock_timestamp()
+        from    int$stg_PARTYGSTUPD   a
+        where   a.gst_registration_date is not null
+        and     a.gst_identification_no is null
+        and     a.userid = p_userid;
+
+        -- GST Identification date validation
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc,createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'PARTYGSTUPD', userid, 'GSTIN Validation', 'GST Reg. date is not in valid format.', clock_timestamp()
+        from    int$stg_PARTYGSTUPD   a
+        where   a.gst_registration_date is not null
+        and (
+                    (to_char(a.gst_registration_date,'yyyy'))::numeric  < 4
+                    or
+                    (to_char(a.gst_registration_date,'yyyymmdd'))::numeric  < 8
+                )
+        and     a.userid = p_userid;
+		
+    -- Start Rev : 016
+    insert into int$error_log
+    (code, lineno, classname, userid, errortype, errordesc,createdon)
+    select  nextval('int$error_log_code'), lineno, 'PARTYGSTUPD', userid, 'Data Validation', 'Transporter ID should be of exact 15 digits', sysdate
+    from    int$stg_partygstupd    a
+    where   a.transporter_id is not null
+    and     LENGTH(a.transporter_id) <> 15
+    and     a.userid = p_userid;
+    
+    insert into int$error_log
+    (code, lineno, classname, userid, errortype, errordesc,createdon)
+    select  nextval('int$error_log_code'), lineno, 'PARTYGSTUPD', userid, 'Data Validation', 'First 2 digits of Transporter Id must be numeric', sysdate
+    from    int$stg_partygstupd    a
+    where   a.transporter_id is not null
+    and     length(translate(substring(a.transporter_id,1,2), ' +-.0123456789', ' ')) > 0
+    and     a.userid = p_userid;
+
+      -- Check whether records are valid or not
+        BEGIN
+            SELECT  'S'
+            INTO STRICT    v_status
+            
+            WHERE   EXISTS (
+                            SELECT  'S'
+                            FROM    int$error_log
+                            WHERE   userid = p_userid
+                            );
+            RETURN('0');
+        EXCEPTION
+            WHEN no_data_found THEN
+                RETURN('1');
+        END;
+
+    EXCEPTION
+        WHEN OTHERS THEN
+            errcode := SQLSTATE;
+            errmsg := SQLERRM;
+
+            --Error log for Oracle Internal Error
+            INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            VALUES (nextval('int$error_log_code'), 0, 'PARTYGSTUPD', p_userid, errcode, errmsg, clock_timestamp());
+            --COMMIT;
+
+            RETURN('0');
+    END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

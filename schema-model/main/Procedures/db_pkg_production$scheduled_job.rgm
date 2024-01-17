@@ -1,0 +1,69 @@
+procedure "main"."db_pkg_production$scheduled_job()" {
+  text = """
+
+DECLARE
+
+
+  REC RECORD;
+
+BEGIN
+        -- Auto Close Job
+        FOR REC IN (
+                    SELECT  JM.CODE
+                    FROM    PRDJOBMAIN  JM,
+                            PRDJOBDET   JD
+                    WHERE   JM.CODE      = JD.JOBCODE
+                    AND     JM.IS_CLOSED = 'N'
+                    AND     JM.JOBTYPE   <> 'AS'
+                    GROUP BY
+                            JM.CODE
+                    HAVING  SUM(CASE WHEN coalesce(JD.P_QTY,0)>0 THEN 1 ELSE 0 END) = 0
+                )
+        LOOP
+             NULL;
+        END LOOP;
+
+        -- Auto Close Lot
+        FOR REC IN (
+            SELECT  DISTINCT
+                    CODE
+            FROM (
+                        SELECT  CODE,
+                                ASSEMBLY_ICODE
+                        FROM (
+                                    SELECT  LM.CODE,
+                                            LO.ASSEMBLY_ICODE,
+                                            LO.OPERATION_SEQ,
+                                            LO.CONSIDER_IN_WIP,
+                                            CASE
+                                                WHEN LO.OPERATION_SEQ=MIN(LO.OPERATION_SEQ) OVER (PARTITION BY LM.CODE, LO.ASSEMBLY_ICODE) THEN coalesce(LO.LOT_QTY,0)+coalesce(LO.CNL_QTY,0)-coalesce(LO.COMPLETED_QTY,0)
+                                                WHEN LO.CONSIDER_IN_WIP='Y' THEN LO.AVAILABLE_TO_FORWARD
+                                            END QTY,
+                                            CASE WHEN LO.CONSIDER_IN_WIP='N' THEN coalesce(LO.ORD_QTY,0) END LAST_PRC_ORD,
+                                            CASE WHEN LO.CONSIDER_IN_WIP='N' THEN LO.COMPLETED_QTY END LAST_PRC_COMPLETE
+                                    FROM
+                                            PRDLOTMAIN      LM,
+                                            PRDLOTOPERATION LO
+                                    WHERE   LM.CODE      = LO.LOTCODE
+                                    AND     LM.IS_CLOSED = 'N'
+                                 ) alias6
+                        GROUP BY
+                                CODE,
+                                ASSEMBLY_ICODE
+                        HAVING  SUM(QTY)+MAX(coalesce(LAST_PRC_ORD,0))<=MAX(LAST_PRC_COMPLETE)
+                    ) alias11
+        )
+        LOOP
+            NULL;
+        END LOOP;
+    EXCEPTION
+        WHEN OTHERS THEN
+            CALL ERRAUDIT(USER, 'DB_PKG_PRODUCTION$SCHEDULED_JOB()', SQLSTATE, SQLERRM);
+    END;
+
+"""
+  arguments = [
+  ]
+  language = plpgsql
+}
+

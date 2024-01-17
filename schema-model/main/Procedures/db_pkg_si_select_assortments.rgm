@@ -1,0 +1,111 @@
+procedure "main"."db_pkg_si_select_assortments(character, bigint, character, bigint, timestamp without time zone, timestamp without time zone)" {
+  text = """
+
+DECLARE
+
+    V_SLNO  bigint := 0;
+
+    C1 CURSOR FOR
+    SELECT  A.CODE,
+            A.NAME
+    FROM    SI_ASSORTMENT   A
+    WHERE   coalesce(A.EXTINCT,'N') = 'N';
+
+    C2 CURSOR FOR
+    SELECT  SLNO,
+            ALLOCATION_CODE,
+            ASSORTMENT_CODE,
+            STARTDATE,
+            ENDDATE,
+            BASIS,
+            FACTOR,SELECTION
+    FROM    TEMP_SI_ALLOCATION T
+    WHERE   coalesce(SELECTION,0) = 1
+    ORDER BY
+            SLNO;
+
+BEGIN
+
+		CREATE TEMP TABLE TEMP_SI_ALLOCATION
+		AS SELECT * FROM TEMP_SI_ALLOCATION;
+		
+		DELETE FROM TEMP_SI_ALLOCATION;
+		
+        IF  P_MODE = 'I' THEN
+            DELETE
+            FROM    TEMP_SI_ALLOCATION;
+
+            FOR I IN C1 LOOP
+                V_SLNO := V_SLNO + 1;
+
+                INSERT
+                INTO    TEMP_SI_ALLOCATION(SLNO,ALLOCATION_CODE,ASSORTMENT_CODE,BASIS,FACTOR)
+                VALUES (V_SLNO,P_ALLOCATIONCODE,I.CODE,P_BASIS,P_FACTOR);
+            END LOOP;
+
+        ELSE
+            FOR I IN C2 LOOP
+                UPDATE  TEMP_SI_ALLOCATION
+                SET     STARTDATE = P_STARTDATE,
+                        ENDDATE = P_ENDDATE,
+                        BASIS   = P_BASIS,
+                        FACTOR  = P_FACTOR
+                WHERE   SLNO    = I.SLNO;
+            END LOOP;
+
+            UPDATE  TEMP_SI_ALLOCATION
+            SET     STARTDATE    = NULL,
+                    ENDDATE      = NULL,
+                    FACTOR       = NULL
+            WHERE   PERFORMION   = 0;
+        END IF;
+  END;
+
+"""
+  arguments = <
+    {
+      name = p_mode
+      type = character
+      mode = IN
+      default = 'I'::bpchar
+    }
+
+    {
+      name = p_allocationcode
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_basis
+      type = character
+      mode = IN
+      default = NULL::bpchar
+    }
+
+    {
+      name = p_factor
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = p_startdate
+      type = timestamp without time zone
+      mode = IN
+      default = NULL::timestamp without time zone
+    }
+
+    {
+      name = p_enddate
+      type = timestamp without time zone
+      mode = IN
+      default = NULL::timestamp without time zone
+    }
+
+  >
+  language = plpgsql
+}
+

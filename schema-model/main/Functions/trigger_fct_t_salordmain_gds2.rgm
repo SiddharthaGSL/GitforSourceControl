@@ -1,0 +1,73 @@
+function "main"."trigger_fct_t_salordmain_gds2()" {
+  text = """
+
+DECLARE
+   SUB_COUNT_A              bigint;
+   SUB_COUNT_B              bigint;
+   SITE_TYPE                varchar(15);
+   V_TRANSFER_ORDER_ADD     bigint;
+   V_TRANSFER_ORDER_REL     bigint;
+BEGIN
+    SELECT COUNT(1)
+    INTO STRICT   SUB_COUNT_A
+    FROM  GDS2_SUBSCR_EVENT
+    WHERE  EVENT_ID = 'SNDORDER';
+
+    SELECT COUNT(1)
+    INTO STRICT   SUB_COUNT_B
+    FROM  GDS2_SUBSCR_EVENT
+    WHERE  EVENT_ID = 'GRTADVICE';
+
+    SELECT COUNT(1)
+    INTO STRICT V_TRANSFER_ORDER_ADD
+    FROM GDS2_SUBSCR_EVENT
+    WHERE EVENT_ID IN ('snd.transferorder.added');
+
+    SELECT COUNT(1)
+    INTO STRICT V_TRANSFER_ORDER_REL
+    FROM GDS2_SUBSCR_EVENT
+    WHERE EVENT_ID IN ('snd.transferorder.released');
+
+    SELECT SITETYPE INTO STRICT SITE_TYPE
+    FROM ADMSITE
+    WHERE  CODE = NEW.ADMSITE_CODE_OWNER;
+
+    IF  coalesce(SUB_COUNT_A,0) > 0 AND SITE_TYPE NOT LIKE 'MS%' AND NEW.AUTHORCODE IS NOT NULL
+    THEN
+
+         CALL DB_PKG_GDS2_EVENT$TRACK(
+            'SNDORDER', NEW.ORDCODE);
+    END IF;
+
+    IF  coalesce(SUB_COUNT_B,0) > 0 AND SITE_TYPE LIKE 'MS%' AND NEW.AUTHORCODE IS NOT NULL
+    THEN
+
+         CALL DB_PKG_GDS2_EVENT$TRACK(
+            'GRTADVICE', NEW.ORDCODE);
+    END IF;
+
+    IF  TG_OP = 'INSERT' 
+    THEN
+        IF coalesce(V_TRANSFER_ORDER_ADD,0) > 0
+        THEN
+            CALL DB_PKG_GDS2_EVENT$TRACK('snd.transferorder.added', NEW.ORDCODE);
+        END IF;
+    END IF;
+    
+    IF  TG_OP = 'UPDATE'
+    THEN
+        IF coalesce(V_TRANSFER_ORDER_REL,0) > 0 AND OLD.AUTHORCODE IS NULL AND NEW.AUTHORCODE IS NOT NULL
+        THEN
+            CALL DB_PKG_GDS2_EVENT$TRACK('snd.transferorder.released', NEW.ORDCODE);
+        END IF;
+    END IF;
+
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

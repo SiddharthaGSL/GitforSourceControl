@@ -1,0 +1,46 @@
+function "main"."trigger_fct_t_prdis_bi()" {
+  text = """
+
+DECLARE
+   vnCmpCode bigint;
+   -- START REV : 001
+   V_ADMSITE_CODE           INVSITESTFMAIN.ADMSITE_CODE_IN%TYPE;
+   V_ENTDT                  INVSTOCK.ENTDT%TYPE;
+   -- END REV : 001
+BEGIN
+   /*******************************************************************************************************************
+     REV NO      DATE           OWNER            DESCRIPTION
+     ---------   -----------    -----------      ---------------------------------------------------------------------
+     REV : 001   14-NOV-2017    DIPTIMAN         (TFS ID : 32259) COGS costrate related changes.
+     REV : 002   19-SEP-2022    ANINDYA          (TFS ID : BATCH SERIAL) Batch serial related cnanges
+   *******************************************************************************************************************/
+   IF TG_OP = 'INSERT'
+   THEN
+       IF  NEW.CODE IS NULL THEN
+           SELECT  nextval('prdis_code')
+           INTO STRICT    NEW.CODE
+;
+       END IF;
+
+       -- START REV : 001
+       SELECT ADMSITE_CODE, ORDDT
+       INTO STRICT   V_ADMSITE_CODE, V_ENTDT
+       FROM   PRDORD
+       WHERE  ORDCODE = NEW.ORDCODE;
+
+       -- If not "Inter Stock Point Transfer" then calculate
+       -- START REV : 002
+       --:NEW.COSTRATE := NVL(DB_PKG_COGS.GET_ITEM_LAST_IN_RATE(V_ADMSITE_CODE, :NEW.ICODE, V_ENTDT),0);
+       NEW.COSTRATE := coalesce(DB_PKG_COGS$GET_ITEM_LAST_IN_RATE(V_ADMSITE_CODE, NEW.ICODE, V_ENTDT, NULL, NEW.INVBATCH_SERIAL_CODE),0);
+       -- END REV : 002
+       -- END REV : 001
+   END IF;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

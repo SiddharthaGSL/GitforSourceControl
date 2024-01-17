@@ -1,0 +1,146 @@
+view "main"."v_pursrvordchg" {
+  text = """-
+SELECT pursrvordmain.ordcode,
+    1 AS seq,
+    'BASIC'::character varying AS chgname,
+    NULL::text AS rate,
+    NULL::text AS sign,
+    pursrvordmain.grsamt AS chgamt,
+    NULL::bpchar AS operation_level,
+    NULL::bpchar AS without_term,
+    'Y'::text AS istotal
+   FROM main.pursrvordmain
+  GROUP BY pursrvordmain.ordcode
+ HAVING (pursrvordmain.ordcode IN ( SELECT min(pursrvordmain.ordcode) AS min
+           FROM main.pursrvordchg
+          WHERE (pursrvordchg.operation_level = 'L'::bpchar)
+          GROUP BY pursrvordmain.ordcode))
+UNION
+ SELECT alias8.ordcode,
+    alias8.seq,
+    alias8.chgname,
+    alias8.rate,
+    alias8.sign,
+    alias8.chgamt,
+    alias8.operation_level,
+    alias8.without_term,
+    alias8.istotal
+   FROM ( SELECT i.ordcode,
+            ((s.seq)::numeric + (1)::numeric) AS seq,
+            c.chgname,
+                CASE
+                    WHEN (s.rate IS NULL) THEN NULL::text
+                    ELSE
+                    CASE
+                        WHEN (COALESCE(s.basis, 'P'::bpchar) = 'P'::bpchar) THEN ((rtrim(to_char(s.rate, 'FM99999990.99'::text), '.'::text) || '% on '::text) || to_char(abs(s.appamt), 'FM99999990.00'::text))
+                        ELSE NULL::text
+                    END
+                END AS rate,
+                CASE
+                    WHEN (s.sign = '-'::bpchar) THEN '(-)'::text
+                    ELSE NULL::text
+                END AS sign,
+            abs(s.chgamt) AS chgamt,
+            s.operation_level,
+            s.without_term_formula AS without_term,
+            'N'::text AS istotal
+           FROM main.finchg c,
+            main.pursrvordchg s,
+            main.pursrvordmain i
+          WHERE ((c.chgcode = s.chgcode) AND (s.pursrvordmain_code = i.ordcode) AND (s.operation_level = 'L'::bpchar))
+          ORDER BY s.operation_level DESC, s.without_term_formula, s.seq) alias8
+UNION
+ SELECT m.ordcode,
+    1001 AS seq,
+    'GROSS'::character varying AS chgname,
+    NULL::text AS rate,
+    NULL::text AS sign,
+    (m.grsamt + COALESCE(( SELECT sum(c.chgamt) AS sum
+           FROM main.pursrvordchg c
+          WHERE ((m.ordcode = c.pursrvordmain_code) AND (c.operation_level = 'L'::bpchar))), (0)::numeric)) AS chgamt,
+    NULL::bpchar AS operation_level,
+    NULL::bpchar AS without_term,
+    'Y'::text AS istotal
+   FROM main.pursrvordmain m
+  WHERE (m.ordcode IN ( SELECT DISTINCT m.ordcode
+           FROM main.pursrvordchg))
+UNION
+ SELECT alias19.ordcode,
+    alias19.seq,
+    alias19.chgname,
+    alias19.rate,
+    alias19.sign,
+    alias19.chgamt,
+    alias19.operation_level,
+    alias19.without_term,
+    alias19.istotal
+   FROM ( SELECT i.ordcode,
+            ((s.seq)::numeric + (1001)::numeric) AS seq,
+            c.chgname,
+                CASE
+                    WHEN (s.rate IS NULL) THEN NULL::text
+                    ELSE
+                    CASE
+                        WHEN (COALESCE(s.basis, 'P'::bpchar) = 'P'::bpchar) THEN ((rtrim(to_char(s.rate, 'FM99999990.99'::text), '.'::text) || '% on '::text) || to_char(abs(s.appamt), 'FM99999990.00'::text))
+                        ELSE NULL::text
+                    END
+                END AS rate,
+                CASE
+                    WHEN (s.sign = '-'::bpchar) THEN '(-)'::text
+                    ELSE NULL::text
+                END AS sign,
+            abs(s.chgamt) AS chgamt,
+            s.operation_level,
+            s.without_term_formula AS without_term,
+            'N'::text AS istotal
+           FROM main.finchg c,
+            main.pursrvordchg s,
+            main.pursrvordmain i
+          WHERE ((c.chgcode = s.chgcode) AND (s.pursrvordmain_code = i.ordcode) AND (s.operation_level = 'H'::bpchar))
+          ORDER BY s.operation_level DESC, s.without_term_formula, s.seq) alias19
+UNION
+ SELECT pursrvordmain.ordcode,
+    2000 AS seq,
+    'NET'::character varying AS chgname,
+    NULL::text AS rate,
+    NULL::text AS sign,
+        CASE
+            WHEN (COALESCE(pursrvordmain.netamt, (0)::numeric) = (0)::numeric) THEN (0)::numeric
+            ELSE pursrvordmain.netamt
+        END AS chgamt,
+    NULL::bpchar AS operation_level,
+    NULL::bpchar AS without_term,
+    'Y'::text AS istotal
+   FROM main.pursrvordmain;
+"""
+  columns = (
+    column "ordcode" {
+      type = "bigint"
+    }
+    column "seq" {
+      type = "numeric"
+    }
+    column "chgname" {
+      type = "character varying"
+    }
+    column "rate" {
+      type = text
+    }
+    column "sign" {
+      type = text
+    }
+    column "chgamt" {
+      type = "numeric"
+    }
+    column "operation_level" {
+      type = bpchar
+    }
+    column "without_term" {
+      type = bpchar
+    }
+    column "istotal" {
+      type = text
+    }
+  )
+}
+

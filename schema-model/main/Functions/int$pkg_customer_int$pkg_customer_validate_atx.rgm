@@ -1,0 +1,713 @@
+function "main"."int$pkg_customer_int$pkg_customer_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        v_status    char(1);
+        errmsg      varchar(200);
+
+        errcode bigint;
+BEGIN
+        --Clear error log table before start validation process
+        DELETE FROM int$error_log WHERE userid = p_userid;
+
+        --fname, lname, mobile,  gENDer, receivemessage cannot be NULL
+        /* Formatted on 10/5/2018 12:53:40 PM (QP5 v5.294) */
+
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          lineno,
+          'POSCUSTOMER',
+          userid,
+          'Mandatory Validation',
+          CASE
+             WHEN fname IS NULL THEN 'First Name is Mandatory'
+             WHEN lname IS NULL THEN 'Last Name is Mandatory'
+             WHEN mobile IS NULL THEN 'Mobile is Mandatory'
+             WHEN gender IS NULL THEN 'Gender is Mandatory'
+             WHEN receivemessage IS NULL THEN 'Receivemessage is Mandatory'
+          END,
+          clock_timestamp()
+     FROM int$stg_poscustomer
+    WHERE     userid = p_userid
+          AND (   fname IS NULL
+               OR lname IS NULL
+               OR mobile IS NULL
+               OR gender IS NULL
+               OR receivemessage IS NULL);
+
+        -- Mobile no has to be >= 10
+        -- Email should contail '@' or '.'
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          lineno,
+          'POSCUSTOMER',
+          userid,
+          'Data Validation',
+          'Invalid Email Id <' || email || '>',
+          clock_timestamp()
+     FROM int$stg_poscustomer
+    WHERE     userid = p_userid
+          AND (email NOT LIKE '%@%' OR email NOT LIKE '%.%');
+
+        -- Invalid gENDer, dob, receivemessage, prefcommunicationmode
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          lineno,
+          'POSCUSTOMER',
+          userid,
+          'Data Validation',
+          CASE
+             WHEN dob > doa
+             THEN
+                'Birth date less than anniversary date.'
+             WHEN UPPER(GENDER) NOT IN ('MALE', 'FEMALE', 'TRANSGENDER', 'UNDISCLOSED')
+             THEN
+                'Invalid GENDER : <' || GENDER || '>'
+             WHEN UPPER(receivemessage) NOT IN ('YES', 'NO')
+             THEN
+                'Invalid RECEIVEMESSAGE : <' || receivemessage || '>'
+             WHEN UPPER(prefcommunicationmode) NOT IN ('SMS', 'EMAIL', 'ANY')
+             THEN
+                   'Invalid PREFCOMMUNICATIONMODE : <'
+                || prefcommunicationmode
+                || '>'
+          END,
+          clock_timestamp()
+     FROM int$stg_poscustomer
+    WHERE     userid = p_userid
+          AND (   dob > doa
+               OR UPPER(GENDER) NOT IN ('MALE', 'FEMALE', 'TRANSGENDER', 'UNDISCLOSED')
+               OR UPPER(receivemessage) NOT IN ('YES', 'NO')
+               OR UPPER(prefcommunicationmode) NOT IN ('SMS', 'EMAIL', 'ANY'));
+
+        -- Should be a valid Card No
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          lineno,
+          'POSCUSTOMER',
+          userid,
+          'Data Validation',
+          'Invalid Card No <' || t1.lpcardno || '>',
+          clock_timestamp()
+     FROM int$stg_poscustomer t1
+    WHERE (    t1.lpcardno IS NOT NULL
+               AND NOT EXISTS (SELECT 1
+                         FROM lpcard t2
+                        WHERE t2.cardno = t1.lpcardno))
+          AND t1.userid = p_userid;
+
+        -- Restrict Duplicate loyaltymembershipno in File
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          lineno,
+          'POSCUSTOMER',
+          userid,
+          'Data Validation',
+             'Loyaltymembership No <'
+          || a.loyaltymembershipno
+          || '> found multiple times in File',
+          clock_timestamp()
+     FROM int$stg_poscustomer a,
+          (  SELECT loyaltymembershipno
+               FROM int$stg_poscustomer
+              WHERE userid = p_userid
+           GROUP BY loyaltymembershipno
+             HAVING COUNT(loyaltymembershipno) > 1) b
+    WHERE a.loyaltymembershipno = b.loyaltymembershipno AND userid = p_userid;
+
+        -- Should not be assigned to other customer
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          lineno,
+          'POSCUSTOMER',
+          userid,
+          'Data Validation',
+          'Card No <' || b.lpcardno || '> assigned to other customer',
+          clock_timestamp()
+     FROM lpcard a, int$stg_poscustomer b
+    WHERE     a.cardno = b.lpcardno
+          AND a.psite_customer_code IS NOT NULL
+          AND b.userid = p_userid;
+
+        -- Should be a valid CODE
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          lineno,
+          'POSCUSTOMER',
+          userid,
+          'Data Validation',
+          'Invalid CODE : <' || code || '>',
+          clock_timestamp()
+     FROM int$stg_poscustomer t1
+    WHERE     userid = p_userid
+          AND (    code IS NOT NULL
+               AND NOT EXISTS (SELECT 1
+                         FROM psite_customer t2
+                        WHERE t2.code = t1.code));
+
+        -- Should be a valid PANNO
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          lineno,
+          'POSCUSTOMER',
+          userid,
+          'Data Validation',
+          'Invalid PANNO : <' || panno || '>',
+          clock_timestamp()
+     FROM int$stg_poscustomer
+    WHERE     userid = p_userid
+          AND (    (   SUBSTR(panno, 1, 1) IN ('0',
+                                                '1',
+                                                '2',
+                                                '3',
+                                                '4',
+                                                '5',
+                                                '6',
+                                                '7',
+                                                '8',
+                                                '9')
+                    OR SUBSTR(panno, 2, 1) IN ('0',
+                                                '1',
+                                                '2',
+                                                '3',
+                                                '4',
+                                                '5',
+                                                '6',
+                                                '7',
+                                                '8',
+                                                '9')
+                    OR SUBSTR(panno, 3, 1) IN ('0',
+                                                '1',
+                                                '2',
+                                                '3',
+                                                '4',
+                                                '5',
+                                                '6',
+                                                '7',
+                                                '8',
+                                                '9')
+                    OR SUBSTR(panno, 4, 1) IN ('0',
+                                                '1',
+                                                '2',
+                                                '3',
+                                                '4',
+                                                '5',
+                                                '6',
+                                                '7',
+                                                '8',
+                                                '9')
+                    OR SUBSTR(panno, 5, 1) IN ('0',
+                                                '1',
+                                                '2',
+                                                '3',
+                                                '4',
+                                                '5',
+                                                '6',
+                                                '7',
+                                                '8',
+                                                '9')
+                    OR SUBSTR(panno, 6, 1) NOT IN ('0',
+                                                    '1',
+                                                    '2',
+                                                    '3',
+                                                    '4',
+                                                    '5',
+                                                    '6',
+                                                    '7',
+                                                    '8',
+                                                    '9')
+                    OR SUBSTR(panno, 7, 1) NOT IN ('0',
+                                                    '1',
+                                                    '2',
+                                                    '3',
+                                                    '4',
+                                                    '5',
+                                                    '6',
+                                                    '7',
+                                                    '8',
+                                                    '9')
+                    OR SUBSTR(panno, 8, 1) NOT IN ('0',
+                                                    '1',
+                                                    '2',
+                                                    '3',
+                                                    '4',
+                                                    '5',
+                                                    '6',
+                                                    '7',
+                                                    '8',
+                                                    '9')
+                    OR SUBSTR(panno, 9, 1) NOT IN ('0',
+                                                    '1',
+                                                    '2',
+                                                    '3',
+                                                    '4',
+                                                    '5',
+                                                    '6',
+                                                    '7',
+                                                    '8',
+                                                    '9')
+                    OR SUBSTR(panno, 10, 1) IN ('0',
+                                                 '1',
+                                                 '2',
+                                                 '3',
+                                                 '4',
+                                                 '5',
+                                                 '6',
+                                                 '7',
+                                                 '8',
+                                                 '9')
+                    OR LENGTH(panno) <> 10)
+               AND panno IS NOT NULL);
+
+        -- Should be a valid AllowCreditSale
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          lineno,
+          'POSCUSTOMER',
+          userid,
+          'Data Validation',
+          'Invalid AllowCreditSale : <' || AllowCreditSale || '>',
+          clock_timestamp()
+     FROM int$stg_poscustomer
+    WHERE userid = p_userid AND AllowCreditSale NOT IN ('Y', 'N');
+
+        --  AllowCreditSale cannot be NULL
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          lineno,
+          'POSCUSTOMER',
+          userid,
+          'Mandatory Validation',
+          'AllowCreditSale is Mandatory',
+          clock_timestamp()
+     FROM int$stg_poscustomer
+    WHERE userid = p_userid AND AllowCreditSale IS NULL;
+
+        -- start rev : 004
+        -- GST Identification No. length validation
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          lineno,
+          'POSCUSTOMER',
+          userid,
+          'Data Validation',
+          'GST Identification No. should have exactly 15 characters',
+          clock_timestamp()
+     FROM int$stg_poscustomer a
+    WHERE     a.gst_identification_no IS NOT NULL
+          AND LENGTH(a.gst_identification_no) <> 15
+          AND a.userid = p_userid;
+
+        -- GST Identification No. masking validation
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          lineno,
+          'POSCUSTOMER',
+          userid,
+          'Data Validation',
+          'GST Identification No. is invalid as per Government prescribed format.',
+          clock_timestamp()
+     FROM int$stg_poscustomer a
+    WHERE     a.gst_identification_no IS NOT NULL
+          AND db_fun_check_gstin_no(a.gst_identification_no) = 'F'
+          AND a.userid = p_userid;
+
+        -- GST Identification No. state code validation
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          lineno,
+          'POSCUSTOMER',
+          userid,
+          'Data Validation',
+          'Unable to determine state as per inputed GST Identification No., State code is invalid.',
+          clock_timestamp()
+     FROM int$stg_poscustomer a
+LEFT OUTER JOIN admgststate gs ON ((SUBSTR(a.gst_identification_no, 1, 2)) = gs.code)
+WHERE a.gst_identification_no IS NOT NULL  AND gs.code IS NULL AND a.userid = p_userid;
+
+        -- GST Identification date validation
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          lineno,
+          'POSCUSTOMER',
+          userid,
+          'Data Validation',
+          'GST Reg. date is not in valid format.',
+          clock_timestamp()
+     FROM int$stg_poscustomer a
+    WHERE     a.gst_registration_date IS NOT NULL
+          AND (   (TO_CHAR(a.gst_registration_date, 'yyyy'))::numeric  < 4
+               OR (TO_CHAR(a.gst_registration_date, 'yyyymmdd'))::numeric  <
+                     8)
+          AND a.userid = p_userid;
+
+        -- GST Identification date validation
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          lineno,
+          'POSCUSTOMER',
+          userid,
+          'Data Validation',
+          'GST Reg. Date cannot be provided without providing GST Identification No.',
+          clock_timestamp()
+     FROM int$stg_poscustomer a
+    WHERE     a.gst_registration_date IS NOT NULL
+          AND a.gst_identification_no IS NULL
+          AND a.userid = p_userid;
+
+        -- GST state validation
+        -- CASE - I
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          lineno,
+          'POSCUSTOMER',
+          userid,
+          'Data Validation',
+          'GST State provided is invalid.',
+          clock_timestamp()
+     FROM int$stg_poscustomer a
+LEFT OUTER JOIN admgststate gs  ON (UPPER(a.gst_state_name) = UPPER(gs.name))
+WHERE a.gst_state_name IS NOT NULL AND gs.name IS NULL AND a.userid = p_userid;
+
+        -- CASE - II
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          lineno,
+          'POSCUSTOMER',
+          userid,
+          'Data Validation',
+          'GST State inputted is not at par with GST Identification No.''s state.',
+          clock_timestamp()
+     FROM int$stg_poscustomer a, admgststate gs
+    WHERE     UPPER(a.gst_state_name) = UPPER(gs.name)
+          AND (SUBSTR(a.gst_identification_no, 1, 2)) <> gs.code
+          AND a.gst_state_name IS NOT NULL
+          AND a.gst_state_name IS NOT NULL
+          AND a.userid = p_userid;
+
+        -- end rev : 004
+--==============================================================================
+--**************************ISDCODE and ISEMPLOYEE******************************
+--==============================================================================
+-- START REV : 006
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          lineno,
+          'POSCUSTOMER',
+          userid,
+          'Data Validation',
+          'Mobile number should contain digits only.',
+          clock_timestamp()
+     FROM int$stg_poscustomer a
+    WHERE (    a.mobile IS NOT NULL
+               AND a.mobile ~ '[^0-9]')
+          AND userid = p_userid;
+
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          a.lineno,
+          'POSCUSTOMER',
+          userid,
+          'Customer Validation',
+          'Mobile number already exists.',
+          clock_timestamp()
+     FROM int$stg_poscustomer a,
+          (  SELECT mobile, COUNT(1)
+               FROM psite_customer
+           GROUP BY mobile
+             HAVING COUNT(1) > 0) b
+    WHERE a.mobile = b.mobile
+    AND a.userid = p_userid
+    AND a.code IS NULL;
+
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          a.lineno,
+          'POSCUSTOMER',
+          userid,
+          'Customer Validation',
+          'Mobile number already exists multiple times.',
+          clock_timestamp()
+     FROM int$stg_poscustomer a              
+    where  a.code not in ( SELECT b.code from psite_customer b where a.mobile = b.mobile  )
+    AND a.mobile in (select b.mobile from psite_customer b ) 
+    AND a.userid = p_userid
+    AND a.code IS NOT NULL;
+
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          a.lineno,
+          'POSCUSTOMER',
+          a.userid,
+          'Data Validation',
+          'Same mobile number in multiple rows in excel not allowed.',
+          clock_timestamp()
+     FROM int$stg_poscustomer a,
+          (  SELECT COUNT(1), mobile
+               FROM (SELECT DISTINCT FNAME,
+                                     MNAME,
+                                     LNAME,
+                                     ADDRESS1,
+                                     ADDRESS2,
+                                     ADDRESS3,
+                                     PIN,
+                                     EMAIL,
+                                     GENDER,
+                                     DISTRICT,
+                                     CITY,
+                                     STATE,
+                                     COUNTRY,
+                                     MOBILE
+                       FROM int$stg_poscustomer a
+                      WHERE a.userid = p_userid) alias4
+           GROUP BY mobile
+             HAVING COUNT(1) > 1) b
+    WHERE a.mobile = b.mobile AND a.userid = p_userid;
+
+INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+          SELECT nextval('int$error_log_code'),
+          lineno,
+          'poscustomer',
+          userid,
+          'Data Validation',
+          'ISD Code is not provided or invalid.',
+          clock_timestamp()
+     FROM int$stg_poscustomer a
+    WHERE (a.ISDCODE NOT IN (SELECT a.isdcode from int$stg_poscustomer a, admisd i
+                                 where a.isdcode::text = i.isdcode)
+           OR a.isdcode IS NULL)
+          AND a.mobile IS NOT NULL
+          AND a.userid = p_userid;
+
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          lineno,
+          'POSCUSTOMER',
+          userid,
+          'Data Validation',
+          'Length of mobile number is not valid for the given ISD Code',
+          clock_timestamp()
+     FROM int$stg_poscustomer a
+LEFT OUTER JOIN admisd i ON (a.ISDCODE::text = i.ISDCODE)
+WHERE i.ALLOW_MOBILENO_DIGIT IS NOT NULL AND LENGTH(a.mobile)::text <> i.ALLOW_MOBILENO_DIGIT AND a.mobile IS NOT NULL AND a.userid = p_userid;
+
+INSERT INTO int$error_log(code,
+                           lineno,
+                           classname,
+                           userid,
+                           errortype,
+                           errordesc,
+                           createdon)
+   SELECT nextval('int$error_log_code'),
+          lineno,
+          'POSCUSTOMER',
+          userid,
+          'Data Validation',
+          'IsEmployee can be either Yes or No.',
+          clock_timestamp()
+     FROM int$stg_poscustomer a
+    WHERE LOWER(a.isemployee) NOT IN ('yes', 'no') AND a.userid = p_userid;
+
+-- END REV : 006
+--COMMIT;
+
+        -- Check whether records are valid or not
+        BEGIN
+            SELECT  'S'
+            INTO STRICT    v_status
+
+            WHERE   EXISTS (
+                            SELECT  'S'
+                            FROM    int$error_log
+                            WHERE   userid = p_userid
+                            );
+            RETURN('0');
+        EXCEPTION
+            WHEN no_data_found THEN
+                RETURN('1');
+        END;
+
+    EXCEPTION
+        WHEN OTHERS THEN
+            errcode := SQLSTATE;
+            errmsg := SQLERRM;
+
+            --Error log for Oracle Internal Error
+            INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            VALUES (nextval('int$error_log_code'), 0, 'POSCUSTOMER', p_userid, errcode, errmsg, clock_timestamp());
+            --COMMIT;
+
+            RETURN('0');
+    END;
+
+    -- allocate gv after validation
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

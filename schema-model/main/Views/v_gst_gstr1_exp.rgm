@@ -1,0 +1,96 @@
+view "main"."v_gst_gstr1_exp" {
+  text = """-
+SELECT gv.document_gstin,
+    gv.document_gst_state_code,
+        CASE
+            WHEN (gv.totaltaxrate = (0)::numeric) THEN 'WOPAY'::text
+            ELSE 'WPAY'::text
+        END AS export_type,
+    gv.entno AS invoice_no,
+    date_trunc('day'::text, gv.entdt) AS invoice_date,
+    NULL::text AS shipping_port_code,
+    NULL::text AS shipping_invoice_no,
+    NULL::text AS shipping_invoice_date,
+    dense_rank() OVER (PARTITION BY gv.document_gstin, gv.entno, gv.entdt ORDER BY gv.hsn_sac_code, gv.uom, gv.totaltaxrate) AS slno,
+    replace((gv.hsn_sac_code)::text, ' '::text, ''::text) AS hsn_sac_code,
+    gv.hsn_sac_description,
+    gv.uom,
+    gv.qty,
+    gv.taxableamt,
+    gv.igstrate AS totaltaxrate,
+    gv.igstamt
+   FROM main.v_gst_ent_hsn gv
+  WHERE ((gv.document_gstin IS NOT NULL) AND (gv.cp_gstin IS NULL) AND (COALESCE((gv.tradegroupcode)::numeric, (1)::numeric) = (3)::numeric) AND (gv.enttype = ANY (ARRAY['SIM'::text, 'SGO'::text, 'PRM'::text, 'CSM'::text])) AND (((gv.enttype = ANY (ARRAY['SIM'::text, 'PRM'::text, 'CSM'::text])) AND (COALESCE(gv.document_gstappl_flag, 'N'::bpchar) = 'Y'::bpchar)) OR (gv.enttype = 'SGO'::text)))
+UNION ALL
+ SELECT gvn.document_gstin,
+    gvn.document_gst_state_code,
+    'WOPAY'::text AS export_type,
+    gvn.entno AS invoice_no,
+    gvn.entdt AS invoice_date,
+    NULL::text AS shipping_port_code,
+    NULL::text AS shipping_invoice_no,
+    NULL::text AS shipping_invoice_date,
+    dense_rank() OVER (PARTITION BY gvn.document_gstin, gvn.entno, gvn.entdt ORDER BY h.hsn_sac_code, gvn.uom) AS slno,
+    replace((h.hsn_sac_code)::text, ' '::text, ''::text) AS hsn_sac_code,
+    h.description AS hsn_sac_description,
+    gvn.uom,
+    gvn.qty,
+    gvn.amt AS taxableamt,
+    0 AS totaltaxrate,
+    0 AS igstamt
+   FROM main.v_gst_ent_nongst gvn,
+    main.invhsnsacmain h
+  WHERE ((gvn.document_gstin IS NOT NULL) AND (gvn.invhsnsacmain_code = h.code) AND (gvn.cp_gstin IS NULL) AND (COALESCE(gvn.tradegroupcode, (1)::numeric) = (3)::numeric) AND (gvn.enttype = ANY (ARRAY['SIM'::text, 'SGO'::text, 'PRM'::text, 'CSM'::text])));
+"""
+  columns = (
+    column "document_gstin" {
+      type = "character varying(15)"
+    }
+    column "document_gst_state_code" {
+      type = "character(2)"
+    }
+    column "export_type" {
+      type = text
+    }
+    column "invoice_no" {
+      type = "character varying"
+    }
+    column "invoice_date" {
+      type = "timestamp without time zone"
+    }
+    column "shipping_port_code" {
+      type = text
+    }
+    column "shipping_invoice_no" {
+      type = text
+    }
+    column "shipping_invoice_date" {
+      type = text
+    }
+    column "slno" {
+      type = "bigint"
+    }
+    column "hsn_sac_code" {
+      type = text
+    }
+    column "hsn_sac_description" {
+      type = "character varying(100)"
+    }
+    column "uom" {
+      type = "character varying"
+    }
+    column "qty" {
+      type = "numeric"
+    }
+    column "taxableamt" {
+      type = "numeric"
+    }
+    column "totaltaxrate" {
+      type = "numeric"
+    }
+    column "igstamt" {
+      type = "numeric"
+    }
+  )
+}
+

@@ -1,0 +1,54 @@
+procedure "main"."int$pkg_so_barcode_loc_pro_setoff_fraction_value(bigint)" {
+  text = """
+
+DECLARE
+
+        c1 CURSOR FOR
+            SELECT coalesce(a.ex_dutyfactor, 0)										ex_dutyfactor,
+                   sum(coalesce(a.ex_appamt, 0))									    act_ex_appamt,
+                   CASE WHEN                         a.ex_basis='M' THEN  round(sum((coalesce(a.ordqty, 0) * coalesce(b.mrp, 0)) * (100 - coalesce(ex_abtfactor, 0)) / 100), 2) WHEN                         a.ex_basis='R' THEN  round(sum((coalesce(a.ordqty, 0) * coalesce(a.rate, 0)) * (100 - coalesce(ex_abtfactor, 0)) / 100), 2) WHEN                         a.ex_basis='L' THEN  round(sum((coalesce(a.ordqty, 0) * coalesce(b.listed_mrp, 0)) * (100 - coalesce(ex_abtfactor, 0)) / 100), 2)  ELSE 0 END 	     													expt_ex_appamt,
+                   sum(coalesce(a.ex_dutyamt, 0))									act_ex_dutyamt,
+                   CASE WHEN                             a.ex_basis='M' THEN  round(sum((((coalesce(a.ordqty, 0) * coalesce(b.mrp, 0) * (100 - coalesce(ex_abtfactor, 0)) / 100 * coalesce(ex_dutyfactor, 0) / 100)))), (CASE WHEN a.ex_roundoff=0 THEN  0  ELSE 2 END )) WHEN                             a.ex_basis='R' THEN  round(sum((((coalesce(a.ordqty, 0) * coalesce(a.rate, 0) * (100 - coalesce(ex_abtfactor, 0)) / 100 * coalesce(ex_dutyfactor, 0) / 100)))), (CASE WHEN a.ex_roundoff=0 THEN  0  ELSE 2 END )) WHEN                             a.ex_basis='L' THEN  round(sum((((coalesce(a.ordqty, 0) * coalesce(b.listed_mrp, 0) * (100 - coalesce(ex_abtfactor, 0)) / 100 * coalesce(ex_dutyfactor, 0) / 100)))), (CASE WHEN a.ex_roundoff=0 THEN  0  ELSE 2 END ))  ELSE 0 END 														expt_ex_dutyamt,
+                   sum(coalesce(a.ex_cessamt, 0))								    act_ex_cessamt,
+                   CASE WHEN                             a.ex_basis='M' THEN  round(sum((((((coalesce(a.ordqty, 0) * coalesce(b.mrp, 0) * (100 - coalesce(ex_abtfactor, 0)) / 100)) * ex_dutyfactor / 100)) * coalesce(ex_cessfactor, 0) / 100)), (CASE WHEN a.ex_roundoff=0 THEN  0  ELSE 2 END )) WHEN                             a.ex_basis='R' THEN  round(sum((((((coalesce(a.ordqty, 0) * coalesce(a.rate, 0) * (100 - coalesce(ex_abtfactor, 0)) / 100)) * ex_dutyfactor / 100)) * coalesce(ex_cessfactor, 0) / 100)), (CASE WHEN a.ex_roundoff=0 THEN  0  ELSE 2 END )) WHEN                             a.ex_basis='L' THEN  round(sum((((((coalesce(a.ordqty, 0) * coalesce(b.listed_mrp, 0) * (100 - coalesce(ex_abtfactor, 0)) / 100)) * ex_dutyfactor / 100)) * coalesce(ex_cessfactor, 0) / 100)), (CASE WHEN a.ex_roundoff=0 THEN  0  ELSE 2 END ))  ELSE 0 END 														expt_ex_cessamt
+            from  salorddet a, invitem b
+            where a.ordcode	= p_ordcode
+            and	  a.icode = b.icode
+            and	  a.excisemain_code is not null
+            and	  coalesce(ex_effrate,0) >= coalesce(ex_applicable_from,0)
+            group by
+                    coalesce(a.ex_dutyfactor, 0),
+                    a.ex_basis,
+                    a.ex_roundoff;
+
+BEGIN
+        for	c1_loop in c1 loop
+            update salorddet	d
+            set	   ex_appamt = (coalesce(ex_appamt, 0)  + (coalesce(c1_loop.expt_ex_appamt, 0)  - coalesce(c1_loop.act_ex_appamt, 0))),
+                   ex_dutyamt = (coalesce(ex_dutyamt, 0) + (coalesce(c1_loop.expt_ex_dutyamt, 0) - coalesce(c1_loop.act_ex_dutyamt, 0))),
+                   ex_cessamt = (coalesce(ex_cessamt, 0) + (coalesce(c1_loop.expt_ex_cessamt, 0) - coalesce(c1_loop.act_ex_cessamt, 0)))
+            where  code =
+                        (
+                            SELECT max(code)
+                            from   salorddet	d1
+                            where  ordcode = p_ordcode
+                            and	   coalesce(ex_dutyfactor, 0) = coalesce(c1_loop.ex_dutyfactor, 0)
+                            and	   excisemain_code is not null
+                            and	   coalesce(ex_effrate,0) >= coalesce(ex_applicable_from,0)
+                        );
+        end loop;
+    end;
+
+
+"""
+  arguments = <
+    {
+      name = p_ordcode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

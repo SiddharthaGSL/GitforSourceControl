@@ -1,0 +1,1166 @@
+function "main"."int$pkg_socnl_int$pkg_socnl_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status                      char(1);
+      errmsg                        varchar(200);
+      errcode                       text;
+      v_icode                       varchar(9);
+      v_barcode                     varchar(50);
+      v_connected_ou                bigint;
+      v_sitetype                    admsite.sitetype%TYPE;
+      v_site_reserve_inv            char(1) := 'N';
+      v_allow_zerorate_salesorder   char(1) := 'N';
+      v_mark                        varchar(100);
+	  
+
+BEGIN
+       v_mark := 1;
+
+      -- Check for OU code is present is not
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'SOCNL',
+                0,
+                'Date Validation',
+                'No Organization Unit is available.',
+                clock_timestamp()
+           FROM admsite a
+          WHERE code = p_connect_site AND admou_code IS NULL;
+
+      v_mark := 4;
+
+      -- Check for site type
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'SOCNL',
+                0,
+                'Date Validation',
+                   p_connect_site::text
+                || ': This module is only for Organizational site.',
+                clock_timestamp()
+           FROM admsite a
+          WHERE     code = p_connect_site
+                AND sitetype NOT IN ('OS-OO-CM', 'MS-OO-CM', 'MS-CO-OM-TS');
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'SOCNL',
+                0,
+                'Date Validation',
+                   p_connect_site::text
+                || ': Document Identification No. is mandatory for the connected site.',
+                clock_timestamp()
+           FROM admsite a
+          WHERE code = p_connect_site AND sitedocin IS NULL;
+
+      v_mark := 5;
+
+      -- Check the DC date is valid or not
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SOCNL',
+                userid,
+                'Date Validation',
+                a.cnldt || ': cnldt, Please enter a valid date.',
+                clock_timestamp()
+           FROM int$stg_socnl a
+          WHERE db_func_is_date(to_char(a.cnldt,'DD-MM-YYYY')) <> 1 AND a.userid = p_userid;
+
+      v_mark := 6;
+
+      -- Future date transaction is not allowed
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SOCNL',
+                userid,
+                'Date Validation',
+                a.cnldt || ': cnldt, future date transaction not allowed.',
+                clock_timestamp()
+           FROM int$stg_socnl a
+          WHERE date_trunc('day', cnldt) > date_trunc('day', clock_timestamp()) AND a.userid = p_userid;
+
+      v_mark := 7;
+
+      DECLARE
+         v_dtfr           timestamp;
+         v_dtto           timestamp;
+         v_yr_ext         char(1);
+         v_day_status     char(1);
+         v_locdays        hrdemp.locdays%TYPE;
+         v_last_dt_lock   char(1);
+         v_ycode          bigint;
+		 i RECORD;
+
+         c1 CURSOR FOR
+            SELECT DISTINCT date_trunc('day', cnldt) cnldt1
+              FROM int$stg_socnl 
+             WHERE db_func_is_date(to_char(cnldt,'DD-MM-YYYY')) = 1 AND userid = p_userid;
+      BEGIN
+         FOR i IN c1
+         LOOP
+            -- Ycode related checking, min trans date checking, lockday checking, Year exists or not, Day status related checking
+            BEGIN
+               SELECT ext,
+                      dtfr,
+                      dtto,
+                      ycode
+                 INTO STRICT v_yr_ext,
+                      v_dtfr,
+                      v_dtto,
+                      v_ycode
+                 FROM admyear
+                WHERE i.cnldt1 BETWEEN dtfr AND dtto;
+
+               UPDATE int$stg_socnl
+                  SET ycode = v_ycode
+                WHERE cnldt = i.cnldt1 AND userid = p_userid;
+
+               IF coalesce(v_yr_ext, 'N') = 'Y'
+               THEN
+                  INSERT INTO int$error_log(code,
+                                             lineno,
+                                             classname,
+                                             userid,
+                                             errortype,
+                                             errordesc,
+                                             createdon)
+                     SELECT nextval('int$error_log_code'),
+                            lineno,
+                            'SOCNL',
+                            userid,
+                            'Data Validation',
+                               i.cnldt1
+                            || ': cnldt, inventory period is not open.',
+                            clock_timestamp()
+                       --'Year of the Date is not open / extinct', sysdate
+                       FROM int$stg_socnl 
+                      WHERE date_trunc('day', cnldt) = i.cnldt1 AND userid = p_userid;
+               ELSE
+                  IF i.cnldt1 < v_dtfr
+                  THEN
+                     INSERT INTO int$error_log(code,
+                                                lineno,
+                                                classname,
+                                                userid,
+                                                errortype,
+                                                errordesc,
+                                                createdon)
+                        SELECT nextval('int$error_log_code'),
+                               lineno,
+                               'SOCNL',
+                               userid,
+                               'Data Validation',
+                                  i.cnldt1
+                               || ': cnldt, Date can not be less than start date of current accounting year date '
+                               || TO_CHAR(v_dtfr, 'DD/MM/YYYY'),
+                               clock_timestamp()
+                          FROM int$stg_socnl 
+                         WHERE date_trunc('day', cnldt) = i.cnldt1 AND userid = p_userid;
+                  ELSE
+                     BEGIN
+                        SELECT locdays
+                          INTO STRICT v_locdays
+                          FROM hrdemp
+                         WHERE ecode = p_userid;
+
+                        IF v_locdays IS NOT NULL
+                        THEN
+                           IF date_trunc('day', i.cnldt1) <
+                                 (current_date - v_locdays::integer)
+                           THEN
+                              INSERT INTO int$error_log(code,
+                                                         lineno,
+                                                         classname,
+                                                         userid,
+                                                         errortype,
+                                                         errordesc,
+                                                         createdon)
+                                 SELECT nextval('int$error_log_code'),
+                                        lineno,
+                                        'SOCNL',
+                                        userid,
+                                        'Data Validation',
+                                           i.cnldt1
+                                        || ': cnldt, user lock days settings getting violated.',
+                                        clock_timestamp()
+                                   FROM int$stg_SOCNL 
+                                  WHERE     date_trunc('day', cnldt) = i.cnldt1
+                                        AND userid = p_userid;
+                           END IF;
+                        END IF;
+                     EXCEPTION
+                        WHEN no_data_found
+                        THEN
+                           INSERT INTO int$error_log(code,
+                                                      lineno,
+                                                      classname,
+                                                      userid,
+                                                      errortype,
+                                                      errordesc,
+                                                      createdon)
+                              SELECT nextval('int$error_log_code'),
+                                     lineno,
+                                     'SOCNL',
+                                     userid,
+                                     'Data Validation',
+                                     'User not exists',
+                                     clock_timestamp()
+                                FROM int$stg_socnl 
+                               WHERE     date_trunc('day', cnldt) = i.cnldt1
+                                     AND userid = p_userid;
+                     END;
+                  END IF;
+               END IF;
+            EXCEPTION
+               WHEN no_data_found
+               THEN
+                  INSERT INTO int$error_log(code,
+                                             lineno,
+                                             classname,
+                                             userid,
+                                             errortype,
+                                             errordesc,
+                                             createdon)
+                     SELECT nextval('int$error_log_code'),
+                            lineno,
+                            'SOCNL',
+                            userid,
+                            'Data Validation',
+                            i.cnldt1 || ': cnldt, Year not exists',
+                            clock_timestamp()
+                       FROM int$stg_socnl 
+                      WHERE date_trunc('day', cnldt) = i.cnldt1 AND userid = p_userid;
+            END;
+
+            -- day status related c77hecking
+            -- Day check
+         END LOOP;
+      END;
+
+     v_mark := 8;
+
+      -- DOCNAME valodation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SOCNL',
+                userid,
+                'Data Validation',
+                   COALESCE(a.scheme_doc_format,'')
+                || ': Scheme_doc_format, should be valid and non-extinct.',
+                clock_timestamp()
+           FROM int$stg_SOCNL a
+          WHERE     UPPER(a.scheme_doc_format) NOT IN
+                       (SELECT UPPER(d.docname)
+                          FROM admdocscheme d, admmenu_docscheme m
+                         WHERE     d.doccode = m.doccode
+                               --AND m.menucode = 463
+                               AND   m.mdmenushortcode ='SalesOrdCnl'
+                               AND coalesce(d.ext, 'N') = 'N'
+                               AND (   0 =
+                                          (SELECT COUNT(*)
+                                             FROM admdocscheme    d,
+                                                  admou_docscheme m
+                                            WHERE     d.doccode = m.doccode
+                                                  AND m.admsite_code =
+                                                         p_connect_site
+                                                  AND coalesce(d.ext, 'N') = 'N')
+                                    OR d.doccode IN (SELECT d.doccode
+                                             FROM admdocscheme    d,
+                                                  admou_docscheme m
+                                            WHERE     d.doccode = m.doccode
+                                                  AND m.admsite_code =
+                                                         p_connect_site
+                                                  AND coalesce(d.ext, 'N') = 'N')))
+                AND a.userid = p_userid;
+
+    v_mark := 9;
+
+           INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SOCNL',
+                userid,
+                'Data Validation',
+                   COALESCE(a.SCHEME_DOCNO,'')
+                || ': Wrongly tagged Sales Order no.',
+                clock_timestamp()
+           FROM int$stg_SOCNL a , SALORDMAIN O
+          WHERE a.userid = p_userid 
+          AND P_CONNECT_SITE NOT IN ( SELECT ADMSITE_CODE FROM HRDEMP_OU E  
+                                      WHERE E.HRDEMP_CODE = p_userid 
+                                      and ( E.ADMOU_CODE IS NULL OR ADMOU_CODE =p_connect_ou
+                                     ) 
+                                    )
+          AND UPPER(O.SCHEME_DOCNO) =  UPPER(a.SO_SCHEME_DOCNO);
+
+            INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+            SELECT nextval('int$error_log_code'),
+                  lineno,
+                 'SOCNL',
+                 userid,
+                'Data Validation',
+                   COALESCE(a.SCHEME_DOCNO,'')
+                || ': Wrongly tagged Sales Order no with connected site .',
+                clock_timestamp()
+           FROM int$stg_SOCNL a ,
+           
+           (
+              SELECT SCHEME_DOCNO,ADMSITE_CODE_OWNER 
+              FROM SALORDMAIN WHERE ADMOU_CODE = p_connect_ou
+           ) O
+           
+          WHERE a.userid = p_userid 
+          AND UPPER(O.SCHEME_DOCNO) =  UPPER(a.SO_SCHEME_DOCNO)
+          AND P_CONNECT_SITE <> O.ADMSITE_CODE_OWNER;
+
+      -- scheme_docno chking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SOCNL',
+                userid,
+                'Data Validation',
+                   a.cnldt
+                || ': Scheme_docno, can not be blank if scheme_doc_format is manual.',
+                clock_timestamp()
+           FROM int$stg_SOCNL a
+          WHERE (    UPPER(a.scheme_doc_format) IN ('MANUAL (GENERAL)', 'MANUAL (EXCISE)')
+                     AND a.scheme_docno IS NULL)
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SOCNL',
+                userid,
+                'Data Validation',
+                   COALESCE(a.scheme_doc_format,'')
+                || ': Scheme_docno, maximum length allowed is 25 characters.',
+                clock_timestamp()
+           FROM int$stg_SOCNL a
+          WHERE LENGTH(a.scheme_doc_format) > 25 AND a.userid = p_userid;
+		  		  
+
+      v_mark := 10;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SOCNL',
+                userid,
+                'Data Validation',
+                   COALESCE(a.scheme_doc_format,'')
+                || ': Scheme_docno, Scheme Doc No should be null, as it would be auto generated',
+                clock_timestamp()
+           FROM int$stg_SOCNL a
+          WHERE (    UPPER(a.scheme_doc_format) NOT IN ('MANUAL (GENERAL)', 'MANUAL (EXCISE)')
+                     AND a.scheme_docno IS NOT NULL)
+                AND a.userid = p_userid;
+
+      v_mark := 11;
+
+      -- scheme_docno unique chking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'SOCNL',
+                p_userid,
+                'Data Validation',
+                   COALESCE(a.scheme_doc_format,'')
+                || ': Scheme_docno, duplicate number not allowed.',
+                clock_timestamp()
+           FROM int$stg_socnl a, salordcnlmain b
+          WHERE     UPPER(a.scheme_docno) = UPPER(b.scheme_docno)
+                AND b.ycode = (SELECT ycode
+                                 FROM admyear
+                                WHERE a.cnldt BETWEEN dtfr AND dtto)
+                AND a.userid = p_userid;
+
+      DECLARE
+	  i RECORD;
+         c1 CURSOR FOR
+            SELECT DISTINCT a.scheme_docno, a.scheme_doc_format
+              FROM int$stg_socnl a
+             WHERE     UPPER(a.scheme_doc_format) IN ('MANUAL (GENERAL)', 'MANUAL (EXCISE)')
+                   AND a.scheme_docno IS NOT NULL
+                   AND a.userid = p_userid;
+      BEGIN
+         FOR i IN c1
+         LOOP
+            INSERT INTO int$error_log(code,
+                                       lineno,
+                                       classname,
+                                       userid,
+                                       errortype,
+                                       errordesc,
+                                       createdon)
+               SELECT nextval('int$error_log_code'),
+                      0,
+                      'SOCNL',
+                      p_userid,
+                      'Data Validation',
+                         COALESCE(i.scheme_doc_format,'')
+                      || ': Scheme_docno, duplicate number not allowed.',
+                      clock_timestamp()
+
+                WHERE EXISTS (SELECT COUNT(*)
+                            FROM (SELECT DISTINCT UPPER(scheme_doc_format),
+                                                  UPPER(scheme_docno),
+                                                  cnldt,
+                                                  UPPER(docno),
+                                                  UPPER(remarks)
+                                    FROM int$stg_socnl a
+                                   WHERE     UPPER(a.scheme_docno) =
+                                                UPPER(i.scheme_docno)
+                                         AND a.userid = p_userid) a
+                          HAVING COUNT(*) > 1);
+         END LOOP;
+      END;
+	DECLARE
+	 i RECORD;
+      BEGIN
+         FOR i
+            IN (SELECT DISTINCT a.doccode, b.scheme_doc_format
+                  FROM admdocscheme a, int$stg_socnl b
+                 WHERE     UPPER(a.docname) = UPPER(b.scheme_doc_format)
+                       AND b.userid = p_userid)
+         LOOP
+            UPDATE int$stg_socnl
+               SET doccode = i.doccode
+             WHERE     userid = p_userid
+                   AND UPPER(scheme_doc_format) =
+                          UPPER(i.scheme_doc_format);
+         END LOOP;
+      END;
+
+      v_mark := 12;
+
+      -- DOCNO
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SOCNL',
+                p_userid,
+                'Data Validation',
+                   COALESCE(a.docno,'')
+                || ': docno, maximum length allowed is 25 characters.',
+                clock_timestamp()
+           FROM int$stg_socnl a
+          WHERE userid = p_userid AND LENGTH(docno) > 25;
+
+      -- remarks
+      v_mark := 21;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SOCNL',
+                p_userid,
+                'Data Validation',
+                   COALESCE(a.remarks,'')
+                || ': remarks, Cancellation Remarks cannot be greater than 500 characters.',
+                clock_timestamp()
+           FROM int$stg_socnl a
+          WHERE LENGTH(remarks) > 500 AND a.userid = p_userid; 
+ v_mark := 21.12;
+      -- Detail section
+      -- Article code
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SOCNL',
+                p_userid,
+                'Data Validation',
+                   COALESCE(a.socnl_mode,'')
+                || ': socnl_mode, invalid SO cancellation mode. Valid modes are Article/Barcode.',
+                clock_timestamp()
+           FROM int$stg_socnl a
+          WHERE     UPPER(coalesce(a.socnl_mode, 'x')) NOT IN ('ARTICLE', 'BARCODE')
+                AND a.userid = p_userid;
+v_mark := 21.13;
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SOCNL',
+                p_userid,
+                'Data Validation',
+                   COALESCE(a.Barcode,'')
+                || ': barcode, can not provide barcode in article mode.',
+                clock_timestamp()
+           FROM int$stg_socnl a
+          WHERE     UPPER(a.socnl_mode) = 'ARTICLE'
+                AND a.barcode IS NOT NULL
+                AND a.userid = p_userid;
+v_mark := 21.14;
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SOCNL',
+                p_userid,
+                'Data Validation',
+                   coalesce(a.article_name, a.article_code::text)
+                || ': article, can not provide article in barcode mode.',
+                clock_timestamp()
+           FROM int$stg_socnl a
+          WHERE     UPPER(a.socnl_mode) = 'BARCODE'
+                AND (a.article_code IS NOT NULL OR a.article_name IS NOT NULL)
+                AND a.userid = p_userid;
+
+      v_mark := '21.1';
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SOCNL',
+                p_userid,
+                'Data Validation',
+                   COALESCE(a.article_code::text,'')
+                || ': article_code, Article doesn''t exist or extinct.',
+                clock_timestamp()
+           FROM int$stg_socnl a
+LEFT OUTER JOIN invarticle p ON (a.article_code = p.code)
+WHERE (p.code IS NULL OR coalesce(p.ext, 'N') = 'Y') AND
+a.article_code IS NOT NULL AND a.userid = p_userid;
+
+      v_mark := '21.2';
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SOCNL',
+                p_userid,
+                'Data Validation',
+                   COALESCE(a.article_name,'')
+                || ': article_name, Article doesn''t exist or extinct.',
+                clock_timestamp()
+           FROM int$stg_socnl a LEFT OUTER JOIN invarticle p
+		   ON (UPPER(a.article_name) = UPPER(p.name))
+WHERE (p.code IS NULL OR coalesce(p.ext, 'N') = 'Y') AND a.article_name IS NOT NULL AND a.userid = p_userid;
+
+      -- Populate article code
+      v_mark := '21.3';
+
+      DECLARE
+	  i RECORD;
+         c1 CURSOR FOR
+            SELECT DISTINCT b.name, b.code
+              FROM int$stg_socnl a, invarticle b
+             WHERE     UPPER(a.article_name) = UPPER(b.name)
+                   AND userid = p_userid;
+      BEGIN
+         FOR i IN c1
+         LOOP
+            UPDATE int$stg_socnl
+               SET article_code = i.code
+             WHERE     UPPER(article_name) = UPPER(i.name)
+                   AND userid = p_userid;
+         END LOOP;
+      END;
+
+      v_mark := '21.4';
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SOCNL',
+                p_userid,
+                'Data Validation',
+                ': Item information is missing.',
+                clock_timestamp()
+           FROM int$stg_socnl a
+          WHERE     a.article_code IS NULL
+                AND a.barcode IS NULL
+                AND a.userid = p_userid;
+
+      v_mark := '21.5';
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SOCNL',
+                p_userid,
+                'Data Validation',
+                   COALESCE(a.siteshrtname,'')
+                || ': siteshrtname, site selection is mandatory in article mode.',
+                clock_timestamp()
+           FROM int$stg_socnl a
+          WHERE     siteshrtname IS NULL
+                AND UPPER(a.socnl_mode) = 'ARTICLE'
+                AND a.userid = p_userid;
+
+      v_mark := '21.61';
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SOCNL',
+                p_userid,
+                'Data Validation',
+                   COALESCE(a.siteshrtname,'')
+                || ': siteshrtname, site does not exists or extinct.',
+                clock_timestamp()
+           FROM int$stg_socnl a LEFT OUTER JOIN admsite b
+		   ON (UPPER(a.siteshrtname) = UPPER(b.shrtname))
+WHERE (b.code IS NULL OR coalesce(b.ext, 'N') = 'Y') 
+AND a.siteshrtname IS NOT NULL AND a.userid = p_userid;
+
+      v_mark := '21.62';
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SOCNL',
+                p_userid,
+                'Data Validation',
+                   COALESCE(a.siteshrtname,'')
+                || ': siteshrtname, selected site is not belongs to the ou of the connected site.',
+                clock_timestamp()
+           FROM int$stg_socnl a LEFT OUTER JOIN admsite b
+		   ON (UPPER(a.siteshrtname) = UPPER(b.shrtname))
+WHERE (   (    b.admou_code = p_connect_ou
+                         AND position('OM' in db_fun_get_sitetype(code)) <> 0)
+                     OR (    b.admou_code IS NULL
+                         AND position('OM' in db_fun_get_sitetype(code)) = 0)) AND a.userid = p_userid;
+
+      DECLARE
+	  i RECORD;
+         c1 CURSOR
+         FOR
+            SELECT DISTINCT b.shrtname, b.code
+              FROM int$stg_socnl a, admsite b
+             WHERE     UPPER(a.siteshrtname) = UPPER(b.shrtname)
+                   AND userid = p_userid;
+      BEGIN
+         FOR i IN c1
+         LOOP
+            UPDATE int$stg_socnl
+               SET det_admsite_code = i.code
+             WHERE     UPPER(siteshrtname) = UPPER(i.shrtname)
+                   AND userid = p_userid;
+         END LOOP;
+      END;
+	 v_mark := '21.63';
+      -- SO_SCHEME_DOCNO
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SOCNL',
+                p_userid,
+                'Data Validation',
+                   COALESCE(a.article_code::text,'')
+                || ': so_scheme_docno, invalid SO scheme document no.',
+                clock_timestamp()
+           FROM int$stg_socnl a
+          WHERE     UPPER(COALESCE(a.so_scheme_docno,'XXXX')) NOT IN
+                       (SELECT UPPER(scheme_docno)
+                          FROM salordmain m
+                         WHERE     coalesce(m.stat, 'N') != 'T'
+                               AND m.ycode <= a.ycode
+                               AND m.orddt <= a.cnldt
+                               AND m.admsite_code_owner = p_connect_site
+                               AND m.admou_code = p_connect_ou
+                               AND m.authorcode IS NOT NULL
+                               AND m.ordcode IN
+                                      (SELECT DISTINCT ordcode
+                                         FROM salorddet d
+                                        WHERE (   (    coalesce(m.reserve_inv,
+                                                            'N') = 'N'
+                                                   AND   coalesce(d.ordqty, 0)
+                                                       - coalesce(d.cnlqty, 0)
+                                                       - coalesce(d.dqty, 0) > 0)
+                                               OR (    coalesce(m.reserve_inv,
+                                                            'N') = 'Y'
+                                                   AND   coalesce(d.ordqty, 0)
+                                                       - coalesce(d.cnlqty, 0) >
+                                                          coalesce(d.reserve_qty,
+                                                               0)))))
+				AND a.so_scheme_docno IS NOT NULL
+                AND a.userid = p_userid;
+  v_mark := '21.64';
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SOCNL',
+                p_userid,
+                'Data Validation',
+                   COALESCE(a.so_scheme_docno,'')
+                || ': so_scheme_docno, can not null in barcode mode.',
+                clock_timestamp()
+           FROM int$stg_socnl a
+          WHERE     UPPER(a.socnl_mode) = 'BARCODE'
+                AND a.so_scheme_docno IS NULL
+                AND a.userid = p_userid;
+ v_mark := '21.65';
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SOCNL',
+                p_userid,
+                'Data Validation',
+                   COALESCE(a.so_scheme_docno,'')
+                || ': so_scheme_docno, should be null in article mode.',
+                clock_timestamp()
+           FROM int$stg_socnl a
+          WHERE     UPPER(a.socnl_mode) = 'ARTICLE'
+                AND a.so_scheme_docno IS NOT NULL
+                AND a.userid = p_userid;
+
+      DECLARE
+	  i RECORD;
+         c1 CURSOR FOR
+            SELECT a.lineno, m.ordcode, m.reserve_inv
+              FROM int$stg_socnl a, salordmain m
+             WHERE     UPPER(a.so_scheme_docno) = UPPER(m.scheme_docno)
+                   AND a.userid = p_userid;
+      BEGIN
+         FOR i IN c1
+         LOOP
+            UPDATE int$stg_socnl
+               SET det_ordcode = i.ordcode, det_reserve_inv = i.reserve_inv
+             WHERE lineno = i.lineno;
+         END LOOP;
+      END;
+
+      -- barcode
+      v_mark := 22;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SOCNL',
+                p_userid,
+                'Data Validation',
+                COALESCE(a.barcode,'') || ': barcode, Item doesn''t exist or is extinct.',
+                clock_timestamp()
+           FROM int$stg_socnl a
+          WHERE     a.lineno NOT IN
+                       (SELECT coalesce(a.lineno, 0) lineno
+                          FROM int$stg_socnl a, invitem b
+                         WHERE     (   (UPPER(a.barcode) = b.icode)
+                                    OR (UPPER(a.barcode) = b.barcode))
+                               AND coalesce(b.ext, 'N') = 'N'
+                               AND a.userid = p_userid)
+                AND barcode IS NOT NULL
+                AND a.userid = p_userid;
+
+	 v_mark := 22.10;
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SOCNL',
+                p_userid,
+                'Data Validation',
+                COALESCE(a.barcode,'') || ': barcode, Item selection is required.',
+                clock_timestamp()
+           FROM int$stg_socnl a
+          WHERE     a.barcode IS NULL
+                AND a.article_code IS NULL
+                AND a.userid = p_userid;
+v_mark := 22.100;
+      DECLARE
+	  i RECORD;
+         c1 CURSOR
+         FOR
+            SELECT a.barcode, a.lineno, b.icode
+              FROM int$stg_socnl a, invitem b
+             WHERE (   UPPER(a.barcode) = UPPER(b.barcode)
+                        OR UPPER(a.barcode) = UPPER(b.icode)
+                        OR a.det_icode = b.icode)
+                   AND a.userid = p_userid;
+
+         c2 CURSOR
+         FOR
+            SELECT d.code,
+                   a.lineno,
+                   CASE
+                      WHEN coalesce(a.det_reserve_inv, 'N') = 'N'
+                      THEN
+                           coalesce(d.ordqty, 0)
+                         - coalesce(d.cnlqty, 0)
+                         - coalesce(d.dqty, 0)
+                      WHEN coalesce(a.det_reserve_inv, 'N') = 'Y'
+                      THEN
+                           coalesce(d.ordqty, 0)
+                         - coalesce(d.cnlqty, 0)
+                         - coalesce(d.reserve_qty, 0)
+                   END
+                      pending_qty,
+                   d.rate
+              FROM int$stg_socnl a, salorddet d
+             WHERE     a.det_icode = d.icode
+                   AND a.det_ordcode = d.ordcode
+                   AND a.userid = p_userid;
+      BEGIN
+         FOR i IN c1
+         LOOP
+            UPDATE int$stg_socnl
+               SET det_icode = i.icode
+             WHERE lineno = i.lineno;
+         END LOOP;
+
+         FOR i IN c2
+         LOOP
+            UPDATE int$stg_socnl
+               SET det_slorddet_code = i.code,
+                   det_rate = i.rate,
+                   det_pending_qty = i.pending_qty
+             WHERE lineno = i.lineno;
+         END LOOP;
+      END;
+ v_mark := 22.2;
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SOCNL',
+                p_userid,
+                'Data Validation',
+                   COALESCE(a.socnl_mode,'')
+                || ': socnl_mode, invalid SO mode. Valid modes are Article/Barcode.',
+                clock_timestamp()
+           FROM int$stg_socnl a
+          WHERE     UPPER(coalesce(a.socnl_mode, 'x')) NOT IN ('ARTICLE', 'BARCODE')
+                AND a.barcode IS NOT NULL
+                AND a.userid = p_userid;
+
+      -- cancel_qty
+      v_mark := 23;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SOCNL',
+                p_userid,
+                'Data Validation',
+                COALESCE(a.cancel_qty :: text,'') || ': cancel_qty, Quantity cannot be blank.',
+                clock_timestamp()
+           FROM int$stg_socnl a
+          WHERE a.cancel_qty IS NULL AND a.userid = p_userid;
+		  
+		     v_mark := 23.1;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SOCNL',
+                p_userid,
+                'Data Validation',
+                   COALESCE(a.cancel_qty :: text,'')
+                || ': cancel_qty, Quantity should be greater than 0.',
+                clock_timestamp()
+           FROM int$stg_socnl a
+          WHERE a.cancel_qty <= 0 AND a.userid = p_userid;
+		  
+		  v_mark := 23.2;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SOCNL',
+                p_userid,
+                'Data Validation',
+                   COALESCE(a.cancel_qty :: text,'')
+                || ': cancel_qty, Quantity must be a multiple of the item scan unit..',
+                clock_timestamp()
+           FROM int$stg_socnl a, invitem b
+          WHERE (   UPPER(a.barcode) = UPPER(b.barcode)
+                     OR UPPER(a.barcode) = UPPER(b.icode))
+                AND MOD(a.cancel_qty, b.barunit) <> 0
+                AND a.userid = p_userid;
+				
+				v_mark := 23.3;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SOCNL',
+                p_userid,
+                'Data Validation',
+                   a.cancel_qty :: text
+                || ': cancel_qty, cancel qty can not be greater than pending qty ('
+                || coalesce(a.det_pending_qty, 0) :: text
+                || ').',
+                clock_timestamp()
+           FROM int$stg_socnl a
+          WHERE     coalesce(a.cancel_qty, 0) > coalesce(a.det_pending_qty, 0)
+                AND UPPER(socnl_mode) = 'BARCODE'
+                AND a.userid = p_userid; 
+			
+
+      -- check whether records are valid or not
+      BEGIN
+         SELECT 'S'
+           INTO STRICT v_status
+           
+          WHERE EXISTS (SELECT 'S'
+                      FROM int$error_log
+                     WHERE userid = p_userid);
+
+         RETURN('0');
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            RETURN('1');
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'SOCNL',
+                      p_userid,
+                      errcode,
+                      errmsg || ',' || v_mark,
+                      clock_timestamp());
+
+         --COMMIT;
+
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

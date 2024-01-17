@@ -1,0 +1,177 @@
+function "main"."db_fun_document_number_batch_atx(bigint, text)" {
+  text = """
+
+DECLARE
+
+  ora2pg_rowcount int;
+lv_manual                admdocscheme.MANUAL%TYPE;
+  lv_width                 admdocscheme.width%TYPE;
+  lv_starting              admdocscheme.starting%TYPE;
+  lv_prefill               admdocscheme.prefill%TYPE;
+  lv_prefix                admdocscheme.prefix%TYPE;
+  lv_suffix                admdocscheme.suffix%TYPE;
+  lv_generation_interval   admdocscheme.generation_interval%TYPE;
+  lv_doccode_wise          admdocscheme.doccode_wise%TYPE;
+  lv_basedon               admdocscheme.basedon%TYPE;
+  lv_generation_basis      admdocscheme.generation_basis%TYPE;
+  lv_batchappl             admdocscheme.batchappl%TYPE;
+  lv_doc_cnt                     bigint;
+  lv_start_from                  bigint;
+  lv_lastdocno                   bigint;
+  lv_main_prefix                varchar(300);
+  lv_main_suffix                varchar(300);
+  lv_return_value                varchar(100);
+BEGIN
+SELECT MANUAL,
+       WIDTH,
+       coalesce(STARTING, 0) STARTING,
+       PREFILL,
+       PREFIX,
+       SUFFIX,
+       GENERATION_INTERVAL,
+       DOCCODE_WISE,
+       BASEDON,
+       GENERATION_BASIS,
+       BATCHAPPL
+  INTO STRICT lv_manual,
+       lv_width,
+       lv_starting,
+       lv_prefill,
+       lv_prefix,
+       lv_suffix,
+       lv_generation_interval,
+       lv_doccode_wise,
+       lv_basedon,
+       lv_generation_basis,
+       lv_batchappl
+  FROM ADMDOCSCHEME
+ WHERE DOCCODE = pv_doccode;
+ IF UPPER(lv_batchappl) <> 'Y' THEN
+    RAISE EXCEPTION 'e_batchapplexception' USING ERRCODE = '50002';
+ END IF;
+ UPDATE ADMLASTDOC SET    LASTNO = coalesce(LASTNO,0) + 1 WHERE  DOCCODE = pv_doccode;
+ GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+   THEN
+      BEGIN
+        lv_doc_cnt := 0;
+        SELECT CASE WHEN lv_doc_cnt =  0  THEN COALESCE(lv_starting, 1) ELSE 1 END
+        INTO STRICT lv_start_from
+;
+        INSERT INTO ADMLASTDOC(DOCCODE,ENTDT,LASTNO) VALUES (pv_doccode,TO_DATE(pv_entdt, 'DD/MM/YYYY'),lv_start_from);
+      END;
+  END IF;
+  SELECT LASTNO  INTO STRICT lv_lastdocno FROM   ADMLASTDOC WHERE  DOCCODE = pv_doccode;
+    SELECT REPLACE(
+              REPLACE(
+                 REPLACE(
+                    REPLACE(
+                       REPLACE(
+                          REPLACE(
+                             lv_prefix,
+                             '[DD]',
+                             TO_CHAR(TO_DATE(pv_entdt, 'DD/MM/YYYY'), 'DD')),
+                          '[MM]',
+                          TO_CHAR(TO_DATE(pv_entdt, 'DD/MM/YYYY'), 'MM')),
+                       '[YY]',
+                       TO_CHAR(TO_DATE(pv_entdt, 'DD/MM/YYYY'), 'YY')),
+                    '[YYYY]',
+                    TO_CHAR(TO_DATE(pv_entdt, 'DD/MM/YYYY'), 'YYYY')),
+                 '[MON]',
+                 TO_CHAR(TO_DATE(pv_entdt, 'DD/MM/YYYY'), 'MON')),
+              '[DAY]',
+              TO_CHAR(TO_DATE(pv_entdt, 'DD/MM/YYYY'), 'DY'))
+      INTO STRICT lv_main_prefix
+;
+    SELECT REPLACE(
+              REPLACE(
+                 REPLACE(
+                    REPLACE(
+                       REPLACE(
+                          REPLACE(
+                             lv_suffix,
+                             '[DD]',
+                             TO_CHAR(TO_DATE(pv_entdt, 'DD/MM/YYYY'), 'DD')),
+                          '[MM]',
+                          TO_CHAR(TO_DATE(pv_entdt, 'DD/MM/YYYY'), 'MM')),
+                       '[YY]',
+                       TO_CHAR(TO_DATE(pv_entdt, 'DD/MM/YYYY'), 'YY')),
+                    '[YYYY]',
+                    TO_CHAR(TO_DATE(pv_entdt, 'DD/MM/YYYY'), 'YYYY')),
+                 '[MON]',
+                 TO_CHAR(TO_DATE(pv_entdt, 'DD/MM/YYYY'), 'MON')),
+              '[DAY]',
+              TO_CHAR(TO_DATE(pv_entdt, 'DD/MM/YYYY'), 'DY'))
+      INTO STRICT lv_main_suffix
+;
+  IF lv_prefill IS NOT NULL
+   THEN
+        lv_return_value :=
+               COALESCE (lv_main_prefix,'')
+            || LPAD(lv_lastdocno, lv_width::integer, lv_prefill)
+            || COALESCE (lv_main_suffix,'');	
+    ELSE
+        lv_return_value :=
+              COALESCE (lv_main_prefix,'')
+            || lv_lastdocno
+            || COALESCE (lv_main_suffix,'');
+    END IF;
+   IF LENGTH(lv_lastdocno::varchar) > lv_width
+   THEN
+      RAISE EXCEPTION 'e_widthexception' USING ERRCODE = '50001';
+   END IF;
+
+  RETURN(lv_return_value);
+  EXCEPTION
+    WHEN SQLSTATE '50002' THEN
+      ROLLBACK;
+      CALL ERRAUDIT(USER,
+                'Db_Fun_Document_Number_Batch',
+                SQLSTATE::varchar,
+                SQLERRM);
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED -  Batch is not applicable for selected document numbering scheme.'
+         || ' : '
+         || pv_doccode USING ERRCODE = '45001';
+   WHEN SQLSTATE '50001' THEN
+      ROLLBACK;
+      CALL ERRAUDIT(USER,
+                'Db_Fun_Document_Number_Batch',
+                SQLSTATE::varchar,
+                SQLERRM);
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED -  Document no width becomes greater than the width specified in master '
+         || ' : '
+         || pv_doccode USING ERRCODE = '45001';
+   WHEN OTHERS
+   THEN
+      ROLLBACK;
+      CALL ERRAUDIT(USER,
+                'Db_Fun_Document_Number_Batch',
+                SQLSTATE::varchar,
+                SQLERRM);
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED '
+         || SQLSTATE
+         || '-'
+         || SQLERRM
+         || ' : '
+         || pv_doccode
+         USING ERRCODE = '45002';
+ END;
+"""
+  returnType = text
+  arguments = <
+    {
+      name = pv_doccode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = pv_entdt
+      type = text
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

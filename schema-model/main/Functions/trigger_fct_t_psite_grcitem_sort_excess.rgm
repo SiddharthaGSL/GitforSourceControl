@@ -1,0 +1,197 @@
+function "main"."trigger_fct_t_psite_grcitem_sort_excess()" {
+  text = """
+
+DECLARE
+   v_type              varchar(100);
+   v_detail_code       invstock.detail_code%TYPE;
+   v_entcode           invstock.entcode%TYPE;
+   v_entno             invstock.entno%TYPE;
+   v_scheme_docno      invstock.scheme_docno%TYPE;
+   v_entdt             invstock.entdt%TYPE;
+   v_enttype           invstock.enttype%TYPE;
+   v_subenttype        invstock.subenttype%TYPE;
+   v_loccode           invstock.loccode%TYPE;
+   v_ycode             invstock.ycode%TYPE;
+   v_new_icode         invstock.icode%TYPE;
+   v_old_icode         invstock.icode%TYPE;
+   v_new_qty           invstock.qty%TYPE;
+   v_old_qty           invstock.qty%TYPE;
+   v_new_rate          invstock.rate%TYPE;
+   v_old_rate          invstock.rate%TYPE;
+   v_refpcode          invstock.refpcode%TYPE;
+   v_refsitecode       invstock.admsite_code%TYPE;
+   v_issecondary       invstock.issecondary%TYPE;
+   v_refsaletype       salinvmain.saletype%TYPE;
+   v_refloccode        invstock.refloccode%TYPE;
+   v_refcmpcode        invstock.refcmpcode%TYPE;
+   v_refglcode         invstock.refglcode%TYPE;
+   v_refdeptcode       invstock.refdeptcode%TYPE;
+   v_refprcode         invstock.refprcode%TYPE;
+   v_refdocno          invstock.refdocno%TYPE;
+   v_refpkgcode        invstock.refpkgcode%TYPE;
+   v_refdccode         invstock.refdccode%TYPE;
+   v_other_rate        invstock.costrate%TYPE;
+   v_item_remarks      invstock.item_remarks%TYPE;
+   v_site_upd_cost     invstock.upd_cost%TYPE;
+   v_upd_cost          invstock.upd_cost%TYPE;
+   v_saletype          finsl.saletype%TYPE;
+   v_ts_admsite_code   invstock.admsite_code%TYPE;
+   v_slcode            finsl.slcode%TYPE;
+
+   -- START REV : 001
+   v_ref_family_code        invstock.ref_family_code%TYPE;
+   -- END REV : 001
+   /*******************************************************************************************************************
+     REV NO      DATE           OWNER            DESCRIPTION
+     ---------   -----------    -----------      ---------------------------------------------------------------------
+     REV : 001   10-OCT-2017    Diptiman         (TFS ID : 32259) Reference family code introduced.
+     REV : 002   14-NOV-2017    DIPTIMAN         (TFS ID : 32259) COGS costrate related changes.
+     REV : 003   14-NOV-2017    DIPTIMAN         (TFS ID : 32259, 42078) COGS costrate related changes.
+   *******************************************************************************************************************/
+BEGIN
+   SELECT  slcode
+   INTO STRICT    v_slcode
+   FROM    ADMSITE
+   WHERE   code = NEW.admsite_code;
+
+   IF coalesce(NEW.shortexcessqty, 0) <> 0
+   THEN
+      SELECT NULL entno, pg.docdt entdt, code entcode, 'ADJ' enttype,
+             (SELECT saletype
+                FROM finsl
+               WHERE slcode = (SELECT slcode
+                                 FROM admsite
+                                WHERE code = pg.admsite_code)) saletype,
+             pg.ycode ycode, pg.slcode refpcode,
+             pg.admsite_code refsitecode, pg.store_loccode refloccode,
+             (SELECT CASE
+                        WHEN coalesce(issecondary, 'N') = 'N'
+                           THEN NULL
+                        ELSE issecondary
+                     END
+                FROM admsite
+               WHERE code = pg.admsite_code) refissecondary,
+             psite_transit_loccode loccode, NULL refsaletype,
+             NULL refcmpcode, NULL refglcode, NULL refdeptcode,
+             NULL refprcode, NULL refdocno, NULL refpkgcode,
+             pg.docno scheme_docno, pg.repln_admsite_code
+        INTO STRICT v_entno, v_entdt, v_entcode, v_enttype,
+             v_saletype,
+             v_ycode, v_refpcode,
+             v_refsitecode, v_refloccode,
+             v_issecondary,
+             v_loccode, v_refsaletype,
+             v_refcmpcode, v_refglcode, v_refdeptcode,
+             v_refprcode, v_refdocno, v_refpkgcode,
+             v_scheme_docno, v_ts_admsite_code
+        FROM psite_grc pg
+       WHERE pg.code = NEW.psite_grc_code;
+
+      v_detail_code := NEW.code;
+      v_new_icode := NEW.icode;
+      v_old_icode := OLD.icode;
+      v_new_qty := 0 - NEW.shortexcessqty;
+      v_old_qty := 0 - OLD.shortexcessqty;
+      v_new_rate := NEW.rate;
+      v_old_rate := NEW.rate;
+      v_item_remarks := NEW.lineremarks;
+
+      IF NEW.shortexcessqty < 0
+      THEN
+         v_site_upd_cost := 'Y';
+         v_upd_cost      := 'Y';
+      ELSIF NEW.shortexcessqty > 0
+      THEN
+         v_site_upd_cost := 'N';
+         v_upd_cost      := 'N';
+      END IF;
+
+      IF v_saletype = 'C' OR v_slcode IS NULL
+      THEN
+         IF NEW.shortexcessqty < 0
+         THEN
+            v_subenttype := 'ACI';
+            v_other_rate := NEW.costrate;
+         ELSIF NEW.shortexcessqty > 0
+         THEN
+            v_subenttype := 'ACO';
+         END IF;
+      END IF;
+
+      IF v_saletype = 'O'
+      THEN
+         IF NEW.shortexcessqty < 0
+         THEN
+            v_subenttype := 'ASI';
+         ELSIF NEW.shortexcessqty > 0
+         THEN
+            v_subenttype := 'ASO';
+         END IF;
+      END IF;
+
+      -- START REV : 001
+      v_ref_family_code := NEW.ref_family_code;
+      -- END REV : 001
+      v_type := 'INSERTING';
+
+      CALL db_pkg_stock$reflect(v_detail_code,
+                            v_type,
+                            v_entcode,
+                            v_entno,
+                            v_entdt,
+                            v_enttype,
+                            v_loccode,
+                            v_ycode,
+                            v_new_icode,
+                            v_old_icode,
+                            v_new_qty,
+                            v_old_qty,
+                            v_new_rate,
+                            v_old_rate,
+                            v_refpcode,
+                            v_refloccode,
+                            v_refcmpcode,
+                            v_refglcode,
+                            v_refdeptcode,
+                            v_refprcode,
+                            v_refdocno,
+                            v_refpkgcode,
+                            v_refdccode,
+                            v_other_rate,
+                            v_scheme_docno,
+                            v_subenttype,
+                            v_upd_cost,
+                            v_item_remarks,
+                            v_refsitecode,
+                            v_issecondary,
+                            v_site_upd_cost,
+                            v_new_rate,
+                            v_ts_admsite_code,
+                            -- START REV : 001
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            0,
+                            V_REF_FAMILY_CODE
+                            --END REV : 001
+                            -- START REV : 003
+                            ,NEW.COSTRATE
+                            -- END REV : 003
+                           );
+   END IF;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

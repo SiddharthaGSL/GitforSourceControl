@@ -1,0 +1,136 @@
+procedure "main"."db_pkg_si_calculate_si(bigint, timestamp without time zone, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      C1 CURSOR FOR
+            SELECT  PB.CODE             PBCODE,
+                    date_trunc('day', PB.BILLDATE)  BILLDT
+            FROM    PSITE_POSBILL   PB
+            WHERE   PB.ADMSITE_CODE = PADMSITE_CODE
+            AND     date_trunc('day', PB.BILLDATE) BETWEEN PDDATEFR AND PDDATETO
+            ORDER BY
+                    1;
+
+      C2 CURSOR(P_PBCODE PSITE_POSBILL.CODE%TYPE) FOR
+              SELECT  I.ICODE,
+            (
+                SELECT  PARCODE
+                FROM    INVGRP
+                WHERE   GRPCODE = (
+                                    SELECT  PARCODE
+                                    FROM    INVGRP
+                                    WHERE   GRPCODE = I.GRPCODE
+                                  )
+            )     DIVISION_GRPCODE,
+            (
+                SELECT  PARCODE
+                FROM    INVGRP
+                WHERE   GRPCODE = I.GRPCODE
+            )   SECTION_GRPCODE,
+            I.GRPCODE   DEPARTMENT_GRPCODE,
+            I.INVARTICLE_CODE,
+            I.CCODE1,
+            I.CCODE2,
+            I.CCODE3,
+            I.CCODE4,
+            I.CCODE5,
+            I.CCODE6,
+            -- START REV : 002
+            I.DESC1,
+            I.DESC2,
+            I.DESC3,
+            I.DESC4,
+            I.DESC5,
+            I.DESC6,
+            -- END REV : 002
+            PBI.MRP,
+            PBI.RSP,
+            date_trunc('day', I.GENERATED)  GENERATED
+    FROM    PSITE_POSBILLITEM   PBI,
+            INVITEM             I
+    WHERE   I.ICODE                 = PBI.ICODE
+    AND     PBI.PSITE_POSBILL_CODE  = P_PBCODE
+    AND     PBI.PSITE_SALESPERSON_ID IS NOT NULL;
+
+
+BEGIN
+    PERFORM set_config('db_pkg_si.v_curr_proc_name', 'DB_PKG_SI.CALCULATE_SI()', false);
+
+    IF  PDDATEFR IS NOT NULL AND PDDATETO IS NOT NULL AND PDDATETO >= PDDATEFR THEN
+        CALL db_pkg_si_record_progress('Collecting data.#Collecting data for SI.',1);
+
+        DELETE FROM SI_PSITE_POSBILLITEM
+        WHERE date_trunc('day', BILLDATE) BETWEEN PDDATEFR AND PDDATETO
+        AND  ADMSITE_CODE = PADMSITE_CODE;
+
+        FOR I IN C1 LOOP
+            DELETE
+            FROM    GLOBAL_PROMO_INVITEM;
+
+            FOR J IN C2(I.PBCODE)
+            LOOP
+                CALL DB_PKG_SI_POPULATE_ITEM(   J.ICODE,
+                                J.DIVISION_GRPCODE,
+                                J.SECTION_GRPCODE,
+                                J.DEPARTMENT_GRPCODE,
+                                J.INVARTICLE_CODE,
+                                J.CCODE1,
+                                J.CCODE2,
+                                J.CCODE3,
+                                J.CCODE4,
+                                J.CCODE5,
+                                J.CCODE6,
+                                -- START REV : 002
+                                J.DESC1,
+                                J.DESC2,
+                                J.DESC3,
+                                J.DESC4,
+                                J.DESC5,
+                                J.DESC6,
+                                -- END REV : 002
+                                J.MRP,
+                                J.RSP,
+                                J.GENERATED
+                            );
+            END LOOP;
+            CALL DB_PKG_SI_UPDATE_SI(I.PBCODE, I.BILLDT, PADMSITE_CODE, PNECODE);
+            COMMIT;
+        END LOOP;
+            CALL db_pkg_si_record_progress('Cash Memo updation compleated.#Cash Memo updation compleated.',1);
+    END IF;
+  EXCEPTION
+    WHEN OTHERS THEN
+    CALL ERRAUDIT(USER, 'DB_PKG_SI.CALCULATE_SI()', SQLSTATE, SQLERRM);
+  END;
+
+"""
+  arguments = <
+    {
+      name = padmsite_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = pddatefr
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = pddateto
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = pnecode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

@@ -1,0 +1,277 @@
+procedure "main"."db_pkg_cost_calculation_proc_collect_rec_batch_atx(character, timestamp without time zone, timestamp without time zone, character, bigint)" {
+  text = """
+
+BEGIN
+        /* Collect Record to be processed */
+
+        IF  P_PROG_FLAG = 'Y' AND (P_MODE <> 'S' OR (P_MODE = 'S' AND DB_FUN_GET_COGS_REQUEST = 'N')) THEN
+            CALL db_pkg_cost_calculation_record_progress('Collecting data which should be update.#Collecting data which should be update.',1);
+        END IF;
+
+
+        IF  P_MODE = 'F' THEN --ALL ITEM
+            EXECUTE 'TRUNCATE TABLE TEMP_FIFO_ITEM';
+
+            INSERT /*+ APPEND */ INTO TEMP_FIFO_ITEM(ICODE)
+            SELECT DISTINCT ICODE
+            FROM    INVCOSTPOOL_MIX P, INVSTOCK I
+            WHERE   P.POOL='OUT'
+            AND     P.ENTTYPE=I.ENTTYPE
+            AND     ((P.SUBENTTYPE IS NULL AND I.SUBENTTYPE IS NULL) OR (P.SUBENTTYPE=I.SUBENTTYPE))
+            AND     (
+                    (P.CONSIDER_QTY_SIGN = '+' AND coalesce(I.QTY,0)>0)
+                    OR (P.CONSIDER_QTY_SIGN = '-' AND coalesce(I.QTY,0)<0)
+                )
+            AND     I.ENTDT BETWEEN P_DATE_FROM AND P_DATE_TO
+            -- START REV : 012
+            AND     coalesce(I.ADMOU_CODE,P_ADMOU_CODE) = P_ADMOU_CODE;
+            -- END REV : 012
+-- START REV : 014
+        EXECUTE 'ANALYZE TABLE TEMP_FIFO_ITEM COMPUTE STATISTICS';
+-- END REV : 014
+        END IF;
+
+        EXECUTE 'TRUNCATE TABLE TEMP_INVSTOCK';
+
+        IF  P_MODE IN ('F','I') THEN --ALL ITEM AND SELECTED ITEM from Recalculate COGS module
+            /* Collect Record for batch job */
+
+            INSERT /*+ APPEND */ INTO TEMP_INVSTOCK(SITETYPE, FIFO_LEVEL, STOCKCODE, ERS_CODE, ENTDT, ENTTYPE, SUBENTTYPE, ICODE, DETAIL_ERS_CODE, REFPCODE, QTY, SEQ, ADMSITE_CODE, ADMOU_CODE, ISSECONDARY)
+            SELECT  S.SITETYPE, P.FIFO_LEVEL, I.STOCKCODE, I.STOCKCODE, I.ENTDT, I.ENTTYPE, I.SUBENTTYPE, I.ICODE, I.DETAIL_CODE, I.REFPCODE, I.QTY, P.SEQ, I.ADMSITE_CODE, I.ADMOU_CODE, coalesce(I.ISSECONDARY,'N') ISSECONDARY
+            FROM    INVCOSTPOOL_MIX P, INVSTOCK I, ADMSITE S
+            WHERE   I.ADMSITE_CODE = S.CODE
+            AND     I.ICODE IN (SELECT T.ICODE FROM TEMP_FIFO_ITEM T)
+            AND     P.POOL='OUT'
+            AND     P.ENTTYPE=I.ENTTYPE
+            AND     ((P.SUBENTTYPE IS NULL AND I.SUBENTTYPE IS NULL) OR (P.SUBENTTYPE=I.SUBENTTYPE))
+            -- START REV : 012
+            AND     coalesce(I.ADMOU_CODE,P_ADMOU_CODE) = P_ADMOU_CODE
+            -- END REV : 012
+            AND     (
+                        (P.CONSIDER_QTY_SIGN = '+' AND coalesce(I.QTY,0)>0)
+                        OR (P.CONSIDER_QTY_SIGN = '-' AND coalesce(I.QTY,0)<0)
+                    )
+            AND     I.ENTDT BETWEEN P_DATE_FROM AND P_DATE_TO;
+
+        ELSIF  P_MODE IN ('S')  AND DB_FUN_GET_COGS_REQUEST = 'N'   THEN --SCHEDULED FIFO JOB
+            /* Collect Record for batch job */
+
+            INSERT /*+ APPEND */ INTO TEMP_INVSTOCK(SITETYPE, FIFO_LEVEL, STOCKCODE, ERS_CODE, ENTDT, ENTTYPE, SUBENTTYPE, ICODE, DETAIL_ERS_CODE, REFPCODE, QTY, SEQ, ADMSITE_CODE, ADMOU_CODE, ISSECONDARY)
+            SELECT  S.SITETYPE, P.FIFO_LEVEL, I.STOCKCODE, I.STOCKCODE, I.ENTDT, I.ENTTYPE, I.SUBENTTYPE, I.ICODE, I.DETAIL_CODE, I.REFPCODE, I.QTY, P.SEQ, I.ADMSITE_CODE, I.ADMOU_CODE, coalesce(I.ISSECONDARY,'N') ISSECONDARY
+            FROM    INVCOSTPOOL_MIX P, INVSTOCK I, ADMSITE S, (SELECT DISTINCT ENTTYPE, STOCKCODE, TYPE FROM INVSTOCK_STAGING) G
+            WHERE   I.STOCKCODE = G.STOCKCODE
+            AND     G.TYPE = 'I'
+            AND     I.ADMSITE_CODE = S.CODE
+            AND     P.POOL='OUT'
+            AND     P.ENTTYPE=I.ENTTYPE
+            -- START REV : 012
+            AND     coalesce(I.ADMOU_CODE,P_ADMOU_CODE) = P_ADMOU_CODE
+            -- END REV : 012
+            AND     ((P.SUBENTTYPE IS NULL AND I.SUBENTTYPE IS NULL) OR (P.SUBENTTYPE=I.SUBENTTYPE))
+            AND     (
+                        (P.CONSIDER_QTY_SIGN = '+' AND coalesce(I.QTY,0)>0)
+                        OR (P.CONSIDER_QTY_SIGN = '-' AND coalesce(I.QTY,0)<0)
+                    );
+
+        END IF;
+
+-- START REV : 014
+        --EXECUTE 'ANALYZE TABLE TEMP_INVSTOCK COMPUTE STATISTICS';
+-- END REV : 014
+        COMMIT;
+
+        --EXECUTE 'TRUNCATE TABLE TEMP_INVSTOCK_SITE_DATE';
+
+        IF (P_MODE <> 'S' OR (P_MODE = 'S' AND DB_FUN_GET_COGS_REQUEST = 'N')) THEN
+            INSERT /*+ APPEND */ INTO TEMP_INVSTOCK_SITE_DATE(ADMOU_CODE, ADMSITE_CODE, SITETYPE, ICODE, ENTDT)
+            SELECT DISTINCT T.ADMOU_CODE, T.ADMSITE_CODE, T.SITETYPE, T.ICODE, T.ENTDT DT FROM TEMP_INVSTOCK T;
+        END IF;
+
+        COMMIT;
+
+-- START REV : 014
+        --EXECUTE 'ANALYZE TABLE TEMP_INVSTOCK_SITE_DATE COMPUTE STATISTICS';
+-- END REV : 014
+        /* Collect Date wise Stock of processed Items's */
+
+        IF P_PROG_FLAG = 'Y'  AND (P_MODE <> 'S' OR (P_MODE = 'S' AND DB_FUN_GET_COGS_REQUEST = 'N')) THEN
+            CALL db_pkg_cost_calculation_record_progress('Preparing temporary stock.#Preparing temporary stock.',1);
+        END IF;
+
+        -- START REV : 009
+        EXECUTE 'TRUNCATE TABLE TEMP_ITEM_DT_STOCK';
+        EXECUTE 'TRUNCATE TABLE TEMP_COGS_DT_STOCK';
+
+        IF  P_MODE IN ('F','I') THEN --ALL ITEM AND SELECTED ITEM from Recalculate COGS module
+            INSERT /*+ APPEND */  INTO TEMP_COGS_DT_STOCK(ADMOU_CODE, ADMSITE_CODE, ICODE, ENTDT, QTY)
+            SELECT  K.ADMOU_CODE, K.ADMSITE_CODE, K.ICODE, K.ENTDT, QTY
+            FROM    INVSTOCK K, TEMP_FIFO_ITEM T
+            WHERE   K.ICODE = T.ICODE
+            AND     K.ENTDT BETWEEN P_DATE_FROM AND P_DATE_TO
+            -- START REV : 012
+            AND     coalesce(K.ADMOU_CODE,P_ADMOU_CODE) = P_ADMOU_CODE;
+            -- END REV : 012;
+            COMMIT;
+
+            INSERT /*+ APPEND */  INTO TEMP_COGS_DT_STOCK(ADMOU_CODE, ADMSITE_CODE, ICODE, ENTDT, QTY)
+            SELECT  K.ADMOU_CODE, K.ADMSITE_CODE, K.ICODE, P_DATE_FROM ENTDT, SUM(K.QTY) QTY
+            FROM    INVSTOCK K, TEMP_FIFO_ITEM T
+            WHERE   K.ICODE = T.ICODE
+            AND     K.ENTDT < P_DATE_FROM
+            -- START REV : 012
+            AND     coalesce(K.ADMOU_CODE,P_ADMOU_CODE) = P_ADMOU_CODE
+            -- END REV : 012
+            GROUP BY K.ADMOU_CODE, K.ADMSITE_CODE, K.ICODE;
+
+            COMMIT;
+
+            INSERT /*+ APPEND */ INTO TEMP_ITEM_DT_STOCK(ADMOU_CODE, ADMSITE_CODE, ICODE, DT, QTY)
+            SELECT  DISTINCT K.ADMOU_CODE, K.ADMSITE_CODE, K.ICODE, K.ENTDT,
+                    SUM(coalesce(K.QTY,0)) OVER (PARTITION BY K.ADMOU_CODE,  K.ADMSITE_CODE, K.ICODE ORDER BY K.ENTDT ASC) QTY
+            FROM    TEMP_COGS_DT_STOCK K;
+
+            /* Collect date wise stock for company level  in BATCH MODE*/
+
+            --INSERT /*+ APPEND */ INTO TEMP_ITEM_DT_STOCK (ADMOU_CODE, ADMSITE_CODE, ICODE, DT, QTY)
+            --SELECT   C.ADMOU_CODE, C.ADMSITE_CODE, C.ICODE, C.ENTDT, A.QTY
+            --FROM    TEMP_INVSTOCK_SITE_DATE C,
+            --    (
+            --   SELECT  DISTINCT K.ADMOU_CODE, K.ADMSITE_CODE, K.ICODE, K.ENTDT,SUM(NVL(K.QTY,0)) OVER (PARTITION BY K.ADMOU_CODE, K.ADMSITE_CODE, K.ICODE ORDER BY K.ENTDT ASC) QTY
+            --    FROM    INVSTOCK K
+            --    WHERE   K.ICODE IN (SELECT T.ICODE FROM TEMP_FIFO_ITEM T)
+            --    ) A
+            --WHERE C.ADMOU_CODE=A.ADMOU_CODE
+            --AND   C.ADMSITE_CODE = A.ADMSITE_CODE
+            --AND   C.ICODE=A.ICODE
+            --AND   C.ENTDT=A.ENTDT;
+        -- END REV : 009
+        ELSIF  P_MODE IN ('S')  AND DB_FUN_GET_COGS_REQUEST = 'N'  THEN --SCHEDULED FIFO JOB
+            /* Collect date wise stock for company level  in JOB MODE*/
+
+            INSERT /*+ APPEND */ INTO TEMP_ITEM_DT_STOCK(ADMOU_CODE, ADMSITE_CODE, ICODE, DT, QTY)
+            SELECT   C.ADMOU_CODE, C.ADMSITE_CODE, C.ICODE, C.ENTDT, A.QTY
+            FROM    TEMP_INVSTOCK_SITE_DATE C,
+                (
+                SELECT  DISTINCT K.ADMOU_CODE, K.ADMSITE_CODE, K.ICODE, K.ENTDT,SUM(coalesce(K.QTY,0)) OVER (PARTITION BY K.ADMOU_CODE, K.ADMSITE_CODE, K.ICODE ORDER BY K.ENTDT ASC) QTY
+                FROM    INVSTOCK K
+                WHERE   K.ICODE IN (SELECT ICODE FROM TEMP_INVSTOCK_SITE_DATE)
+                -- START REV : 012
+                AND     coalesce(K.ADMOU_CODE,P_ADMOU_CODE) = P_ADMOU_CODE
+                -- END REV : 012
+                ) A
+            WHERE C.ADMOU_CODE=A.ADMOU_CODE
+            AND   C.ADMSITE_CODE = A.ADMSITE_CODE
+            AND   C.ICODE=A.ICODE
+            AND   C.ENTDT=A.ENTDT;
+
+        END IF;
+
+        COMMIT;
+
+-- START REV : 014
+        --EXECUTE IMMEDIATE 'ANALYZE TABLE TEMP_ITEM_DT_STOCK COMPUTE STATISTICS';
+        --EXECUTE IMMEDIATE 'ANALYZE TABLE TEMP_COGS_DT_STOCK COMPUTE STATISTICS';
+-- END REV : 014
+        /* Collet Item wise In-Trans Records */
+
+        IF P_PROG_FLAG = 'Y'   AND (P_MODE <> 'S' OR (P_MODE = 'S' AND DB_FUN_GET_COGS_REQUEST = 'N')) THEN
+            CALL db_pkg_cost_calculation_record_progress('Preparing IN Pool.#Preparing IN Pool.',1);
+        END IF;
+
+        EXECUTE 'TRUNCATE TABLE TEMP_FIFO_IN_STOCK';
+
+        /* Collect IN-pool for company level */
+
+        IF (P_MODE <> 'S' OR (P_MODE = 'S' AND DB_FUN_GET_COGS_REQUEST = 'N')) THEN
+            INSERT /*+ APPEND */ INTO TEMP_FIFO_IN_STOCK(ADMOU_CODE, ADMSITE_CODE, ICODE, STOCKCODE, ENTDT, QTY, RATE,SITE_RATE)
+            SELECT  I.ADMOU_CODE, I.ADMSITE_CODE, I.ICODE, I.STOCKCODE, I.ENTDT, I.QTY, I.COSTRATE, I.RATE
+            FROM    INVSTOCK I, ADMSITE SITE, (SELECT T.ADMOU_CODE, T.ADMSITE_CODE, T.ICODE, MAX(T.ENTDT) DT FROM TEMP_INVSTOCK_SITE_DATE T GROUP BY T.ADMOU_CODE, T.ADMSITE_CODE, T.ICODE) S
+            WHERE   I.ADMOU_CODE=S.ADMOU_CODE
+            AND     I.ADMSITE_CODE=S.ADMSITE_CODE
+            AND     I.ADMSITE_CODE = SITE.CODE
+            AND     SITE.SITETYPE IN ('OS-OO-CM','MS-OO-CM','MS-CO-CM','US-CO-CM')
+            AND     I.ICODE = S.ICODE
+            AND     I.ENTDT<=S.DT
+            AND     I.UPD_COST='Y'
+            -- START REV : 012
+            AND     coalesce(I.ADMOU_CODE,P_ADMOU_CODE) = P_ADMOU_CODE;
+            -- END REV : 012
+        END IF;
+
+        COMMIT;
+
+
+        /* Collect IN-pool for site level */
+
+        IF (P_MODE <> 'S' OR (P_MODE = 'S' AND DB_FUN_GET_COGS_REQUEST = 'N')) THEN
+            INSERT /*+ APPEND */ INTO TEMP_FIFO_IN_STOCK(ADMOU_CODE, ADMSITE_CODE, ICODE, STOCKCODE, ENTDT, QTY, RATE,SITE_RATE)
+            SELECT  I.ADMOU_CODE, I.ADMSITE_CODE, I.ICODE, I.STOCKCODE, I.ENTDT, I.QTY, I.COSTRATE, I.RATE
+            FROM    INVSTOCK I, ADMSITE SITE, (SELECT T.ADMOU_CODE, T.ADMSITE_CODE, T.ICODE, MAX(T.ENTDT) DT FROM TEMP_INVSTOCK_SITE_DATE T GROUP BY T.ADMOU_CODE, T.ADMSITE_CODE, T.ICODE) S
+            WHERE   I.ADMOU_CODE=S.ADMOU_CODE
+            AND     I.ADMSITE_CODE=S.ADMSITE_CODE
+            AND     I.ADMSITE_CODE = SITE.CODE
+            AND     SITE.SITETYPE IN ('MS-CO-OM-TS','US-CO-OM-TS')
+            AND     I.ICODE = S.ICODE
+            AND     I.ENTDT<=S.DT
+            AND     I.SITE_UPD_COST='Y'
+            -- START REV : 012
+            AND     coalesce(I.ADMOU_CODE,P_ADMOU_CODE) = P_ADMOU_CODE;
+            -- END REV : 012
+        END IF;
+
+-- START REV : 014
+        --EXECUTE IMMEDIATE 'ANALYZE TABLE TEMP_FIFO_IN_STOCK COMPUTE STATISTICS';
+-- END REV : 014
+        /*
+        Possible Scenarios
+        ====================
+        UP_COST = Y and SITE_UPD_COST = 'Y' : Possible for all Consignment Site stock Inward entries
+        UP_COST = Y and SITE_UPD_COST = 'N' : Not Possible
+        UP_COST = N and SITE_UPD_COST = 'Y' : Possible for all Outright Track Secondary Site stock Inward entries
+        UP_COST = N and SITE_UPD_COST = 'N' : Not considered
+        */
+        COMMIT;
+
+
+    END;
+
+"""
+  arguments = <
+    {
+      name = p_mode
+      type = character
+      mode = IN
+    }
+
+    {
+      name = p_date_from
+      type = timestamp without time zone
+      mode = IN
+      default = NULL::timestamp without time zone
+    }
+
+    {
+      name = p_date_to
+      type = timestamp without time zone
+      mode = IN
+      default = NULL::timestamp without time zone
+    }
+
+    {
+      name = p_prog_flag
+      type = character
+      mode = IN
+      default = 'N'::bpchar
+    }
+
+    {
+      name = p_admou_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+  >
+  language = plpgsql
+}
+

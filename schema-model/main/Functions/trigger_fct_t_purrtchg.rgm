@@ -1,0 +1,217 @@
+function "main"."trigger_fct_t_purrtchg()" {
+  text = """
+
+DECLARE
+   ora2pg_rowcount integer;
+V_SCHEME_DOCNO   PURRTMAIN.SCHEME_DOCNO%TYPE;
+   -- START REV : 002
+   V_ADMSITE_CODE   ADMSITE.CODE%TYPE;
+   V_POSTCODE       bigint;
+   V_CCCODE         FINCOSTTAG.CODE%TYPE;
+   -- END REV : 002
+   -- START REV : 005
+   V_DAMOUNT        FINPOST.DAMOUNT%TYPE;
+   V_CAMOUNT        FINPOST.CAMOUNT%TYPE;
+   -- END REV : 005
+   V_ADMOU_CODE     FINPOST.ADMOU_CODE%TYPE; -- REV : 006
+BEGIN
+  BEGIN
+
+    -- start rev : 013
+   SELECT SCHEME_DOCNO, ADMSITE_CODE
+          ,ADMOU_CODE  -- REV : 006
+   INTO STRICT   V_SCHEME_DOCNO, V_ADMSITE_CODE
+          ,V_ADMOU_CODE  -- REV : 006
+   FROM   PURRTMAIN
+   WHERE  RTCODE = coalesce(NEW.RTCODE, OLD.RTCODE);
+
+   IF   TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN
+        UPDATE FINPOST
+        SET    ENTNO = NEW.RTNO::varchar
+              ,SCHEME_DOCNO = V_SCHEME_DOCNO
+              ,ENTDT = NEW.RTDT
+              ,GLCODE = NEW.GLCODE
+              ,SLCODE = NEW.SLCODE
+              ,CHGCODE = NEW.CHGCODE
+              ,CHGRATE = NEW.RATE
+              ,DAMOUNT =
+                         CASE WHEN(coalesce(CAMOUNT, 0) - coalesce(DAMOUNT, 0) - coalesce(OLD.CHGAMT, 0)) < 0 THEN
+                                0 - (coalesce(CAMOUNT,0) - coalesce(DAMOUNT,0) - coalesce(OLD.CHGAMT,0))
+                              ELSE 0
+                         END
+              ,CAMOUNT =
+                         CASE WHEN(coalesce(CAMOUNT, 0) - coalesce(DAMOUNT, 0) - coalesce(OLD.CHGAMT, 0)) > 0 THEN (coalesce(CAMOUNT,0) - coalesce(DAMOUNT,0) - coalesce(OLD.CHGAMT,0))
+                              ELSE 0
+                         END
+        WHERE  ENTCODE = NEW.RTCODE::varchar
+        AND    ENTTYPE = 'PRC'
+        AND    CHGCODE = OLD.CHGCODE
+        AND    coalesce(CHGRATE, 0) = coalesce(OLD.RATE, 0)
+        -- START REV : 100
+       -- AND    GLCODE = :OLD.GLCODE
+        AND    ((OLD.GLCODE IS NULL AND GLCODE IS NULL) OR GLCODE = OLD.GLCODE)
+        -- END REV : 100
+        AND    ((OLD.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = OLD.SLCODE);
+
+        UPDATE  FINPOST
+        SET     ENTNO = NEW.RTNO::varchar
+               ,SCHEME_DOCNO = V_SCHEME_DOCNO
+               ,ENTDT = NEW.RTDT
+               ,GLCODE = NEW.GLCODE
+               ,SLCODE = NEW.SLCODE
+               ,CHGCODE = NEW.CHGCODE
+               ,CHGRATE = NEW.RATE
+               ,DAMOUNT =
+                           CASE WHEN(coalesce(CAMOUNT, 0) - coalesce(DAMOUNT, 0) + coalesce(NEW.CHGAMT, 0)) < 0 THEN
+                                  0 - (coalesce(CAMOUNT,0) - coalesce(DAMOUNT,0) + coalesce(NEW.CHGAMT,0))
+                                ELSE 0
+                           END
+               ,CAMOUNT =
+                           CASE WHEN(coalesce(CAMOUNT, 0) - coalesce(DAMOUNT, 0) + coalesce(NEW.CHGAMT, 0)) > 0 THEN (coalesce(CAMOUNT,0) - coalesce(DAMOUNT,0) + coalesce(NEW.CHGAMT,0))
+                                ELSE 0
+                           END
+        WHERE     ENTCODE = NEW.RTCODE::varchar
+        AND       ENTTYPE = 'PRC'
+        AND       CHGCODE = NEW.CHGCODE
+        AND       coalesce(CHGRATE, 0) = coalesce(NEW.RATE, 0)
+        -- START REV : 100
+       -- AND    GLCODE = :NEW.GLCODE
+        AND    ((NEW.GLCODE IS NULL AND GLCODE IS NULL) OR GLCODE = NEW.GLCODE)
+        -- END REV : 100
+        AND       ((NEW.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = NEW.SLCODE)
+        RETURNING POSTCODE
+        INTO      V_POSTCODE;
+
+        GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF  ora2pg_rowcount = 0 THEN
+            IF    coalesce(NEW.CHGAMT, 0) < 0 THEN
+                   INSERT INTO FINPOST(POSTCODE, ENTCODE, ENTNO, ENTDT
+                        ,ENTTYPE, GLCODE, SLCODE, DAMOUNT, CAMOUNT, YCODE
+                        ,CHGCODE, CHGRATE, SCHEME_DOCNO
+                        ,ADMOU_CODE -- REV : 006
+                        )
+                   VALUES ( nextval('erp01'),NEW.RTCODE::varchar, NEW.RTNO::varchar,NEW.RTDT,'PRC'
+                         ,NEW.GLCODE, NEW.SLCODE, -coalesce(NEW.CHGAMT, 0), 0, NEW.YCODE
+                         ,NEW.CHGCODE, NEW.RATE, V_SCHEME_DOCNO
+                         ,V_ADMOU_CODE -- REV : 006
+                         )
+                   RETURNING   POSTCODE
+                   INTO        V_POSTCODE;
+             ELSIF coalesce(NEW.CHGAMT, 0) > 0 THEN
+               INSERT INTO FINPOST(POSTCODE, ENTCODE, ENTNO, ENTDT
+                        ,ENTTYPE, GLCODE, SLCODE, DAMOUNT, CAMOUNT, YCODE
+                        ,CHGCODE, CHGRATE, SCHEME_DOCNO
+                        ,ADMOU_CODE -- REV : 006
+                        )
+               VALUES (nextval('erp01'),NEW.RTCODE::varchar, NEW.RTNO::varchar,NEW.RTDT,'PRC'
+                        ,NEW.GLCODE, NEW.SLCODE, 0, coalesce(NEW.CHGAMT, 0), NEW.YCODE
+                        ,NEW.CHGCODE, NEW.RATE, V_SCHEME_DOCNO
+                        ,V_ADMOU_CODE -- REV : 006
+                        )
+               RETURNING   POSTCODE
+               INTO        V_POSTCODE;
+            END IF;
+        END IF;
+
+        BEGIN
+            SELECT  POSTCODE,
+                    DAMOUNT,
+                    CAMOUNT
+            INTO STRICT
+                    V_POSTCODE,
+                    V_DAMOUNT,
+                    V_CAMOUNT
+            FROM
+                    FINPOST
+            WHERE
+                    ENTCODE = NEW.RTCODE::varchar
+            AND     ENTTYPE = 'PRC'
+            -- START REV : 100
+            -- AND    GLCODE = :NEW.GLCODE
+            AND    ((NEW.GLCODE IS NULL AND GLCODE IS NULL) OR GLCODE = NEW.GLCODE)
+            -- END REV : 100
+            AND     CHGCODE = NEW.CHGCODE
+            AND     coalesce(CHGRATE, 0) = coalesce(NEW.RATE, 0)
+            AND     ((NEW.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = NEW.SLCODE);
+
+            DELETE    FROM FINCOSTTAG
+            WHERE     ENTCODE   = NEW.RTCODE::varchar
+            -- START REV : 100
+            -- AND    GLCODE = :OLD.GLCODE
+            AND    ((OLD.GLCODE IS NULL AND GLCODE IS NULL) OR GLCODE = OLD.GLCODE)
+            -- END REV : 100
+            AND       ((OLD.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = OLD.SLCODE)
+            AND       ADMSITE_CODE = V_ADMSITE_CODE
+            AND       POSTCODE  = V_POSTCODE
+            AND       REF_ADMSITE_CODE = V_ADMSITE_CODE;
+
+            IF  V_POSTCODE IS NOT NULL AND NEW.GL_CC_APPL = 'Y' AND (coalesce(V_DAMOUNT,0) <> 0 OR coalesce(V_CAMOUNT,0) <> 0) THEN
+                INSERT INTO FINCOSTTAG(ENTCODE, ENTNO, ENTDT, ENTTYPE
+                       ,GLCODE, YCODE, COSTCODE, SLCODE, DAMOUNT, CAMOUNT
+                       ,POSTCODE, ADMSITE_CODE, REF_ADMSITE_CODE
+                       ,ADMOU_CODE -- REV : 006
+                       )
+                VALUES (NEW.RTCODE::varchar, NEW.RTNO::varchar, NEW.RTDT, 'PRC'
+                       ,NEW.GLCODE, NEW.YCODE, NULL, NEW.SLCODE, V_DAMOUNT, V_CAMOUNT
+                       ,V_POSTCODE, V_ADMSITE_CODE, V_ADMSITE_CODE
+                       ,V_ADMOU_CODE -- REV : 006
+                       );
+            END IF;
+        EXCEPTION
+            WHEN no_data_found THEN
+            NULL;
+        END;
+        -- END REV : 005
+   END IF;
+
+   IF TG_OP = 'DELETE' THEN
+      DELETE FROM FINCOSTTAG
+      WHERE  POSTCODE IN(
+                     SELECT POSTCODE
+                     FROM   FINPOST
+                     WHERE  ENTCODE = OLD.RTCODE::varchar
+                     AND    ENTTYPE = 'PRC'
+                     AND    CHGCODE = OLD.CHGCODE
+                     AND    coalesce(CHGRATE, 0) = coalesce(OLD.RATE, 0)
+                    -- START REV : 100
+                    -- AND    GLCODE = :OLD.GLCODE
+                    AND    ((OLD.GLCODE IS NULL AND GLCODE IS NULL) OR GLCODE = OLD.GLCODE)
+                    -- END REV : 100
+                     AND    ((OLD.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = OLD.SLCODE));
+
+      DELETE FROM FINPOST
+      WHERE  ENTCODE = OLD.RTCODE::varchar
+      AND    ENTTYPE = 'PRC'
+      AND    CHGCODE = OLD.CHGCODE
+      AND    coalesce(CHGRATE, 0) = coalesce(OLD.RATE, 0)
+    -- START REV : 100
+    -- AND    GLCODE = :OLD.GLCODE
+      AND    ((OLD.GLCODE IS NULL AND GLCODE IS NULL) OR GLCODE = OLD.GLCODE)
+    -- END REV : 100
+      AND    ((OLD.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = OLD.SLCODE);
+   END IF;
+
+   DELETE FROM FINPOST
+   WHERE  ENTCODE = OLD.RTCODE::varchar
+   AND    ENTTYPE = 'PRC'
+   AND    coalesce(DAMOUNT, 0) = 0
+   AND    coalesce(CAMOUNT, 0) = 0;
+EXCEPTION
+   WHEN OTHERS THEN
+     CALL ERRAUDIT(USER, 'T_Purrtchg', SQLSTATE::varchar, SQLERRM);
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED  ' || SQLSTATE::varchar || '  ' || SQLERRM USING ERRCODE = '45001';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

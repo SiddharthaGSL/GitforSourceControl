@@ -1,0 +1,137 @@
+function "main"."int$pkg_orgunmgtag_int$pkg_orgunmgtag_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        errmsg                  varchar(500);
+        vsession                varchar(100);
+        vdetailtbl              varchar(1000);
+        vdetailrec              varchar(500);
+        errcode                 bigint;
+        vmaxno                  bigint;
+        vcount                  bigint;V_CNT                   bigint := 0;
+        v_follow_transit_route  bigint;
+
+        -- START REV : 002
+        C_SITE CURSOR FOR
+            SELECT A.PRICELISTCODE, A.SALTERMCODE, S.CODE FINSL_OU_SITE_CODE, O.CODE FINS_OU_CODE,
+                   a.FINTRADEGRP_CODE, A.SALFORMCODE,
+                   A.CUSTOMER_SITE_CODE, UPPER(SUBSTR(A.OUT_LGT_APPL,1,1)) OUT_LGT_APPLICABLE,
+                   UPPER(SUBSTR(A.OUT_PERMIT_APPL,1,1)) OUT_PERMIT_APPLICABLE,
+                   UPPER(SUBSTR(A.FOLLOW_TRANSIT_ROUTE, 1,1)) FOLLOW_TRANSIT_ROUTE1,
+                   A.TRANSIT_VIA_ADMSITE_CODE
+            FROM int$stg_orgunmgtag a INNER JOIN finsl_ou o 
+			ON (a.ORGANIZATION_SITE_CODE = O.ADMSITE_CODE AND A.SLCODE = O.SLCODE)
+			LEFT OUTER JOIN finsl_ou_site s ON (O.CODE = S.FINSL_OU_CODE)
+		AND a.userid = p_userid;
+        -- END REV : 002
+BEGIN
+   --FINFORM
+        FOR C2 IN C_SITE LOOP
+            V_FOLLOW_TRANSIT_ROUTE := 0;
+
+            IF  C2.FOLLOW_TRANSIT_ROUTE1 IS NOT NULL THEN
+                IF  SUBSTR(C2.FOLLOW_TRANSIT_ROUTE1,1,1) = 'Y' THEN
+                    V_FOLLOW_TRANSIT_ROUTE := 1;
+                ELSE
+                    V_FOLLOW_TRANSIT_ROUTE := 0;
+                END IF;
+            END IF;
+
+            UPDATE FINSL_OU_SITE X
+            SET    PRICELISTCODE = coalesce(C2.PRICELISTCODE, X.PRICELISTCODE )
+                  ,TERMCODE = coalesce(C2.SALTERMCODE, X.TERMCODE)
+                  ,SALFORMCODE = coalesce(C2.SALFORMCODE,X.SALFORMCODE)
+                  ,SALTRADEGRP_CODE = coalesce(C2.FINTRADEGRP_CODE,X.SALTRADEGRP_CODE)
+                  ,OUT_LGT_APPL = coalesce(C2.OUT_LGT_APPLICABLE, X.OUT_LGT_APPL)
+                  ,OUT_PERMIT_APPL = coalesce(C2.OUT_PERMIT_APPLICABLE, X.OUT_PERMIT_APPL)
+                  ,TRANSIT_VIA_ADMSITE_CODE = coalesce(C2.TRANSIT_VIA_ADMSITE_CODE, X.TRANSIT_VIA_ADMSITE_CODE)
+                  ,STRICTLY_FOLLOW_TRANSIT_ROUTE = coalesce(V_FOLLOW_TRANSIT_ROUTE, X.STRICTLY_FOLLOW_TRANSIT_ROUTE)
+            WHERE  CODE = C2.FINSL_OU_SITE_CODE;
+
+            IF NOT FOUND THEN
+                INSERT INTO FINSL_OU_SITE(FINSL_OU_CODE, SITE_CODE, TERMCODE, OUT_LGT_APPL, 
+                                           OUT_PERMIT_APPL, PRICELISTCODE, SALTRADEGRP_CODE, SALFORMCODE, 
+                                           TRANSIT_VIA_ADMSITE_CODE, STRICTLY_FOLLOW_TRANSIT_ROUTE)
+                VALUES (C2.FINS_OU_CODE, C2.CUSTOMER_SITE_CODE, C2.SALTERMCODE, coalesce(C2.OUT_LGT_APPLICABLE,'N'),
+                        coalesce(C2.OUT_PERMIT_APPLICABLE,'N'), C2.PRICELISTCODE, C2.FINTRADEGRP_CODE, C2.SALFORMCODE,
+                        C2.TRANSIT_VIA_ADMSITE_CODE, V_FOLLOW_TRANSIT_ROUTE);
+            END IF;
+            V_CNT := coalesce(V_CNT,0) + 1;
+        END LOOP;
+        -- END REV : 002
+      -- log to be added in history table
+      SELECT nextval('int$error_log_code')
+        INTO STRICT vsession
+;
+
+      vdetailtbl :=
+            'create table ginarchive.ORGUNMGTAG_'
+         || vsession
+         || ' as select distinct org_site_shortname, customer_site_shortname, sale_pricelist_name, sale_term_name, sale_form_name, transit_via_site_shortname, follow_transit_route, out_lgt_appl, out_permit_appl from int$stg_ORGUNMGTAG where userid ='
+         || p_userid::text;
+
+      EXECUTE vdetailtbl;
+      vdetailrec := 'select count(1) from ginarchive.ORGUNMGTAG_' || vsession::text;
+      EXECUTE vdetailrec
+                   INTO STRICT v_cnt;
+
+      INSERT INTO int$history(code, importedby, importedon,
+                   classname, summary,
+                   history_detail_tablename, history_detail_row_count
+                  )
+           VALUES (nextval('int$history_code'), p_userid, clock_timestamp(),
+                   'ORGUNMGTAG', V_CNT::text || ' Data imported successfully.',
+                   'ginarchive.ORGUNMGTAG_' || vsession, V_CNT
+                  );
+
+      RETURN('1');
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         -- error log for oracle internal error
+         INSERT INTO int$error_log(code, lineno, classname,
+                      userid, errortype, errordesc, createdon
+                     )
+              VALUES (nextval('int$error_log_code'), 0, 'ORGUNMGTAG',
+                      p_userid, errcode, errmsg, clock_timestamp()
+                     );
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

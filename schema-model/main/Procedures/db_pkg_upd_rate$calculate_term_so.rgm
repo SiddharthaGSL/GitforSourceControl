@@ -1,0 +1,140 @@
+procedure "main"."db_pkg_upd_rate$calculate_term_so()" {
+  text = """
+
+DECLARE
+
+      dummy_appamt            double precision;
+      v_item_chg              double precision;
+      dummy_totchgamt         double precision;
+      dummy_chkchgamt         double precision;
+      dummy_chk               char(1);
+      dummy_prvchk            char(1);
+      dummy_sign              char(1);
+	  V_ERRMSG					VARCHAR(2000);
+
+      C1 CURSOR FOR
+          SELECT saltermdet.saltermcode,
+                 saltermdet.chgcode,
+                 coalesce(saltermdet.rate,0) rate,
+                 saltermdet.formulae,
+                 LENGTH(saltermdet.formulae) formlen,
+                 saltermdet.sign,
+                 coalesce(salchg.glcode,NULLIF(current_setting('db_pkg_upd_rate.g_glcode'),'')::bigint) glcode,
+                 coalesce(fingl.costapp,'N') costapp,
+                 salchg.formcode,
+                 salchg.roundoff,
+                 saltermdet.seq,
+                 salchg.basis,
+                 saltermdet.operation_level,
+                 salchg.istax,
+                 salchg.source,
+                 CASE WHEN salchg.glcode IS NULL 
+				 THEN coalesce(salchg.slcode,NULLIF(current_setting('db_pkg_upd_rate.g_slcode'),'')::bigint) 
+				 ELSE salchg.slcode END  slcode
+          FROM   saltermdet, salchg, fingl
+          WHERE  saltermdet.chgcode = salchg.salchgcode
+          AND    fingl.glcode = CASE WHEN salchg.istax='N' 
+		  						THEN coalesce(salchg.glcode,NULLIF(current_setting('db_pkg_upd_rate.g_glcode'),'')::bigint)  
+		  						ELSE salchg.glcode END
+          AND    saltermcode = current_setting('db_pkg_upd_rate.g_saltermcode')::bigint
+          AND    saltermdet.operation_level = 'H'
+          ORDER BY SEQ;
+
+BEGIN
+       DELETE FROM salordchg
+       WHERE  ordcode = current_setting('db_pkg_upd_rate.g_ordcode')::bigint
+       AND    operation_level = 'H';
+
+       -- ADJUST ITEM CHARGE FROM GRSAMT
+       SELECT SUM(chgamt)
+       INTO STRICT   v_item_chg
+       FROM   salordchg_item
+       WHERE  ordcode = current_setting('db_pkg_upd_rate.g_ordcode')::bigint;
+
+       FOR c1rec IN c1 LOOP
+           dummy_totchgamt := 0;
+           FOR i IN 1..c1rec.formlen LOOP
+               IF MOD(i,2) != 0 THEN
+                  dummy_chk := SUBSTR(c1rec.formulae,i,1);
+                  dummy_chkchgamt := 0;
+
+                  IF dummy_chk = 'B' THEN
+                     dummy_chkchgamt :=  coalesce(current_setting('db_pkg_upd_rate.g_grsamt')::double,0) + coalesce(v_item_chg,0);
+                  ELSE
+                     BEGIN
+                         SELECT n.chgamt
+                         INTO STRICT   dummy_chkchgamt
+                         FROM   saltermdet m, salordchg n
+                         WHERE  m.chgcode         = n.chgcode
+                         AND    n.ordcode         = current_setting('db_pkg_upd_rate.g_ordcode')::bigint
+                         AND    m.saltermcode     = c1rec.saltermcode
+                         AND    m.operation_level = 'H'
+                         AND    m.seq             = (dummy_chk)::numeric;
+                     EXCEPTION
+                         WHEN no_data_found THEN
+                              dummy_chkchgamt := 0;
+                     END;
+                  END IF;
+
+                  dummy_prvchk := SUBSTR(c1rec.formulae,i-1,1);
+
+                  IF    dummy_prvchk = '+' THEN
+                        dummy_totchgamt := dummy_totchgamt + coalesce(dummy_chkchgamt,0);
+                  ELSIF dummy_prvchk = '-' then
+                        dummy_totchgamt := dummy_totchgamt - coalesce(dummy_chkchgamt,0);
+                  ELSE
+                        dummy_totchgamt := coalesce(DUMMY_chkchgamt,0);
+                  END IF;
+               END IF;
+           END LOOP;
+
+           dummy_appamt := dummy_totchgamt;
+
+           IF  c1rec.basis = 'P' THEN
+               dummy_totchgamt := ((c1rec.rate/100)*coalesce(dummy_totchgamt,0));
+           ELSE
+               dummy_totchgamt := c1rec.rate;
+           END IF;
+
+           IF  c1rec.sign = '-' AND dummy_totchgamt >= 0 THEN
+               dummy_totchgamt := -1 * coalesce(dummy_totchgamt,0);
+           END IF;
+
+           IF    dummy_totchgamt < 0 THEN
+                 dummy_sign := '-';
+           ELSIF dummy_totchgamt > 0 THEN
+                 dummy_sign := '+';
+           ELSIF dummy_totchgamt = 0 THEN
+                 dummy_sign := c1rec.sign;
+           END IF;
+
+           IF  c1rec.roundoff = 'Y' THEN
+               dummy_totchgamt := ROUND(dummy_totchgamt);
+           END IF;
+
+           INSERT INTO salordchg(ordcode, seq, chgcode, rate, sign, chgamt, glcode, basis, appamt,
+                           formulae, operation_level, istax, source, slcode, without_term_formula)
+           VALUES (current_setting('db_pkg_upd_rate.g_ordcode')::bigint, c1rec.seq, c1rec.chgcode, c1rec.rate, dummy_sign, dummy_totchgamt, c1rec.glcode,
+                   c1rec.basis, dummy_appamt, c1rec.formulae, c1rec.operation_level, c1rec.istax, c1rec.source,
+                   c1rec.slcode, 'N');
+       END LOOP;
+
+       UPDATE salordchg
+       SET    ordcode = ordcode
+       WHERE  ordcode = current_setting('db_pkg_upd_rate.g_ordcode')::bigint;
+   EXCEPTION
+       WHEN OTHERS THEN
+	   V_ERRMSG	:= SQLERRM;
+            PERFORM set_config('db_pkg_upd_rate.v_errcode', SQLSTATE, false);
+            PERFORM set_config('db_pkg_upd_rate.v_errmsg', SQLERRM, false);
+			
+            CALL erraudit(USER, 'hdr - DB_PKG_PACKET.CALCULATE_TERM_ITEM_so - ', current_setting('db_pkg_upd_rate.v_errcode')::varchar(50), current_setting('db_pkg_upd_rate.v_errmsg')::varchar(2000));
+            RAISE EXCEPTION '%', 'CALCULATE_TERM : ERROR : '|| current_setting('db_pkg_upd_rate.v_errmsg')::varchar(2000) USING ERRCODE = '45200';
+   END;
+
+"""
+  arguments = [
+  ]
+  language = plpgsql
+}
+

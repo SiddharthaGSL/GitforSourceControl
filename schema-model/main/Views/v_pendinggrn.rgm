@@ -1,0 +1,77 @@
+view "main"."v_pendinggrn" {
+  text = """-
+SELECT purordmain.ordcode,
+    purordmain.scheme_docno AS pono,
+    purordmain.orddt,
+    finsl.slname AS transporter,
+    finsl2.slname AS vendor,
+    invlgtnote.lgtno AS lrno,
+    invlgtnote.lgtdt AS lrdate,
+    sum(pdet.ordqty) AS poqty,
+    sum(pdet.cnlqty) AS cancelqty,
+    sum(COALESCE(pdet.rcqty, (0)::numeric)) AS grcqty,
+    ((sum(pdet.ordqty) - sum(COALESCE(pdet.cnlqty, (0)::numeric))) - sum(COALESCE(pdet.rcqty, (0)::numeric))) AS pendingqty,
+    sum(lgt.tagqty) AS tagqty
+   FROM main.invlgtnote,
+    ( SELECT invgatein.lgtcode,
+            invgatein.gateindt,
+            sum(COALESCE(invgatein.gateinqty, (0)::numeric)) AS gateinqty,
+            sum(COALESCE(invgatein.tagqty, (0)::numeric)) AS tagqty
+           FROM main.invgatein
+          GROUP BY invgatein.lgtcode, invgatein.gateindt) lgt,
+    main.invltgin_shipment_advice,
+    main.purordshipmain,
+    main.purordmain,
+    ( SELECT purorddet.ordcode,
+            sum(COALESCE(purorddet.ordqty, (0)::numeric)) AS ordqty,
+            sum(COALESCE(purorddet.cnlqty, (0)::numeric)) AS cnlqty,
+            sum(COALESCE(purorddet.rcqty, (0)::numeric)) AS rcqty
+           FROM main.purorddet
+          GROUP BY purorddet.ordcode) pdet,
+    main.finsl,
+    main.finsl finsl2
+  WHERE ((invlgtnote.lgtcode = lgt.lgtcode) AND (invlgtnote.lgtcode = invltgin_shipment_advice.lgtincode) AND (invltgin_shipment_advice.shipcode = purordshipmain.shipcode) AND (purordmain.ordcode = purordshipmain.ordcode) AND (purordmain.ordcode = pdet.ordcode) AND (finsl.slcode = purordmain.trpcode) AND (finsl2.slcode = purordmain.pcode))
+  GROUP BY purordmain.ordcode, purordmain.scheme_docno, finsl.slname, finsl2.slname, purordmain.orddt, invlgtnote.qty1, lgt.gateindt, invlgtnote.lgtdt, invlgtnote.lgtno
+ HAVING ((invlgtnote.qty1 = sum(lgt.gateinqty)) AND (invlgtnote.qty1 = sum(lgt.tagqty)) AND (((sum(COALESCE(pdet.ordqty, (0)::numeric)) - sum(COALESCE(pdet.rcqty, (0)::numeric))) - sum(COALESCE(pdet.cnlqty, (0)::numeric))) > (0)::numeric))
+  ORDER BY purordmain.ordcode;
+"""
+  columns = (
+    column "ordcode" {
+      type = "bigint"
+    }
+    column "pono" {
+      type = "character varying(25)"
+    }
+    column "orddt" {
+      type = "timestamp(0) without time zone"
+    }
+    column "transporter" {
+      type = "character varying(100)"
+    }
+    column "vendor" {
+      type = "character varying(100)"
+    }
+    column "lrno" {
+      type = "bigint"
+    }
+    column "lrdate" {
+      type = "timestamp(0) without time zone"
+    }
+    column "poqty" {
+      type = "numeric"
+    }
+    column "cancelqty" {
+      type = "numeric"
+    }
+    column "grcqty" {
+      type = "numeric"
+    }
+    column "pendingqty" {
+      type = "numeric"
+    }
+    column "tagqty" {
+      type = "numeric"
+    }
+  )
+}
+

@@ -1,0 +1,321 @@
+function "main"."trigger_fct_t_salrtchg()" {
+  text = """
+
+declare
+    ora2pg_rowcount integer;
+v_rtno        salrtmain.rtno%type;
+    v_rtdt        salrtmain.rtdt%type;
+    v_ycode        salrtmain.ycode%type;
+    v_docno        salrtmain.docno%type;
+    --START REV : 001
+    v_docdt        salrtmain.docdt%type;
+    --END REV : 001
+    --START REV : 002
+    v_scheme_docno  salrtmain.scheme_docno%type;
+    --END REV : 002
+    -- START REV : 004
+    V_POSTCODE            FINPOST.POSTCODE%TYPE;
+    V_CCCODE              FINCOSTTAG.CODE%TYPE;
+    V_ADMSITE_CODE_OWNER  SALINVMAIN.ADMSITE_CODE_OWNER%TYPE;
+    -- END REV : 004
+    V_ADMOU_CODE_OWNER    SALINVMAIN.ADMOU_CODE%TYPE;
+    -- START REV : 102
+    V_SALETYPE            SALINVMAIN.SALETYPE%TYPE;
+    V_ENTTYPE             FINPOST.ENTTYPE%TYPE;
+    -- END REV : 102
+   V_DAMOUNT        FINPOST.DAMOUNT%TYPE;
+   V_CAMOUNT        FINPOST.CAMOUNT%TYPE;
+BEGIN
+  BEGIN
+/**************************************************************************************************
+REV : 100 MOUSUMI        06/04/2017     (BUG ID : 26844) Need an option to create Multi OU and all operation will be according to the same
+REV : 101 ANINDYA        15/06/2017     (TFS ID : 29634) GST Related changes.
+REV : 102 MOUSUMI        18/09/2017     (TFS ID : 33151) Introduction of new entry type for transfer charges
+REV : 103 PRASANTA       03/11/2017     (TFS ID : 34257) Error occurred while calculate charge in Sales return.
+REV : 104 MOUSUMI        06-FEB-2018    (TFS ID : 37894) Error occurred while calculate charge in Sales return.
+REV : 105 MOUSUMI        20/10/2020     (TFS ID : XXX) Error occurred while calculate charge in Sales return.
+**************************************************************************************************************/
+        -- START REV : 102
+         BEGIN
+         SELECT SALETYPE
+         INTO STRICT   V_SALETYPE
+         FROM   SALRTMAIN
+         WHERE  RTCODE = coalesce(OLD.RTCODE,NEW.RTCODE);
+         EXCEPTION WHEN no_data_found THEN
+         NULL;
+         END;
+
+        IF V_SALETYPE = 'O' THEN
+            V_ENTTYPE := 'SRC';
+        ELSIF V_SALETYPE = 'C' THEN
+            V_ENTTYPE := 'CRC';
+        END IF;
+        -- END REV : 102
+    if  OLD.rtcode is not null then
+         --START REV : 001 NEW COLUMN ADDED
+        select rtno,rtdt,ycode,docno,docdt,scheme_docno,ADMSITE_CODE_OWNER   -- 004
+        into STRICT     v_rtno,v_rtdt,v_ycode,v_docno,v_docdt,v_scheme_docno,V_ADMSITE_CODE_OWNER   -- 004
+        from    salrtmain
+        where    rtcode = OLD.rtcode;
+          --END REV : 001
+        if  coalesce(OLD.chgamt,0) < 0 then
+            update     finpost
+            set entno  =   v_rtno::varchar,
+                entdt  =   v_rtdt,
+                docno  =   v_docno,
+                 --START REV : 001
+                docdt  =   v_docdt,
+                 --END REV : 001
+                --START REV : 002
+                scheme_docno = v_scheme_docno,
+                --END REV : 002
+                camount =   coalesce(camount,0) + coalesce(OLD.chgamt,0),
+                damount =   0
+            where   entcode  =   OLD.rtcode::varchar
+            -- START REV : 102
+            --and     enttype  =   'SRC'
+            and     enttype  = V_ENTTYPE
+            -- END REV : 102
+            and     glcode   =   OLD.glcode
+            and     chgcode   =   OLD.salchgcode -- REV : 002
+            and     coalesce(chgrate,0)  =   coalesce(OLD.rate,0) -- REV : 002, REV : 003
+            and     coalesce(slcode,0)   =   coalesce(OLD.slcode,0) -- REV : 002
+            and     coalesce(camount,0)  >   0;
+        elsif  coalesce(OLD.chgamt,0) > 0 then
+            update  finpost
+            set entno  =   v_rtno::varchar,
+                entdt  =   v_rtdt,
+                docno  =   v_docno,
+                 --START REV : 001
+                docdt  =   v_docdt,
+                 --END REV : 001
+                --START REV : 002
+                scheme_docno = v_scheme_docno,
+                --END REV : 002
+                camount =   0,
+                damount =   coalesce(damount,0) - coalesce(OLD.chgamt,0)
+            where   entcode  =   OLD.rtcode::varchar
+            -- START REV : 102
+            --and     enttype  =   'SRC'
+            and     enttype  =  V_ENTTYPE
+            -- END REV : 102
+            and     glcode   =   OLD.glcode
+            and     chgcode   =   OLD.salchgcode -- REV : 002
+            and     coalesce(chgrate,0)  =   coalesce(OLD.rate,0) -- REV : 002, REV : 003
+            and     coalesce(slcode,0)   =   coalesce(OLD.slcode,0) -- REV : 002
+            and     coalesce(damount,0)  >   0;
+        end if;
+    end if;
+
+    if  NEW.rtcode is not null then
+         --START REV : 001 NEW COLUMN ADDED
+        select rtno,rtdt,ycode,docno,docdt,scheme_docno
+               -- START REV : 100
+               ,ADMSITE_CODE_OWNER
+               -- END REV : 100
+        into STRICT   v_rtno,v_rtdt,v_ycode,v_docno,v_docdt, v_scheme_docno
+               ,V_ADMSITE_CODE_OWNER
+        from   salrtmain
+        where  rtcode = NEW.rtcode;
+         --END REV : 001
+        -- START REV : 100
+        BEGIN
+            select DISTINCT S.ADMOU_CODE
+            into STRICT   V_ADMOU_CODE_OWNER
+            from   ADMSITE S
+            where  S.CODE       = V_ADMSITE_CODE_OWNER;
+        EXCEPTION WHEN no_data_found THEN
+        NULL;
+        END;
+        -- END REV : 100
+        if  coalesce(NEW.chgamt,0) < 0 then
+            update  finpost
+            set entno  =   v_rtno::varchar,
+                entdt  =   v_rtdt,
+                docno  =   v_docno,
+                 --START REV : 001
+                docdt  =   v_docdt,
+                 --END REV : 001
+                --START REV : 002
+                scheme_docno = v_scheme_docno,
+                --END REV : 002
+                camount =  coalesce(camount,0) - coalesce(NEW.chgamt,0),
+                damount =  0
+            where   entcode  = NEW.rtcode::varchar
+            -- START REV : 102
+            --and     enttype  =   'SRC'
+            and     enttype  =  V_ENTTYPE
+            -- END REV : 102
+            and     glcode   =   NEW.glcode
+            and  chgcode   =   NEW.salchgcode -- REV : 002
+            and  coalesce(chgrate,0)  =   coalesce(NEW.rate,0) -- REV : 002, REV : 003
+            and  coalesce(slcode,0)   =   coalesce(NEW.slcode,0) -- REV : 002
+            and     coalesce(camount,0)  >   0;
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+if  ora2pg_rowcount  = 0 then
+                 --START REV : 001  NEW COLUMN ADDED REV : 002 v_scheme_docno, slcode, chgcode ADDED
+                insert into finpost(postcode,entcode, entno, entdt, docno,docdt ,enttype, glcode, slcode,
+                                    camount, damount, ycode, scheme_docno, chgcode, chgrate
+                                    ,ADMSITE_CODE_OWNER,ADMOU_CODE -- REV : 100
+                                    )
+                values ( nextval('erp01'), NEW.rtcode::varchar, v_rtno::varchar, v_rtdt, v_docno,v_docdt,
+                        -- START REV : 102
+                         --'SRC'
+                         V_ENTTYPE
+                        -- END REV : 102
+                         , NEW.glcode, NEW.slcode,
+                        -coalesce(NEW.chgamt,0), 0, v_ycode, v_scheme_docno, NEW.salchgcode, NEW.rate
+                        ,V_ADMSITE_CODE_OWNER,V_ADMOU_CODE_OWNER -- REV : 100
+                        );
+            end if;
+             --END REV : 001
+         -- START REV : 004      
+         -- END REV : 004
+        elsif  coalesce(NEW.chgamt,0) > 0 then
+            update  finpost
+            set entno  =   v_rtno::varchar,
+                entdt  =   v_rtdt,
+                docno  =   v_docno,
+                 --START REV : 001
+                docdt  =   v_docdt,
+                 --END REV : 001
+                --START REV : 002
+                scheme_docno = v_scheme_docno,
+                --END REV : 002
+                camount =   0,
+                damount =   coalesce(damount,0) + coalesce(NEW.chgamt,0)
+            where   entcode  =  NEW.rtcode::varchar
+            -- START REV : 102
+            --AND    ENTTYPE = 'SRC'
+            AND    ENTTYPE = V_ENTTYPE
+            -- END REV : 102
+            and     glcode   =  NEW.glcode
+            and     chgcode   =  NEW.salchgcode -- REV : 002
+            and     coalesce(chgrate,0)  =   coalesce(NEW.rate,0) -- REV : 002, REV : 003
+            and     coalesce(slcode,0)   =   coalesce(NEW.slcode,0) -- REV : 002
+            and     coalesce(damount,0)  >   0;
+            GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+if  ora2pg_rowcount  = 0 then
+             --START REV : 001 NEW COLUMN ADDED REV : 002 v_scheme_docno, slcode chgcode ADDED
+                insert into finpost( postcode, entcode, entno, entdt, docno,docdt,enttype, glcode, slcode,
+                                        camount, damount, ycode, scheme_docno, chgcode, chgrate
+                                        ,ADMSITE_CODE_OWNER,ADMOU_CODE -- REV : 100
+                                        )
+                values ( nextval('erp01'), NEW.rtcode::varchar, v_rtno::varchar, v_rtdt, v_docno,v_docdt,
+                        -- START REV : 102
+                        --'SRC'
+                        V_ENTTYPE
+                        -- END REV : 102
+                        , NEW.glcode, NEW.slcode,
+                            0, coalesce(NEW.chgamt,0), v_ycode, v_scheme_docno, NEW.salchgcode, NEW.rate
+                            ,V_ADMSITE_CODE_OWNER,V_ADMOU_CODE_OWNER -- REV : 100
+                            );
+            end if;
+             --END REV : 001
+         -- START REV : 004       
+         -- END REV : 004
+        end if;
+     -- START REV : 104
+        BEGIN
+
+            SELECT --COUNT( POSTCODE),
+                    POSTCODE,
+                    SUM(DAMOUNT),
+                    SUM(CAMOUNT)
+            INTO
+                    V_POSTCODE,
+                    V_DAMOUNT,
+                    V_CAMOUNT
+            FROM
+                    FINPOST
+            WHERE
+                    ENTCODE = NEW.RTCODE::varchar
+            AND    ENTTYPE = V_ENTTYPE
+            AND    GLCODE = NEW.GLCODE
+            AND     CHGCODE = NEW.SALCHGCODE
+            AND     coalesce(CHGRATE, 0) = coalesce(NEW.RATE, 0)
+            AND     ((NEW.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = NEW.SLCODE)
+                        GROUP BY POSTCODE
+            HAVING   SUM( coalesce(DAMOUNT,0) + coalesce(CAMOUNT,0)) <> 0;
+
+            DELETE    FROM FINCOSTTAG
+            WHERE     ENTCODE   = NEW.RTCODE::varchar
+            AND    ENTTYPE = V_ENTTYPE
+            --START REV : 105
+           -- AND    ((:OLD.GLCODE IS NULL AND GLCODE IS NULL) OR GLCODE = :OLD.GLCODE)
+           -- AND       ((:OLD.SLCODE IS NULL AND SLCODE IS NULL) OR SLCODE = :OLD.SLCODE)
+           -- END REV : 105
+           -- AND       ADMSITE_CODE = V_ADMSITE_CODE
+            AND       POSTCODE  = V_POSTCODE;
+          --  AND       REF_ADMSITE_CODE = V_ADMSITE_CODE;
+       --   IF
+            IF  V_POSTCODE IS NOT NULL AND NEW.GL_CC_APPL = 'Y' AND (coalesce(V_DAMOUNT,0) <> 0 OR coalesce(V_CAMOUNT,0) <> 0) THEN
+                INSERT INTO FINCOSTTAG(ENTCODE, ENTNO, ENTDT, ENTTYPE
+                       ,GLCODE, YCODE, COSTCODE, SLCODE, DAMOUNT, CAMOUNT
+                       ,POSTCODE, ADMSITE_CODE, REF_ADMSITE_CODE
+                       ,ADMOU_CODE -- REV : 006
+                       )
+                VALUES (NEW.RTCODE::varchar, V_RTNO::varchar, V_RTDT, V_ENTTYPE
+                       ,NEW.GLCODE, V_YCODE, NULL, NEW.SLCODE, V_DAMOUNT, V_CAMOUNT
+                       ,V_POSTCODE, V_ADMSITE_CODE_OWNER, V_ADMSITE_CODE_OWNER
+                       ,V_ADMOU_CODE_OWNER -- REV : 006
+                       );
+            END IF;
+        EXCEPTION
+            WHEN no_data_found THEN
+            NULL;
+           -- WHEN OTHERS THEN
+           -- ERRAUDIT(444,444,444,:NEW.GLCODE||'*'||:NEW.SALCHGCODE||'*'||:NEW.RATE||'*'||:NEW.SLCODE);
+        END;
+        -- END REV : 104
+    end if;
+
+   -- START REV : 004
+   IF  TG_OP = 'DELETE' THEN
+       DELETE FROM FINCOSTTAG
+       WHERE  POSTCODE IN (
+                           SELECT POSTCODE
+                           FROM   FINPOST
+                           WHERE  ENTCODE = OLD.RTCODE::varchar
+                           -- START REV : 102
+                           --AND    ENTTYPE = 'SRC'
+                           AND    ENTTYPE = V_ENTTYPE
+                           -- END REV : 102
+                         );
+   END IF;
+   -- END REV : 004
+    DELETE FROM fincosttag
+          WHERE postcode IN (
+                   SELECT postcode
+                     FROM finpost
+                    WHERE entcode = OLD.rtcode::varchar
+                      -- START REV : 102
+                      --AND    ENTTYPE = 'SRC'
+                      AND    ENTTYPE = V_ENTTYPE
+                      -- END REV : 102
+                      AND coalesce(damount, 0) = 0
+                      AND coalesce(camount, 0) = 0);
+
+    DELETE FROM finpost
+          WHERE entcode = OLD.rtcode::varchar
+            -- START REV : 102
+            --AND    ENTTYPE = 'SRC'
+            AND    ENTTYPE = V_ENTTYPE
+            -- END REV : 102
+            AND coalesce(damount, 0) = 0
+            AND coalesce(camount, 0) = 0;
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+end
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

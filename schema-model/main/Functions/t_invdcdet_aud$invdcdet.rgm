@@ -1,0 +1,193 @@
+function "main"."t_invdcdet_aud$invdcdet()" {
+  text = """
+
+DECLARE
+    V_RECORD_OLD AUD_INVDCDET%ROWTYPE;
+	V_RECORD_NEW AUD_INVDCDET%ROWTYPE;
+    V_SID DOUBLE PRECISION;
+    V_TRNID CHARACTER VARYING(50);
+    V_ACTION CHARACTER VARYING(10);
+    I RECORD;    
+	V_AUDIT_USER CHARACTER VARYING (100);
+	V_LOGINUSER  CHARACTER VARYING (100);
+	V_PROGRAM    CHARACTER VARYING (100);
+	V_REC_COUNT  BIGINT; 
+   
+BEGIN
+       SELECT current_setting('audit.AUDIT_USER', true) INTO V_AUDIT_USER;
+	   IF NULLIF(V_AUDIT_USER,'') IS NOT NULL THEN  
+		   BEGIN
+				SELECT FULLNAME
+				INTO   STRICT V_LOGINUSER
+				FROM   APPUSER
+				WHERE  ID =  substring (V_AUDIT_USER,8,position(';' in V_AUDIT_USER)-8)::NUMERIC; 
+		   EXCEPTION
+				WHEN no_data_found
+				THEN
+					V_LOGINUSER := 'System';
+			END;			
+		ELSE
+			V_LOGINUSER := 'SYSTEM';
+		END IF;
+	   
+	   select application_name
+	   INTO   V_PROGRAM
+	   from pg_stat_activity where pid = pg_backend_pid();
+
+       V_ACTION:=TG_OP;
+	   
+       SELECT TXID_CURRENT() INTO V_TRNID;
+       
+        IF TG_OP = 'INSERT' OR  TG_OP = 'UPDATE' THEN 
+	   
+           V_RECORD_NEW.ACTION := V_ACTION;
+           V_RECORD_NEW.ACTION_SUBTYPE := 'NEW';
+           V_RECORD_NEW.TRANSACTION_ID := V_TRNID::TEXT;		   
+		   V_RECORD_NEW.dccode := NEW.dccode;
+            V_RECORD_NEW.ordcode := NEW.ordcode;
+            V_RECORD_NEW.icode := NEW.icode;
+            V_RECORD_NEW.soicode := NEW.soicode;
+            V_RECORD_NEW.isqty := NEW.isqty;
+            V_RECORD_NEW.rate := NEW.rate;
+            V_RECORD_NEW.mrp := NEW.mrp;
+            V_RECORD_NEW.costrate := NEW.costrate;
+            V_RECORD_NEW.remarks := NEW.remarks;
+            V_RECORD_NEW.code := NEW.code;
+            V_RECORD_NEW.salorddet_code := NEW.salorddet_code;
+            V_RECORD_NEW.salordmain_scheme_docno := NEW.salordmain_scheme_docno;
+            V_RECORD_NEW.salordmain_orddt := NEW.salordmain_orddt;
+            V_RECORD_NEW.factor := NEW.factor;
+            V_RECORD_NEW.discount := NEW.discount;
+            V_RECORD_NEW.basic_rate := NEW.basic_rate;
+            V_RECORD_NEW.roundoff := NEW.roundoff;
+            V_RECORD_NEW.invpicklistdet_code := NEW.invpicklistdet_code;
+            V_RECORD_NEW.invbin_code := NEW.invbin_code;
+            V_RECORD_NEW.invdcmain_status := NEW.invdcmain_status;
+            V_RECORD_NEW.dataversion := NEW.dataversion;
+            V_RECORD_NEW.wsp := NEW.wsp;
+            V_RECORD_NEW.listep_mrp := NEW.listep_mrp;
+            V_RECORD_NEW.invbatch_serial_code := NEW.invbatch_serial_code;
+          END IF;  
+            
+         IF TG_OP = 'UPDATE' OR TG_OP = 'DELETE' THEN 
+	   
+            V_RECORD_OLD.ACTION := V_ACTION;
+            V_RECORD_OLD.ACTION_SUBTYPE := 'OLD';
+            V_RECORD_OLD.TRANSACTION_ID := V_TRNID::TEXT;			
+			V_RECORD_OLD.dccode := OLD.dccode;
+            V_RECORD_OLD.ordcode := OLD.ordcode;
+            V_RECORD_OLD.icode := OLD.icode;
+            V_RECORD_OLD.soicode := OLD.soicode;
+            V_RECORD_OLD.isqty := OLD.isqty;
+            V_RECORD_OLD.rate := OLD.rate;
+            V_RECORD_OLD.mrp := OLD.mrp;
+            V_RECORD_OLD.costrate := OLD.costrate;
+            V_RECORD_OLD.remarks := OLD.remarks;
+            V_RECORD_OLD.code := OLD.code;
+            V_RECORD_OLD.salorddet_code := OLD.salorddet_code;
+            V_RECORD_OLD.salordmain_scheme_docno := OLD.salordmain_scheme_docno;
+            V_RECORD_OLD.salordmain_orddt := OLD.salordmain_orddt;
+            V_RECORD_OLD.factor := OLD.factor;
+            V_RECORD_OLD.discount := OLD.discount;
+            V_RECORD_OLD.basic_rate := OLD.basic_rate;
+            V_RECORD_OLD.roundoff := OLD.roundoff;
+            V_RECORD_OLD.invpicklistdet_code := OLD.invpicklistdet_code;
+            V_RECORD_OLD.invbin_code := OLD.invbin_code;
+            V_RECORD_OLD.invdcmain_status := OLD.invdcmain_status;
+            V_RECORD_OLD.dataversion := OLD.dataversion;
+            V_RECORD_OLD.wsp := OLD.wsp;
+            V_RECORD_OLD.listep_mrp := OLD.listep_mrp;
+            V_RECORD_OLD.invbatch_serial_code := OLD.invbatch_serial_code;
+          END IF;  
+
+    IF TG_OP = 'INSERT' THEN
+	    V_REC_COUNT := 1;
+        INSERT INTO AUD_INVDCDET SELECT V_RECORD_NEW.*;
+    END IF;
+
+    IF TG_OP = 'UPDATE' THEN
+	FOR I IN (
+		SELECT 
+		V_RECORD_OLD.invbin_code,
+                  V_RECORD_OLD.invpicklistdet_code,
+                  V_RECORD_OLD.roundoff,
+                  V_RECORD_OLD.basic_rate,
+                  V_RECORD_OLD.discount,
+                  V_RECORD_OLD.factor,
+                  V_RECORD_OLD.salordmain_orddt,
+                  V_RECORD_OLD.salordmain_scheme_docno,
+                  V_RECORD_OLD.salorddet_code,
+                  V_RECORD_OLD.remarks,
+                  V_RECORD_OLD.rate,
+                  V_RECORD_OLD.isqty,
+                  V_RECORD_OLD.soicode,
+                  V_RECORD_OLD.icode,
+                  V_RECORD_OLD.ordcode
+		EXCEPT
+		SELECT 
+		V_RECORD_NEW.invbin_code,
+                  V_RECORD_NEW.invpicklistdet_code,
+                  V_RECORD_NEW.roundoff,
+                  V_RECORD_NEW.basic_rate,
+                  V_RECORD_NEW.discount,
+                  V_RECORD_NEW.factor,
+                  V_RECORD_NEW.salordmain_orddt,
+                  V_RECORD_NEW.salordmain_scheme_docno,
+                  V_RECORD_NEW.salorddet_code,
+                  V_RECORD_NEW.remarks,
+                  V_RECORD_NEW.rate,
+                  V_RECORD_NEW.isqty,
+                  V_RECORD_NEW.soicode,
+                  V_RECORD_NEW.icode,
+                  V_RECORD_NEW.ordcode
+			 )
+	LOOP
+	  V_REC_COUNT := 1; 
+		INSERT INTO AUD_INVDCDET SELECT V_RECORD_OLD.*;
+       INSERT INTO AUD_INVDCDET SELECT V_RECORD_NEW.*;    
+	END LOOP;   
+    END IF;
+
+    IF TG_OP = 'DELETE' THEN
+		V_REC_COUNT := 1;
+		INSERT INTO AUD_INVDCDET SELECT V_RECORD_OLD.*;
+    END IF;
+	
+	IF V_REC_COUNT >  0
+	THEN
+	   BEGIN
+            INSERT INTO AUD_TRANSACTION (TRANSACTION_ID, TRANSACTION_DATE, LOGIN_USER, PROGRAM, MODULE_SHORTCODE, MODULE_TYPE)
+            VALUES (V_TRNID,   current_date,V_LOGINUSER, V_PROGRAM, 'DeliveryChallan', 'Delivery Challan');
+       EXCEPTION WHEN unique_violation THEN
+            NULL;
+       END;  
+
+       BEGIN  
+             INSERT INTO AUD_TRANSACTION_TABLE (TRANSACTION_ID, TABLE_NAME)
+             VALUES (V_TRNID,  'INVDCDET');
+       EXCEPTION WHEN unique_violation THEN
+             NULL;
+       END; 
+	END IF;   
+    
+
+    IF TG_OP = 'INSERT' THEN
+        RETURN NEW;
+    ELSIF TG_OP = 'UPDATE' THEN
+        RETURN NEW;
+    ELSIF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    EXCEPTION
+        WHEN others THEN
+            CALL main.erraudit(SESSION_USER::text, 'T_INVDCDET_AUD'::CHARACTER, SQLSTATE::text, SQLERRM);
+			RAISE;
+			RETURN NULL;
+END;
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

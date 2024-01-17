@@ -1,0 +1,229 @@
+function "main"."int$pkg_invgst_einv_int$pkg_invgst_einv_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      errmsg        varchar(500);
+      vsession      varchar(100);
+      vdetailtbl    varchar(1000);
+      vdetailrec    varchar(500);
+      errcode       bigint;
+      vmaxno        bigint;
+      vcount        bigint;
+      v_cnt         bigint;
+      v_tablename   varchar(100);c1 CURSOR FOR
+         SELECT *
+           FROM int$stg_invgst_einv a
+          WHERE a.userid = p_userid
+            -- START REV : 002
+            AND coalesce(a.ALREADY_EXISTS_EINVOICE_TABLE, 0) = 0;
+            -- END REV : 002;
+  j RECORD;
+
+BEGIN
+      FOR i IN c1
+      LOOP
+         IF i.action = 'UPDATE'
+         THEN
+            FOR j
+               IN (SELECT DISTINCT entcode,
+                                   enttype,
+                                   scheme_docno,
+                                   release_status
+                     FROM finpost
+                    WHERE     UPPER(scheme_docno) = UPPER(i.ginesys_doc_no)
+                          AND enttype IN ('SIM'  -- Sales Invoice (SALINVMAIN)
+                                               ,
+                                          'CTM'   -- Transfer Out (SALINVMAIN)
+                                               ,
+                                          'SRM'    -- Sales Return (SALRTMAIN)
+                                               ,
+                                          'CRM' -- Consignment/Stock Transfer Return (SALRTMAIN) not in FR
+                                               ,
+                                          'SDM' -- Sales Debit Note (SALINVJRNMAIN)
+                                               ,
+                                          'SCM' -- Sales Credit Note (SALINVJRNMAIN)
+                                               ,
+                                          'SSM' -- Sale Service Invoice (SALSRVMAIN)
+                                               ,
+                                          'CSM' -- Retail Sale - Owned Store Sale (SALCSMAIN)
+                                               ,
+                                          'CSM' -- Retail Sale - E-com - Fulfilled by Seller (SALCSMAIN)
+                                               ,
+                                          'PIM' -- Purchase Invoice (PURINVMAIN)
+                                               ,
+                                          'PIM' -- Consignment Invoice (PURINVMAIN)
+                                               ,
+                                          'PRM' -- Purchase Return (PURRTMAIN)
+                                               ,
+                                          'PDM' -- Purchase Debit Note (PURINVJRNMAIN)
+                                               ,
+                                          'PCM' -- Purchase Credit Note (PURINVJRNMAIN)
+                                               ,
+                                          'PSM' -- Purchase Service Invoice (PURSRVMAIN)
+                                               ,
+                                          'PJM' -- Purchase Service Debit Note (PURSRVJRNMAIN)
+                                               ))
+            LOOP
+               IF j.enttype = 'SIM'
+               THEN
+                  v_tablename := 'SALINVMAIN';
+               ELSIF j.enttype = 'CTM'
+               THEN
+                  v_tablename := 'SALINVMAIN';
+               ELSIF j.enttype = 'SRM'
+               THEN
+                  v_tablename := 'SALRTMAIN';
+               ELSIF j.enttype = 'CRM'
+               THEN
+                  v_tablename := 'SALRTMAIN';
+               ELSIF j.enttype = 'SDM'
+               THEN
+                  v_tablename := 'SALINVJRNMAIN';
+               ELSIF j.enttype = 'SCM'
+               THEN
+                  v_tablename := 'SALINVJRNMAIN';
+               ELSIF j.enttype = 'SSM'
+               THEN
+                  v_tablename := 'SALSRVMAIN';
+               ELSIF j.enttype = 'CSM'
+               THEN
+                  v_tablename := 'SALCSMAIN';
+               ELSIF j.enttype = 'PIM'
+               THEN
+                  v_tablename := 'PURINVMAIN';
+               ELSIF j.enttype = 'PRM'
+               THEN
+                  v_tablename := 'PURRTMAIN';
+               ELSIF j.enttype = 'PDM'
+               THEN
+                  v_tablename := 'PURINVJRNMAIN';
+               ELSIF j.enttype = 'PCM'
+               THEN
+                  v_tablename := 'PURINVJRNMAIN';
+               ELSIF j.enttype = 'PSM'
+               THEN
+                  v_tablename := 'PURSRVMAIN';
+               ELSIF j.enttype = 'PJM'
+               THEN
+                  v_tablename := 'PURSRVJRNMAIN';
+               END IF;
+
+               INSERT INTO invgst_einvoice(code,
+                                            transaction_code,
+                                            transaction_table,
+                                            scheme_docno,
+                                            irn,
+                                            ack_no,
+                                            ack_datetime,
+                                            signed_qr_data,
+                                            updated_by,
+                                            updated_on)
+                    VALUES (nextval('invgst_einvoice_seq'),
+                            j.entcode,
+                            v_tablename,
+                            j.scheme_docno,
+                            i.irn,
+                            i.ack_no,
+                            i.ack_datetime,
+                            i.signed_qr_data,
+                            p_userid,
+                            clock_timestamp());
+            END LOOP;
+         ELSIF i.action = 'DELETE'
+         THEN
+            DELETE FROM invgst_einvoice
+             WHERE UPPER(scheme_docno) = UPPER(i.ginesys_doc_no);
+         END IF;
+      END LOOP;
+
+      -- log to be added in history table
+      SELECT nextval('int$error_log_code') INTO STRICT vsession;
+
+      vdetailtbl :=
+            'create table ginarchive.invgst_einv_'
+         || vsession
+         || ' as select action, ginesys_doc_no, irn, ack_no, to_char(ack_datetime,''dd/mm/yyyy hh:mi:ss am'') "ack_datetime", signed_qr_data '
+         || ' from int$stg_invgst_einv where COALESCE(ALREADY_EXISTS_EINVOICE_TABLE, 0) = 0 AND userid = '
+         || p_userid::text;
+
+      EXECUTE vdetailtbl;
+	  
+	  vdetailrec :=
+         'select count(1) from ginarchive.invgst_einv_' || vsession::text;
+
+      EXECUTE vdetailrec INTO STRICT v_cnt;
+
+      INSERT INTO int$history(code,
+                               importedby,
+                               importedon,
+                               classname,
+                               summary,
+                               history_detail_tablename,
+                               history_detail_row_count)
+           VALUES (nextval('int$history_code'),
+                   p_userid,
+                   clock_timestamp(),
+                   'INVGST_EINV',
+                   V_CNT::text || ' Data updated successfully.',
+                   'ginarchive.invgst_einv_' || vsession,
+                   V_CNT);
+
+      RETURN('1');
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         -- error log for oracle internal error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'INVGST_EINV',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

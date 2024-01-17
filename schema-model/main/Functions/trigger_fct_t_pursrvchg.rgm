@@ -1,0 +1,317 @@
+function "main"."trigger_fct_t_pursrvchg()" {
+  text = """
+
+DECLARE
+   ora2pg_rowcount integer;
+v_docno     varchar(200);
+   v_docdt     timestamp;
+   v_duedt     timestamp;
+   v_camount   finpost.camount%TYPE;
+   v_damount   finpost.damount%TYPE;
+   v_type                 pursrvmain.type%type;
+   v_ycode                finpost.ycode%type;
+   v_postcode             finpost.postcode%type;
+   v_cccode               fincosttag.code%type;
+   v_admsite_code_owner   pursrvmain.admsite_code_owner%type;
+   V_SCHEME_DOCNO         PURSRVMAIN.SCHEME_DOCNO%TYPE;
+   V_ADMOU_CODE          PURSRVMAIN.ADMOU_CODE%TYPE;
+BEGIN
+  BEGIN
+   IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE'
+   THEN
+      SELECT docno, docdt, duedt, type, ycode, admsite_code_owner,SCHEME_DOCNO
+             ,ADMOU_CODE  -- REV : 025
+        INTO STRICT v_docno, v_docdt, v_duedt, v_type, v_ycode, v_admsite_code_owner,V_SCHEME_DOCNO
+             ,V_ADMOU_CODE -- REV : 025
+        FROM pursrvmain
+       WHERE srvcode = coalesce(NEW.srvcode, OLD.srvcode);
+
+
+      UPDATE finpost
+         SET entno = NEW.srvno,
+             entdt = NEW.srvdt,
+             glcode = NEW.glcode,
+             slcode = NEW.slcode,
+             chgcode = NEW.chgcode,
+             damount =
+                CASE
+                   WHEN(  coalesce(damount, 0)
+                         - coalesce(camount, 0)
+                         - coalesce(OLD.chgamt, 0)
+                        ) > 0
+                      THEN (  coalesce(damount, 0)
+                            - coalesce(camount, 0)
+                            - coalesce(OLD.chgamt, 0)
+                           )
+                   ELSE 0
+                END,
+             camount =
+                CASE
+                   WHEN(  coalesce(damount, 0)
+                         - coalesce(camount, 0)
+                         - coalesce(OLD.chgamt, 0)
+                        ) < 0
+                      THEN   0
+                           - (  coalesce(damount, 0)
+                              - coalesce(camount, 0)
+                              - coalesce(OLD.chgamt, 0)
+                             )
+                   ELSE 0
+                END,
+             docno = v_docno,
+             docdt = v_docdt,
+             duedt = v_duedt,
+             -- START REV : 007
+             CHGRATE = NEW.RATE,
+             SCHEME_DOCNO = V_SCHEME_DOCNO
+             -- END REV : 007
+             ,ADMOU_CODE  = V_ADMOU_CODE -- REV : 025
+       WHERE entcode = NEW.srvcode::varchar
+         AND enttype = 'PSC'
+         -- START REV : 008
+         AND CHG_PK_CODE = OLD.CODE
+         -- END REV : 008
+         AND chgcode = OLD.chgcode
+         -- START REV : 007
+         --AND glcode = :OLD.glcode
+         AND coalesce(glcode,0) = coalesce(OLD.glcode,0)
+         AND    coalesce(CHGRATE, 0) = coalesce(OLD.RATE, 0)
+         -- END REV : 007
+         AND ((OLD.slcode IS NULL AND slcode IS NULL) OR slcode = OLD.slcode
+             );
+
+
+      UPDATE finpost
+         SET entno = NEW.srvno,
+             entdt = NEW.srvdt,
+             glcode = NEW.glcode,
+             slcode = NEW.slcode,
+             chgcode = NEW.chgcode,
+             damount =
+                CASE
+                   WHEN(  coalesce(damount, 0)
+                         - coalesce(camount, 0)
+                         + coalesce(NEW.chgamt, 0)
+                        ) > 0
+                      THEN (  coalesce(damount, 0)
+                            - coalesce(camount, 0)
+                            + coalesce(NEW.chgamt, 0)
+                           )
+                   ELSE 0
+                END,
+             camount =
+                CASE
+                   WHEN(  coalesce(damount, 0)
+                         - coalesce(camount, 0)
+                         + coalesce(NEW.chgamt, 0)
+                        ) < 0
+                      THEN   0
+                           - (  coalesce(damount, 0)
+                              - coalesce(camount, 0)
+                              + coalesce(NEW.chgamt, 0)
+                             )
+                   ELSE 0
+                END,
+             docno = v_docno,
+             docdt = v_docdt,
+             duedt = v_duedt,
+             -- START REV : 007
+             CHGRATE      = NEW.RATE,
+             SCHEME_DOCNO = V_SCHEME_DOCNO
+             -- END REV : 007
+             ,ADMOU_CODE  = V_ADMOU_CODE -- REV : 025
+       WHERE entcode = NEW.srvcode::varchar
+         AND enttype = 'PSC'
+         -- START REV : 008
+         AND CHG_PK_CODE = NEW.CODE
+         -- END REV : 008
+         AND chgcode = NEW.chgcode
+         -- START REV : 007
+         --AND glcode = :NEWglcode
+         AND coalesce(glcode,0) = coalesce(NEW.glcode,0)
+         AND       coalesce(CHGRATE, 0) = coalesce(NEW.RATE, 0)
+         -- END REV : 007
+         AND ((NEW.slcode IS NULL AND slcode IS NULL) OR slcode = NEW.slcode
+             );
+
+      GET DIAGNOSTICS ora2pg_rowcount = ROW_COUNT;
+IF ora2pg_rowcount = 0
+      THEN
+         IF coalesce(NEW.chgamt, 0) < 0
+         THEN
+            INSERT INTO finpost(postcode, entcode, entno,
+                         entdt, enttype, docno, docdt, duedt,
+                         glcode, slcode, damount, camount,
+                         ycode, chgcode,
+                         -- START REV : 007
+                         CHGRATE,
+                         SCHEME_DOCNO
+                         -- END REV : 007
+                        -- START REV : 008
+                         ,CHG_PK_CODE
+                        -- END REV : 008
+                        ,ADMOU_CODE  -- REV : 025
+                        )
+                 VALUES (nextval('erp01'), NEW.srvcode, NEW.srvno,
+                         NEW.srvdt, 'PSC', v_docno, v_docdt, v_duedt,
+                         NEW.glcode, NEW.slcode, 0, -coalesce(NEW.chgamt, 0),
+                         NEW.ycode, NEW.chgcode,
+                         -- START REV : 007
+                         NEW.RATE,
+                         V_SCHEME_DOCNO
+                         -- END REV : 007
+                         -- START REV : 008
+                         ,NEW.CODE
+                         -- END REV : 008
+                         ,V_ADMOU_CODE -- REV : 025
+                        );
+
+         ELSIF coalesce(NEW.chgamt, 0) > 0
+         THEN
+            INSERT INTO finpost(postcode, entcode, entno,
+                         entdt, enttype, docno, docdt, duedt,
+                         glcode, slcode, damount, camount,
+                         ycode, chgcode,
+                         -- START REV : 007
+                         CHGRATE,
+                         SCHEME_DOCNO
+                         -- END REV : 007
+                        -- START REV : 008
+                         ,CHG_PK_CODE
+                        -- END REV : 008
+                        ,ADMOU_CODE  -- REV : 025
+                        )
+                 VALUES (nextval('erp01'), NEW.srvcode, NEW.srvno,
+                         NEW.srvdt, 'PSC', v_docno, v_docdt, v_duedt,
+                         NEW.glcode, NEW.slcode, coalesce(NEW.chgamt, 0), 0,
+                         NEW.ycode, NEW.chgcode,
+                         -- START REV : 007
+                         NEW.RATE,
+                         V_SCHEME_DOCNO
+                         -- END REV : 007
+                         -- START REV : 008
+                         ,NEW.CODE
+                         -- END REV : 008
+                         ,V_ADMOU_CODE -- REV : 025
+                        );
+
+         END IF;
+      END IF;
+
+
+      -- START REV : 003
+      IF  coalesce(v_type, 'N') <> 'N' THEN
+          v_postcode := NULL;
+          v_cccode   := NULL;
+
+          BEGIN
+              SELECT postcode
+              INTO STRICT   v_postcode
+              FROM   finpost
+              WHERE  ENTCODE = NEW.srvcode::varchar
+              and    entdt = NEW.srvdt
+              AND    enttype = 'PSC'
+             -- START REV : 007
+             --AND glcode = :OLD.glcode
+            -- START REV : 008
+             AND CHG_PK_CODE = NEW.CODE
+            -- END REV : 008
+             AND coalesce(glcode,0) = coalesce(NEW.glcode,0)
+             AND    coalesce(CHGRATE, 0) = coalesce(NEW.RATE, 0)
+             -- END REV : 007
+              AND    coalesce(slcode, 0) = coalesce(NEW.slcode, 0)
+              and    chgcode = NEW.chgcode
+              and    damount = CASE
+                                  WHEN coalesce(NEW.chgamt, 0) > 0 THEN coalesce(NEW.chgamt, 0)
+                                  ELSE 0
+                               END
+              and    camount = CASE
+                                  WHEN coalesce(NEW.chgamt, 0) < 0 THEN ABS(coalesce(NEW.chgamt, 0))
+                                  ELSE 0
+                               END
+              AND    ycode = v_ycode;
+          EXCEPTION
+              WHEN no_data_found THEN NULL;
+          END;
+      END IF;
+   END IF;
+
+   IF TG_OP = 'DELETE'
+   THEN
+
+      DELETE FROM fincosttag
+            WHERE postcode IN (
+                     SELECT postcode
+                       FROM finpost
+                      WHERE entcode = OLD.srvcode::varchar
+                        AND enttype = 'PSC'
+                        AND chgcode = OLD.chgcode
+                        -- START REV : 008
+                        AND CHG_PK_CODE = OLD.CODE
+                        -- END REV : 008
+                        -- START REV : 007
+                         --AND glcode = :OLD.glcode
+                        AND coalesce(glcode,0) = coalesce(OLD.glcode,0)
+                        AND    coalesce(CHGRATE, 0) = coalesce(OLD.RATE, 0)
+                         -- END REV : 007
+                        AND (   (OLD.slcode IS NULL AND slcode IS NULL)
+                             OR slcode = OLD.slcode
+                            ));
+
+
+      DELETE FROM finpost
+            WHERE entcode = OLD.srvcode::varchar
+              AND enttype = 'PSC'
+                -- START REV : 008
+              AND CHG_PK_CODE = OLD.CODE
+                -- END REV : 008
+              AND chgcode = OLD.chgcode
+              -- START REV : 007
+             --AND glcode = :OLD.glcode
+              AND coalesce(glcode,0) = coalesce(OLD.glcode,0)
+              AND    coalesce(CHGRATE, 0) = coalesce(OLD.RATE, 0)
+             -- END REV : 007
+              AND (   (OLD.slcode IS NULL AND slcode IS NULL)
+                     OR slcode = OLD.slcode
+                    );
+
+     END IF;
+
+  -- START REV : 007
+      DELETE FROM FINCOSTTAG
+      WHERE  POSTCODE IN (     SELECT POSTCODE FROM FINPOST
+                            WHERE entcode = OLD.srvcode::varchar
+                            AND enttype = 'PSC'
+                            AND coalesce(damount, 0) = 0
+                            AND coalesce(camount, 0) = 0
+                         );
+  -- END REV : 007
+   DELETE FROM finpost
+      WHERE entcode = OLD.SRVCODE::varchar
+        AND enttype = 'PSC'
+        AND coalesce(damount, 0) = 0
+        AND coalesce(camount, 0) = 0;
+EXCEPTION
+   WHEN OTHERS
+   THEN
+     CALL erraudit(USER, 'T_Pursrvchg', SQLSTATE::varchar, SQLERRM);
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED  '
+                               || SQLSTATE::varchar
+                               || '  '
+                               || SQLERRM
+                               USING ERRCODE = '45001';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

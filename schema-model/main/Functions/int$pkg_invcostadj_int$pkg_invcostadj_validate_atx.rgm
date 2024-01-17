@@ -1,0 +1,174 @@
+function "main"."int$pkg_invcostadj_int$pkg_invcostadj_validate_atx(bigint, bigint, timestamp without time zone, bigint, text)" {
+  text = """
+
+DECLARE
+
+        v_status        char(1);
+        errmsg          varchar(200);
+        errcode         bigint;
+        g_mark          varchar(100);
+        v_oucode        admou.code%type;
+BEGIN
+        -- start null check
+        -- month_name null
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'INVCOSTADJ', userid, 'Mandatory Validation','Month Name can not be blank.',clock_timestamp()
+        from    int$stg_invcostadj a
+        where   month_name is null
+        and     userid = p_userid;
+
+        -- site_shortname null
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'INVCOSTADJ', userid, 'Mandatory Validation','Site short Name can not be blank.',clock_timestamp()
+        from    int$stg_invcostadj a
+        where   site_shortname is null
+        and     userid = p_userid;
+
+        -- barcode null
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'INVCOSTADJ', userid, 'Mandatory Validation','Barcode can not be blank.',clock_timestamp()
+        from    int$stg_invcostadj a
+        where   barcode is null
+        and     userid = p_userid;
+
+        -- diff_cost_amt null
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'INVCOSTADJ', userid, 'Mandatory Validation','Difference Amount can not be blank.',clock_timestamp()
+        from    int$stg_invcostadj a
+        where   diff_cost_amt is null
+        and     userid = p_userid;
+
+        -- diff_site_cost_amt null
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'INVCOSTADJ', userid, 'Mandatory Validation','Site difference Amount can not be blank.',clock_timestamp()
+        from    int$stg_invcostadj a
+        where   diff_site_cost_amt is null
+        and     userid = p_userid;
+
+        -- invalid month_name name
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'INVCOSTADJ', userid, 'Data Validation','Month Name is not valid.',clock_timestamp()
+        FROM int$stg_invcostadj a
+LEFT OUTER JOIN (SELECT upper(month_name) mnt_name from admmonth where ycode <> 1) b ON (upper(a.month_name) = b.mnt_name)
+WHERE a.userid = p_userid  and b.mnt_name is null and a.month_name is not null;
+
+        -- invalid site_shrtname name
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'INVCOSTADJ', userid, 'Data Validation','Site Short Name is not available in Site Master.',clock_timestamp()
+        FROM int$stg_invcostadj a
+LEFT OUTER JOIN (SELECT upper(shrtname) srt_name from admsite) b ON (upper(a.site_shortname) = b.srt_name)
+WHERE a.userid = p_userid  and b.srt_name is null and a.site_shortname is not null;
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'INVCOSTADJ', userid, 'Data Validation','Site Short Name is available in more than once Site.',clock_timestamp()
+        from    int$stg_invcostadj a,
+                        (
+                            SELECT  upper(a1.shrtname) site_shrtname,count(upper(a1.shrtname)) cnt
+                            from    admsite a1
+                            group by upper(a1.shrtname)
+                            having count(upper(a1.shrtname)) > 1
+                        ) b
+        where   a.userid = p_userid
+        and     a.site_shortname is not null
+        and     upper(a.site_shortname) = upper(b.site_shrtname);
+
+        -- invalid icode
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'INVCOSTADJ', userid, 'Data Validation','ICODE/BARCODE is not available in Item Master',clock_timestamp()
+        from    int$stg_invcostadj a, invitem b
+        where   a.userid = p_userid
+        and     a.lineno NOT IN
+                  (SELECT coalesce(x.lineno, 0) lineno
+                   FROM   int$stg_invcostadj x, invitem i
+                   WHERE  ((UPPER(x.barcode) = i.icode) OR (UPPER(x.barcode) = i.barcode))
+                   AND   a.userid = p_userid)
+         AND   a.barcode IS NOT NULL
+         AND   a.userid = p_userid;
+
+        -- INV_MONTH_STATUS
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'INVCOSTADJ', userid, 'Data Validation','Inventory MONTH_NAME for the OU of selected Site should be closed state.',clock_timestamp()
+        from    int$stg_invcostadj a, (SELECT mcode, upper(month_name) mnt_name from admmonth where ycode <> 1) b, admou_month c, admsite d
+        where   a.userid = p_userid
+        and     upper(a.month_name) = b.mnt_name
+        and     b.mcode = c.admmonth_code
+        and     c.admou_code = p_connect_ou
+        and     c.inv_month_status <> 'C'
+        and     upper(a.site_shortname) = upper(d.shrtname)
+        and     d.sitetype not like '%OM%';
+
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), 0, 'INVCOSTADJ', p_userid, 'Data Validation','Duplicate month and Site Combination.',clock_timestamp()
+        from (
+                    SELECT  row_number() over (partition by upper(month_name), upper(site_shortname), upper(barcode) order by upper(month_name), upper(site_shortname), upper(barcode)) row_cnt
+                    from    int$stg_invcostadj a
+                    where   a.userid = p_userid
+                ) t
+        where   row_cnt > 1;
+        -- diff_cost_amt, diff_site_cost_amt
+        --COMMIT;
+
+        -- check whether records are valid or not
+        begin
+            select  'S'
+            into STRICT    v_status
+
+            where   exists (SELECT  'S'
+                            from    int$error_log
+                            where   userid = p_userid
+                            and     classname = 'INVCOSTADJ');
+            return('0');
+        exception
+            when no_data_found then
+                return('1');
+        end;
+    exception
+        when others then
+            errcode := SQLSTATE;
+            errmsg := sqlerrm;
+
+            insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            values (nextval('int$error_log_code'), 0, 'INVCOSTADJ', p_userid, errcode, errmsg, clock_timestamp());
+            --COMMIT;
+
+            return('0');
+    END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_classname
+      type = text
+      mode = IN
+      default = 'INVCOSTADJ'::text
+    }
+
+  >
+  language = plpgsql
+}
+

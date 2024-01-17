@@ -1,0 +1,126 @@
+procedure "main"."p_mlsp_dsr_ltl(timestamp without time zone, refcursor)" {
+  text = """
+
+DECLARE
+
+    dtfr        timestamp;
+    dtto        timestamp;
+    dtfrly      timestamp;
+    dttoly      timestamp;
+
+BEGIN
+/******************************************************************************
+001        22/02/2019         JIT CHATTERJEE (Reviewed by Mousumi di)               
+(Bug 12338 - There has been introduced a new status which is 'U' for auto settlement. For the new status, the report data was not generating for the DSR report )
+******************************************************************************/
+   dtfr := to_date(to_char(next_day(reportdate - 8,'monday'),'DD-MON-YY'),'DD-MON-RR');
+   dtto := to_date(to_char(reportdate-1,'DD-MON-YY'),'DD-MON-RR');
+   dtfrly := to_date(to_char(next_day(reportdate - 8,'monday'),'DD-MON')||'-'||(to_char(reportdate,'YYYY'))::numeric -1::varchar,'DD-MON-RR');
+   dttoly := to_date(to_char((reportdate-1),'DD-MON')||'-'||(to_char(reportdate,'YYYY'))::numeric -1::varchar,'DD-MON-RR');
+   OPEN refcur FOR
+            SELECT  admsite.name                                                                store
+                    ,sum(saleamt_ly)                                                            saleamt_ly
+                    ,sum(saleamt)                                                               saleamt
+                    ,sum(saleamt) - sum(saleamt_ly)                                              goly_saleamt
+                    ,sum(footfall_ly)                                                           footfall_ly
+                    ,sum(footfall)                                                              footfall
+                    ,sum(footfall)-sum(footfall_ly)                                             goly_footfall
+                    ,sum(no_of_inv_ly)                                                          no_of_inv_ly
+                    ,sum(no_of_inv)                                                             no_of_inv
+                    ,sum(no_of_inv)-sum(no_of_inv_ly)                                           goly_no_of_inv
+                    ,round((CASE WHEN sum(footfall_ly)=0 THEN 0  ELSE (sum(no_of_inv_ly)/sum(footfall_ly))*100 END )::numeric,3)     conv_perc_ly
+                    ,round((CASE WHEN sum(footfall)=0 THEN 0  ELSE (sum(no_of_inv)/sum(footfall))*100 END )::numeric,3)               conv_perc
+                    ,round((CASE WHEN sum(footfall)=0 THEN 0  ELSE (sum(no_of_inv)/sum(footfall))*100 END )::numeric,3)-
+                      round((CASE WHEN sum(footfall_ly)=0 THEN 0  ELSE (sum(no_of_inv_ly)/sum(footfall_ly))*100 END )::numeric,3)    goly_conv_perc
+                    ,round((CASE WHEN sum(no_of_inv_ly)=0 THEN 0  ELSE sum(saleamt_ly)/sum(no_of_inv_ly) END )::numeric,2)               avg_sale_amt_ly
+                    ,round((CASE WHEN sum(no_of_inv)=0 THEN 0  ELSE sum(saleamt)/sum(no_of_inv) END )::numeric,2)                     avg_sale_amt
+                    ,round((CASE WHEN sum(no_of_inv)=0 THEN 0  ELSE sum(saleamt)/sum(no_of_inv) END )::numeric,2)-
+                      round((CASE WHEN sum(no_of_inv_ly)=0 THEN 0  ELSE sum(saleamt_ly)/sum(no_of_inv_ly) END )::numeric,2)              goly_avg_sale_amt
+            FROM (
+                    SELECT  p.admsite_code              sitecode
+                            ,sum(coalesce(netpayable,0))     saleamt
+                            ,0                          footfall
+                            ,count(billno)              no_of_inv
+                            ,0                          saleamt_ly
+                            ,0                          footfall_ly
+                            ,0                          no_of_inv_ly
+                    FROM    psite_posbill   p
+                            ,psite_posstlm  m
+                    WHERE   to_date(to_char(billdate,'DD-MON-YY'),'DD-MON-RR') = to_date(to_char(stlmfor,'DD-MON-YY'),'DD-MON-RR')
+                    AND     p.admsite_code = m.admsite_code
+                    AND     status IN ('O','C','U')
+                    AND     to_date(to_char(billdate,'DD-MON-YY'),'DD-MON-RR') BETWEEN dtfr AND dtto
+                    GROUP BY
+                            p.admsite_code
+
+UNION ALL
+
+                    SELECT  admsite_code            sitecode
+                            ,0                      saleamt
+                            ,sum(footfall)          footfall
+                            ,0                      no_of_inv
+                            ,0                      saleamt_ly
+                            ,0                      footfall_ly
+                            ,0                      no_of_inv_ly
+                    FROM   psite_posstlm
+                    WHERE  status IN ('O','C','U')
+                    AND    to_date(to_char(stlmfor,'DD-MON-YY'),'DD-MON-RR') BETWEEN dtfr AND dtto
+                    GROUP BY
+                            admsite_code
+                    
+UNION ALL
+
+                    SELECT  p.admsite_code              sitecode
+                            ,0                          saleamt
+                            ,0                          footfall
+                            ,0                          no_of_inv
+                            ,sum(coalesce(netpayable,0))     saleamt_ly
+                            ,0                          footfall_ly
+                            ,count(billno)              no_of_inv_ly
+                    FROM    psite_posbill   p
+                            ,psite_posstlm  m
+                    WHERE   to_date(to_char(billdate,'DD-MON-YY'),'DD-MON-RR') = to_date(to_char(stlmfor,'DD-MON-YY'),'DD-MON-RR')
+                    AND     p.admsite_code = m.admsite_code
+                    AND     status IN ('O','C','U') --REV:001
+                    AND     to_date(to_char(billdate,'DD-MON-YY'),'DD-MON-RR') BETWEEN dtfrly AND dttoly
+                    GROUP BY
+                            p.admsite_code
+                    
+UNION ALL
+
+                    SELECT  admsite_code            sitecode
+                            ,0                      saleamt
+                            ,0                      footfall
+                            ,0                      no_of_inv
+                            ,0                      saleamt_ly
+                            ,sum(footfall)          footfall_ly
+                            ,0                      no_of_inv_ly
+                    FROM   psite_posstlm
+                    WHERE  status IN ('O','C','U')--REV:001
+                    AND    to_date(to_char(stlmfor,'DD-MON-YY'),'DD-MON-RR') BETWEEN dtfrly AND dttoly
+                    GROUP BY
+                            admsite_code
+                ) t1
+                ,admsite
+            WHERE   t1.sitecode = admsite.code
+            GROUP BY
+                    admsite.name;
+END;
+"""
+  arguments = <
+    {
+      name = reportdate
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = refcur
+      type = refcursor
+      mode = INOUT
+    }
+
+  >
+  language = plpgsql
+}
+

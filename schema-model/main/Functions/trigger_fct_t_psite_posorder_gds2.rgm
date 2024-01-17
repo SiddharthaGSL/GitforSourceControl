@@ -1,0 +1,76 @@
+function "main"."trigger_fct_t_psite_posorder_gds2()" {
+  text = """
+
+DECLARE
+    V_SUB_POSORD_ADDED_CNT          bigint;
+    V_SUB_POSORD_UPDATED_CNT        bigint;
+    V_SUB_POSORD_DELETE_EVENT_CNT   bigint;
+BEGIN
+    SELECT COUNT(1)
+      INTO STRICT V_SUB_POSORD_ADDED_CNT
+      FROM GDS2_SUBSCR_EVENT
+     WHERE EVENT_ID IN ('pos.posorder.added');
+
+    SELECT COUNT(1)
+      INTO STRICT V_SUB_POSORD_UPDATED_CNT
+      FROM GDS2_SUBSCR_EVENT
+     WHERE EVENT_ID IN ('pos.posorder.updated');
+
+    IF TG_OP = 'INSERT'
+        THEN
+            IF  coalesce(V_SUB_POSORD_ADDED_CNT, 0) > 0
+            THEN
+
+            SELECT COUNT(1)
+              INTO STRICT V_SUB_POSORD_DELETE_EVENT_CNT
+              FROM GDS2_EVENT_TRACK
+             WHERE EVENT_ID IN ('pos.posorder.deleted')
+             AND   REFCODE = NEW.CODE::varchar;
+
+            IF coalesce(V_SUB_POSORD_DELETE_EVENT_CNT, 0) > 0
+            THEN
+                IF coalesce(V_SUB_POSORD_UPDATED_CNT, 0) > 0
+                THEN
+                    CALL DB_PKG_GDS2_EVENT$TRACK('pos.posorder.updated', NEW.CODE);
+
+                -- delete the pos.posorder.deleted event
+                    DELETE FROM
+                        GDS2_EVENT_TRACK
+                          WHERE     REFCODE = NEW.CODE::varchar
+                                AND EVENT_ID = 'pos.posorder.deleted';
+                END IF;
+            ELSE
+                CALL DB_PKG_GDS2_EVENT$TRACK('pos.posorder.added', NEW.CODE);
+            END IF;
+        END IF;
+    END IF;
+
+    IF TG_OP = 'UPDATE'
+    THEN
+        IF coalesce(V_SUB_POSORD_UPDATED_CNT, 0) > 0
+        THEN
+            CALL DB_PKG_GDS2_EVENT$TRACK('pos.posorder.updated', NEW.CODE);
+        END IF;
+    END IF;
+
+    IF TG_OP = 'DELETE'
+     THEN
+        IF coalesce(V_SUB_POSORD_UPDATED_CNT, 0) > 0
+        THEN
+            CALL DB_PKG_GDS2_EVENT$TRACK('pos.posorder.deleted', OLD.CODE);
+        END IF;
+    END IF;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

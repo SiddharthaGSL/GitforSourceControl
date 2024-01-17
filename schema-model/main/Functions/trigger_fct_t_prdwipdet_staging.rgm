@@ -1,0 +1,177 @@
+function "main"."trigger_fct_t_prdwipdet_staging()" {
+  text = """
+
+/********************************************************************************************************************
+   NAME: T_WIP_PRDWIPDET
+   PURPOSE:
+   REVISIONS:
+   No.          Date            Author      Description
+   ---------    ----------      ------      -------------------------------------------------------------------------
+   rev : 000    20-feb-2015     manash      (bug id : lsv-220-58538) wip rate differante iss and rec.
+   REV : 001    30-JUL-2015     MANASH      (BUG ID : XXX)  Generic Production release.
+   REV : 002    20-10-2020      MOUSUMI     (BUG ID : XXX)  COSTRATE FOR ALTERNATE FROM JOB RECEIPT
+   REV : 003    12-APR-2022     SIDDHARTHA  (TFS ID : XXXX) Introduction of Batch Serial Code
+********************************************************************************************************************/
+DECLARE
+   V_WIPTXN_TYPE    PRDWIPMAIN.WIPTXN_TYPE%TYPE;
+   V_TYPE           varchar(100);
+   V_PRCODE         PRDWIPMAIN.PRCODE%TYPE;
+   V_OP_SEQ         PRDJOBBOM.OPERATION_SEQ%TYPE;
+   V_WIP_DATE       PRDWIPMAIN.WIP_DATE%TYPE;
+   V_AUTOGEN_TYPE   PRDWIPMAIN.AUTOGEN_TYPE%TYPE;
+BEGIN
+  BEGIN
+   IF TG_OP = 'INSERT'
+   THEN
+      V_TYPE := 'INSERTING';
+   ELSIF TG_OP = 'UPDATE'
+   THEN
+      V_TYPE := 'UPDATING';
+   ELSIF TG_OP = 'DELETE'
+   THEN
+      V_TYPE := 'DELETING';
+   END IF;
+
+   SELECT WIPTXN_TYPE,
+          PRCODE,
+          WIP_DATE,
+          AUTOGEN_TYPE
+     INTO STRICT V_WIPTXN_TYPE,
+          V_PRCODE,
+          V_WIP_DATE,
+          V_AUTOGEN_TYPE
+     FROM PRDWIPMAIN WM
+    WHERE CODE = coalesce(OLD.WIPTXN_CODE, NEW.WIPTXN_CODE);
+
+   SELECT OPERATION_SEQ
+     INTO STRICT V_OP_SEQ
+     FROM PRDJOBBOM JB
+    WHERE CODE = coalesce(NEW.JOBBOM_CODE, OLD.JOBBOM_CODE);
+
+   -- start rev : 001
+   --IF  V_WIPTXN_TYPE = 'R' THEN
+   IF V_WIPTXN_TYPE IN ('R', 'W')
+   THEN
+      -- end rev : 001
+      INSERT INTO PRD_RATE_STAGING(TRANMAIN_CODE,
+                                    TYPE,
+                                    JOBCODE,
+                                    LOTCODE,
+                                    ASSEMBLY_ICODE,
+                                    ASS_SAITEM_CODE,
+                                    TXN_TYPE,
+                                    PRCODE,
+                                    OPERATION_SEQ,
+                                    TXN_DATE,
+                                    --START REV : 003
+                                    INVBATCH_SERIAL_CODE
+                                    --END REV : 003
+                                    )
+           VALUES (coalesce(NEW.WIPTXN_CODE, OLD.WIPTXN_CODE),
+                   V_TYPE,
+                   coalesce(NEW.JOBCODE, OLD.JOBCODE),
+                   coalesce(NEW.LOTCODE, OLD.LOTCODE),
+                   coalesce(NEW.ASSEMBLY_ICODE, OLD.ASSEMBLY_ICODE),
+                   coalesce(NEW.ASS_SAITEM_CODE, OLD.ASS_SAITEM_CODE),
+                   'RTWS',
+                   V_PRCODE,
+                   V_OP_SEQ,
+                   V_WIP_DATE,
+                   -- START REV : 003
+                   coalesce(NEW.INVBATCH_SERIAL_CODE, OLD.INVBATCH_SERIAL_CODE)
+                   -- END REV : 003
+                   );
+
+      -- START REV : 002
+     -- ERRAUDIT('T','T','T',V_AUTOGEN_TYPE||:NEW.ASSEMBLY_ICODE||'*'||:OLD.ASSEMBLY_ICODE||'*'||:NEW.JOB_ASSEMBLY_ICODE||'*'||:OLD.JOB_ASSEMBLY_ICODE);
+      IF  V_AUTOGEN_TYPE IN ('R', 'O')
+      THEN
+          --ERRAUDIT('T1','T','T1',V_AUTOGEN_TYPE||'*'||:NEW.WIPTXN_CODE||'*'||:OLD.WIPTXN_CODE);
+           
+         INSERT INTO TEMP_PRD_RATE_STAGING(TRANMAIN_CODE,
+                                            TYPE,
+                                            JOBCODE,
+                                            LOTCODE,
+                                            ASSEMBLY_ICODE,
+                                            ASS_SAITEM_CODE,
+                                            TXN_TYPE,
+                                            PRCODE,
+                                            OPERATION_SEQ,
+                                            TXN_DATE,
+                                            -- START REV : 003
+                                            INVBATCH_SERIAL_CODE
+                                            -- END REV : 003
+                                            )
+              VALUES (coalesce(NEW.WIPTXN_CODE, OLD.WIPTXN_CODE),
+                      V_TYPE,
+                      coalesce(NEW.JOBCODE, OLD.JOBCODE),
+                      coalesce(NEW.LOTCODE, OLD.LOTCODE),
+                      coalesce(NEW.ASSEMBLY_ICODE, OLD.ASSEMBLY_ICODE),
+                      coalesce(NEW.ASS_SAITEM_CODE, OLD.ASS_SAITEM_CODE),
+                      'RTWS',
+                      V_PRCODE,
+                      V_OP_SEQ,
+                      V_WIP_DATE,
+                      -- START REV : 003
+                      coalesce(NEW.INVBATCH_SERIAL_CODE, OLD.INVBATCH_SERIAL_CODE)
+                      -- END REV : 003
+                      );
+      END IF;
+   -- END REV : 002
+   ELSE
+      IF coalesce(NEW.ASSEMBLY_ICODE, OLD.ASSEMBLY_ICODE) =
+            coalesce(NEW.COMPONENT_ICODE, OLD.COMPONENT_ICODE)
+      THEN
+         INSERT INTO PRD_RATE_STAGING(TRANMAIN_CODE,
+                                       TYPE,
+                                       JOBCODE,
+                                       LOTCODE,
+                                       ASSEMBLY_ICODE,
+                                       ASS_SAITEM_CODE,
+                                       TXN_TYPE,
+                                       PRCODE,
+                                       OPERATION_SEQ,
+                                       TXN_DATE,
+                                       -- START REV : 003
+                                       INVBATCH_SERIAL_CODE
+                                       -- END REV : 003
+                                       )
+              VALUES (coalesce(NEW.WIPTXN_CODE, OLD.WIPTXN_CODE),
+                      V_TYPE,
+                      coalesce(NEW.JOBCODE, OLD.JOBCODE),
+                      coalesce(NEW.LOTCODE, OLD.LOTCODE),
+                      coalesce(NEW.ASSEMBLY_ICODE, OLD.ASSEMBLY_ICODE),
+                      coalesce(NEW.ASS_SAITEM_CODE, OLD.ASS_SAITEM_CODE),
+                      'ISSPSD',
+                      V_PRCODE,
+                      V_OP_SEQ,
+                      V_WIP_DATE,
+                      -- START REV : 003
+                      coalesce(NEW.INVBATCH_SERIAL_CODE, OLD.INVBATCH_SERIAL_CODE)
+                      -- END REV : 003
+                      );
+      END IF;
+   END IF;
+EXCEPTION
+   WHEN OTHERS
+   THEN
+      CALL ERRAUDIT(USER,
+                'T_PRDWIPDET_STAGING',
+                SQLSTATE::varchar,
+                SQLERRM);
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED  ' || SQLSTATE::varchar || '  ' || SQLERRM USING ERRCODE = '45002';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

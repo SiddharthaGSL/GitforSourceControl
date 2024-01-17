@@ -1,0 +1,212 @@
+view "main"."v_stock" {
+  text = """-
+SELECT trans.enttype,
+    inventtype.entname,
+    trans.ycode,
+    trans.entcode,
+    trans.entno,
+    trans.entdt,
+    trans.loccode,
+    trans.icode,
+    trans.qty,
+    trans.rate
+   FROM ( SELECT op.ycode AS entcode,
+            op.ycode AS entno,
+            (date_trunc('days'::text, yr.dtfr) - '1 day'::interval) AS entdt,
+            'OPN'::text AS enttype,
+            op.loccode,
+            op.icode,
+            op.oqty AS qty,
+            op.orate AS rate,
+            op.ycode
+           FROM main.invitemop op,
+            main.admyear yr
+          WHERE ((COALESCE(op.oqty, (0)::numeric) <> (0)::numeric) AND (op.ycode = yr.ycode))
+        UNION ALL
+         SELECT invgrcdet.grccode,
+            invgrcdet.grcno,
+            invgrcdet.grcdt,
+            'GRC'::text AS text,
+            invgrcdet.loccode,
+            invgrcdet.icode,
+            invgrcdet.acqty,
+            invgrcdet.acrate,
+            invgrcdet.ycode
+           FROM main.invgrcdet
+          WHERE (COALESCE(invgrcdet.acqty, (0)::numeric) <> (0)::numeric)
+        UNION ALL
+         SELECT invgrtdet.grtcode,
+            invgrtdet.grtno,
+            invgrtdet.grtdt,
+            'GRT'::text AS text,
+            invgrtdet.loccode,
+            invgrtdet.icode,
+            (- invgrtdet.qty),
+            invgrtdet.rate,
+            invgrtdet.ycode
+           FROM main.invgrtdet
+          WHERE (COALESCE(invgrtdet.qty, (0)::numeric) <> (0)::numeric)
+        UNION ALL
+         SELECT invstfdet.stfcode,
+            invstfdet.stfno,
+            invstfdet.stfdt,
+            'STI'::text AS text,
+            invstfdet.inloccode,
+            invstfdet.icode,
+            invstfdet.qty,
+            0,
+            invstfdet.ycode
+           FROM main.invstfdet
+          WHERE (COALESCE(invstfdet.qty, (0)::numeric) <> (0)::numeric)
+        UNION ALL
+         SELECT invstfdet.stfcode,
+            invstfdet.stfno,
+            invstfdet.stfdt,
+            'STO'::text AS text,
+            invstfdet.outloccode,
+            invstfdet.icode,
+            (- invstfdet.qty),
+            0,
+            invstfdet.ycode
+           FROM main.invstfdet
+          WHERE (COALESCE(invstfdet.qty, (0)::numeric) <> (0)::numeric)
+        UNION ALL
+         SELECT prdrc.ordcode,
+            prdrc.ordno,
+            prdrc.orddt,
+            'PRC'::text AS text,
+            prdrc.loccode,
+            prdrc.icode,
+            prdrc.qty,
+            COALESCE(invitem.rate, (0)::numeric) AS rate,
+            prdrc.ycode
+           FROM main.prdrc,
+            main.invitem
+          WHERE (((invitem.icode)::text = (prdrc.icode)::text) AND (COALESCE(prdrc.qty, (0)::numeric) <> (0)::numeric))
+        UNION ALL
+         SELECT prdis.ordcode,
+            prdis.ordno,
+            prdis.orddt,
+            'PIS'::text AS text,
+            prdis.loccode,
+            prdis.icode,
+            (- prdis.qty),
+            COALESCE(invitem.rate, (0)::numeric) AS "coalesce",
+            prdis.ycode
+           FROM main.prdis,
+            main.invitem
+          WHERE (((prdis.icode)::text = (invitem.icode)::text) AND (COALESCE(prdis.qty, (0)::numeric) <> (0)::numeric))
+        UNION ALL
+         SELECT invstkadjdet.stkadjcode,
+            invstkadjdet.stkadjno,
+            invstkadjdet.stkadjdt,
+            'ADJ'::text AS text,
+            invstkadjdet.loccode,
+            invstkadjdet.icode,
+            invstkadjdet.qty,
+            0,
+            invstkadjdet.ycode
+           FROM main.invstkadjdet
+          WHERE (COALESCE(invstkadjdet.qty, (0)::numeric) <> (0)::numeric)
+        UNION ALL
+         SELECT invdcmain.dccode,
+            invdcmain.dcno,
+            invdcmain.dcdt,
+            'DCI'::text AS text,
+            invdcmain.inloccode,
+            invdcdet.icode,
+            invdcdet.isqty,
+            invdcdet.rate,
+            invdcmain.ycode
+           FROM main.invdcmain,
+            main.invdcdet
+          WHERE (invdcmain.dccode = invdcdet.dccode)
+        UNION ALL
+         SELECT invdcmain.dccode,
+            invdcmain.dcno,
+            invdcmain.dcdt,
+            'DCO'::text AS text,
+            invdcmain.outloccode,
+            invdcdet.icode,
+            (- invdcdet.isqty),
+            invdcdet.rate,
+            invdcmain.ycode
+           FROM main.invdcmain,
+            main.invdcdet
+          WHERE (invdcmain.dccode = invdcdet.dccode)
+        UNION ALL
+         SELECT salinvmain.invcode,
+            salinvmain.invno,
+            salinvmain.invdt,
+            'SAL'::text AS text,
+            salinvdet.outloccode,
+            salinvdet.icode,
+            (- salinvdet.invqty),
+            salinvdet.rate,
+            salinvmain.ycode
+           FROM main.salinvmain,
+            main.salinvdet
+          WHERE (salinvmain.invcode = salinvdet.invcode)
+        UNION ALL
+         SELECT salrtmain.rtcode,
+            salrtmain.rtno,
+            salrtmain.rtdt,
+            'SRT'::text AS text,
+            salrtmain.inloccode,
+            salrtdet.icode,
+            salrtdet.qty,
+            salrtdet.rate,
+            salrtmain.ycode
+           FROM main.salrtmain,
+            main.salrtdet
+          WHERE (salrtmain.rtcode = salrtdet.rtcode)
+        UNION ALL
+         SELECT invmiscmain.misccode,
+            invmiscmain.miscno,
+            invmiscmain.miscdt,
+            'MIS'::text AS text,
+            invmiscmain.loccode,
+            invmiscdet.icode,
+            invmiscdet.qty,
+            0 AS rate,
+            invmiscmain.ycode
+           FROM main.invmiscmain,
+            main.invmiscdet
+          WHERE (invmiscmain.misccode = invmiscdet.misccode)) trans,
+    main.inventtype
+  WHERE (trans.enttype = (inventtype.enttype)::text);
+"""
+  columns = (
+    column "enttype" {
+      type = text
+    }
+    column "entname" {
+      type = "character varying(100)"
+    }
+    column "ycode" {
+      type = "bigint"
+    }
+    column "entcode" {
+      type = "bigint"
+    }
+    column "entno" {
+      type = "bigint"
+    }
+    column "entdt" {
+      type = "timestamp without time zone"
+    }
+    column "loccode" {
+      type = "bigint"
+    }
+    column "icode" {
+      type = "character varying(9)"
+    }
+    column "qty" {
+      type = "numeric"
+    }
+    column "rate" {
+      type = "numeric"
+    }
+  )
+}
+

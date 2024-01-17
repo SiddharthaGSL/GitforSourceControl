@@ -1,0 +1,53 @@
+procedure "main"."update_salordmain_status(bigint)" {
+  text = """
+
+DECLARE
+
+    COUNTER     bigint;
+    COUNTER1    bigint;
+    ERRCODE     varchar(50);
+    ERRMSG      varchar(2000);
+
+BEGIN
+    SELECT COUNT(1)
+      INTO STRICT COUNTER
+      FROM SALORDDET
+     WHERE coalesce(SALORDDET.DQTY,0) <> (coalesce(SALORDDET.ORDQTY,0)-coalesce(SALORDDET.CNLQTY,0))
+       AND SALORDDET.ORDCODE = ARGCODE;
+    IF COUNTER = 0 THEN
+       UPDATE SALORDMAIN
+          SET STAT = 'T'
+        WHERE ORDCODE = ARGCODE;
+    ELSE
+         SELECT COUNT(1)
+           INTO STRICT COUNTER1
+           FROM SALORDDET
+          WHERE (coalesce(SALORDDET.DQTY,0) + coalesce(SALORDDET.CNLQTY,0)) <> 0
+            AND SALORDDET.ORDCODE = ARGCODE;
+            IF    COUNTER1 = 0 THEN
+                UPDATE SALORDMAIN
+                   SET STAT = 'N'
+                 WHERE ORDCODE = ARGCODE;
+            ELSE
+                UPDATE SALORDMAIN
+                   SET STAT = 'P'
+                 WHERE ORDCODE = ARGCODE;
+            END IF;
+    END IF;
+EXCEPTION WHEN OTHERS THEN
+    ERRCODE := SQLSTATE;
+    ERRMSG     := SQLERRM;
+    CALL ERRAUDIT(USER,'UPDATE_SALORDMAIN_STATUS',ERRCODE,ERRMSG);
+END;
+"""
+  arguments = <
+    {
+      name = argcode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

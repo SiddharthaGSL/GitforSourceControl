@@ -1,0 +1,111 @@
+function "main"."db_fun_item_rate_snd(timestamp without time zone, text, text, bigint, bigint, bigint, text)" {
+  text = """
+
+DECLARE
+
+/**********************************************************************************************************************
+   NAME: DB_FUN_ITEM_RATE_SND
+
+   PURPOSE:
+
+   REVISIONS:
+   No.   		Date    Author          Description
+   --------- 	----------  	--------------  -------------------------------------------------------------------
+   REV : 001 	31/12/2010	MANASH		(BUG ID : 2278) Sales Item level discount to be added in Sales Order
+   								and  Delivery Challan.
+
+***********************************************************************************************************************/
+	V_RATE 		double precision;
+	ERRCODE 	varchar(50);
+	ERRMSG 		varchar(2000);
+	V_NOTFOUND 	char(1) := 'N';
+
+BEGIN
+	IF  coalesce(ARGPRICELISTCODE,0) != 0 THEN
+		BEGIN
+			SELECT PRICE
+			INTO STRICT  V_RATE
+			FROM   SALPRICELISTDET
+			WHERE  PRICELISTCODE = ARGPRICELISTCODE
+			AND    ICODE = ARGICODE
+			AND    EFFDT = (
+					SELECT  MAX(EFFDT)
+					FROM    SALPRICELISTDET
+					WHERE   PRICELISTCODE = ARGPRICELISTCODE
+					AND     ICODE  = ARGICODE
+					AND     EFFDT <= ARGDATE
+			);
+		EXCEPTION WHEN no_data_found THEN
+			V_NOTFOUND := 'Y';
+		END;
+	END IF;
+	IF  coalesce(ARGPRICELISTCODE,0) = 0 OR V_NOTFOUND = 'Y' THEN
+		BEGIN
+			SELECT	CASE WHEN ARGPRICETYPE='M' THEN coalesce(MRP,0) WHEN ARGPRICETYPE='W' THEN coalesce(WSP,0) WHEN ARGPRICETYPE='C' THEN coalesce(RATE,0) WHEN ARGPRICETYPE='L' THEN coalesce(LISTED_MRP,0) WHEN ARGPRICETYPE='R' THEN coalesce(COSTRATE,0)  ELSE 0 END
+			INTO STRICT	V_RATE
+			FROM	INVITEM
+			WHERE	ICODE = ARGICODE;
+		EXCEPTION WHEN no_data_found THEN
+			V_RATE := 0;
+		END;
+		V_RATE  := CALCULATE_MRP(coalesce(ARGDISCOUNT_FACTOR,0)*(-1), ARGPRICE_ROUNDOFF, ARGROUNDOFF_LIMIT, V_RATE,'A');
+	END IF;
+	RETURN(coalesce(V_RATE,0));
+EXCEPTION
+	WHEN OTHERS THEN
+		ERRCODE := SQLSTATE;
+		ERRMSG  := SQLERRM;
+		CALL ERRAUDIT(USER,'DB_FUN_ITEM_RATE_SND',ERRCODE,ERRMSG);
+		RAISE EXCEPTION '%', 'Internal error occured.'||ERRMSG USING ERRCODE = '45111';
+		RETURN(0);
+END;
+"""
+  returnType = numeric
+  arguments = <
+    {
+      name = argdate
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = argicode
+      type = text
+      mode = IN
+    }
+
+    {
+      name = argpricetype
+      type = text
+      mode = IN
+    }
+
+    {
+      name = argpricelistcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = argdiscount_factor
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = argprice_roundoff
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = argroundoff_limit
+      type = text
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+  volatility = STABLE
+}
+

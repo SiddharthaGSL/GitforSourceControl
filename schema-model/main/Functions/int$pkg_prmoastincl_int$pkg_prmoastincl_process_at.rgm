@@ -1,0 +1,328 @@
+function "main"."int$pkg_prmoastincl_int$pkg_prmoastincl_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        errmsg              varchar(500);
+        vsession            varchar(100);
+        vdetailtbl          varchar(1000);
+        vdetailrec          varchar(500);
+
+        errcode             bigint;
+        vmaxno              bigint;
+        vcount              bigint;
+BEGIN
+         -- START REV : 001
+         --
+         -- First delete the items and then add the items
+         --
+         DELETE FROM promo_assortment_include
+         WHERE assortment_code IN (
+            SELECT assortment_code
+            FROM (
+                    SELECT  b.code  assortment_code
+                            ,count(1)
+                    FROM    int$stg_prmoastincl a
+                            ,promo_assortment   b
+                    WHERE   upper(a.assortment_name) = upper(b.name)
+                    AND     a.userid = p_userid
+                    AND     UPPER(a.includeorexclude) = 'INCLUDE'
+                    AND     UPPER(a.behaviour) = 'REMOVE EXISTING THEN ADD'
+                    GROUP BY
+                            b.code
+                ) t1
+         );
+
+         DELETE FROM promo_assortment_exclude
+         WHERE assortment_code IN (
+            SELECT assortment_code
+            FROM (
+                    SELECT  b.code  assortment_code
+                            ,count(1)
+                    FROM    int$stg_prmoastincl a
+                            ,promo_assortment   b
+                    WHERE   upper(a.assortment_name) = upper(b.name)
+                    AND     a.userid = p_userid
+                    AND     UPPER(a.includeorexclude) = 'EXCLUDE'
+                    AND     UPPER(a.behaviour) = 'REMOVE EXISTING THEN ADD'
+                    GROUP BY
+                            b.code
+                ) t1
+         );
+
+         INSERT INTO promo_assortment_include(assortment_code, icode, item_reward_value
+          ,division_grpcode, section_grpcode, department_grpcode, invarticle_code
+          ,ccode1, ccode2, ccode3, ccode4, ccode5, ccode6
+          ,desc1, desc2, desc3, desc4, desc5, desc6
+          ,price_range_basis, price_range_from, price_range_to, stockindate_from, stockindate_to
+          ,invbatch_serial_code, batch_exp_date_fr, batch_exp_date_to
+          )
+         SELECT  t1.assortment_code, t1.icode, benefit_value
+                 ,t1.division_code, t1.section_code, t1.department_code, t1.article_code
+                 ,t1.ccode1, t1.ccode2, t1.ccode3, t1.ccode4, t1.ccode5, t1.ccode6
+                 ,t1.desc1, t1.desc2, t1.desc3, t1.desc4, t1.desc5, t1.desc6
+                 ,CASE WHEN t1.price_range_basis='M' THEN  'L' WHEN t1.price_range_basis='R' THEN  'M' END , t1.price_range_from, t1.price_range_to
+                 ,t1.creation_date_from, t1.creation_date_to,
+                 -- START REV : 003
+                 t1.invbatch_serial_code, t1.batch_exp_date_fr, t1.batch_exp_date_to
+                 -- END REV : 003
+         FROM
+         (
+             SELECT  b.code  assortment_code
+                     ,upper(a.includeorexclude) includeorexclude
+                     ,upper(a.behaviour) behaviour
+                     ,i.icode, a.benefit_value
+                     ,a.division_code, a.section_code, a.department_code, a.article_code
+                     ,a.ccode1, a.ccode2, a.ccode3, a.ccode4, a.ccode5, a.ccode6
+                     ,a.desc1, a.desc2, a.desc3, a.desc4, a.desc5, a.desc6
+                     ,upper(substr(a.price_range_basis,1,1)) price_range_basis
+                     , a.price_range_from, a.price_range_to, a.creation_date_from, a.creation_date_to
+                     -- START REV : 003
+                     ,bs.code as invbatch_serial_code
+                     ,batch_valid_from as batch_exp_date_fr
+                     ,batch_valid_upto as batch_exp_date_to
+                     -- START REV : 003
+                     ,count(1)
+             FROM int$stg_prmoastincl a INNER JOIN invitem i ON ((upper(a.item_barcode) = i.barcode) OR (upper(a.item_barcode) = i.icode))
+			 INNER JOIN promo_assortment b ON  upper(a.assortment_name) = upper(b.name)
+			 LEFT OUTER JOIN invbatch_serial bs ON 
+			 ((UPPER(a.batch_serial_no) = UPPER(bs.batch_serial_no))			 
+			 AND i.icode = bs.icode)
+			 AND a.userid = p_userid 
+			 WHERE upper(a.includeorexclude) = 'INCLUDE' -- do not uncomment the following line
+             --*AND     UPPER(a.behaviour) = 'ADD TO EXISTING'
+  AND a.item_barcode is not null 
+ GROUP BY
+                     b.code
+                     ,upper(a.includeorexclude)
+                     ,upper(a.behaviour)
+                     ,i.icode, a.benefit_value
+                     ,a.division_code, a.section_code, a.department_code, a.article_code
+                     ,a.ccode1, a.ccode2, a.ccode3, a.ccode4, a.ccode5, a.ccode6
+                     ,a.desc1, a.desc2, a.desc3, a.desc4, a.desc5, a.desc6
+                     ,a.price_range_basis, a.price_range_from, a.price_range_to
+                     ,a.creation_date_from, a.creation_date_to
+                     -- START REV : 003
+                     ,bs.code, batch_valid_from, batch_valid_upto
+                     -- END REV : 003
+UNION ALL
+
+             SELECT  b.code  assortment_code
+                     ,upper(a.includeorexclude) includeorexclude
+                     ,upper(a.behaviour) behaviour
+                     ,a.item_barcode icode, a.benefit_value
+                     ,a.division_code, a.section_code, a.department_code, a.article_code
+                     ,a.ccode1, a.ccode2, a.ccode3, a.ccode4, a.ccode5, a.ccode6
+                     ,a.desc1, a.desc2, a.desc3, a.desc4, a.desc5, a.desc6
+                     ,upper(substr(a.price_range_basis,1,1)) price_range_basis, a.price_range_from, a.price_range_to
+                     ,a.creation_date_from, a.creation_date_to
+                     -- START REV : 003
+                     ,NULL as invbatch_serial_code, batch_valid_from as batch_exp_date_fr, batch_valid_upto as batch_exp_date_to
+                     -- END REV : 003
+                     ,count(1)
+             FROM    int$stg_prmoastincl a
+                     ,promo_assortment   b
+             WHERE   upper(a.assortment_name) = upper(b.name)
+             AND     a.userid = p_userid
+             AND     upper(a.includeorexclude) = 'INCLUDE'
+             -- do not uncomment the following line
+             --*AND     UPPER(a.behaviour) = 'ADD TO EXISTING'
+             AND     a.item_barcode is null
+             GROUP BY
+                     b.code
+                     ,upper(a.includeorexclude)
+                     ,upper(a.behaviour)
+                     ,a.item_barcode, a.benefit_value
+                     ,a.division_code, a.section_code, a.department_code, a.article_code
+                     ,a.ccode1, a.ccode2, a.ccode3, a.ccode4, a.ccode5, a.ccode6
+                     ,a.desc1, a.desc2, a.desc3, a.desc4, a.desc5, a.desc6
+                     ,a.price_range_basis, a.price_range_from, a.price_range_to, a.creation_date_from, a.creation_date_to
+                      -- START REV : 003
+                     ,batch_valid_from, batch_valid_upto
+                     -- END REV : 003
+         ) t1
+         EXCEPT
+         SELECT  i.assortment_code, i.icode, i.item_reward_value
+                ,i.division_grpcode, i.section_grpcode, i.department_grpcode, i.invarticle_code
+                ,i.ccode1, i.ccode2, i.ccode3, i.ccode4, i.ccode5, i.ccode6
+                ,i.desc1, i.desc2, i.desc3, i.desc4, i.desc5, i.desc6
+                ,i.price_range_basis, i.price_range_from, i.price_range_to, i.stockindate_from, i.stockindate_to
+                
+                ,bs.code as invbatch_serial_code, batch_valid_from, batch_valid_upto
+         FROM int$stg_prmoastincl a INNER JOIN promo_assortment b ON upper(a.assortment_name) = UPPER(b.name)
+		LEFT OUTER JOIN promo_assortment_include i ON (b.code = i.assortment_code)
+		INNER JOIN invitem im ON ((upper(a.item_barcode) = im.barcode) OR (upper(a.item_barcode) = im.icode))
+		LEFT OUTER JOIN invbatch_serial bs ON (im.icode = bs.icode)
+		LEFT OUTER JOIN invbatch_serial bs2 ON (UPPER(a.batch_serial_no) = UPPER(bs2.batch_serial_no))
+  AND upper(a.includeorexclude) = 'INCLUDE';
+
+         INSERT INTO promo_assortment_exclude(assortment_code, icode
+                ,division_grpcode, section_grpcode, department_grpcode, invarticle_code
+                ,ccode1, ccode2, ccode3, ccode4, ccode5, ccode6
+                ,desc1, desc2, desc3, desc4, desc5, desc6
+                ,price_range_basis, price_range_from, price_range_to, stockindate_from, stockindate_to
+                -- START REV : 003
+                ,invbatch_serial_code, batch_exp_date_fr, batch_exp_date_to)
+                -- END REV : 003
+         SELECT  t1.assortment_code, t1.icode
+                 ,t1.division_code, t1.section_code, t1.department_code, t1.article_code
+                 ,t1.ccode1, t1.ccode2, t1.ccode3, t1.ccode4, t1.ccode5, t1.ccode6
+                 ,t1.desc1, t1.desc2, t1.desc3, t1.desc4, t1.desc5, t1.desc6
+                 ,CASE WHEN t1.price_range_basis='M' THEN  'L' WHEN t1.price_range_basis='R' THEN  'M' END , t1.price_range_from, t1.price_range_to, t1.creation_date_from, t1.creation_date_to
+                 -- START REV : 003
+                 ,t1.invbatch_serial_code, t1.batch_exp_date_fr, t1.batch_exp_date_to
+                 -- END REV : 003
+         FROM
+         (
+             SELECT  b.code  assortment_code
+                     ,upper(a.includeorexclude) includeorexclude
+                     ,upper(a.behaviour) behaviour
+                     ,i.icode
+                     ,a.division_code, a.section_code, a.department_code, a.article_code
+                     ,a.ccode1, a.ccode2, a.ccode3, a.ccode4, a.ccode5, a.ccode6
+                     ,a.desc1, a.desc2, a.desc3, a.desc4, a.desc5, a.desc6
+                     ,upper(substr(a.price_range_basis,1,1)) price_range_basis, a.price_range_from, a.price_range_to, a.creation_date_from, a.creation_date_to
+                     -- START REV : 003
+                     ,bs.code as invbatch_serial_code, batch_valid_from as batch_exp_date_fr, batch_valid_upto as batch_exp_date_to
+                     -- END REV : 003
+                     ,count(1)
+             FROM  int$stg_prmoastincl a
+			 INNER JOIN invitem i ON ((upper(a.item_barcode) = i.barcode) OR (upper(a.item_barcode) = i.icode))
+			 INNER JOIN promo_assortment b ON upper(a.assortment_name) = upper(b.name)
+			 LEFT OUTER JOIN invbatch_serial bs ON (UPPER(a.batch_serial_no) = UPPER(bs.batch_serial_no))
+			 LEFT OUTER JOIN invbatch_serial bs3 ON (i.icode = bs3.icode)			
+			 WHERE a.userid = p_userid 
+			 AND UPPER(a.includeorexclude) = 'EXCLUDE' -- do not uncomment the following line
+             --*AND     UPPER(a.behaviour) = 'ADD TO EXISTING'
+  AND a.item_barcode is not null -- START REV : 003
+ GROUP BY
+                     b.code
+                     ,upper(a.includeorexclude)
+                     ,upper(a.behaviour)
+                     ,i.icode
+                     ,a.division_code, a.section_code, a.department_code, a.article_code
+                     ,a.ccode1, a.ccode2, a.ccode3, a.ccode4, a.ccode5, a.ccode6
+                     ,a.desc1, a.desc2, a.desc3, a.desc4, a.desc5, a.desc6
+                     ,a.price_range_basis, a.price_range_from, a.price_range_to, a.creation_date_from, a.creation_date_to
+                     -- START REV : 003
+                     ,bs.code, batch_valid_from, batch_valid_upto
+                     -- END REV : 003
+UNION ALL
+
+             SELECT  b.code  assortment_code
+                     ,upper(a.includeorexclude) includeorexclude
+                     ,upper(a.behaviour) behaviour
+                     ,a.item_barcode icode
+                     ,a.division_code, a.section_code, a.department_code, a.article_code
+                     ,a.ccode1, a.ccode2, a.ccode3, a.ccode4, a.ccode5, a.ccode6
+                     ,a.desc1, a.desc2, a.desc3, a.desc4, a.desc5, a.desc6
+                     ,upper(substr(a.price_range_basis,1,1)) price_range_basis, a.price_range_from, a.price_range_to, a.creation_date_from, a.creation_date_to
+                     -- START REV : 003
+                     ,NULL as invbatch_serial_code, batch_valid_from as batch_exp_date_fr, batch_valid_upto as batch_exp_date_to
+                     -- END REV : 003
+                     ,count(1)
+             FROM    int$stg_prmoastincl a
+                     ,promo_assortment   b
+             WHERE   upper(a.assortment_name) = upper(b.name)
+             AND     a.userid = p_userid
+             AND     UPPER(a.includeorexclude) = 'EXCLUDE'
+             -- do not uncomment the following line
+             --*AND     UPPER(a.behaviour) = 'ADD TO EXISTING'
+             AND     a.item_barcode is null
+             GROUP BY
+                     b.code
+                     ,upper(a.includeorexclude)
+                     ,upper(a.behaviour)
+                     ,a.item_barcode
+                     ,a.division_code, a.section_code, a.department_code, a.article_code
+                     ,a.ccode1, a.ccode2, a.ccode3, a.ccode4, a.ccode5, a.ccode6
+                     ,a.desc1, a.desc2, a.desc3, a.desc4, a.desc5, a.desc6
+                     ,a.price_range_basis, a.price_range_from, a.price_range_to, a.creation_date_from, a.creation_date_to
+                     -- START REV : 003
+                     ,batch_valid_from, batch_valid_upto
+                     -- END REV : 003
+         ) t1
+         EXCEPT
+         SELECT  i.assortment_code, a.item_barcode
+                ,i.division_grpcode, i.section_grpcode, i.department_grpcode, i.invarticle_code
+                ,i.ccode1, i.ccode2, i.ccode3, i.ccode4, i.ccode5, i.ccode6
+                ,i.desc1, i.desc2, i.desc3, i.desc4, i.desc5, i.desc6
+                ,i.price_range_basis, i.price_range_from, i.price_range_to, i.stockindate_from, i.stockindate_to
+                
+                ,bs.code as invbatch_serial_code, batch_valid_from, batch_valid_upto
+                
+         FROM int$stg_prmoastincl a INNER JOIN  invitem im ON ((upper(a.item_barcode) = im.barcode) OR (upper(a.item_barcode) = im.icode))
+		 INNER JOIN  promo_assortment b ON UPPER(a.assortment_name) = UPPER(b.name)
+		 	LEFT OUTER JOIN promo_assortment_exclude i ON (b.code = i.assortment_code)
+			LEFT OUTER JOIN invbatch_serial bs ON (im.icode = bs.icode)
+			LEFT OUTER JOIN invbatch_serial bs4 ON (UPPER(a.batch_serial_no) = UPPER(bs4.batch_serial_no))  
+  			AND UPPER(a.includeorexclude) = 'EXCLUDE';
+         -- END REV : 001
+        -- log to be added in History table
+        SELECT  nextval('int$error_log_code')
+        INTO STRICT    vsession
+;
+
+        -- start rev : 002
+        --vdetailtbl := 'CREATE TABLE ASSORTMENT_'||vsession||' AS SELECT DISTINCT ASSORTMENT_NAME FROM int$stg_prmoastincl WHERE userid ='|| p_userid::text;
+        vdetailtbl := 'CREATE TABLE ginarchive.ASSORTMENT_'||vsession||' AS SELECT DISTINCT ASSORTMENT_NAME FROM int$stg_prmoastincl WHERE userid ='|| p_userid::text;
+        -- end rev : 002
+        EXECUTE vdetailtbl;
+
+        -- start rev : 002
+        --vdetailrec := 'SELECT count(1) FROM ASSORTMENT_'||vsession;
+        vdetailrec := 'SELECT count(1) FROM ginarchive.ASSORTMENT_'||vsession;
+        -- end rev : 002
+        EXECUTE vdetailrec INTO STRICT vcount;
+
+        INSERT INTO int$history(code, importedby, importedon, classname, summary, history_detail_tablename, history_detail_row_count)
+        -- start rev : 002
+        --VALUES (int$history_code.NEXTVAL, p_userid, SYSDATE, 'PRMOASTINCL', vcount::TEXT||' Assortment(s) updated successfully.', 'ASSORTMENT_'||vsession, vcount);
+        VALUES (nextval('int$history_code'), p_userid, clock_timestamp(), 'PRMOASTINCL', vcount::TEXT||' Assortment(s) updated successfully.', 'ginarchive.ASSORTMENT_'||vsession, vcount);
+        -- end rev : 002
+        RETURN('1');
+
+    EXCEPTION
+        WHEN OTHERS THEN
+            errcode := SQLSTATE;
+            errmsg := SQLERRM;
+
+            --Error log for Oracle Internal Error
+            INSERT INTO int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            VALUES (nextval('int$error_log_code'), 0, 'PRMOASTINCL', p_userid, errcode, errmsg, clock_timestamp());
+            --COMMIT;
+
+            RETURN('0');
+    END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

@@ -1,0 +1,69 @@
+function "main"."emg_gstadd_cessrate(timestamp without time zone, text, text)" {
+  text = """
+
+DECLARE
+
+   /************************************************************************************************************
+      REVISIONS:
+      No     Date         Author                   Description
+      ----   ----------   ----------------------   -------------------------------------------------------------
+      001    13-SEP-2019    SIDDHARTHA             [SEPTEMBER] EMG: Kerala Cess Implementation
+      NOTES:
+   *************************************************************************************************************/
+   V_ADDCESS_RATE      double precision;
+
+BEGIN
+    BEGIN
+        SELECT coalesce(ADDCESSRATE,0)
+            INTO STRICT   V_ADDCESS_RATE
+            FROM   INVGSTADDCESSRATE DR,
+                   (SELECT GST.CODE
+                    FROM (SELECT GR.CODE,
+                            HSN.CODE   INVHSNSACMAIN_CODE
+                    FROM invhsnsacmain hsn, invhsnsacdet hsnd
+LEFT OUTER JOIN invgstrate gr ON (HSND.INVGSTRATE_CODE = GR.CODE)
+WHERE HSN.CODE = HSND.INVHSNSACMAIN_CODE  AND coalesce(GR.EXTINCT, 'N') = 'N' AND (HSND.INVHSNSACMAIN_CODE, HSND.EFFECTIVE_DATE) IN (SELECT   INVHSNSACMAIN_CODE, MAX(EFFECTIVE_DATE)
+                    FROM INVHSNSACDET
+                    WHERE EFFECTIVE_DATE <= P_ENTRYDATE
+                    GROUP BY INVHSNSACMAIN_CODE) ) GST,
+                    INVITEM           ITEM
+                    WHERE      ITEM.ICODE = P_ITEMCODE
+                    AND        ITEM.INVHSNSACMAIN_CODE = GST.INVHSNSACMAIN_CODE) G
+            WHERE  DR.GSTSTATECODE = P_OWNER_GSTIN_STATE_CODE
+            AND    DR.INVGSTRATE_CODE = G.CODE
+            AND    DR.EFFECTIVE_DATE = (SELECT MAX(EFFECTIVE_DATE)
+                                             FROM INVGSTADDCESSRATE DR2
+                                            WHERE DR2.GSTSTATECODE = P_OWNER_GSTIN_STATE_CODE
+                                            AND   DR2.INVGSTRATE_CODE = G.CODE
+                                            AND   DR2.EFFECTIVE_DATE <= P_ENTRYDATE);
+        EXCEPTION WHEN no_data_found THEN
+                NULL;
+        END;
+   RETURN coalesce((V_ADDCESS_RATE),0);
+END;
+"""
+  returnType = numeric
+  arguments = <
+    {
+      name = p_entrydate
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_owner_gstin_state_code
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_itemcode
+      type = text
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+  volatility = STABLE
+}
+

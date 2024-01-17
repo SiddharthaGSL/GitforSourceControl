@@ -1,0 +1,274 @@
+procedure "main"."db_pkg_check_routine_ym_close$loc_pro_check_fin_month_close(bigint, bigint, timestamp without time zone, character varying)" {
+  text = """
+
+DECLARE
+
+      c1 CURSOR FOR
+           SELECT mn.dtfr,
+                  mn.dtto,
+                  TO_CHAR(mn.dtfr, 'yyyy') yy,
+                  TO_CHAR(mn.dtfr, 'Month') mon,
+                  om.admou_code,
+                  om.admmonth_code,
+                  om.code                  admou_month_code,
+                  mn.ycode
+             FROM admou_month om, admmonth mn
+            WHERE     om.admmonth_code = mn.mcode
+                  AND om.admou_code = p_admou_code
+                  AND om.admmonth_code <= p_mcode
+                  AND om.fin_month_status = 'O'
+         ORDER BY om.admmonth_code;
+      v_prv_month_status   admou_month.fin_month_status%TYPE;
+      v_inv_month_status   admou_month.inv_month_status%TYPE;
+      v_cogs_status        admou_month.cogs_run_status%TYPE;
+      v_cnt                bigint := 0;
+      v_err_flag           char(1) := 'N';
+      v_err_msg            admou_year.validation_error%TYPE;
+      v_error_cnt          bigint := 0;
+      v_err_mcode          admmonth.mcode%TYPE;
+
+BEGIN
+      -- db_pkg_ginesys_context.set_attribute('FIN_MN_CLS', 'S');
+      -- db_pkg_ginesys_context.set_attribute('FIN_MN_CLS_DT',
+                                            -- TO_CHAR(p_dtto, 'yyyymmdd'));
+      UPDATE admou_month om
+         SET validation_error  = NULL
+       WHERE     om.admou_code = p_admou_code
+             AND position('[FIN]' in validation_error) <> 0;
+      FOR c1_loop IN c1
+      LOOP
+         v_err_flag := 'N';
+         v_cnt := 0;
+         v_err_msg := '[FIN]';
+         v_prv_month_status := NULL;
+         v_inv_month_status := NULL;
+         -- previous month status check
+         IF TO_CHAR(c1_loop.dtfr, 'mm') = '04'
+         THEN
+            BEGIN
+               SELECT fin_month_status
+                 INTO STRICT v_prv_month_status
+                 FROM admou_month um, admmonth mn
+                WHERE     um.admmonth_code = mn.mcode
+                      AND mn.ycode != 1
+                      AND um.admou_code = p_admou_code
+                      AND um.admmonth_code =
+                             (SELECT coalesce(MAX(um1.admmonth_code), 0)
+                                FROM admou_month um1
+                               WHERE     um1.admou_code = p_admou_code
+                                     AND um1.admmonth_code <
+                                            c1_loop.admmonth_code);
+               IF v_prv_month_status <> 'C'
+               THEN
+                  v_err_flag := 'Y';
+                  v_err_msg :=
+                        v_err_msg
+                     || '['
+                     || clock_timestamp()
+                     || ']'
+                     || ' Previous Year ['
+                     || c1_loop.yy
+                     || '] months are in Open State. Please close last month of previous year before closing the month.';
+               END IF;
+            EXCEPTION
+               WHEN OTHERS
+               THEN
+                  NULL;
+            END;
+         END IF;
+         -- inventory month status check
+         BEGIN
+            SELECT inv_month_status
+              INTO STRICT v_inv_month_status
+              FROM admou_month um
+             WHERE     um.admou_code = c1_loop.admou_code
+                   AND um.admmonth_code = c1_loop.admmonth_code;
+            IF v_inv_month_status = 'O'
+            THEN
+               v_err_flag := 'Y';
+               v_err_msg :=
+                     v_err_msg
+                  || '~'
+                  || '['
+                  || clock_timestamp()
+                  || ']'
+                  || ' Inventory month for ['
+                  || c1_loop.mon
+                  || '] is not closed yet. Please close Inventory Month first and then proceed.';
+            END IF;
+         EXCEPTION
+            WHEN OTHERS
+            THEN
+               v_err_flag := 'Y';
+               v_err_msg :=
+                     v_err_msg
+                  || '~'
+                  || '['
+                  || clock_timestamp()
+                  || ']'
+                  || ' Inventory month for ['
+                  || c1_loop.mon
+                  || '] is not closed yet. Please close Inventory Month first and then proceed.';
+         END;
+         -- COGS status check
+         BEGIN
+            SELECT cogs_run_status
+              INTO STRICT v_cogs_status
+              FROM admou_month um
+             WHERE     um.admou_code = c1_loop.admou_code
+                   AND um.admmonth_code = c1_loop.admmonth_code;
+            IF v_cogs_status <> 'F'
+            THEN
+               v_err_flag := 'Y';
+               v_err_msg :=
+                     v_err_msg
+                  || '~'
+                  || '['
+                  || clock_timestamp()
+                  || ']'
+                  || ' COGS Calculation status should be Final before Finance Month closure. Kindly calculate COGS.';
+            END IF;
+         EXCEPTION
+            WHEN OTHERS
+            THEN
+               v_err_flag := 'Y';
+               v_err_msg :=
+                     v_err_msg
+                  || '~'
+                  || '['
+                  || clock_timestamp()
+                  || ']'
+                  || ' COGS Calculation status should be Final before Finance Month closure. Kindly calculate COGS.';
+         END;
+         -- chk for pending GRC(s)
+         v_cnt := 0;
+         SELECT coalesce(COUNT(1), 0)
+           INTO STRICT v_cnt
+           -- start rev : 003
+           --from    ginview.lv_pending_grc grc
+           FROM ginview.nrv_pending_grc grc
+
+          WHERE     grc.admou_code = p_admou_code
+                AND grc.receive_date BETWEEN c1_loop.dtfr AND c1_loop.dtto;
+         IF v_cnt <> 0
+         THEN
+            v_err_flag := 'Y';
+            v_err_msg :=
+                  v_err_msg
+               || '~'
+               || '['
+               || clock_timestamp()
+               || ']'
+               || ' There are some Goods Receive entries, which is pending to get invoiced. Month closure is not allowed. Please click on ''Show Documents pending for Invoice'' for details.';
+         END IF;
+         -- chk for pending GRT(s)
+         v_cnt := 0;
+         SELECT coalesce(COUNT(1), 0)
+           INTO STRICT v_cnt
+           -- start rev : 003
+           --from    ginview.lv_pending_grt grt
+           FROM ginview.nrv_pending_grt grt
+
+          WHERE     grt.admou_code = p_admou_code
+                AND grt.return_date BETWEEN c1_loop.dtfr AND c1_loop.dtto;
+         IF v_cnt <> 0
+         THEN
+            v_err_flag := 'Y';
+            v_err_msg :=
+                  v_err_msg
+               || '~'
+               || '['
+               || clock_timestamp()
+               || ']'
+               || ' There are some Goods Return entries, which is pending to get invoiced. Month closure is not allowed. Please click on ''Show Documents pending for Invoice'' for details.';
+         END IF;
+         -- before check any unposted document
+         -- reset unposted status at stock table
+         CALL db_pro_upd_release_status(c1_loop.ycode,
+                                    p_admou_code,
+                                    c1_loop.dtfr,
+                                    c1_loop.dtto);
+         -- check all financial documents are posted
+         v_cnt := 0;
+         SELECT coalesce(COUNT(1), 0)
+           INTO STRICT v_cnt
+           FROM ginview.lv_finance_entry f
+          WHERE     UPPER(f.release_status) = 'UNPOSTED'
+                AND coalesce(f.admou_code, c1_loop.admou_code) =
+                       c1_loop.admou_code
+                AND f.entry_date BETWEEN c1_loop.dtfr AND c1_loop.dtto;
+         IF v_cnt <> 0
+         THEN
+            v_err_flag := 'Y';
+            v_err_msg :=
+                  v_err_msg
+               || '~'
+               || '['
+               || clock_timestamp()
+               || ']'
+               || ' Unposted financial entries exists. Month closure is not allowed. Please click on ''Show Un-posted Document(s) for the details.''';
+         END IF;
+         IF v_err_flag = 'Y'
+         THEN
+            v_error_cnt := 1;
+            UPDATE admou_month om
+               SET fin_month_status = 'O', validation_error = v_err_msg
+             WHERE     om.admou_code = p_admou_code
+                   AND om.code = c1_loop.admou_month_code;
+         ELSE
+            -- if all chks succed the close.
+            UPDATE admou_month om
+               SET fin_month_status = 'C',
+                   validation_error  = NULL,
+                   fin_month_modified_by = p_user_id,
+                   fin_month_modified_time = clock_timestamp()
+             WHERE     om.fin_month_status = 'O'
+                   AND om.admou_code = p_admou_code
+                   AND om.code = c1_loop.admou_month_code;
+         END IF;
+         COMMIT;
+      END LOOP;
+--       COMMIT;
+--       db_pkg_ginesys_context.set_attribute('FIN_MN_CLS', 'N');
+--       db_pkg_ginesys_context.set_attribute('FIN_MN_CLS_DT', NULL);
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+--          db_pkg_ginesys_context.set_attribute('FIN_MN_CLS', 'N');
+--          db_pkg_ginesys_context.set_attribute('FIN_MN_CLS_DT', NULL);
+         CALL erraudit(
+            USER,
+            'db_pkg_check_routine_ym_close_loc_pro_check_fin_month_close',
+            SQLSTATE,
+            SQLERRM);
+   END;
+"""
+  arguments = <
+    {
+      name = p_admou_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_mcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_dtto
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_user_id
+      type = character varying
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

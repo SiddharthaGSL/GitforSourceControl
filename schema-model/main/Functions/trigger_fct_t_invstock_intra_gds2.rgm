@@ -1,0 +1,134 @@
+function "main"."trigger_fct_t_invstock_intra_gds2()" {
+  text = """
+
+DECLARE
+   V_ISENABLED_SITE     smallint;
+   V_ISENABLED_STKPNT   smallint;
+   -- START REV : 001
+   V_SUB_SITE           bigint;
+   -- END REV : 001
+BEGIN
+   SELECT COUNT(1)
+     INTO STRICT V_ISENABLED_SITE
+     FROM GDS2_SUBSCR_EVENT
+    WHERE EVENT_ID = 'INVENTORY_SITE';
+
+   SELECT COUNT(1)
+     INTO STRICT V_ISENABLED_STKPNT
+     FROM GDS2_SUBSCR_EVENT
+    WHERE EVENT_ID = 'INVENTORY_STOCKPOINT';
+
+    -- START REV : 001
+    SELECT COUNT(1)
+     INTO STRICT V_SUB_SITE
+     FROM GDS2_SUBSCR_EVENT
+    WHERE EVENT_ID = 'site.inventory.item.updated';
+    -- END REV : 001
+   IF TG_OP = 'INSERT'
+   THEN
+      IF V_ISENABLED_SITE > 0
+      THEN
+         CALL DB_PKG_GDS2_EVENT$TRACK(
+            'INVENTORY_SITE',
+            NEW.ICODE || '~' || NEW.ADMSITE_CODE::TEXT);
+      END IF;
+
+      IF V_ISENABLED_STKPNT > 0
+      THEN
+         CALL DB_PKG_GDS2_EVENT$TRACK(
+            'INVENTORY_STOCKPOINT',
+               NEW.ICODE  || '~'|| NEW.ADMSITE_CODE::TEXT|| '~'|| NEW.LOCCODE::TEXT|| '~'|| coalesce(NEW.PSITE_STOCKPOINT_CODE, 'NA'));
+      END IF;
+
+      -- START REV : 001
+      IF V_SUB_SITE > 0 
+      THEN
+        CALL DB_PKG_GDS2_EVENT$TRACK(
+            'site.inventory.item.updated',
+            NEW.ICODE || '~' || NEW.ADMSITE_CODE::TEXT);
+      END IF;
+      -- END REV : 001
+   END IF;
+
+   IF TG_OP = 'UPDATE'
+   THEN
+      IF V_ISENABLED_SITE > 0
+      THEN
+        CALL DB_PKG_GDS2_EVENT$TRACK(
+            'INVENTORY_SITE',
+            OLD.ICODE || '~' || OLD.ADMSITE_CODE::TEXT);
+
+        CALL DB_PKG_GDS2_EVENT$TRACK(
+            'INVENTORY_SITE',
+            NEW.ICODE || '~' || NEW.ADMSITE_CODE::TEXT);
+      END IF;
+
+       IF V_ISENABLED_STKPNT > 0
+       THEN
+        CALL DB_PKG_GDS2_EVENT$TRACK(
+            'INVENTORY_STOCKPOINT',
+            OLD.ICODE|| '~'|| OLD.ADMSITE_CODE::TEXT|| '~'|| OLD.LOCCODE::TEXT|| '~'|| coalesce(OLD.PSITE_STOCKPOINT_CODE, 'NA'));
+
+         CALL DB_PKG_GDS2_EVENT$TRACK(
+            'INVENTORY_STOCKPOINT',
+            NEW.ICODE|| '~'|| NEW.ADMSITE_CODE::TEXT|| '~'|| NEW.LOCCODE::TEXT|| '~'|| coalesce(NEW.PSITE_STOCKPOINT_CODE, 'NA'));
+       END IF;
+
+       -- START REV : 001
+      IF V_SUB_SITE > 0 
+      THEN
+        CALL DB_PKG_GDS2_EVENT$TRACK(
+            'site.inventory.item.updated',
+            OLD.ICODE || '~' || OLD.ADMSITE_CODE::TEXT);
+        CALL DB_PKG_GDS2_EVENT$TRACK(
+            'site.inventory.item.updated',
+            NEW.ICODE || '~' || NEW.ADMSITE_CODE::TEXT);
+      END IF;
+      -- END REV : 001
+   END IF;
+
+   IF TG_OP = 'DELETE'
+   THEN
+      IF V_ISENABLED_SITE > 0
+      THEN
+        CALL DB_PKG_GDS2_EVENT$TRACK(
+            'INVENTORY_SITE',
+            OLD.ICODE || '~' || OLD.ADMSITE_CODE::TEXT);
+      END IF;
+
+      IF V_ISENABLED_STKPNT > 0
+      THEN
+        CALL DB_PKG_GDS2_EVENT$TRACK(
+            'INVENTORY_STOCKPOINT',
+               OLD.ICODE
+            || '~'
+            || OLD.ADMSITE_CODE::TEXT
+            || '~'
+            || OLD.LOCCODE::TEXT
+            || '~'
+            || coalesce(OLD.PSITE_STOCKPOINT_CODE, 'NA'));
+      END IF;
+
+      -- START REV : 001
+      IF V_SUB_SITE > 0 
+      THEN
+        CALL DB_PKG_GDS2_EVENT$TRACK(
+            'site.inventory.item.updated',
+            OLD.ICODE || '~' || OLD.ADMSITE_CODE::TEXT);
+      END IF;
+      -- END REV : 001
+   END IF;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

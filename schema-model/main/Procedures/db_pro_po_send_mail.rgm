@@ -1,0 +1,56 @@
+procedure "main"."db_pro_po_send_mail()" {
+  text = """
+
+DECLARE
+
+/*******************************************************************************************************************
+   No.        Date        Author                   Description
+   ---------  ----------  ----------------------   ------------------------------------------------------------------
+   REV : 000  26/09/2014  PRASANTA                 (BUG ID : 1681) PO Auto Email.
+   REV : 001  12/10/2015  PRASANTA                 (BUG ID : 2063) Auto Email - Mail shooting for Purchase Order is not proper.
+ *********************************************************************************************************************/
+ C_PO CURSOR FOR
+ SELECT ORDCODE,STATUS
+ FROM   PO_SEND_MAIL
+
+ WHERE  ORDDT <= date_trunc('day', clock_timestamp())
+ -- END REV : 001
+ AND    AUTHORCODE IS NOT NULL
+ AND    coalesce(MAIL_SEND_YN,'N') = 'N'
+ ORDER BY 1;
+ ERRCODE                 varchar(50);
+ ERRMSG                  varchar(2000);
+BEGIN
+ FOR C1 IN C_PO
+   LOOP
+      CALL DB_PKG_AUTOEMAIL.TRACK_EVENT('Purchase Order Document',C1.STATUS,'PURORDMAIN','ORDCODE',C1.ORDCODE);
+       -- START REV : 001
+       UPDATE PO_SEND_MAIL
+       SET MAIL_SEND_YN = 'Y'
+       WHERE  ORDCODE     = C1.ORDCODE
+       AND    coalesce(MAIL_SEND_YN,'N') = 'N'
+       AND    AUTHORCODE IS NOT NULL;
+       -- END REV : 001
+   END LOOP;
+   -- START REV : 001
+   /*UPDATE PO_SEND_MAIL
+   SET MAIL_SEND_YN = 'Y'
+   WHERE  ORDDT     = TRUNC(SYSDATE)
+   AND    NVL(MAIL_SEND_YN,'N') = 'N'
+   AND    AUTHORCODE IS NOT NULL;
+    */
+   -- END REV : 001
+   COMMIT;
+    EXCEPTION
+           WHEN OTHERS THEN
+              ERRCODE   := SQLSTATE;
+                ERRMSG  := SQLERRM;
+                CALL ERRAUDIT(USER,'DB_PRO_PO_SEND_MAIL',ERRCODE,ERRMSG);
+                RAISE EXCEPTION '%', 'Internal error occured.'||errmsg USING ERRCODE = '45111';
+END;
+"""
+  arguments = [
+  ]
+  language = plpgsql
+}
+

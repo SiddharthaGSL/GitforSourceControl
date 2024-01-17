@@ -1,0 +1,485 @@
+function "main"."int$pkg_processmaster_int$pkg_processmaster_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        c2 CURSOR FOR
+        SELECT  rd.oid    rd_rwid,
+                rd.qty      rdqty,
+                a.rate      rate,
+                rd.jrccode  jrccode
+        from    int$stg_processmaster   a,
+                finsl                   f,
+                prdpr                   p,
+                v_item                  i,
+                prdjrcdet               rd,
+                prdjrcmain              rm,
+                prdjobmain              jm
+
+                ,admmonth               x
+                ,admou_month            y
+                
+        where   upper(a.jobber) = upper(f.slname)
+        and     upper(a.process)= upper(p.prname)
+        and     a.articlename is null
+        and     a.barcode is not null
+        and (
+                    upper(a.barcode) = upper(i.barcode)
+                    or
+                    upper(a.barcode) = upper(i.icode)
+                )
+        and     rd.jrccode          = rm.code
+        and     rm.prcode           = p.prcode
+        and     rm.pcode            = f.slcode
+        and     rm.srvcode is null
+        and     rd.assembly_icode   = i.icode
+        and     rd.jobcode          = jm.code
+        and     jm.is_closed        = 'N'
+        and     a.userid            = p_userid
+        -- start rev : 001
+        and     coalesce(a.update_pending_receipt,'N') = 'Y'
+        -- end rev : 001
+        -- START REV : 005
+        and     x.mcode = y.admmonth_code
+        and     rm.jrc_date between x.dtfr and x.dtto
+        and     y.admou_code = p_connect_ou
+        and     y.inv_month_status = 'O'
+        -- END REV : 005
+        order by
+                4;
+
+        c3 CURSOR FOR
+        SELECT  jd.oid    jd_rwid,
+                a.rate      rate,
+                jd.jobcode  jobcode
+        from    int$stg_processmaster   a,
+                finsl                   f,
+                prdpr                   p,
+                v_item                  i,
+                prdjobdet               jd,
+                prdjobmain              jm
+
+                ,admmonth               x
+                ,admou_month            y
+                
+        where   upper(a.jobber) = upper(f.slname)
+        and     upper(a.process)= upper(p.prname)
+        and     a.articlename is null
+        and     a.barcode is not null
+        and (
+                    upper(a.barcode) = upper(i.barcode)
+                    or
+                    upper(a.barcode) = upper(i.icode)
+                )
+        and     jd.jobcode          = jm.code
+        and     jm.prcode           = p.prcode
+        and     jm.pcode            = f.slcode
+        and     jd.assembly_icode   = i.icode
+        and     coalesce(jd.p_qty,0)     > 0
+        and     jm.is_closed        = 'N'
+        and     a.userid            = p_userid
+        -- start rev : 001
+        and     coalesce(a.update_pending_order,'N') = 'Y'
+        -- end rev : 001
+        -- START REV : 005
+        and     x.mcode = y.admmonth_code
+        and     jm.job_date between x.dtfr and x.dtto
+        and     y.admou_code = p_connect_ou
+        and     y.inv_month_status = 'O'
+        -- END REV : 005
+        order by
+                3;
+
+        errmsg                      varchar(500);
+        vsession                    varchar(100);
+        vdetailtbl                  varchar(1000);
+        vdetailrec                  varchar(500);
+        errcode                     text;
+        vmaxno                      bigint;
+        vcount                      bigint;
+        v_prdprrate_code            prdprrate.code%type;
+        v_cnt                       bigint := 0;
+        v_rlcode                    hrdemp.rlcode%type;
+        v_profcode                  admprof.profcode%type;
+        v_edit_jrc                  admpriv.edit%type;
+        v_edit_jo                   admpriv.edit%type;
+        v_allow_ratechange_joborder admprof.allow_ratechange_joborder%type;
+        v_allow_ratechange_jobreceipt admprof.allow_ratechange_jobreceipt%type;
+        v_prv_jrccode               prdjrcmain.code%type;
+        v_prv_jobcode               prdjobmain.code%type;
+BEGIN
+        -- Record will get inserted in this table only when PROCESS and JOBBER matching record does not exists. Rate will get updated as zero.
+        insert
+        into    prdprrate (prcode,pcode,rate,code)
+        select  prcode,pcode,0,nextval('prdprrate_code')
+        from    (
+                    select  prcode,pcode
+                    from    (
+                                select  f.slcode    pcode,
+                                        p.prcode    prcode
+                                from    int$stg_processmaster   a,
+                                        finsl                   f,
+                                        prdpr                   p
+                                where   upper(a.jobber) = upper(f.slname)
+                                and     upper(a.process)= upper(p.prname)
+                                and     a.userid        = p_userid
+                            )   s
+                    except
+                    select  prcode,pcode
+                    from    prdprrate   prt
+                ) t;
+        --COMMIT;
+
+        -- upsert new jobber wise - article wise rate if not exists. record will get inserted in this table only where articlename is specified.
+        INSERT INTO prdprrate_article(code,prdprrate_code,prcode,pcode,invarticle_code,rate)
+            SELECT 
+                            nextval('prdprrate_article_code') as code,
+                            src.prdprrate_code,
+                            src.prcode,
+                            src.pcode,
+                            src.invarticle_code,
+                            src.rate
+                            FROM
+                            (SELECT  f.slcode    pcode,
+                                    p.prcode    prcode,
+                                    c.code      invarticle_code,
+                                    a.rate      rate,
+                                    prt.code    prdprrate_code
+                            from    int$stg_processmaster   a,
+                                    finsl                   f,
+                                    prdpr                   p,
+                                    invarticle              c,
+                                    prdprrate               prt
+                            where   upper(a.jobber)      = upper(f.slname)
+                            and     upper(a.process)     = upper(p.prname)
+                            and     upper(a.articlename) = upper(c.name)
+                            and     f.slcode             = prt.pcode
+                            and     p.prcode             = prt.prcode
+                            and     a.articlename is not null
+                            and     a.barcode is null
+                            and     a.userid = p_userid
+                                      ) src
+        ON CONFLICT (prcode,pcode,invarticle_code)
+        DO UPDATE
+        SET rate = EXCLUDED.rate;
+
+        --COMMIT;
+
+        -- upsert new jobber wise - item wise rate if not exists. record will get inserted in this table only where barcode is specified.
+        INSERT INTO prdprrate_item(code,prdprrate_code,prcode,pcode,icode,rate)
+            SELECT 
+                            nextval('prdprrate_item_code') as code,
+                            src.prdprrate_code,
+                            src.prcode,
+                            src.pcode,
+                            src.icode,
+                            src.rate
+                            FROM
+                            (SELECT     f.slcode    pcode,
+                                        p.prcode    prcode,
+                                        i.icode     icode,
+                                        a.rate      rate,
+                                        prt.code    prdprrate_code
+                                from    int$stg_processmaster   a,
+                                        finsl                   f,
+                                        prdpr                   p,
+                                        v_item                  i,
+                                        prdprrate               prt
+                                where   upper(a.jobber)      = upper(f.slname)
+                                and     upper(a.process)     = upper(p.prname)
+                                and     f.slcode             = prt.pcode
+                                and     p.prcode             = prt.prcode
+                                and (
+                                            upper(a.barcode) = upper(i.barcode)
+                                            or
+                                            upper(a.barcode) = upper(i.icode)
+                                        )
+                                and     a.articlename is null
+                                and     a.barcode is not null
+                                and     a.userid = p_userid
+                                      ) src
+        ON CONFLICT (prcode,pcode,icode)
+        DO UPDATE
+        SET rate = EXCLUDED.rate;
+
+        --COMMIT;
+
+        v_allow_ratechange_joborder     := 'N';
+        v_allow_ratechange_jobreceipt   := 'N';
+
+        -- chking edit privilage for job order and receipt
+        begin
+            select  profcode,
+                    rlcode
+            into STRICT    v_profcode,
+                    v_rlcode
+            from    hrdemp  e
+            where   e.ecode = p_userid;
+
+            begin
+                select  p.edit
+                into STRICT    v_edit_jrc
+                from    admpriv p
+                where   p.rlcode   = v_rlcode
+                and     p.menucode  = 751;
+
+                if  v_edit_jrc = 'Y' and v_profcode is not null then
+                    select  allow_ratechange_jobreceipt
+                    into STRICT    v_allow_ratechange_jobreceipt
+                    from    admprof p
+                    where   profcode = v_profcode;
+                end if;
+            exception
+                when others then
+                null;
+            end;
+
+            begin
+                select  p.edit
+                into STRICT    v_edit_jo
+                from    admpriv p
+                where   p.rlcode   = v_rlcode
+                and     p.menucode  = 739;
+
+                if  v_edit_jo = 'Y' and v_profcode is not null then
+                    select  allow_ratechange_joborder
+                    into STRICT    v_allow_ratechange_joborder
+                    from    admprof p
+                    where   profcode = v_profcode;
+                end if;
+            exception
+                when others then
+                null;
+            end;
+        exception
+            when others then
+            null;
+        end;
+
+        -- update job_rate at job order and receipt depending upon user profile option
+        if  v_allow_ratechange_jobreceipt = 'Y' then
+            for c2_loop in c2
+            loop
+                update  prdjrcdet rd
+                set     job_rate = c2_loop.rate
+                where   rowid    = c2_loop.rd_rwid;
+
+                if  v_prv_jrccode is null then
+                    v_prv_jrccode := c2_loop.jrccode;
+
+                elsif   v_prv_jrccode is not null and v_prv_jrccode <> c2_loop.jrccode then
+                        update  prdjrcmain rm
+                        set     srvamt = (
+                                            SELECT  round((sum(coalesce(qty,0)*coalesce(job_rate,0)))::numeric,2)
+                                            from    prdjrcdet rd1
+                                            where   jrccode = v_prv_jrccode
+                                         ),
+                                last_access_ecode = p_userid,
+                                last_access_time  = clock_timestamp()
+                        where   code    = v_prv_jrccode;
+
+                        v_prv_jrccode := c2_loop.jrccode;
+                end if;
+
+                v_cnt := coalesce(v_cnt,0)+1;
+
+                if  v_cnt = 100 then
+                    --COMMIT;
+                    v_cnt := 1;
+                end if;
+            end loop;
+
+            --COMMIT;
+
+            -- for only last jrccode
+            update  prdjrcmain rm
+            set     srvamt = (
+                                SELECT  round((sum(coalesce(qty,0)*coalesce(job_rate,0)))::numeric,2)
+                                from    prdjrcdet rd1
+                                where   jrccode = v_prv_jrccode
+                             ),
+                    last_access_ecode = p_userid,
+                    last_access_time  = clock_timestamp()
+            where   code    = v_prv_jrccode
+            and     coalesce(v_prv_jrccode,0) <> 0;
+
+            --COMMIT;
+        end if;
+
+        if  v_allow_ratechange_joborder = 'Y' then
+            v_cnt := 1;
+
+            for c3_loop in c3
+            loop
+                update  prdjobdet jd
+                set     job_rate = c3_loop.rate
+                where   rowid    = c3_loop.jd_rwid;
+
+                if  v_prv_jobcode is null then
+                    v_prv_jobcode := c3_loop.jobcode;
+
+                elsif   v_prv_jobcode is not null and v_prv_jobcode <> c3_loop.jobcode then
+                        update  prdjobmain jm
+                        set     last_access_ecode = p_userid,
+                                last_access_time  = clock_timestamp()
+                        where   code = v_prv_jobcode;
+
+                        v_prv_jobcode := c3_loop.jobcode;
+                end if;
+
+                v_cnt := coalesce(v_cnt,0)+1;
+
+                if  v_cnt = 100 then
+                    --COMMIT;
+                    v_cnt := 1;
+                end if;
+            end loop;
+
+            --COMMIT;
+
+            -- for only last jobcode
+            update  prdjobmain jm
+            set     last_access_ecode = p_userid,
+                    last_access_time  = clock_timestamp()
+            where   code = v_prv_jobcode
+            and     coalesce(v_prv_jobcode,0) <> 0;
+
+            --COMMIT;
+        end if;
+
+        -- log to be added in history table
+        select  nextval('int$error_log_code')
+        into STRICT    vsession
+;
+
+        -- start rev : 002
+        --vdetailtbl := 'create table processmaster_'||vsession||' as select distinct jobber,process,barcode,articlename,rate from int$stg_processmaster where userid ='|| p_userid::text;
+        vdetailtbl := 'create table ginarchive.processmaster_'||vsession||' as select distinct jobber,process,barcode,articlename,rate from int$stg_processmaster where userid ='|| p_userid::text;
+        -- end rev : 002
+        EXECUTE vdetailtbl;
+
+        -- start rev : 002
+        --vdetailrec := 'select count(1) from processmaster_'||vsession;
+        vdetailrec := 'select count(1) from ginarchive.processmaster_'||vsession;
+        -- end rev : 002
+        EXECUTE vdetailrec into STRICT vcount;
+
+        insert into int$history(code, importedby, importedon, classname, summary, history_detail_tablename, history_detail_row_count)
+        -- start rev : 002
+        --values (int$history_code.nextval, p_userid, sysdate, 'PROCESSMASTER', vcount::TEXT||' Rate updated successfully.', 'processmaster_'||vsession, vcount);
+        values (nextval('int$history_code'), p_userid, clock_timestamp(), 'PROCESSMASTER', vcount::TEXT||' Rate updated successfully.', 'ginarchive.processmaster_'||vsession, vcount);
+        -- end rev : 002
+        --COMMIT;
+
+        return('1');
+
+    exception
+        when others then
+            errcode := SQLSTATE;
+            errmsg  := sqlerrm;
+
+            -- error log for oracle internal error
+            insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            values (nextval('int$error_log_code'), 0, 'PROCESSMASTER', p_userid, errcode, errmsg, clock_timestamp());
+            --COMMIT;
+
+            return('0');
+    end;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+
+function "main"."int$pkg_processmaster_int$pkg_processmaster_process(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+ 
+DECLARE
+    -- Change this to reflect the dblink connection string
+    --v_conn_str  text := format('port=%s dbname=%s user=%s', current_setting('port'), current_database(), current_user);
+    v_srvname       name;
+    v_connname      text;
+    v_connstr       text;
+    v_conn_result   text;
+    v_query         text;
+
+    v_ret    text;
+BEGIN
+    v_srvname := 'foreign_pgbase';
+    v_connname := replace(uuid_generate_v4()::text,'-','');
+    v_connstr  := v_srvname;
+    
+    --Open the connection  
+    SELECT dblink_connect(v_connname,v_connstr) 
+    INTO v_conn_result;
+	v_query := 'SELECT * FROM int$pkg_processmaster_int$pkg_processmaster_process_atx ( ' || quote_nullable(p_userid::text) || '::bigint,' || quote_nullable(p_connect_site::text) || '::bigint,' || quote_nullable(p_logging_date::text) || '::timestamp without time zone,' || quote_nullable(p_connect_ou::text) || '::bigint )';
+	SELECT * INTO v_ret FROM dblink(v_connname, v_query) AS p (ret text);
+
+	SELECT dblink_disconnect(v_connname) 
+    INTO v_conn_result;
+	
+	RETURN v_ret;
+EXCEPTION 
+   WHEN OTHERS THEN
+        SELECT dblink_disconnect(v_connname) 
+        INTO v_conn_result;
+
+END;
+"""
+  returnType = text
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

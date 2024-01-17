@@ -1,0 +1,199 @@
+function "main"."t_purinvchg_aud$purinvchg()" {
+  text = """
+
+DECLARE
+    V_RECORD_OLD AUD_PURINVCHG%ROWTYPE;
+	V_RECORD_NEW AUD_PURINVCHG%ROWTYPE;
+    V_SID DOUBLE PRECISION;
+    V_TRNID CHARACTER VARYING(50);
+    V_ACTION CHARACTER VARYING(10);
+    I RECORD;    
+	V_AUDIT_USER CHARACTER VARYING (100);
+	V_LOGINUSER  CHARACTER VARYING (100);
+	V_PROGRAM    CHARACTER VARYING (100);
+	V_REC_COUNT  BIGINT; 
+   
+BEGIN
+       SELECT current_setting('audit.AUDIT_USER', true) INTO V_AUDIT_USER;
+	   IF NULLIF(V_AUDIT_USER,'') IS NOT NULL THEN  
+		   BEGIN
+				SELECT FULLNAME
+				INTO   STRICT V_LOGINUSER
+				FROM   APPUSER
+				WHERE  ID =  substring (V_AUDIT_USER,8,position(';' in V_AUDIT_USER)-8)::NUMERIC; 
+		   EXCEPTION
+				WHEN no_data_found
+				THEN
+					V_LOGINUSER := 'System';
+			END;			
+		ELSE
+			V_LOGINUSER := 'SYSTEM';
+		END IF;
+	   
+	   select application_name
+	   INTO   V_PROGRAM
+	   from pg_stat_activity where pid = pg_backend_pid();
+
+       V_ACTION:=TG_OP;
+	   
+       SELECT TXID_CURRENT() INTO V_TRNID;
+       
+        IF TG_OP = 'INSERT' OR  TG_OP = 'UPDATE' THEN 
+	   
+           V_RECORD_NEW.ACTION := V_ACTION;
+           V_RECORD_NEW.ACTION_SUBTYPE := 'NEW';
+           V_RECORD_NEW.TRANSACTION_ID := V_TRNID::TEXT;		   
+		   V_RECORD_NEW.invcode := NEW.invcode;
+            V_RECORD_NEW.invno := NEW.invno;
+            V_RECORD_NEW.invdt := NEW.invdt;
+            V_RECORD_NEW.docno := NEW.docno;
+            V_RECORD_NEW.chgcode := NEW.chgcode;
+            V_RECORD_NEW.rate := NEW.rate;
+            V_RECORD_NEW.sign := NEW.sign;
+            V_RECORD_NEW.chgamt := NEW.chgamt;
+            V_RECORD_NEW.glcode := NEW.glcode;
+            V_RECORD_NEW.formcode := NEW.formcode;
+            V_RECORD_NEW.formno := NEW.formno;
+            V_RECORD_NEW.formdt := NEW.formdt;
+            V_RECORD_NEW.ycode := NEW.ycode;
+            V_RECORD_NEW.code := NEW.code;
+            V_RECORD_NEW.slcode := NEW.slcode;
+            V_RECORD_NEW.gl_cc_appl := NEW.gl_cc_appl;
+            V_RECORD_NEW.seq := NEW.seq;
+            V_RECORD_NEW.without_term_formula := NEW.without_term_formula;
+            V_RECORD_NEW.basis := NEW.basis;
+            V_RECORD_NEW.appamt := NEW.appamt;
+            V_RECORD_NEW.formulae := NEW.formulae;
+            V_RECORD_NEW.operation_level := NEW.operation_level;
+            V_RECORD_NEW.istax := NEW.istax;
+            V_RECORD_NEW.source := NEW.source;
+            V_RECORD_NEW.gst_component := NEW.gst_component;
+            V_RECORD_NEW.isreverse := NEW.isreverse;
+            V_RECORD_NEW.include_in_tds := NEW.include_in_tds;
+          END IF;  
+            
+         IF TG_OP = 'UPDATE' OR TG_OP = 'DELETE' THEN 
+	   
+            V_RECORD_OLD.ACTION := V_ACTION;
+            V_RECORD_OLD.ACTION_SUBTYPE := 'OLD';
+            V_RECORD_OLD.TRANSACTION_ID := V_TRNID::TEXT;			
+			V_RECORD_OLD.invcode := OLD.invcode;
+            V_RECORD_OLD.invno := OLD.invno;
+            V_RECORD_OLD.invdt := OLD.invdt;
+            V_RECORD_OLD.docno := OLD.docno;
+            V_RECORD_OLD.chgcode := OLD.chgcode;
+            V_RECORD_OLD.rate := OLD.rate;
+            V_RECORD_OLD.sign := OLD.sign;
+            V_RECORD_OLD.chgamt := OLD.chgamt;
+            V_RECORD_OLD.glcode := OLD.glcode;
+            V_RECORD_OLD.formcode := OLD.formcode;
+            V_RECORD_OLD.formno := OLD.formno;
+            V_RECORD_OLD.formdt := OLD.formdt;
+            V_RECORD_OLD.ycode := OLD.ycode;
+            V_RECORD_OLD.code := OLD.code;
+            V_RECORD_OLD.slcode := OLD.slcode;
+            V_RECORD_OLD.gl_cc_appl := OLD.gl_cc_appl;
+            V_RECORD_OLD.seq := OLD.seq;
+            V_RECORD_OLD.without_term_formula := OLD.without_term_formula;
+            V_RECORD_OLD.basis := OLD.basis;
+            V_RECORD_OLD.appamt := OLD.appamt;
+            V_RECORD_OLD.formulae := OLD.formulae;
+            V_RECORD_OLD.operation_level := OLD.operation_level;
+            V_RECORD_OLD.istax := OLD.istax;
+            V_RECORD_OLD.source := OLD.source;
+            V_RECORD_OLD.gst_component := OLD.gst_component;
+            V_RECORD_OLD.isreverse := OLD.isreverse;
+            V_RECORD_OLD.include_in_tds := OLD.include_in_tds;
+          END IF;  
+
+    IF TG_OP = 'INSERT' THEN
+	    V_REC_COUNT := 1;
+        INSERT INTO AUD_PURINVCHG SELECT V_RECORD_NEW.*;
+    END IF;
+
+    IF TG_OP = 'UPDATE' THEN
+	FOR I IN (
+		SELECT 
+		V_RECORD_OLD.formulae,
+                  V_RECORD_OLD.appamt,
+                  V_RECORD_OLD.without_term_formula,
+                  V_RECORD_OLD.seq,
+                  V_RECORD_OLD.gl_cc_appl,
+                  V_RECORD_OLD.slcode,
+                  V_RECORD_OLD.formdt,
+                  V_RECORD_OLD.formno,
+                  V_RECORD_OLD.formcode,
+                  V_RECORD_OLD.glcode,
+                  V_RECORD_OLD.chgamt,
+                  V_RECORD_OLD.sign,
+                  V_RECORD_OLD.rate,
+                  V_RECORD_OLD.docno,
+                  V_RECORD_OLD.invdt
+		EXCEPT
+		SELECT 
+		V_RECORD_NEW.formulae,
+                  V_RECORD_NEW.appamt,
+                  V_RECORD_NEW.without_term_formula,
+                  V_RECORD_NEW.seq,
+                  V_RECORD_NEW.gl_cc_appl,
+                  V_RECORD_NEW.slcode,
+                  V_RECORD_NEW.formdt,
+                  V_RECORD_NEW.formno,
+                  V_RECORD_NEW.formcode,
+                  V_RECORD_NEW.glcode,
+                  V_RECORD_NEW.chgamt,
+                  V_RECORD_NEW.sign,
+                  V_RECORD_NEW.rate,
+                  V_RECORD_NEW.docno,
+                  V_RECORD_NEW.invdt
+			 )
+	LOOP
+	  V_REC_COUNT := 1; 
+		INSERT INTO AUD_PURINVCHG SELECT V_RECORD_OLD.*;
+       INSERT INTO AUD_PURINVCHG SELECT V_RECORD_NEW.*;    
+	END LOOP;   
+    END IF;
+
+    IF TG_OP = 'DELETE' THEN
+		V_REC_COUNT := 1;
+		INSERT INTO AUD_PURINVCHG SELECT V_RECORD_OLD.*;
+    END IF;
+	
+	IF V_REC_COUNT >  0
+	THEN
+	   BEGIN
+            INSERT INTO AUD_TRANSACTION (TRANSACTION_ID, TRANSACTION_DATE, LOGIN_USER, PROGRAM, MODULE_SHORTCODE, MODULE_TYPE)
+            VALUES (V_TRNID,   current_date,V_LOGINUSER, V_PROGRAM, 'Purchase Invoice', 'Purchase Invoice');
+       EXCEPTION WHEN unique_violation THEN
+            NULL;
+       END;  
+
+       BEGIN  
+             INSERT INTO AUD_TRANSACTION_TABLE (TRANSACTION_ID, TABLE_NAME)
+             VALUES (V_TRNID,  'PURINVCHG');
+       EXCEPTION WHEN unique_violation THEN
+             NULL;
+       END; 
+	END IF;   
+    
+
+    IF TG_OP = 'INSERT' THEN
+        RETURN NEW;
+    ELSIF TG_OP = 'UPDATE' THEN
+        RETURN NEW;
+    ELSIF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    EXCEPTION
+        WHEN others THEN
+            CALL main.erraudit(SESSION_USER::text, 'T_PURINVCHG_AUD'::CHARACTER, SQLSTATE::text, SQLERRM);
+			RAISE;
+			RETURN NULL;
+END;
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

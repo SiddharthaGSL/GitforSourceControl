@@ -1,0 +1,218 @@
+function "main"."int$pkg_sitegstupdate_int$pkg_sitegstupdate_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      errmsg       varchar(500);
+      vsession     varchar(100);
+      vdetailtbl   varchar(1000);
+      vdetailrec   varchar(500);
+      errcode      bigint;
+      vcount       bigint;
+BEGIN
+      DECLARE
+         C_SITE CURSOR FOR
+            SELECT a.SITECODE                      SITECODE,
+                   UPPER(a.gst_identification_no) gst_identification_no,
+                   a.gst_registration_date         gst_registration_date,
+                   gs.code                         admgstin_code
+              FROM int$stg_sitegstupdate a LEFT OUTER JOIN admgstin gs 
+			  ON (UPPER(coalesce(a.gst_identification_no, '@@')) = UPPER(gs.gstin_no))
+WHERE a.userid = p_userid;
+      BEGIN
+         FOR C2 IN C_SITE
+         LOOP
+            UPDATE ADMSITE
+               SET admgstin_code =
+                      CASE
+                         WHEN sitetype IN ('MS-OO-CM', 'OS-OO-CM', 'MS-CO-CM')
+                         THEN
+                            C2.admgstin_code
+                         ELSE
+                            NULL
+                      END,
+                   cp_gstin_no =
+                      CASE
+                         WHEN sitetype IN ('MS-OO-CM', 'OS-OO-CM', 'MS-CO-CM')
+                         THEN
+                            NULL
+                         ELSE
+                            UPPER(C2.gst_identification_no)
+                      END,
+                   cp_gstin_date =
+                      CASE
+                         WHEN sitetype IN ('MS-OO-CM', 'OS-OO-CM', 'MS-CO-CM')
+                         THEN
+                            NULL
+                         ELSE
+                            C2.gst_registration_date
+                      END,
+                   cp_gstin_state_code =
+                      CASE
+                         WHEN sitetype IN ('MS-OO-CM', 'OS-OO-CM', 'MS-CO-CM')
+                         THEN
+                            NULL
+                         ELSE (SUBSTR(C2.gst_identification_no, 1, 2))
+                      END
+             WHERE CODE = C2.SITECODE;
+         END LOOP;
+      END;
+
+      -- log to be added in history table
+      SELECT nextval('int$error_log_code') INTO STRICT vsession;
+
+      vdetailtbl :=
+            'create table ginarchive.SITEGSTUPDATE_'
+         || vsession
+         || ' as select distinct SITECODE,GST_IDENTIFICATION_NO,GST_REGISTRATION_DATE from int$stg_SITEGSTUPDATE where userid ='
+         || p_userid::text;
+
+      EXECUTE vdetailtbl;
+
+      vdetailrec :=
+         'select count(1) from ginarchive.SITEGSTUPDATE_' || vsession::text;
+
+      EXECUTE vdetailrec INTO STRICT vcount;
+
+      INSERT INTO int$history(code,
+                               importedby,
+                               importedon,
+                               classname,
+                               summary,
+                               history_detail_tablename,
+                               history_detail_row_count)
+           VALUES (nextval('int$history_code'),
+                   p_userid,
+                   clock_timestamp(),
+                   'SITEGSTUPDATE',
+                   vcount::TEXT || ' site''s GSTIN updated successfully.',
+                   'ginarchive.SITEGSTUPDATE_' || vsession,
+                   vcount);
+
+      RETURN('1');
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         -- error log for oracle internal error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'SITEGSTUPDATE',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+
+function "main"."int$pkg_sitegstupdate_int$pkg_sitegstupdate_process(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+ 
+DECLARE
+	-- Change this to reflect the dblink connection string
+	--v_conn_str  text := format('port=%s dbname=%s user=%s', current_setting('port'), current_database(), current_user);
+    v_srvname       name;
+    v_connname      text;
+    v_connstr       text;
+    v_conn_result   text;
+    v_query         text;
+
+	v_ret    text;
+BEGIN
+
+    v_srvname := 'foreign_pgbase';
+    v_connname := replace(uuid_generate_v4()::text,'-','');
+    v_connstr  := v_srvname;
+    
+    --Open the connection  
+    SELECT dblink_connect(v_connname,v_connstr) 
+    INTO v_conn_result;
+    
+	v_query := 'SELECT * FROM int$pkg_sitegstupdate_int$pkg_sitegstupdate_process_atx ( ' || quote_nullable(p_userid::text) || '::bigint,' || quote_nullable(p_connect_site::text) || '::bigint,' || quote_nullable(p_logging_date::text) || '::timestamp without time zone,' || quote_nullable(p_connect_ou::text) || '::bigint )';
+	SELECT * INTO v_ret FROM dblink(v_connname, v_query) AS p (ret text);
+
+	
+	SELECT dblink_disconnect(v_connname) 
+    INTO v_conn_result;
+	
+	RETURN v_ret;
+EXCEPTION 
+   WHEN OTHERS THEN
+        SELECT dblink_disconnect(v_connname) 
+        INTO v_conn_result;
+
+END;
+"""
+  returnType = text
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

@@ -1,0 +1,372 @@
+function "main"."int$pkg_ipjrnimport_int$pkg_ipjrnimport_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      errmsg           varchar(500);
+      vsession         varchar(100);
+      vdetailtbl       varchar(1000);
+      vdetailrec       varchar(500);
+      errcode          bigint;
+      vmaxno           bigint;
+      vcount           bigint;
+
+      v_jrncode        finjrnmain.jrncode%TYPE;
+      v_jrnno          finjrnmain.jrnno%TYPE;
+      v_ycode          finjrnmain.ycode%TYPE;
+      v_jrndt          finjrnmain.jrndt%TYPE;
+      v_doccode        finjrnmain.doccode%TYPE;
+      v_scheme_docno   finjrnmain.scheme_docno%TYPE;
+
+      v_refno          finjrnmain.refno%TYPE;
+      v_glcode         bigint;
+      v_damount        double precision;
+      v_camount        double precision;
+      v_tot_damount    double precision;
+      v_tot_camount    double precision;
+      v_main_rem       finjrnmain.nartext%TYPE;
+      v_oucode         bigint;
+      v_tempno         bigint;
+      v_err            varchar(1000);
+      g_mark           varchar(100);-- START REV : 003
+      x1 CURSOR FOR
+         SELECT DISTINCT ref_no
+           FROM int$stg_ipjrnimport
+          WHERE userid = p_userid;
+
+      -- main fields
+      y1 CURSOR(
+         v_journal_ref    text)
+      FOR
+         SELECT DISTINCT journal_date,
+                         document_scheme,
+                         ref_no,
+                         remarks
+           FROM int$stg_ipjrnimport
+          WHERE     userid = p_userid
+                AND (   (v_journal_ref IS NULL AND ref_no IS NULL)
+                     OR (v_journal_ref IS NOT NULL AND ref_no = v_journal_ref));
+
+      -- detail fields
+      z1 CURSOR(
+         v_journal_ref    text)
+      FOR
+         SELECT ref_no,
+                slid,
+                ref_site_shrtname,
+                amount
+           FROM int$stg_ipjrnimport
+          WHERE     userid = p_userid
+                AND (   (v_journal_ref IS NULL AND ref_no IS NULL)
+                     OR (v_journal_ref IS NOT NULL AND ref_no = v_journal_ref));
+
+BEGIN
+      v_oucode := p_connect_ou;
+	  
+      FOR x IN x1
+      LOOP
+         FOR y IN y1(x.ref_no)
+         LOOP
+            v_ycode := NULL;
+            v_jrndt := NULL;
+            v_doccode := NULL;
+            v_refno := NULL;
+            v_main_rem := NULL;
+            v_glcode := NULL;
+            v_scheme_docno := NULL;
+            v_tot_damount := NULL;
+            v_tot_camount := NULL;
+            v_damount := NULL;
+            v_camount := NULL;
+
+            v_jrndt := y.journal_date;
+            v_refno := y.ref_no;
+            v_main_rem := y.remarks;
+
+            BEGIN
+               SELECT ycode
+                 INTO STRICT v_ycode
+                 FROM admyear y
+                WHERE v_jrndt BETWEEN dtfr AND dtto AND ext = 'N';
+            EXCEPTION
+               WHEN no_data_found
+               THEN
+                  v_ycode := NULL;
+               WHEN too_many_rows
+               THEN
+                  v_ycode := NULL;
+            END;
+
+            SELECT doccode
+              INTO STRICT v_doccode
+              FROM admdocscheme
+             WHERE UPPER(docname) =
+                      (SELECT DISTINCT UPPER(document_scheme)
+                         FROM int$stg_ipjrnimport
+                        WHERE     userid = p_userid
+                              AND (   (y.ref_no IS NULL AND ref_no IS NULL)
+                                   OR (    y.ref_no IS NOT NULL
+                                       AND ref_no = y.ref_no)));
+
+            SELECT coalesce(SUM(coalesce(amount, 0)), 0)
+              INTO STRICT v_tot_damount
+              FROM int$stg_ipjrnimport
+             WHERE     userid = p_userid
+                   AND (   (y.ref_no IS NULL AND ref_no IS NULL)
+                        OR (y.ref_no IS NOT NULL AND ref_no = y.ref_no))
+                   AND coalesce(amount, 0) >= 0;
+
+            g_mark := 'P08';
+
+            SELECT coalesce(SUM(ABS(coalesce(amount, 0))), 0)
+              INTO STRICT v_tot_camount
+              FROM int$stg_ipjrnimport
+             WHERE     userid = p_userid
+                   AND (   (y.ref_no IS NULL AND ref_no IS NULL)
+                        OR (y.ref_no IS NOT NULL AND ref_no = y.ref_no))
+                   AND coalesce(amount, 0) < 0;
+
+            IF v_tot_damount > v_tot_camount
+            THEN
+               v_damount := 0;
+               v_camount := coalesce(v_tot_damount, 0) - coalesce(v_tot_camount, 0);
+            ELSIF v_tot_damount < v_tot_camount
+            THEN
+               v_damount := coalesce(v_tot_camount, 0) - coalesce(v_tot_damount, 0);
+               v_camount := 0;
+            ELSIF v_tot_damount = v_tot_camount
+            THEN
+               NULL;
+            END IF;
+
+            IF v_doccode NOT IN (1, 169)
+            THEN
+               v_scheme_docno := 'Automatic';
+            END IF;
+
+            -- START REV : 003
+            /*
+            db_pkg_genentryno.set_oucode(v_oucode);
+            db_pkg_genentryno.set_sitecode(p_connect_site);
+            db_pkg_genentryno.set_menucode(25);
+            db_pkg_genentryno.initialize_globals(v_ycode);
+
+            v_tempno := db_pkg_genentryno.get_tempno;
+
+            */
+            V_SCHEME_DOCNO :=
+               db_fun_document_number_web(NULL,
+                                           v_doccode,
+                                           v_ycode,
+                                           to_char(v_jrndt,'DD-MM-YYYY'),
+                                           NULL,
+                                           p_connect_site,
+                                           v_oucode,
+                                           'FinanceARAPJournal');
+
+            -- END REV : 003
+            SELECT nextval('erp01') INTO STRICT v_jrncode;
+
+            INSERT INTO finjrnmain (jrncode,
+                                       jrnno,
+                                       jrndt,
+                                       jrntype,
+                                       refno,
+                                       ycode,
+                                       ecode,
+                                       time,
+                                       nartext,
+                                       doccode,
+                                       scheme_docno,
+                                       release_status,
+                                       admsite_code_owner,
+                                       admou_code,
+                                       is_interparty,
+                                       -- START REV : 002
+                                       entry_source           -- END REV : 002
+                                                   )
+                 VALUES (v_jrncode,
+                         v_tempno,
+                         date_trunc('day', v_jrndt),
+                         'J',
+                         v_refno,
+                         v_ycode,
+                         p_userid,
+                         clock_timestamp(),
+                         v_main_rem,
+                         v_doccode,
+                         v_scheme_docno,
+                         'U',
+                         p_connect_site,
+                         p_connect_ou,
+                         'Y'                                -- START REV : 002
+                            ,
+                         'EXCEL'                              -- END REV : 002
+                                );
+
+            -- Detail entry
+            FOR z IN z1(x.ref_no)
+            LOOP
+               INSERT INTO finjrndet  (jrncode,
+                                        jrnno,
+                                        jrndt,
+                                        jrntype,
+                                        glcode,
+                                        slcode,
+                                        damount,
+                                        camount,
+                                        ycode,
+                                        nartext,
+                                        gl_cc_appl,
+                                        ref_admsite_code)
+                  SELECT v_jrncode,
+                         v_tempno,
+                         date_trunc('day', v_jrndt),
+                         'J',
+                         glcode,
+                         slcode,
+                         CASE WHEN amt >= 0 THEN amt ELSE 0 END,
+                         CASE WHEN amt < 0 THEN ABS(amt) ELSE 0 END,
+                         v_ycode,
+                         nartext,
+                         'N',
+                         ref_site_code
+                    FROM (SELECT sl.glcode glcode,
+                                 sl.slcode slcode,
+                                 a.nartext,
+                                 coalesce(
+                                    st.code,
+                                    DB_FUNC_FIN_REF_SITE(sl.slcode,
+                                                          p_connect_site))
+                                    ref_site_code,
+                                 amount    amt
+                            FROM int$stg_ipjrnimport a
+							LEFT OUTER JOIN (SELECT UPPER(shrtname) shrtname, code
+                                    FROM admsite) st ON (UPPER(a.ref_site_shrtname) = st.shrtname)
+							INNER JOIN finsl sl 
+							ON UPPER(a.slid) = UPPER(sl.slid)  AND a.userid = p_userid AND (   (    z.ref_no IS NULL
+                                          AND a.ref_no IS NULL)
+                                      OR (    z.ref_no IS NOT NULL
+                                          AND a.ref_no = z.ref_no)) AND coalesce(a.slid, 'x-1x') =
+                                        coalesce(z.slid, 'x-1x') ) alias16;
+            END LOOP;                                          -- Detail entry
+         -- END REV : 002
+         -- Generate the scheme docno
+         -- START REV : 003
+         /*
+                     db_pkg_genentryno.set_entcode (v_jrncode);
+
+                     UPDATE finjrnmain
+                        SET jrncode = jrncode
+                      WHERE jrncode = v_jrncode;
+
+                     UPDATE finjrndet
+                        SET (jrnno,
+                             jrndt,
+                             ycode,
+                             jrntype) =
+                               (SELECT jrnno,
+                                       jrndt,
+                                       ycode,
+                                       jrntype
+                                  FROM finjrnmain
+                                 WHERE jrncode = finjrndet.jrncode)
+                      WHERE jrncode = v_jrncode;
+
+                     --COMMIT;
+                  -- END REV : 003
+                  */
+         -- END IF;
+         END LOOP;
+      END LOOP;
+
+      -- END REV : 003
+      SELECT nextval('int$error_log_code') INTO STRICT vsession;
+
+      vdetailtbl :=
+            'create table ginarchive.ipjrnimport_'
+         || vsession
+         || ' as select distinct document_scheme, journal_date, ref_no from int$stg_ipjrnimport where userid ='
+         || p_userid::text;
+
+      EXECUTE vdetailtbl;
+
+      vdetailrec :=
+         'select count(1) from ginarchive.ipjrnimport_' || vsession::text;
+
+      EXECUTE vdetailrec INTO STRICT vcount;
+
+      INSERT INTO int$history(code,
+                               importedby,
+                               importedon,
+                               classname,
+                               summary,
+                               history_detail_tablename,
+                               history_detail_row_count)
+           VALUES (nextval('int$history_code'),
+                   p_userid,
+                   clock_timestamp(),
+                   'IPJRNIMPORT',
+                   vcount::TEXT || ' AR/AP journal(s) imported successfully.',
+                   'ginarchive.ipjrnimport_' || vsession,
+                   vcount);
+
+      RETURN('1');
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         -- error log for oracle internal error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'IPJRNIMPORT',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

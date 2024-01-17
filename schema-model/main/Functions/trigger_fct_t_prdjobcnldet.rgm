@@ -1,0 +1,363 @@
+function "main"."trigger_fct_t_prdjobcnldet()" {
+  text = """
+
+/******************************************************************************
+   NAME: T_A_PRDJOBCNLDET
+   PURPOSE:
+   REVISIONS:
+   No.          Date            Author          Description
+   ---------    ----------      --------------- -------------------------------------------------------------------
+   REV : 000    25-JUL-2013     MANASH          (BUG ID : 825)  V11 Production.
+   REV : 001    06-DEC-2013     MOUSUMI         (BUG ID : 924)  Sub assembly item filter added,POST_WIP_PRODUCTION MODIFIED
+   REV : 002    18-JUL-2014     MANASH          (BUG ID : 1408) CNL-PSD record will not be insert at the time of job order cancel.
+   REV : 003    13-JAN-2015     MANASH          (BUG ID : 2070) Deletion of Order Cancel was generating an error for SAI wise orders.
+   REV : 004    18-FEB-2015     MANASH          (BUG ID : 1683) Job Order Cancel will cancel respective BOM quantity also.
+   REV : 005    17-JUL-2015     MANASH          (BUG ID : XXX)  Generic Production release.
+   REV : 006    05-NOV-2015     MANASH          (BUG ID : 13151) The cancel_qty of prdjobbom table not updating for adhoc job order cancel.
+   REV : 007    05-AUG-2020     MOUSUMI         (BUG ID : 13151) MIGRATION RELATED CHANGES
+   REV : 008    17-MAY-2022     Siddhartha      (TFS ID : XXXX)  Batch Serial Changes
+******************************************************************************/
+DECLARE
+   V_PCODE                    PRDJOBMAIN.PCODE%TYPE;
+   V_PRCODE                   PRDJOBMAIN.PRCODE%TYPE;
+   V_LOTCODE                  PRDJOBDET.LOTCODE%TYPE;
+   V_CUR_OP_SEQ               PRDJOBDET.OPERATION_SEQ%TYPE;
+   V_MODE                     varchar(10);
+   V_OPERATION_SEQ            PRDLOTOPERATION.OPERATION_SEQ%TYPE;
+   V_IS_FG_ENTRY_EXISTS       char(1) := 'N';
+   
+   V_COUNT                    bigint := 0;
+   V_ORD_QTY                  PRDJOBDET.QTY%TYPE := 0;
+   V_ADMSITE_CODE             PRDJOBCNLMAIN.ADMSITE_CODE%TYPE;
+   V_CNLDT                    PRDJOBCNLMAIN.CNLDT%TYPE;
+   -- START REV : 005
+   V_PRV_PRCODE               PRDJRCMAIN.PRCODE%TYPE;
+   V_PRV_OPSEQ                PRDLOTOPERATION.OPERATION_SEQ%TYPE;
+   V_A2F_QTY                  PRDLOTOPERATION.AVAILABLE_TO_FORWARD%TYPE;
+   -- END REV : 005
+   -- START REV : 007
+   V_ENTRY_SOURCE             varchar(25);
+   V_SID                      bigint;
+   V_PROGRAM                  varchar(50);
+-- END REV : 007
+BEGIN
+  BEGIN
+   -- START REV : 007
+   BEGIN
+      SELECT ENTRY_SOURCE
+        INTO STRICT V_ENTRY_SOURCE
+        FROM PRDJOBCNLMAIN
+       WHERE CODE = coalesce(NEW.CNLCODE, OLD.CNLCODE);
+   EXCEPTION
+      WHEN no_data_found
+      THEN
+         NULL;
+   END;
+
+SELECT PG_BACKEND_PID() INTO V_SID;
+
+SELECT APPLICATION_NAME INTO V_PROGRAM FROM PG_STAT_ACTIVITY WHERE PID=V_SID;
+
+   -- END REV : 007
+   IF     coalesce(NEW.QTY, coalesce(OLD.QTY, 0)) <> 0
+      AND coalesce(NEW.CNLCODE, coalesce(OLD.CNLCODE, 0)) <> 0
+   THEN
+      -- START REV : 007
+      IF     coalesce(V_ENTRY_SOURCE, 'XX') <> 'WEB'
+AND not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+      THEN
+         -- END REV : O07
+         IF TG_OP = 'INSERT'
+         THEN
+            UPDATE PRDJOBDET
+               SET CNL_QTY = coalesce(CNL_QTY, 0) + coalesce(NEW.QTY, 0)
+             WHERE CODE = NEW.PRDJOBDET_CODE;
+         END IF;
+
+         IF TG_OP = 'DELETE'
+         THEN
+            UPDATE PRDJOBDET
+               SET CNL_QTY = coalesce(CNL_QTY, 0) - coalesce(OLD.QTY, 0)
+             WHERE CODE = OLD.PRDJOBDET_CODE;
+         END IF;
+
+         IF TG_OP = 'UPDATE'
+         THEN
+            UPDATE PRDJOBDET
+               SET CNL_QTY = coalesce(CNL_QTY, 0) - coalesce(OLD.QTY, 0)
+             WHERE CODE = OLD.PRDJOBDET_CODE;
+
+            UPDATE PRDJOBDET
+               SET CNL_QTY = coalesce(CNL_QTY, 0) + coalesce(NEW.QTY, 0)
+             WHERE CODE = NEW.PRDJOBDET_CODE;
+         END IF;
+      END IF;
+
+      BEGIN
+         SELECT PCODE, PRCODE, ADMSITE_CODE
+           INTO STRICT V_PCODE, V_PRCODE, V_ADMSITE_CODE
+           FROM PRDJOBMAIN
+          WHERE CODE = coalesce(NEW.PRDJOBMAIN_CODE, OLD.PRDJOBMAIN_CODE);
+      EXCEPTION
+         WHEN OTHERS
+         THEN
+            V_PCODE := NULL;
+            V_PRCODE := NULL;
+            V_ADMSITE_CODE := NULL;
+      END;
+
+      BEGIN
+         SELECT LOTCODE, OPERATION_SEQ, coalesce(QTY, 0)
+           INTO STRICT V_LOTCODE, V_CUR_OP_SEQ, V_ORD_QTY
+           FROM PRDJOBDET D
+          WHERE CODE = coalesce(NEW.PRDJOBDET_CODE, OLD.PRDJOBDET_CODE);
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            V_LOTCODE := NULL;
+            V_CUR_OP_SEQ := NULL;
+            V_ORD_QTY := 0;
+      END;
+
+      IF TG_OP = 'INSERT'
+      THEN
+         V_MODE := 'INSERTING';
+      ELSIF TG_OP = 'UPDATE'
+      THEN
+         V_MODE := 'UPDATING';
+      ELSIF TG_OP = 'DELETE'
+      THEN
+         V_MODE := 'DELETING';
+      END IF;
+
+      BEGIN
+         SELECT CNLDT
+           INTO STRICT V_CNLDT
+           FROM PRDJOBCNLMAIN
+          WHERE CODE = coalesce(NEW.CNLCODE, OLD.CNLCODE);
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            V_CNLDT := NULL;
+      END;
+
+      -- For Cancel
+      call DB_PKG_PRODUCTION$POST_WIP_TRANSACTION(
+         V_ADMSITE_CODE,
+         V_MODE,
+         'CNL',
+         OLD.CODE,
+         NEW.CODE,
+         V_LOTCODE,
+         NEW.PRDJOBMAIN_CODE,
+         NULL,
+         NULL,
+         V_CUR_OP_SEQ,
+         V_PCODE,
+         V_PRCODE,
+         NEW.ICODE,
+         NULL,
+         'ASS',
+         0 - NEW.QTY,
+         NULL,
+         NULL,
+         coalesce(NEW.CNLCODE, OLD.CNLCODE),
+         V_CNLDT,
+         NEW.ASS_SAITEM_CODE,
+         NULL,
+         NEW.ICODE,
+         NULL
+         );
+   END IF;
+
+   -- START REV : 005
+   -- START REV : 006
+   --IF  NVL(:OLD.LOTCODE,NVL(:NEW.LOTCODE,0)) <> 0 THEN
+   -- END REV : 006
+   DECLARE
+      C1 CURSOR FOR
+           SELECT JB.CODE,
+                  JB.TOLERANCE,
+                  JB.QTY,
+                  JB.ISSUED_QTY,
+                  JB.RETURN_QTY,
+                  JB.WASTAGE_QTY,
+                  JB.CANCEL_QTY,
+                  JB.ASSEMBLY_QTY,
+                  JB.BOM_QTY,
+                  -- START REV : 005
+                  JB.LOTCODE,
+                  JB.OPERATION_SEQ,
+                  JB.ASSEMBLY_ICODE,
+                  JB.COMPONENT_ICODE,
+                  JB.ASS_SAITEM_CODE,
+                  JB.COM_SAITEM_CODE
+             -- END REV : 005
+             FROM PRDJOBBOM JB
+            WHERE     JB.JOBCODE =
+                         coalesce(OLD.PRDJOBMAIN_CODE, NEW.PRDJOBMAIN_CODE)
+                  AND JB.PRDJOBDET_CODE =
+                         coalesce(OLD.PRDJOBDET_CODE, NEW.PRDJOBDET_CODE)
+                  AND JB.ASSEMBLY_ICODE = coalesce(OLD.ICODE, NEW.ICODE)
+         ORDER BY 1;
+   BEGIN
+      FOR C1_LOOP IN C1
+      LOOP
+         -- START REV : 005
+         -- START REV : 006
+         --IF  C1_LOOP.OPERATION_SEQ > 1 AND C1_LOOP.ASSEMBLY_ICODE = C1_LOOP.COMPONENT_ICODE THEN
+         IF     coalesce(OLD.LOTCODE, coalesce(NEW.LOTCODE, 0)) <> 0
+            AND C1_LOOP.OPERATION_SEQ > 1
+            AND (C1_LOOP.ASSEMBLY_ICODE = C1_LOOP.COMPONENT_ICODE)
+         THEN
+            -- START REV : 006
+            V_PRV_OPSEQ :=
+               DB_PKG_PRODUCTION$GET_PRV_OPSEQ(C1_LOOP.LOTCODE,
+                                                C1_LOOP.ASSEMBLY_ICODE,
+                                                C1_LOOP.ASS_SAITEM_CODE,
+                                                C1_LOOP.COM_SAITEM_CODE,
+                                                C1_LOOP.OPERATION_SEQ);
+
+            V_PRV_PRCODE :=
+               DB_PKG_PRODUCTION$GET_PRV_PRCODE(C1_LOOP.LOTCODE,
+                                                 C1_LOOP.ASSEMBLY_ICODE,
+                                                 C1_LOOP.ASS_SAITEM_CODE,
+                                                 C1_LOOP.COM_SAITEM_CODE,
+                                                 C1_LOOP.OPERATION_SEQ);
+
+            call DB_PKG_PRODUCTION$POST_WIP_TRANSACTION (
+               V_ADMSITE_CODE,
+               V_MODE,
+               'CNL',
+               C1_LOOP.CODE,
+               C1_LOOP.CODE,
+               V_LOTCODE,
+               NEW.PRDJOBMAIN_CODE,
+               NULL,
+               NULL,
+               coalesce(V_PRV_OPSEQ, V_CUR_OP_SEQ),
+               V_PCODE,
+               coalesce(V_PRV_PRCODE, V_PRCODE),
+               NEW.ICODE,
+               NULL,
+               'PSD',
+               ROUND ( (coalesce(NEW.QTY, 0) * coalesce(C1_LOOP.BOM_QTY, 0)), 3),
+               NULL,
+               NULL,
+               coalesce(NEW.CNLCODE, OLD.CNLCODE),
+               V_CNLDT,
+               C1_LOOP.COM_SAITEM_CODE,
+               NULL,
+               NEW.ICODE,
+               NULL
+               );
+
+            -- START REV : 007
+            IF     coalesce(V_ENTRY_SOURCE, 'XX') <> 'WEB'
+AND not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+            THEN
+               -- END REV : O07
+               IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE'
+               THEN
+                  V_A2F_QTY :=
+                     ROUND ( (coalesce(NEW.QTY, 0) * coalesce(C1_LOOP.BOM_QTY, 0)),
+                            3);
+
+                  UPDATE PRDLOTOPERATION
+                     SET AVAILABLE_TO_FORWARD =
+                              coalesce(AVAILABLE_TO_FORWARD, 0)
+                            + coalesce(V_A2F_QTY, 0)
+                   WHERE     LOTCODE = C1_LOOP.LOTCODE
+                         AND ASSEMBLY_ICODE = C1_LOOP.ASSEMBLY_ICODE
+                         AND coalesce(ASS_SAITEM_CODE, 0) =
+                                coalesce(C1_LOOP.COM_SAITEM_CODE,
+                                     coalesce(ASS_SAITEM_CODE, 0))
+                         AND OPERATION_SEQ = V_PRV_OPSEQ
+                         AND PRCODE = V_PRV_PRCODE
+                         AND CONSIDER_IN_WIP <> 'N';
+               END IF;
+
+               IF TG_OP = 'DELETE' OR TG_OP = 'UPDATE'
+               THEN
+                  V_A2F_QTY :=
+                     ROUND ( (coalesce(OLD.QTY, 0) * coalesce(C1_LOOP.BOM_QTY, 0)),
+                            3);
+
+                  UPDATE PRDLOTOPERATION
+                     SET AVAILABLE_TO_FORWARD =
+                              coalesce(AVAILABLE_TO_FORWARD, 0)
+                            - coalesce(V_A2F_QTY, 0)
+                   WHERE     LOTCODE = C1_LOOP.LOTCODE
+                         AND ASSEMBLY_ICODE = C1_LOOP.ASSEMBLY_ICODE
+                         AND coalesce(ASS_SAITEM_CODE, 0) =
+                                coalesce(C1_LOOP.COM_SAITEM_CODE,
+                                     coalesce(ASS_SAITEM_CODE, 0))
+                         AND OPERATION_SEQ = V_PRV_OPSEQ
+                         AND PRCODE = V_PRV_PRCODE
+                         AND CONSIDER_IN_WIP <> 'N';
+               END IF;
+            END IF;                                               -- REV : 007
+         END IF;
+
+         -- END REV : 005
+         -- START REV : 007
+         IF     coalesce(V_ENTRY_SOURCE, 'XX') <> 'WEB'
+AND not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+         THEN
+            -- END REV : O07
+            IF TG_OP = 'DELETE' OR TG_OP = 'UPDATE'
+            THEN
+               UPDATE PRDJOBBOM JB
+                  SET CANCEL_QTY =
+                           coalesce(CANCEL_QTY, 0)
+                         - ROUND (
+                              (  (coalesce(QTY, 0) * coalesce(OLD.QTY, 0))
+                               / coalesce(ASSEMBLY_QTY, 0)),
+                              3)
+                WHERE CODE = C1_LOOP.CODE;
+            END IF;
+
+            IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE'
+            THEN
+               UPDATE PRDJOBBOM JB
+                  SET CANCEL_QTY =
+                           coalesce(CANCEL_QTY, 0)
+                         + ROUND (
+                              (  (coalesce(QTY, 0) * coalesce(NEW.QTY, 0))
+                               / coalesce(ASSEMBLY_QTY, 0)),
+                              3)
+                WHERE CODE = C1_LOOP.CODE;
+            END IF;
+         END IF;                                                  -- REV : 007
+      END LOOP;
+   END;
+-- START REV : 006
+--END IF;
+-- END REV : 006
+-- END REV : 004
+EXCEPTION
+   WHEN SQLSTATE '50001' THEN
+      call ERRAUDIT(USER,
+                'T_PRDJOBCNLDET',
+                SQLSTATE::varchar,
+                SQLERRM || 'Unable to find next process. Operation aborted.');
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED  '
+         || 'Unable to find next process. Operation aborted.' USING ERRCODE = '45001';
+   WHEN OTHERS
+   THEN
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED  ' || SQLSTATE::varchar || '  ' || SQLERRM USING ERRCODE = '45100';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

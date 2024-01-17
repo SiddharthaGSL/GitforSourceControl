@@ -1,0 +1,155 @@
+procedure "main"."int$pkg_createpo_sumup_line_lvl_purordchg(bigint)" {
+  text = """
+
+DECLARE
+
+      v_seq            bigint := 1;
+      v_item_lvl_seq   bigint := 1;
+      v_termed         char(1);
+      v_cnt            smallint := 0;
+
+      c3 CURSOR FOR
+           SELECT i.ordcode,
+                  i.chgcode,
+                  i.rate,
+                  i.SIGN,
+                  i.basis,
+                  i.istax,
+                  i.source,
+                  i.formulae,
+                  round((SUM(i.chgamt))::numeric, 2) chgamt,
+                  round((SUM(i.appamt))::numeric, 2) appamt,
+                  SUM(i.seq),
+                  -- START REV : 006
+                  i.gst_component,
+                  i.isreverse
+             -- END REV : 006
+             FROM purordchg_item i
+            WHERE i.ordcode = p_ordcode AND i.basis <> 'A'
+         GROUP BY i.ordcode,
+                  i.chgcode,
+                  i.rate,
+                  i.SIGN,
+                  i.basis,
+                  i.istax,
+                  i.source,
+                  i.formulae,
+                  -- START REV : 006
+                  i.gst_component,
+                  i.isreverse
+         -- END REV : 006
+UNION ALL
+
+           SELECT i.ordcode,
+                  i.chgcode,
+                  SUM(i.rate)            rate,
+                  i.SIGN,
+                  i.basis,
+                  i.istax,
+                  i.source,
+                  i.formulae,
+                  round((SUM(i.chgamt))::numeric, 2) chgamt,
+                  round((SUM(i.appamt))::numeric, 2) appamt,
+                  SUM(i.seq),
+                  -- START REV : 006
+                  i.gst_component,
+                  i.isreverse
+             -- END REV : 006
+             FROM purordchg_item i
+            WHERE i.ordcode = p_ordcode AND i.basis = 'A'
+         GROUP BY i.ordcode,
+                  i.chgcode,
+                  i.SIGN,
+                  i.basis,
+                  i.istax,
+                  i.source,
+                  i.formulae,
+                  -- START REV : 006
+                  i.gst_component,
+                  i.isreverse
+         -- END REV : 006
+         ORDER BY 11;
+
+BEGIN
+      DELETE FROM purordchg
+       WHERE ordcode = p_ordcode AND operation_level = 'L';
+
+      FOR c3rec IN c3
+      LOOP
+         IF c3rec.basis = 'A'
+         THEN
+            SELECT MIN(seq)
+              INTO STRICT v_seq
+              FROM purordchg_item
+             WHERE     ordcode = p_ordcode
+                   AND chgcode = c3rec.chgcode
+                   AND operation_level = 'L';
+         ELSE
+            SELECT MIN(seq)
+              INTO STRICT v_seq
+              FROM purordchg_item
+             WHERE     ordcode = p_ordcode
+                   AND chgcode = c3rec.chgcode
+                   AND coalesce(rate, 0) = coalesce(c3rec.rate, 0)
+                   AND operation_level = 'L';
+         END IF;
+
+         IF coalesce(v_seq, 0) = 0
+         THEN
+            v_seq := 800 + v_item_lvl_seq;
+            v_item_lvl_seq := v_item_lvl_seq + 1;
+         END IF;
+
+         INSERT INTO purordchg(ordcode,
+                                seq,
+                                chgcode,
+                                rate,
+                                SIGN,
+                                basis,
+                                istax,
+                                source,
+                                formulae,
+                                chgamt,
+                                appamt,
+                                operation_level,
+                                without_term_formula,
+                                -- START REV : 006
+                                gst_component,
+                                isreverse                     -- END REV : 006
+                                         )
+              VALUES (c3rec.ordcode,
+                      v_seq,
+                      c3rec.chgcode,
+                      c3rec.rate,
+                      c3rec.SIGN,
+                      c3rec.basis,
+                      c3rec.istax,
+                      c3rec.source,
+                      c3rec.formulae,
+                      c3rec.chgamt,
+                      c3rec.appamt,
+                      'L',
+                      CASE WHEN v_termed='N' THEN  'Y'  ELSE 'N' END ,
+                      -- START REV : 006
+                      CASE WHEN c3rec.source='G' THEN  c3rec.gst_component  ELSE NULL END ,
+                      coalesce(c3rec.isreverse, 'N')              -- END REV : 006
+                                                );
+      END LOOP;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         NULL;
+   END;
+
+"""
+  arguments = <
+    {
+      name = p_ordcode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

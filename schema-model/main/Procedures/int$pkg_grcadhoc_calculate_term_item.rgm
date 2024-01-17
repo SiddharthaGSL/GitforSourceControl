@@ -1,0 +1,694 @@
+procedure "main"."int$pkg_grcadhoc_calculate_term_item(bigint, timestamp without time zone, bigint, bigint, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+      C1 CURSOR FOR
+         SELECT CODE,
+                PO_CODE,
+                D.ICODE,
+                coalesce(RSP, 0)   RSP,
+                coalesce(ACQTY, 0) QTY,
+                NETAMT         GRCAMT,
+                EXCISEMAIN_CODE,
+                EX_BASIS,
+                EX_EFFRATE,
+                EX_ABTFACTOR,
+                EX_DUTYFACTOR,
+                EX_CESSFACTOR,
+                EX_APPAMT,
+                EX_DUTYAMT,
+                EX_CESSAMT,
+                I.GST_ITC_APPL                                     -- REV : 002
+           FROM INVGRCDET D, INVITEM I
+          WHERE D.GRCCODE = p_GRCcode                        -- START REV : 002
+                AND D.ICODE = I.ICODE;
+
+      -- END REV : 002 ;
+      C2 CURSOR FOR
+           SELECT PURTERMDET.PURTERMMAIN_CODE PURTERMCODE,
+                  PURTERMDET.CHGCODE,
+                  coalesce(PURTERMDET.RATE, 0)   RATE,
+                  PURTERMDET.FORMULAE,
+                  LENGTH(PURTERMDET.FORMULAE) FORMLEN,
+                  PURTERMDET.SIGN,
+                  FINCHG.FORMCODE,
+                  FINCHG.ROUNDOFF,
+                  FINCHG.INCLUDE_IN_COST,
+                  PURTERMDET.SEQ,
+                  FINCHG.BASIS,
+                  PURTERMDET.OPERATION_LEVEL,
+                  FINCHG.ISTAX,
+                  FINCHG.SOURCE,
+                  CASE WHEN FINCHG.SOURCE='G' THEN  GST_COMPONENT  ELSE NULL END
+                     GST_COMPONENT,
+                  FINCHG.ISREVERSE
+             FROM PURTERMDET, FINCHG
+            WHERE     PURTERMDET.CHGCODE = FINCHG.CHGCODE
+                  AND PURTERMMAIN_CODE = P_PURTERMCODE
+                  AND PURTERMDET.OPERATION_LEVEL = 'L'
+         ORDER BY PURTERMDET.SEQ;
+
+      DUMMY_APPAMT       double precision;
+      DUMMY_TOTCHGAMT    double precision;
+      DUMMY_CHKCHGAMT    double precision;
+      DUMMY_CHK          char(1);
+      DUMMY_PRVCHK       char(1);
+      DUMMY_SIGN         char(1);
+      V_RATE             double precision;
+      V_TAXCODE          bigint;
+      V_TAX_STATUS       char(1);
+      V_ITEM_CHG         double precision := 0;
+      V_GRCAMT           double precision;
+      V_CODE             bigint;
+      V_SIGN             char(1);
+
+      V_MAX_CODE         bigint;
+      V_TOTAPPAMT        double precision;
+      V_TOTCHGAMT        double precision;
+      V_DIFFAMT          double precision;
+      V_CAL_RATE         double precision;
+
+      V_RANGE_APPL       FINTAXDET.RANGE_APPL%TYPE;
+      V_TAX_BASIS        FINTAXDET.TAX_BASIS%TYPE;
+      V_TAXDETCODE       FINTAXDET.TAXDETCODE%TYPE;
+      DUP_RATE           FINTAXDET.RATE%TYPE;
+      V_RANGEFROM        FINTAX_RANGE.RANGEFROM%TYPE;
+      V_APPAMT           INVGRCCHG.APPAMT%TYPE;
+
+      V_MAX_DET_CODE     INVGRCDET.CODE%TYPE;
+      V_MAX_DET_GRCAMT   INVGRCDET.NETAMT%TYPE;
+      V_EXCISE_APPL      char(1) := 'N';
+      V_ADMSITE_CODE     bigint := NULL;
+      V_ADMCMPTAX_CODE   ADMSITE.PSITE_ADMCMPTAX_CODE%TYPE;
+      V_GST_ITC_APPL     char(2) := NULL;
+	  I RECORD;
+
+  C1_LOOP RECORD;
+
+BEGIN
+      DELETE FROM INVGRCCHG
+            WHERE GRCCODE = p_GRCcode;
+
+      DELETE FROM INVGRCCHG_ITEM
+       WHERE GRCCODE = p_GRCcode;
+
+      SELECT SUM(coalesce(NETAMT, 0))
+        INTO STRICT V_GRCAMT
+        FROM INVGRCDET
+       WHERE GRCCODE = p_GRCcode; -- ITEM WISE OR FULL RETURN AMOUNT FOR AMOUNT BASED APPORTION
+      IF coalesce(V_GRCAMT, 0) = 0
+      THEN
+         V_GRCAMT := 1;
+      END IF;
+
+      SELECT ISEXCISE, ADMSITE_CODE_IN
+        INTO STRICT V_EXCISE_APPL, V_ADMSITE_CODE
+        FROM INVGRCMAIN M, ADMDOCSCHEME D
+       WHERE M.GRCCODE = P_GRCCODE AND M.DOCCODE = D.DOCCODE;
+
+      SELECT PSITE_ADMCMPTAX_CODE
+        INTO STRICT V_ADMCMPTAX_CODE
+        FROM ADMSITE
+       WHERE CODE = V_ADMSITE_CODE;
+
+      FOR C1REC IN C1
+      LOOP
+         FOR C2REC IN C2
+         LOOP
+            IF     C2REC.SOURCE = 'E'
+               AND C1REC.EXCISEMAIN_CODE IS NOT NULL
+               AND coalesce(V_EXCISE_APPL, 'N') = 'Y'
+            THEN
+               INSERT INTO INVGRCCHG_ITEM(GRCCODE,
+                                           INVGRCDET_CODE,
+                                           SEQ,
+                                           CHGCODE,
+                                           RATE,
+                                           BASIS,
+                                           SIGN,
+                                           CHGAMT,
+                                           APPAMT,
+                                           FORMULAE,
+                                           ISTAX,
+                                           SOURCE,
+                                           --START REV : 002
+                                           INCLUDE_IN_COST--END REV : 002
+                                           )
+                  (SELECT P_GRCCODE,
+                          C1REC.CODE,
+                          C2REC.SEQ,
+                          C2REC.CHGCODE,
+                          C1REC.EX_DUTYFACTOR,
+                          C2REC.BASIS,
+                          C2REC.SIGN,
+                          C1REC.EX_DUTYAMT,
+                          C1REC.EX_APPAMT,
+                          C2REC.FORMULAE,
+                          C2REC.ISTAX,
+                          C2REC.SOURCE,
+                          --START REV : 002
+                          C2REC.INCLUDE_IN_COST
+                     --END REV : 002
+                     FROM INVGRCDET
+                    WHERE     CODE = C1REC.CODE
+                          AND EXCISEMAIN_CODE = C1REC.EXCISEMAIN_CODE);
+
+               -- if excise is include in cost then it will add in item cost
+               FOR C1_LOOP
+                  IN (  SELECT A.CODE, A.CHGAMT, B.INCLUDE_IN_COST
+                          FROM INVGRCCHG_ITEM A, FINCHG B
+                         WHERE     A.CHGCODE = B.CHGCODE
+                               AND A.GRCCODE = P_GRCCODE
+                               AND A.INVGRCDET_CODE = C1REC.CODE
+                               AND A.SOURCE = 'E'
+                      ORDER BY 1)
+               LOOP
+                  IF C1_LOOP.INCLUDE_IN_COST = 'Y'
+                  THEN
+                     V_ITEM_CHG :=
+                        coalesce(V_ITEM_CHG, 0) + coalesce(C1_LOOP.CHGAMT, 0);
+                  END IF;
+               END LOOP;
+            ELSE
+               IF C2REC.SOURCE = 'V'
+               THEN
+                  SELECT TAXCODE
+                    INTO STRICT V_TAXCODE
+                    FROM INVITEM
+                   WHERE ICODE = C1REC.ICODE;
+
+                  IF V_TAXCODE IS NOT NULL
+                  THEN
+                     BEGIN
+                        SELECT T2.RATE       INPUTRATE,
+                               T2.RANGE_APPL RANGE_APPL,
+                               T2.TAX_BASIS  TAX_BASIS,
+                               T2.TAXDETCODE TAXDETCODE
+                          INTO STRICT V_RATE,
+                               V_RANGE_APPL,
+                               V_TAX_BASIS,
+                               V_TAXDETCODE
+                          FROM invitem t1
+LEFT OUTER JOIN fintaxdet t2 ON (T1.TAXCODE = T2.TAXCODE)
+WHERE T1.ICODE = C1REC.ICODE  AND T2.ADMCMPTAX_CODE = V_ADMCMPTAX_CODE AND T2.FINTRADEGRP_CODE = P_FINTRADEGRP_CODE AND (   (    coalesce(P_FORMCODE, 0) = 0
+                                        AND coalesce(T2.FORMCODE, 0) = 0)
+                                    OR T2.FORMCODE = P_FORMCODE) AND (   T1.TAXCODE IS NULL
+                                    OR T2.TAXDETCODE =
+                                          (SELECT TAXDETCODE
+                                             FROM FINTAXDET B
+                                            WHERE     T2.TAXCODE = B.TAXCODE
+                                                  AND B.ADMCMPTAX_CODE =
+                                                         V_ADMCMPTAX_CODE
+                                                  AND B.FINTRADEGRP_CODE =
+                                                         P_FINTRADEGRP_CODE
+                                                  AND (   (    coalesce(
+                                                                  P_FORMCODE,
+                                                                  0) = 0
+                                                           AND coalesce(
+                                                                  B.FORMCODE,
+                                                                  0) = 0)
+                                                       OR B.FORMCODE =
+                                                             P_FORMCODE)
+                                                  AND B.DTFR =
+                                                         (SELECT MAX(C.DTFR)
+                                                            FROM FINTAXDET C
+                                                           WHERE     C.DTFR <=
+                                                                        P_GRCDT
+                                                                 AND (   C.DTTO >=
+                                                                            P_GRCDT
+                                                                      OR C.DTTO
+                                                                            IS NULL)
+                                                                 AND C.ADMCMPTAX_CODE =
+                                                                        V_ADMCMPTAX_CODE
+                                                                 AND C.TAXCODE =
+                                                                        T2.TAXCODE
+                                                                 AND C.FINTRADEGRP_CODE =
+                                                                        P_FINTRADEGRP_CODE
+                                                                 AND (   (    coalesce(
+                                                                                 P_FORMCODE,
+                                                                                 0) =
+                                                                                 0
+                                                                          AND coalesce(
+                                                                                 C.FORMCODE,
+                                                                                 0) =
+                                                                                 0)
+                                                                      OR C.FORMCODE =
+                                                                            P_FORMCODE))));
+
+                        IF     coalesce(V_RANGE_APPL, 'N') = 'Y'
+                           AND V_TAX_BASIS = 'M'
+                        THEN
+                           V_RANGEFROM := 0;
+
+                           SELECT coalesce(MIN(RANGEFROM), 0)
+                             INTO STRICT V_RANGEFROM
+                             FROM FINTAX_RANGE R
+                            WHERE TAXDETCODE = V_TAXDETCODE;
+
+                           IF V_RANGEFROM = 0
+                           THEN
+                              V_RATE := 0;
+                           ELSE
+                              IF C1REC.RSP >= V_RANGEFROM
+                              THEN
+                                 BEGIN
+                                    SELECT coalesce(RATE, 0)
+                                      INTO STRICT DUP_RATE
+                                      FROM FINTAX_RANGE R
+                                     WHERE     TAXDETCODE = V_TAXDETCODE
+                                           AND C1REC.RSP BETWEEN coalesce(
+                                                                    RANGEFROM,
+                                                                    0)
+                                                             AND coalesce(
+                                                                    RANGETO,
+                                                                    999999999999999999);
+
+                                    V_RATE := DUP_RATE;
+                                 EXCEPTION
+                                    WHEN no_data_found
+                                    THEN
+                                       V_RATE := 0;
+                                    WHEN OTHERS
+                                    THEN
+                                       V_RATE := 0;
+                                 END;
+                              ELSE
+                                 V_RATE := 0;
+                              END IF;
+                           END IF;
+                        END IF;
+
+                        V_TAX_STATUS := 'I';                      -- FROM ITEM
+                     EXCEPTION
+                        WHEN no_data_found
+                        THEN
+                           V_TAX_STATUS := 'C';                 -- FROM CHARGE
+                     END;
+                  ELSE
+                     V_TAX_STATUS := 'N';                       -- NON TAXABLE
+                  END IF;
+               ELSIF C2REC.SOURCE = 'G'
+               THEN
+                  V_TAX_STATUS := 'I';
+                  V_RANGE_APPL := 'N';
+               ELSE
+                  IF C2REC.SOURCE = 'E'
+                  THEN
+                     V_TAX_STATUS := 'N';            -- Not applicable for tax
+                  ELSE
+                     V_TAX_STATUS := 'C';                       -- FROM CHARGE
+                  END IF;
+               END IF;
+
+               IF V_TAX_STATUS <> 'N'
+               THEN
+                  DUMMY_TOTCHGAMT := 0;
+
+                  FOR I IN 1 .. C2REC.FORMLEN
+                  LOOP
+                     IF MOD(I, 2) != 0
+                     THEN
+                        DUMMY_CHK := SUBSTR(C2REC.FORMULAE, I, 1);
+                        DUMMY_CHKCHGAMT := 0;
+
+                        IF DUMMY_CHK = 'B'
+                        THEN
+                           DUMMY_CHKCHGAMT := coalesce(C1REC.GRCAMT, 0);
+                        ELSE
+                           BEGIN
+                              SELECT INVGRCCHG_ITEM.CHGAMT
+                                INTO STRICT DUMMY_CHKCHGAMT
+                                FROM PURTERMDET, INVGRCCHG_ITEM
+                               WHERE     PURTERMDET.CHGCODE =
+                                            INVGRCCHG_ITEM.CHGCODE
+                                     AND INVGRCCHG_ITEM.INVGRCDET_CODE =
+                                            C1REC.CODE
+                                     AND PURTERMDET.PURTERMMAIN_CODE =
+                                            C2REC.PURTERMCODE
+                                     AND PURTERMDET.OPERATION_LEVEL = 'L'
+                                     AND PURTERMDET.SEQ =
+                                            (DUMMY_CHK)::numeric;
+                           EXCEPTION
+                              WHEN no_data_found
+                              THEN
+                                 DUMMY_CHKCHGAMT := 0;
+                           END;
+                        END IF;
+
+                        DUMMY_PRVCHK := SUBSTR(C2REC.FORMULAE, I - 1, 1);
+
+                        IF DUMMY_PRVCHK = '+'
+                        THEN
+                           DUMMY_TOTCHGAMT :=
+                              DUMMY_TOTCHGAMT + coalesce(DUMMY_CHKCHGAMT, 0);
+                        ELSIF DUMMY_PRVCHK = '-'
+                        THEN
+                           DUMMY_TOTCHGAMT :=
+                              DUMMY_TOTCHGAMT - coalesce(DUMMY_CHKCHGAMT, 0);
+                        ELSE
+                           DUMMY_TOTCHGAMT := coalesce(DUMMY_CHKCHGAMT, 0);
+                        END IF;
+                     END IF;
+                  END LOOP;
+
+                  DUMMY_APPAMT := DUMMY_TOTCHGAMT;
+
+                  IF coalesce(V_RANGE_APPL, 'N') = 'Y' AND V_TAX_BASIS = 'N'
+                  THEN
+                     V_RANGEFROM := 0;
+
+                     SELECT coalesce(MIN(RANGEFROM), 0)
+                       INTO STRICT V_RANGEFROM
+                       FROM FINTAX_RANGE R
+                      WHERE TAXDETCODE = V_TAXDETCODE;
+
+                     IF V_RANGEFROM = 0
+                     THEN
+                        V_RATE := 0;
+                     ELSE
+                        V_APPAMT := 0;
+
+                        -- START REV : 083
+                        -- V_APPAMT := ROUND((DUMMY_APPAMT / C1REC.QTY),2);
+                        IF coalesce(C1REC.QTY, 0) <> 0
+                        THEN
+                           V_APPAMT := round((DUMMY_APPAMT / C1REC.QTY)::numeric, 2);
+                        END IF;
+
+                        -- END REV : 083
+                        IF V_APPAMT >= V_RANGEFROM
+                        THEN
+                           BEGIN
+                              SELECT coalesce(RATE, 0)
+                                INTO STRICT DUP_RATE
+                                FROM FINTAX_RANGE R
+                               WHERE     TAXDETCODE = V_TAXDETCODE
+                                     AND V_APPAMT BETWEEN coalesce(RANGEFROM, 0)
+                                                      AND coalesce(
+                                                             RANGETO,
+                                                             999999999999999999);
+
+                              V_RATE := DUP_RATE;
+                           EXCEPTION
+                              WHEN no_data_found
+                              THEN
+                                 V_RATE := 0;
+                              WHEN OTHERS
+                              THEN
+                                 V_RATE := 0;
+                           END;
+                        ELSE
+                           V_RATE := 0;
+                        END IF;
+                     END IF;
+                  END IF;
+
+                  IF C2REC.SOURCE = 'G'
+                  THEN
+                     V_RATE :=
+                        DB_FUNC_GET_GST_TAX_RATE(C1REC.ICODE,
+                                                  C2REC.GST_COMPONENT,
+                                                  P_GRCDT,
+                                                  C2REC.ISTAX,
+                                                  NULL,
+                                                  NULL,
+                                                  C1REC.RSP,
+                                                  DUMMY_APPAMT,
+                                                  C1REC.QTY,
+                                                  V_ADMSITE_CODE,
+                                                  NULL,
+                                                  P_PCODE);
+                  END IF;
+
+                  -- for round off purpose
+                  UPDATE GLOBAL_TEMP_STORAGE G
+                     SET VALUE_1 = V_RATE
+                   WHERE     CODE_1 = P_GRCCODE
+                         AND CODE_2 = C1REC.CODE
+                         AND CODE_3 = C2REC.CHGCODE
+                         AND CHAR_1 = C2REC.BASIS;
+
+                  IF V_TAX_STATUS = 'C'
+                  THEN
+                     V_CAL_RATE := coalesce(C2REC.RATE, 0);
+                  ELSE
+                     V_CAL_RATE := coalesce(V_RATE, 0);
+                  END IF;
+
+                  IF C2REC.BASIS = 'P'
+                  THEN
+                     DUMMY_TOTCHGAMT :=
+                        ROUND (
+                           (V_CAL_RATE / 100) * coalesce(DUMMY_TOTCHGAMT, 0),
+                           2);
+                  ELSIF C2REC.BASIS = 'A'
+                  THEN
+                     DUMMY_TOTCHGAMT :=
+                        ROUND (
+                           (coalesce(C1REC.GRCAMT, 0) * C2REC.RATE / V_GRCAMT),
+                           2);
+                  END IF;
+
+
+                  IF C2REC.SIGN = '-' AND DUMMY_TOTCHGAMT >= 0
+                  THEN
+                     DUMMY_TOTCHGAMT := -1 * coalesce(DUMMY_TOTCHGAMT, 0);
+                  END IF;
+
+                  DUMMY_SIGN := C2REC.SIGN;
+
+                  IF C2REC.ROUNDOFF = 'Y'
+                  THEN
+                     DUMMY_TOTCHGAMT := ROUND(DUMMY_TOTCHGAMT);
+                  END IF;
+
+                  INSERT INTO INVGRCCHG_ITEM(GRCCODE,
+                                              INVGRCDET_CODE,
+                                              SEQ,
+                                              CHGCODE,
+                                              RATE,
+                                              BASIS,
+                                              SIGN,
+                                              CHGAMT,
+                                              APPAMT,
+                                              FORMULAE,
+                                              ISTAX,
+                                              SOURCE,
+                                              GST_COMPONENT,
+                                              ISREVERSE,
+                                              --START REV : 002
+                                              INCLUDE_IN_COST--END REV : 002
+                                              )
+                          VALUES (
+                                    P_GRCCODE,
+                                    C1REC.CODE,
+                                    C2REC.SEQ,
+                                    C2REC.CHGCODE,
+                                    CASE WHEN                                        C2REC.BASIS='A' THEN  ABS(DUMMY_TOTCHGAMT)  ELSE CASE WHEN V_TAX_STATUS='C' THEN  C2REC.RATE  ELSE V_RATE END  END ,
+                                    C2REC.BASIS,
+                                    DUMMY_SIGN,
+                                    DUMMY_TOTCHGAMT,
+                                    DUMMY_APPAMT,
+                                    C2REC.FORMULAE,
+                                    C2REC.ISTAX,
+                                    C2REC.SOURCE,
+                                    C2REC.GST_COMPONENT,
+                                    C2REC.ISREVERSE,
+                                    --START REV : 002
+                                    C2REC.INCLUDE_IN_COST--END REV : 002
+                                    );
+
+                  -- START REV : 002
+                  --IF  C2REC.INCLUDE_IN_COST = 'Y' THEN
+                  IF (C2REC.SOURCE <> 'G' AND c2rec.INCLUDE_IN_COST = 'Y')
+                     OR (C2REC.SOURCE = 'G' AND C1REC.GST_ITC_APPL = 'NO')
+                  THEN
+                     -- END REV : 002
+                     V_ITEM_CHG :=
+                        coalesce(V_ITEM_CHG, 0) + coalesce(DUMMY_TOTCHGAMT, 0);
+                  END IF;
+               END IF;
+            END IF;
+         END LOOP;
+
+         UPDATE INVGRCDET
+            SET CHGAMT = coalesce(V_ITEM_CHG, 0),
+                EFFAMT = coalesce(C1REC.GRCAMT, 0) + coalesce(V_ITEM_CHG, 0)
+          WHERE CODE = C1REC.CODE;
+
+         V_ITEM_CHG := 0;
+      END LOOP;
+
+      FOR I
+         IN (SELECT CHGCODE,
+                    INCLUDE_IN_COST,
+                    RATE,
+                    TOT,
+                    SOURCE                                        -- REV : 002
+               FROM (  SELECT G.CHGCODE,
+                              F.INCLUDE_IN_COST,
+                              G.RATE,
+                              ABS(SUM(G.CHGAMT)) TOT,
+                              G.SOURCE                            -- REV : 002
+                         FROM INVGRCCHG_ITEM G, FINCHG F
+                        WHERE     G.CHGCODE = F.CHGCODE
+                              AND G.GRCCODE = P_GRCCODE
+                              AND G.BASIS = 'A'
+                     GROUP BY G.CHGCODE,
+                              F.INCLUDE_IN_COST,
+                              G.RATE,
+                              G.SOURCE                            -- REV : 002
+                                      ) alias2
+              WHERE RATE <> TOT)
+      LOOP
+         SELECT MAX(CODE), MAX(SIGN)
+           INTO STRICT V_CODE, V_SIGN
+           FROM INVGRCCHG_ITEM
+          WHERE     GRCCODE = P_GRCCODE
+                AND CHGCODE = I.CHGCODE
+                AND RATE = I.RATE
+                AND ABS(CHGAMT) > ABS(I.RATE - I.TOT);
+
+         -- START REV : 002
+         BEGIN
+            SELECT DISTINCT I.GST_ITC_APPL
+              INTO STRICT V_GST_ITC_APPL
+              FROM INVITEM I, INVGRCDET D
+             WHERE     I.ICODE = D.ICODE
+                   AND CODE = (SELECT INVGRCDET_CODE
+                                 FROM INVGRCCHG_ITEM
+                                WHERE CODE = V_CODE);
+         EXCEPTION
+            WHEN no_data_found
+            THEN
+               NULL;
+         END;
+
+         -- END REV : 002
+         UPDATE INVGRCCHG_ITEM
+            SET CHGAMT =
+                   round((
+                      CASE WHEN                          V_SIGN='-' THEN    coalesce(CHGAMT, 0)                              - coalesce(I.RATE, 0)                              + coalesce(I.TOT, 0)  ELSE coalesce(CHGAMT, 0) + coalesce(I.RATE, 0) - coalesce(I.TOT, 0) END )::numeric,
+                      2)
+          WHERE CODE = V_CODE;
+
+         -- START REV : 002
+         --IF I.INCLUDE_IN_COST = 'Y' THEN
+         IF (I.SOURCE <> 'G' AND I.INCLUDE_IN_COST = 'Y')
+            OR (I.SOURCE = 'G' AND V_GST_ITC_APPL = 'NO')
+         -- END REV : 002
+         THEN
+            UPDATE INVGRCDET
+               SET CHGAMT =
+                      round((
+                         CASE WHEN                             V_SIGN='-' THEN    coalesce(CHGAMT, 0)                                 - coalesce(I.RATE, 0)                                 + coalesce(I.TOT, 0)  ELSE coalesce(CHGAMT, 0)                            + coalesce(I.RATE, 0)                            - coalesce(I.TOT, 0) END )::numeric,
+                         2),
+                   EFFAMT =
+                      round((
+                         CASE WHEN                             V_SIGN='-' THEN    coalesce(EFFAMT, 0)                                 - coalesce(I.RATE, 0)                                 + coalesce(I.TOT, 0)  ELSE coalesce(EFFAMT, 0)                            + coalesce(I.RATE, 0)                            - coalesce(I.TOT, 0) END )::numeric,
+                         2)
+             WHERE CODE = (SELECT INVGRCDET_CODE
+                             FROM INVGRCCHG_ITEM
+                            WHERE CODE = V_CODE);
+         END IF;
+      END LOOP;
+
+      BEGIN
+         SELECT MAX(CODE)
+           INTO STRICT V_MAX_DET_CODE
+           FROM INVGRCDET
+          WHERE GRCCODE = P_GRCCODE;
+
+         SELECT NETAMT
+           INTO STRICT V_MAX_DET_GRCAMT
+           FROM INVGRCDET
+          WHERE CODE = V_MAX_DET_CODE;
+      END;
+
+      DECLARE
+         V_CHGAMT             INVGRCCHG_ITEM.CHGAMT%TYPE;
+         V_MAX_GST_ITC_APPL   char(2) := NULL;
+      BEGIN
+         -- START REV : 002
+         V_MAX_GST_ITC_APPL := NULL;
+
+         BEGIN
+            SELECT DISTINCT I.GST_ITC_APPL
+              INTO STRICT V_MAX_GST_ITC_APPL
+              FROM INVITEM I, INVGRCDET D
+             WHERE I.ICODE = D.ICODE AND CODE = V_MAX_DET_CODE;
+         EXCEPTION
+            WHEN no_data_found
+            THEN
+               NULL;
+         END;
+
+         -- END REV : 002
+         SELECT SUM(coalesce(A.CHGAMT, 0))
+           INTO STRICT V_CHGAMT
+           FROM INVGRCCHG_ITEM A, FINCHG B
+          WHERE     A.GRCCODE = p_GRCcode
+                AND A.CHGCODE = B.CHGCODE
+                -- START REVB : 002
+                AND (   (B.INCLUDE_IN_COST = 'Y' AND A.SOURCE <> 'G')
+                     OR (V_MAX_GST_ITC_APPL = 'NO' AND A.SOURCE = 'G'))
+                -- END REV : 002
+                AND A.INVGRCDET_CODE = V_MAX_DET_CODE;
+
+         UPDATE INVGRCDET
+            SET CHGAMT = coalesce(V_CHGAMT, 0),
+                EFFAMT = coalesce(V_MAX_DET_GRCAMT, 0) + coalesce(V_CHGAMT, 0)
+          WHERE     CODE = V_MAX_DET_CODE
+                AND coalesce(CHGAMT, 0) <> coalesce(V_CHGAMT, 0);
+      END;
+
+      CALL int$pkg_grcadhoc_sumup_line_lvl_invgrcchg(p_GRCcode);
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         NULL;
+   END;
+
+"""
+  arguments = <
+    {
+      name = p_grccode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_grcdt
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_fintradegrp_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_formcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_pcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_purtermcode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

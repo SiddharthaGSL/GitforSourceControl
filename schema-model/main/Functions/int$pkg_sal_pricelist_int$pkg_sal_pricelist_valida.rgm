@@ -1,0 +1,394 @@
+function "main"."int$pkg_sal_pricelist_int$pkg_sal_pricelist_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+        v_status                char(1);
+        errmsg                  varchar(200);
+        errcode                 bigint;
+        v_icode                 varchar(9);
+        v_barcode               varchar(50);
+        v_connected_ou          bigint;
+        v_sitetype              admsite.sitetype%type;
+        v_mark                  varchar(100);
+BEGIN
+        v_mark := 1;
+        -- Validation for Price List Name
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'SAL_PRICELIST', userid, 'Data Validation', PRICE_LIST_NAME||': Price list name, max allowed length is 100 characters.', clock_timestamp()
+        from   int$stg_sal_pricelist a
+        where  length(price_list_name) > 100
+        and    a.userid = p_userid;
+
+        v_mark := 1.1;
+        -- Validation for Price List Name
+        insert  into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT  nextval('int$error_log_code'), lineno, 'SAL_PRICELIST', p_userid, 'Data Validation', x.price_list_name||': Duplicate price list name found, unable to proceed.',clock_timestamp()
+        from    int$stg_sal_pricelist x
+        where   upper(x.price_list_name) in (
+                            SELECT price_list_name1
+                            from (
+                                        select  upper(a.price_list_name) price_list_name1, count(*)
+                                        from    int$stg_sal_pricelist a
+                                        where   a.userid = p_userid
+                                        group by upper(a.price_list_name)
+                                        having count(*) > 1
+                                    ) alias8
+                        )
+        and     x.userid = p_userid;
+
+        v_mark := 2;
+        -- Validation for Remarks
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'SAL_PRICELIST', userid, 'Data Validation', a.remarks||': Remarks, max length allowed is 500 characters.', clock_timestamp()
+        from   int$stg_sal_pricelist a
+        where  length(a.price_list_name) > 500
+        and    a.userid = p_userid;
+
+        v_mark := 3;
+        -- Validation for Price Type
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'SAL_PRICELIST', userid, 'Data Validation', a.price_type||': Price type, value should be valid.', clock_timestamp()
+        from   int$stg_sal_pricelist a
+        where  upper(price_type) not in ('RSP', 'WSP', 'MRP', 'STANDARD RATE', 'EFFECTIVE RATE')
+        and    a.userid = p_userid;
+
+        v_mark := 3.1;
+        -- Validation for Price Type, modification
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'SAL_PRICELIST', userid, 'Data Validation', a.price_type||': Price Type, modification is not allowed in the price type.', clock_timestamp()
+        from   int$stg_sal_pricelist a, salpricelistmain b, (
+                                                                SELECT pricelistcode from finsl_ou_site
+                                                                
+union
+ 
+                                                                select pricelistcode from finsl_ou
+                                                                
+union
+ 
+                                                                select pricelistcode from finsl
+                                                                
+union
+ 
+                                                                select pricelist_code from admsite
+                                                            ) c
+        where  upper(a.price_list_name) = upper(b.pricelistname)
+        and    b.pricelistcode = c.pricelistcode
+        and    upper(a.price_type) <> (select case 
+                                                  when b.price_type = 'L' then 'MRP'
+                                                  when b.price_type = 'M' then 'RSP'
+                                                  when b.price_type = 'W' then 'WSP'
+                                                  when b.price_type = 'R' then 'STANDARD RATE'
+                                                  when b.price_type = 'C' then 'EFFECTIVE RATE'
+                                              end
+                                       )
+        and    a.price_type is not null
+        and    a.userid = p_userid;
+
+        v_mark := 3.2;
+        -- Validation for Price Type, insertion
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'SAL_PRICELIST', userid, 'Data Validation', a.price_type||': Price Type, for new pricelist price type is mandatory.', clock_timestamp()
+        from   int$stg_sal_pricelist a
+        where  a.price_type is null
+        and    upper(a.price_list_name) not in (SELECT upper(b.pricelistname) from salpricelistmain b)
+        and    a.userid = p_userid;
+
+        v_mark := 4;
+        -- Validation for Discount_Mode
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'SAL_PRICELIST', userid, 'Data Validation', a.discount_mode||': Discount Mode, value should be valid.', clock_timestamp()
+        from   int$stg_sal_pricelist a
+        where  upper(a.discount_mode) not in ('MARKUP', 'MARKDOWN')
+        and    a.discount_mode is not null
+        and    a.userid = p_userid;
+
+        v_mark := 4.1;
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'SAL_PRICELIST', userid, 'Data Validation', a.discount_mode||': Discount Mode, value should be valid.', clock_timestamp()
+        FROM int$stg_sal_pricelist a LEFT OUTER JOIN salpricelistmain b 
+		ON (upper(a.price_list_name) = upper(b.pricelistname ))
+WHERE b.pricelistcode is null  -- Insetion mode 
+  and upper(coalesce(a.discount_mode,'xx')) not in ('MARKUP', 'MARKDOWN') and a.userid = p_userid;
+
+        v_mark := 5;
+        -- Validation for discount_rate
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'SAL_PRICELIST', userid, 'Data Validation',
+		a.discount_rate :: text||': Discount rate, is allowed up to 6 char in length.', clock_timestamp()
+        from   int$stg_sal_pricelist a
+        where  length(a.discount_rate:: text) > 6 -- previously it was 7
+        and    a.userid = p_userid;
+
+        v_mark := 5.1;
+        -- Validation for discount_rate
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'SAL_PRICELIST', userid, 'Data Validation', 
+		a.discount_rate :: text||': Discount rate, can be given up to 3 decimal max.', clock_timestamp()
+        from   int$stg_sal_pricelist a
+        where  length(substr(a.discount_rate,position('.' in a.discount_rate)+1)) >4
+        and    position('.' in a.discount_rate:: text) > 0
+        and    a.userid = p_userid;
+
+        v_mark := 5.2;
+        -- Validation for discount_rate
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'SAL_PRICELIST', userid, 'Data Validation',
+		a.discount_rate::text||': Discount rate, can not be negative.', clock_timestamp()
+        from   int$stg_sal_pricelist a
+        where  coalesce(a.discount_rate,0) < 0
+        and    a.userid = p_userid;
+
+        v_mark := 5.3;
+        -- Validation for discount_rate
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'SAL_PRICELIST', userid, 'Data Validation',
+		a.discount_rate:: text||': Discount rate, can not be greater than or equals to 100.', clock_timestamp()
+        from   int$stg_sal_pricelist a
+
+        where  coalesce(a.discount_rate,0) > 99.99 -- as web receive max 99.99
+        and    a.userid = p_userid;
+
+        v_mark := 6.1;
+        -- Validation for include_tax
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'SAL_PRICELIST', userid, 'Data Validation', 
+		a.include_tax||': Include tax, value should be valid.', clock_timestamp()
+        FROM  int$stg_sal_pricelist a LEFT OUTER JOIN salpricelistmain b 
+		ON (upper(a.price_list_name) = upper(b.pricelistname ))
+WHERE coalesce(upper(a.discount_mode),case when b.discount_mode = 'D' then 'MARKDOWN' else 'MARKUP' end) = 'MARKDOWN' and upper(a.include_tax) not in (
+                            'DO NOT INCLUDE',
+                            'BASED ON SELECTED PRICE TYPE BEFORE MARKDOWN',
+                            'BASED ON SELECTED PRICE TYPE AFTER MARKDOWN',
+                            'BASED ON NET PRICE BEFORE MARKDOWN',
+                            'BASED ON NET PRICE AFTER MARKDOWN'
+                        ) and a.include_tax is not null and a.userid = p_userid;
+
+        v_mark := 6.2;
+        -- Validation for include_tax
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'SAL_PRICELIST', userid, 'Data Validation', a.include_tax||': Include tax, is allowed only when Mode is ''Markdown''.', clock_timestamp()
+        from   int$stg_sal_pricelist a
+        where  upper(a.discount_mode) <> 'MARKDOWN'
+        and    a.include_tax is not null
+        and    a.discount_mode is not null
+        and    a.userid = p_userid;
+
+        v_mark := 7.1;
+        -- Validation for round_off
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'SAL_PRICELIST', userid, 'Data Validation', a.round_off||': Round off, value should be valid.', clock_timestamp()
+        from   int$stg_sal_pricelist a
+        where  upper(a.round_off) not in ('DO NOT ROUND', 'UPPER', 'LOWER', 'ROUND')
+        and    a.round_off is not null
+        and    a.userid = p_userid;
+
+        v_mark := 7.2;
+        -- Validation for round_off
+        -- have to check
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'SAL_PRICELIST', userid, 'Data Validation', a.include_tax||': Round off is required only when Include tax is ''Do not include''.', clock_timestamp()
+        FROM int$stg_sal_pricelist a LEFT OUTER JOIN salpricelistmain b 
+		ON (upper(a.price_list_name) = upper(b.pricelistname ))
+WHERE coalesce(upper(a.include_tax),
+                    case 
+                        when b.include_vat_in_discount||b.cmptax_code_basis||b.discount_basis in ('NSN','NDN') then 'DO NOT INCLUDE'
+                    else
+                        'xx'
+                    end) <> 'DO NOT INCLUDE' and a.round_off is not null and a.userid = p_userid;
+
+        v_mark := 8.1;
+        -- Validation for round_in_multiples_of
+        v_mark := 8.1;
+        -- Validation for round_in_multiples_of
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'SAL_PRICELIST', userid, 'Data Validation', a.round_in_multiples_of :: text||': Round in multiples of, can be given up to 2 decimal max.', clock_timestamp()
+        from   int$stg_sal_pricelist a
+        where  length(rtrim(substr(a.round_in_multiples_of,position('.' in a.round_in_multiples_of)+1),0)) > 3
+        and    position('.' in a.round_in_multiples_of) > 0
+        and    a.userid = p_userid;
+
+        v_mark := '8.1.1';
+        -- Validation for round_in_multiples_of
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'SAL_PRICELIST', userid, 'Data Validation', a.round_in_multiples_of :: text||': Round in multiples of, can not be negative or zero.', clock_timestamp()
+        from   int$stg_sal_pricelist a
+        where  a.round_in_multiples_of <= 0
+        and    upper(a.include_tax) = 'DO NOT INCLUDE'
+        and    a.userid = p_userid;
+
+        v_mark := '8.1.2';
+        -- Validation for round_in_multiples_of
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'SAL_PRICELIST', userid, 'Data Validation', a.round_in_multiples_of :: text||': Round in multiples of, should be less than 1000.', clock_timestamp()
+        from   int$stg_sal_pricelist a
+        where  coalesce(a.round_in_multiples_of,0) >= 1000
+        and    a.userid = p_userid;
+
+        v_mark := 8.2;
+        -- Validation for round_in_multiples_of
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'SAL_PRICELIST', userid, 'Data Validation', a.round_in_multiples_of :: text||': Round in multiples of is required only when Include tax is ''Do not include'' and Round off is ''Do not round''.', clock_timestamp()
+        FROM int$stg_sal_pricelist a LEFT OUTER JOIN salpricelistmain b
+		ON (upper(a.price_list_name) = upper(b.pricelistname ))
+WHERE (
+                    (
+                        coalesce(upper(a.include_tax),
+                            case 
+                                when b.include_vat_in_discount||b.cmptax_code_basis||b.discount_basis in ('NSN','NDN') then 'DO NOT INCLUDE'
+                            else
+                                'xx'
+                            end) <> 'DO NOT INCLUDE'
+                    )
+                    or (
+                        coalesce(upper(a.round_off), 
+                            case
+                                when b.net_price_round_limit = 'N' then 'DO NOT ROUND' 
+                            else
+                                'XX'
+                            end) = 'DO NOT ROUND'
+                    )
+                ) and a.round_in_multiples_of is not null and a.userid = p_userid;
+
+        v_mark := 8.3;
+        insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+        SELECT nextval('int$error_log_code'), lineno, 'SAL_PRICELIST', userid, 'Data Validation', a.round_in_multiples_of :: text||': Round in multiples of, is not required if round off is ''Do not round''.', clock_timestamp()
+        FROM int$stg_sal_pricelist a LEFT OUTER JOIN salpricelistmain b 
+		ON (upper(a.price_list_name) = upper(b.pricelistname ))
+WHERE  --and    nvl(upper(a.discount_mode),case when b.discount_mode = 'D' then 'MARKDOWN' else 'MARKUP' end) = 'MARKDOWN'
+   coalesce(upper(a.round_off),
+                            case
+                                when coalesce(b.net_price_round_limit,'N') = 'N' then 'DO NOT ROUND' 
+                            else
+                                'XX'
+                            end) = 'DO NOT ROUND' and a.round_in_multiples_of is not null and a.userid = p_userid;
+
+        --COMMIT;
+
+        -- check whether records are valid or not
+        begin
+            select  'S'
+            into STRICT    v_status
+
+            where   exists (
+                            SELECT  'S'
+                            from    int$error_log
+                            where   userid = p_userid
+                            and     classname = 'SAL_PRICELIST'
+                            );
+            return('0');
+        exception
+            when no_data_found then
+                return('1');
+        end;
+    exception
+        when others then
+            errcode := SQLSTATE;
+            errmsg := sqlerrm;
+
+            insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+            values (nextval('int$error_log_code'), 0, 'SAL_PRICELIST', p_userid, errcode, errmsg||','||v_mark, clock_timestamp());
+            --COMMIT;
+
+            return('0');
+    END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+
+function "main"."int$pkg_sal_pricelist_int$pkg_sal_pricelist_validate(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+ 
+DECLARE
+	-- Change this to reflect the dblink connection string
+	--v_conn_str  text := format('port=%s dbname=%s user=%s', current_setting('port'), current_database(), current_user);
+    v_srvname       name;
+    v_connname      text;
+    v_connstr       text;
+    v_conn_result   text;
+    v_query         text;
+
+	v_ret	char;
+BEGIN
+    v_srvname := 'foreign_pgbase';
+    v_connname := replace(uuid_generate_v4()::text,'-','');
+    v_connstr  := v_srvname;
+    
+    --Open the connection  
+    SELECT dblink_connect(v_connname,v_connstr) 
+    INTO v_conn_result;
+	
+	v_query := 'SELECT * FROM int$pkg_sal_pricelist_int$pkg_sal_pricelist_validate_atx ( ' || quote_nullable(p_userid::text) || '::bigint,' || quote_nullable(p_connect_site::text) || '::bigint,' || quote_nullable(p_logging_date::text) || '::timestamp without time zone,' || quote_nullable(p_connect_ou::text) || '::bigint )';
+	SELECT * INTO v_ret FROM dblink(v_connname, v_query) AS p (ret text);
+
+	
+	SELECT dblink_disconnect(v_connname) 
+    INTO v_conn_result;
+	
+	RETURN v_ret;
+EXCEPTION 
+   WHEN OTHERS THEN
+        SELECT dblink_disconnect(v_connname) 
+        INTO v_conn_result;
+
+END;
+"""
+  returnType = text
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

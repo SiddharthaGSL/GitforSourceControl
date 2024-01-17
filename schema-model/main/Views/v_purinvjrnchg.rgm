@@ -1,0 +1,145 @@
+view "main"."v_purinvjrnchg" {
+  text = """-
+SELECT purinvjrnmain.jrncode,
+    1 AS seq,
+    'BASIC'::character varying AS chgname,
+    NULL::text AS rate,
+    NULL::text AS sign,
+    purinvjrnmain.grsamt AS chgamt,
+    NULL::bpchar AS operation_level,
+    NULL::bpchar AS without_term,
+    'Y'::text AS istotal
+   FROM main.purinvjrnmain
+  WHERE (purinvjrnmain.jrncode IN ( SELECT min(purinvjrnchg.jrncode) AS min
+           FROM main.purinvjrnchg
+          WHERE (purinvjrnchg.operation_level = 'L'::bpchar)
+          GROUP BY purinvjrnchg.jrncode))
+UNION ALL
+ SELECT var_sbq.jrncode,
+    var_sbq.seq,
+    var_sbq.chgname,
+    var_sbq.rate,
+    var_sbq.sign,
+    var_sbq.chgamt,
+    var_sbq.operation_level,
+    var_sbq.without_term,
+    var_sbq.istotal
+   FROM ( SELECT i.jrncode,
+            ((s.seq)::numeric + (1)::numeric) AS seq,
+            c.chgname,
+                CASE
+                    WHEN ((s.rate)::character varying IS NULL) THEN NULL::text
+                    ELSE
+                    CASE COALESCE(s.basis, 'P'::bpchar)
+                        WHEN 'P'::bpchar THEN concat_ws(''::text, rtrim(to_char(s.rate, ('FM99999990.99'::character varying)::text), '.'::text), '% on ', to_char(s.appamt, ('FM99999990.00'::character varying)::text))
+                        ELSE NULL::text
+                    END
+                END AS rate,
+                CASE s.sign
+                    WHEN '-'::bpchar THEN '(-)'::text
+                    ELSE NULL::text
+                END AS sign,
+            abs(s.chgamt) AS chgamt,
+            s.operation_level,
+            s.without_term_formula AS without_term,
+            'N'::text AS istotal
+           FROM main.finchg c,
+            main.purinvjrnchg s,
+            main.purinvjrnmain i
+          WHERE ((c.chgcode = s.chgcode) AND (s.jrncode = i.jrncode) AND (s.operation_level = 'L'::bpchar))
+          ORDER BY s.operation_level DESC, s.without_term_formula, s.seq) var_sbq
+UNION ALL
+ SELECT m.jrncode,
+    1001 AS seq,
+    'GROSS'::character varying AS chgname,
+    NULL::text AS rate,
+    NULL::text AS sign,
+    (m.grsamt + COALESCE(( SELECT sum(c.chgamt) AS sum
+           FROM main.purinvjrnchg c
+          WHERE ((m.jrncode = c.jrncode) AND (c.operation_level = 'L'::bpchar))), (0)::numeric)) AS chgamt,
+    NULL::bpchar AS operation_level,
+    NULL::bpchar AS without_term,
+    'Y'::text AS istotal
+   FROM main.purinvjrnmain m
+  WHERE (m.jrncode IN ( SELECT DISTINCT purinvjrnchg.jrncode
+           FROM main.purinvjrnchg))
+UNION ALL
+ SELECT var_sbq_2.jrncode,
+    var_sbq_2.seq,
+    var_sbq_2.chgname,
+    var_sbq_2.rate,
+    var_sbq_2.sign,
+    var_sbq_2.chgamt,
+    var_sbq_2.operation_level,
+    var_sbq_2.without_term,
+    var_sbq_2.istotal
+   FROM ( SELECT i.jrncode,
+            ((s.seq)::numeric + (1001)::numeric) AS seq,
+            c.chgname,
+                CASE
+                    WHEN ((s.rate)::character varying IS NULL) THEN NULL::text
+                    ELSE
+                    CASE COALESCE(s.basis, 'P'::bpchar)
+                        WHEN 'P'::bpchar THEN concat_ws(''::text, rtrim(to_char(s.rate, ('FM99999990.99'::character varying)::text), '.'::text), '% on ', to_char(s.appamt, ('FM99999990.00'::character varying)::text))
+                        ELSE NULL::text
+                    END
+                END AS rate,
+                CASE s.sign
+                    WHEN '-'::bpchar THEN '(-)'::text
+                    ELSE NULL::text
+                END AS sign,
+            abs(s.chgamt) AS chgamt,
+            s.operation_level,
+            s.without_term_formula AS without_term,
+            'N'::text AS istotal
+           FROM main.finchg c,
+            main.purinvjrnchg s,
+            main.purinvjrnmain i
+          WHERE ((c.chgcode = s.chgcode) AND (s.jrncode = i.jrncode) AND (s.operation_level = 'H'::bpchar))
+          ORDER BY s.operation_level DESC, s.without_term_formula, s.seq) var_sbq_2
+UNION ALL
+ SELECT purinvjrnmain.jrncode,
+    2000 AS seq,
+    'NET'::character varying AS chgname,
+    NULL::text AS rate,
+    NULL::text AS sign,
+        CASE COALESCE(purinvjrnmain.netamt, (0)::numeric)
+            WHEN 0 THEN (0)::numeric
+            ELSE purinvjrnmain.netamt
+        END AS chgamt,
+    NULL::bpchar AS operation_level,
+    NULL::bpchar AS without_term,
+    'Y'::text AS istotal
+   FROM main.purinvjrnmain;
+"""
+  columns = (
+    column "jrncode" {
+      type = "bigint"
+    }
+    column "seq" {
+      type = "numeric"
+    }
+    column "chgname" {
+      type = "character varying"
+    }
+    column "rate" {
+      type = text
+    }
+    column "sign" {
+      type = text
+    }
+    column "chgamt" {
+      type = "numeric"
+    }
+    column "operation_level" {
+      type = bpchar
+    }
+    column "without_term" {
+      type = bpchar
+    }
+    column "istotal" {
+      type = text
+    }
+  )
+}
+

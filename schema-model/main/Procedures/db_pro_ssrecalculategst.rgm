@@ -1,0 +1,574 @@
+procedure "main"."db_pro_ssrecalculategst(bigint)" {
+  text = """
+
+DECLARE
+
+        v_sscode                bigint;
+        v_admsite_code          bigint;
+        v_recalcdate            timestamp;
+        v_tradegroup            bigint;
+/***************************************************************************************************
+REVISION : 001      SIDDHARTHA  (TFS ID :  14516)     Changes in Re-calculation of tax charges for changes in tax calculation method.
+REVISION : 002      SIDDHARTHA  (TFS ID :  19492)     Changes in Re-calculation of tax charges for changes create invoice payload.
+REVISION : 003      SIDDHARTHA  (TFS ID :  22670)     Kerala Cess Implementation
+REVISION : 004      SIDDHARTHA  (TFS ID :  27747)     Capturing Hsn Code Of The Highest Tax Rate Item Being Applied Against Any Charge Item.
+***************************************************************************************************/
+SSMain CURSOR(pd_recalcdate timestamp, pa_admsite_code bigint, pn_sscode bigint)
+                FOR
+                SELECT  consale.sscode,
+                        consale.owner_gstin_no,
+                        consale.owner_gstin_state_code,
+                        consale.cp_gstin_no cp_gstin_no,
+                        consale.cp_gstin_state_code,
+                        case
+				when owner_gstin_state_code is not null and cp_gstin_state_code is not null and owner_gstin_state_code <> cp_gstin_state_code then 2
+                        else 1
+                end fintradegrp_code
+                FROM (
+                SELECT  ssm.sscode,
+                        coalesce(gin.gstin_no,s.cp_gstin_no) owner_gstin_no,
+                        coalesce(gin.admgststate_code,s.cp_gstin_state_code) owner_gstin_state_code,
+                        case when ssm.psite_customer_code is not null then
+                            case when c.cp_gstin_no is not null then c.cp_gstin_no
+                                else null
+                            end
+                        else null
+                        end  cp_gstin_no,
+                        case when ssm.psite_customer_code is not null then
+                        case when c.cp_gstin_no is not null then substr(c.cp_gstin_no,1,2)
+                             when c.cp_gstin_no is null then c.cp_gstin_state_code
+                        end
+                        else null
+                        end cp_gstin_state_code
+                        FROM salssmain ssm
+LEFT OUTER JOIN psite_customer c ON (ssm.psite_customer_code = c.code)
+, admsite s
+LEFT OUTER JOIN admgstin gin ON (s.admgstin_code = gin.code)
+WHERE ssm.admsite_code = s.code   AND date_trunc('day', ssdate) =  date_trunc('day', pd_recalcdate) AND ssm.admsite_code = pa_admsite_code AND ssm.sscode = pn_sscode
+                         ) consale;
+            SSMainVatRegime CURSOR(pd_recalcdate timestamp, pa_admsite_code bigint, pn_sscode bigint)
+                FOR
+                SELECT  consale.code,
+                        consale.sscode,
+                        consale.hsn_sac_code,
+                        consale.govt_identifier,
+                        CASE WHEN(
+                                  consale.owner_gstin_no is null
+                                  OR
+                                  consale.invhsnsacmain_code = 1
+                                  OR
+                                  consale.hsn_code IS NULL
+                                  )
+                        THEN 'V' ELSE 'G' end VatRegime
+                FROM
+                (
+            SELECT ssd.code,
+                   ssm.sscode,
+                   ssm.owner_gstin_no,
+                   i.invhsnsacmain_code,
+                   hsn.invhsnsacmain_code hsn_code,
+                   hm.hsn_sac_code        hsn_sac_code,
+                   hm.govt_identifier
+              FROM salssmain ssm, salssdet ssd, (  SELECT hsn.code           invhsnsacmain_code,
+                             MAX(effective_date) effective_date
+                        FROM invhsnsacmain hsn
+LEFT OUTER JOIN invhsnsacdet hsnd ON (hsn.code = hsnd.invhsnsacmain_code)
+WHERE coalesce(hsnd.effective_date,pd_recalcdate) <= pd_recalcdate GROUP BY hsn.code) hsn
+LEFT OUTER JOIN invitem i ON coalesce (i.invhsnsacmain_code, -10) = hsn.invhsnsacmain_code
+LEFT OUTER JOIN invhsnsacmain hm ON (i.invhsnsacmain_code = hm.code)
+WHERE ssm.admsite_code = pa_admsite_code
+AND ssm.sscode = pn_sscode
+AND ssm.sscode = ssd.sscode
+AND ssd.icode = i.icode   )  consale;
+            SSMainItemVat CURSOR(pd_recalcdate timestamp, pa_admsite_code bigint, pn_sscode bigint)
+               FOR
+            SELECT ssd.code,
+                   ssm.sscode,
+                   ssd.netamt,
+                   round((ABS(ssd.netamt / ssd.qty))::numeric, 3) netprice,
+                   ssd.rate rsp,
+                   i.icode,
+                   v.vatcode,
+                   v.description,
+                   v.rate,
+                   v.vatid,
+                   coalesce(v.rangeappl, 0)                  rangeappl,
+                   v.rangebasis
+              FROM salssmain     ssm,
+                   salssdet      ssd,
+                   invitem           i,
+                   (SELECT site_code,
+                           vatcode,
+                           description,
+                           rate,
+                           vatid,
+                           rangeappl,
+                           basis rangebasis
+                      FROM v_npos_vat v1
+                     WHERE (v1.vatcode, v1.effectivedate) IN (  SELECT v2.vatcode, MAX(v2.effectivedate) AS expr1
+                                       FROM v_npos_vat v2
+                                      WHERE date_trunc('day', effectivedate) <= pd_recalcdate
+                                            AND v2.isextinct = 0
+                                            AND v2.site_code = pa_admsite_code
+                                   GROUP BY v2.vatcode)
+                           AND v1.isextinct = 0
+                           AND v1.site_code = pa_admsite_code
+                           ) v
+             WHERE     ssm.sscode = ssd.sscode
+                   AND ssm.admsite_code = pa_admsite_code
+                   AND ssd.icode = i.icode
+                   AND coalesce(ssd.taxregime, 'V') = 'V'
+                   AND i.taxcode = v.vatcode
+                   AND date_trunc('day', ssm.ssdate) = pd_recalcdate
+                   AND ssm.sscode = pn_sscode
+            
+UNION ALL
+
+            SELECT ssd.code,
+                   ssm.sscode,
+                   ssd.netamt,
+                   round((ABS(ssd.netamt / ssd.qty))::numeric, 3) netprice,
+                   ssd.rate rsp,
+                   i.icode,
+                   v.vatcode,
+                   v.description,
+                   v.rate,
+                   v.vatid,
+                   coalesce(v.rangeappl, 0)                  rangeappl,
+                   v.rangebasis
+              FROM salssmain    ssm,
+                   salssdet     ssd,
+                   invitem           i,
+                   (SELECT site_code,
+                           vatcode,
+                           description,
+                           rate,
+                           vatid,
+                           rangeappl,
+                           basis rangebasis
+                      FROM v_npos_vat v1
+                     WHERE     v1.vatcode = 0
+                           AND v1.isextinct = 0
+                           AND v1.site_code = pa_admsite_code) v
+             WHERE     ssm.sscode = ssd.sscode
+                   AND ssm.admsite_code = pa_admsite_code
+                   AND ssd.icode = i.icode
+                   AND coalesce(ssd.taxregime, 'V') = 'V'
+                   AND i.taxcode NOT IN (SELECT v2.vatcode
+                                           FROM v_npos_vat v2
+                                          WHERE v2.site_code = pa_admsite_code)
+                   AND date_trunc('day', ssm.ssdate) = pd_recalcdate
+                   AND ssm.sscode = pn_sscode;
+            SSMainItemGST CURSOR(pd_recalcdate timestamp, pa_admsite_code bigint, pn_sscode bigint)
+                FOR
+                 SELECT  --START REV : 003
+                        ssm.sscode salsscode,
+                        date_trunc('day', ssm.ssdate) ssdate,
+                        --END REV : 003
+                        ssd.code,
+                        ssm.sscode,
+                        --START REV : 003
+                        ssm.fintradegrp_code,
+                        coalesce(ssm.owner_gstin_state_code,ssm.cp_gstin_state_code) gst_state_code,
+                        ssm.cp_gstin_no gstin_no,
+                        --END REV : 003
+                        ssd.netamt,
+                        round((ABS(ssd.netamt / ssd.qty))::numeric, 3)                        netprice,
+                        ssd.rate,
+                        i.icode,
+                        CASE WHEN ssm.fintradegrp_code = 2 THEN g.igstrate
+                             WHEN ssm.fintradegrp_code = 3 THEN 0 ELSE 0 END igstrate,
+                        CASE WHEN ssm.fintradegrp_code = 1 THEN g.cgstrate ELSE 0 END cgstrate,
+                        CASE WHEN ssm.fintradegrp_code = 1 THEN g.sgstrate ELSE 0 END sgstrate,
+                        --START REV : 004
+                        g.hsn_sac_code,
+                        --END REV : 004
+                        g.invhsnsacdet_code,
+                        g.taxname,
+                        --START REV : 003
+                        coalesce(g.cessrate + get_gstadd_cessrate(
+                                    g.code,
+                                    pd_recalcdate,
+                                    coalesce(ssm.owner_gstin_state_code,ssm.cp_gstin_state_code),
+                                    ssm.fintradegrp_code,
+                                    ssm.cp_gstin_no
+                                ),0) cessrate,
+                        --END REV : 003
+                        g.slabappl                                                   slabappl,
+                        g.slabbasis                                                 slabbasis,
+                        -- START REV : 005 
+                        --Start rev : 002
+                        --ssd.isdynamictax,
+                        --End rev : 002
+                        coalesce(ssd.issecondarysupply,0) issecondarysupply,
+                        ssd.secondarysupplyparenticode, 
+                        ssd.secondarysupplytaxpolicy,
+                        -- END REV : 005
+                        g.govt_identifier
+                    FROM salssmain ssm, salssdet ssd, invitem i
+LEFT OUTER JOIN (SELECT hsn.code        invhsnsacmain_code,
+                        --START REV : 004
+                                hsn.hsn_sac_code,
+                        --END REV : 004
+                                gr.Tax_name     taxname,
+                                hsnd.code       invhsnsacdet_code,
+                                gr.igst_rate    igstrate,
+                                gr.cgst_rate    cgstrate,
+                                gr.sgst_rate    sgstrate,
+                                gr.cess_rate    cessrate,
+                                hsnd.slab_appl  slabappl,
+                                hsnd.slab_basis slabbasis,
+                                --START REV : 003
+                                gr.code,
+                                --END REV : 003
+                                hsn.govt_identifier
+                            FROM invhsnsacmain hsn, invhsnsacdet hsnd
+LEFT OUTER JOIN invgstrate gr ON (hsnd.invgstrate_code = gr.code)
+WHERE hsn.code = hsnd.invhsnsacmain_code  AND coalesce(gr.extinct, 'N') = 'N' AND (hsnd.invhsnsacmain_code, hsnd.effective_date) IN (  SELECT invhsnsacmain_code, MAX(effective_date)
+                                            FROM invhsnsacdet
+                                            WHERE effective_date <= pd_recalcdate
+                                        GROUP BY invhsnsacmain_code) ) g ON (i.invhsnsacmain_code = g.invhsnsacmain_code)
+WHERE ssm.sscode = ssd.sscode AND ssm.admsite_code = pa_admsite_code AND ssd.icode = i.icode AND coalesce(ssd.taxregime, 'V') = 'G'  AND date_trunc('day', ssm.ssdate) = pd_recalcdate AND ssm.sscode = pn_sscode -- START REV : 005   
+                     --Start rev : 002
+                        --ORDER BY isdynamictax ASC;
+ ORDER BY coalesce(issecondarysupply,0) ASC;
+                    --End rev : 002;
+                    -- END REV : 005
+   v_slab_range_desc   varchar(100);
+   v_slab_range_rate   double precision;
+   v_slab_igstrate     double precision;
+   v_slab_cgstrate     double precision;
+   v_slab_sgstrate     double precision;
+   v_slab_cessrate     double precision;
+   v_slab_taxname      varchar(50);
+   --v_hosettledon       DATE;
+   --v_hosettledby       NUMBER;
+      --Start rev : 002
+   v_igstrate          double precision := 0;
+   v_cgstrate          double precision := 0;
+   v_sgstrate          double precision := 0;
+   v_cessrate          double precision := 0;
+   v_taxdescription    varchar(50);
+   --End rev : 002
+   --START REV : 004
+   v_hsn_sac_code      varchar(20);
+   --END REV : 004
+BEGIN
+ SELECT   sscode, admsite_code, date_trunc('day', ssdate), fintradegrp_code
+                INTO STRICT v_sscode, v_admsite_code, v_recalcdate, v_tradegroup
+                FROM salssmain
+            WHERE   sscode = p_sscode;
+if v_tradegroup <> 3
+then
+           for c1 in ssmain(v_recalcdate, v_admsite_code, v_sscode)
+           loop
+              update salssmain
+              set fintradegrp_code = c1.fintradegrp_code,
+                  owner_gstin_no = c1.owner_gstin_no,
+                  owner_gstin_state_code = c1.owner_gstin_state_code,
+                  cp_gstin_no = c1.cp_gstin_no,
+                  cp_gstin_state_code = c1.cp_gstin_state_code
+               where sscode = c1.sscode;
+           end loop;
+else
+           for c1 in ssmain(v_recalcdate, v_admsite_code, v_sscode)
+           loop
+              update salssmain
+              set owner_gstin_no = c1.owner_gstin_no,
+                  owner_gstin_state_code = c1.owner_gstin_state_code,
+                  cp_gstin_no = c1.cp_gstin_no,
+                  cp_gstin_state_code = c1.cp_gstin_state_code
+               where sscode = c1.sscode;
+           end loop;
+end if;
+           for c2 in SSMainvatregime(v_recalcdate, v_admsite_code, v_sscode)
+           loop
+               update salssdet
+               set  taxregime = c2.vatregime,
+                    hsn_sac_code = coalesce(c2.govt_identifier,c2.hsn_sac_code)
+               where code = c2.code;
+            end loop;
+         FOR c3 IN SSMainItemVat(v_recalcdate, v_admsite_code, v_sscode)
+         LOOP
+            IF c3.rangeappl = 0
+            THEN
+               UPDATE salssdet
+                  SET taxdetcode = c3.vatid,
+                      taxdescription = c3.description,
+                      taxpercent = c3.rsp,
+                      taxamt =
+                            ROUND (((c3.netamt / (100 + c3.rate)) * c3.rate)::numeric, 2),
+                      taxableamt =
+                                ROUND (((c3.netamt / (100 + c3.rate)) * 100)::numeric, 2),
+                      igstrate = 0,
+                      igstamt  = 0,
+                      cgstrate = 0,
+                      cgstamt  = 0,
+                      sgstrate = 0,
+                      sgstamt  = 0,
+                      cessrate = 0,
+                      cessamt  = 0
+                WHERE code = c3.code;
+            ELSIF c3.rangeappl = 1
+            THEN
+               BEGIN
+                  SELECT range_desc, rate
+                    INTO STRICT v_slab_range_desc, v_slab_range_rate
+                    FROM fintax_range
+                   WHERE taxdetcode = c3.vatid
+                     AND (   (    c3.rangebasis = 'N'
+                              AND c3.netprice BETWEEN rangefrom
+                                                  AND coalesce(rangeto, 99999999)
+                             )
+                          OR (    c3.rangebasis = 'R'
+                              AND c3.rate BETWEEN rangefrom
+                                             AND coalesce(rangeto, 99999999)
+                             )
+                         );
+                  UPDATE salssdet
+                     SET taxdetcode = c3.vatid,
+                         taxdescription = v_slab_range_desc,
+                         taxpercent = v_slab_range_rate,
+                         taxamt =
+                            ROUND (  ((c3.netamt / (100 + v_slab_range_rate))
+                                   * v_slab_range_rate):: numeric,
+                                   2
+                                  ),
+                         taxableamt =
+                            ROUND (  ((c3.netamt / (100 + v_slab_range_rate))
+                                   * 100)::numeric,
+                                   2
+                                  ),
+                          igstrate = 0,
+                          igstamt  = 0,
+                          cgstrate = 0,
+                          cgstamt  = 0,
+                          sgstrate = 0,
+                          sgstamt  = 0,
+                          cessrate = 0,
+                          cessamt  = 0
+                   WHERE code = c3.code;
+               EXCEPTION
+                  WHEN no_data_found
+                  THEN
+                     UPDATE salssdet pbi
+                        SET taxdetcode = c3.vatid,
+                            taxdescription = 'Slab Not Defined',
+                            taxpercent = 0,
+                            taxamt = 0,
+                            taxableamt = c3.netamt,
+                            igstrate = 0,
+                            igstamt  = 0,
+                            cgstrate = 0,
+                            cgstamt  = 0,
+                            sgstrate = 0,
+                            sgstamt  = 0,
+                            cessrate = 0,
+                            cessamt  = 0
+                      WHERE code = c3.code;
+               END;
+            END IF;
+         END LOOP;
+--==============================================================================
+         --GST
+         FOR c4 IN SSMainItemGST(v_recalcdate, v_admsite_code, v_sscode)
+         LOOP
+            IF coalesce(c4.slabappl,'N') = 'N'
+            -- start rev : 005
+            --Start rev : 002
+                --THEN IF c4.isdynamictax = 0
+                THEN IF c4.issecondarysupply = 0
+            -- end rev : 005   
+                    THEN
+                        IF (coalesce(v_igstrate,0) < coalesce(c4.igstrate,0)) OR (coalesce(v_sgstrate,0) < coalesce(c4.sgstrate,0))
+                          THEN
+                                v_igstrate := c4.igstrate;
+                                v_sgstrate := c4.sgstrate;
+                                v_cgstrate := c4.cgstrate;
+                                v_cessrate := c4.cessrate;
+                                v_taxdescription := c4.taxname;
+                                --START REV : 004
+                                v_hsn_sac_code := coalesce(c4.govt_identifier,c4.hsn_sac_code);
+                                --END REV : 004
+                         END IF;
+                --End rev : 002
+               UPDATE salssdet pbi
+                  SET taxdescription = c4.taxname,
+                      taxdetcode  = NULL,
+                      igstrate = c4.igstrate,
+                      igstamt =
+                            ROUND (((c4.netamt / (100 + (c4.igstrate + c4.sgstrate + c4.cgstrate + c4.cessrate))) * c4.igstrate):: numeric, 2),
+                      cgstrate = c4.cgstrate,
+                      cgstamt =
+                            ROUND (((c4.netamt / (100 + (c4.igstrate + c4.sgstrate + c4.cgstrate + c4.cessrate))) * c4.cgstrate):: numeric, 2),
+                      sgstrate = c4.sgstrate,
+                      sgstamt =
+                            ROUND (((c4.netamt / (100 + (c4.igstrate + c4.sgstrate + c4.cgstrate + c4.cessrate))) * c4.sgstrate):: numeric, 2),
+                      cessrate = c4.cessrate,
+                      cessamt =
+                            ROUND (((c4.netamt / (100 + (c4.igstrate + c4.sgstrate + c4.cgstrate + c4.cessrate))) * c4.cessrate):: numeric, 2)
+                WHERE code = c4.code;
+                UPDATE salssdet
+			    SET  TaxAmt = (coalesce(igstamt,0) + coalesce(cgstamt,0) + coalesce(sgstamt,0) + coalesce(cessamt,0)),
+                     TaxPercent = IGSTRate + CGSTRate + SGSTRate + CESSRate,
+					 Taxableamt = netamt - (coalesce(igstamt,0) + coalesce(cgstamt,0) + coalesce(sgstamt,0) + coalesce(cessamt,0))
+				WHERE code = c4.code;
+				-- start rev : 005
+                --Start rev : 002
+                --ELSIF c4.isdynamictax = 1
+                ELSIF c4.issecondarysupply = 1 and C4.secondarysupplytaxpolicy = 'M'
+                -- end rev : 005 
+                        THEN
+                           UPDATE salssdet pbi
+                              SET taxdescription = v_taxdescription,
+                                  taxdetcode  = NULL,
+                                  --START REV : 004
+                                  hsn_sac_code = v_hsn_sac_code,
+                                  --END REV : 004
+                                  igstrate = v_igstrate,
+                                  igstamt =
+                                        ROUND (((c4.netamt / (100 + (v_igstrate + v_sgstrate + v_cgstrate + v_cessrate))) * v_igstrate):: numeric, 2),
+                                  cgstrate = v_cgstrate,
+                                  cgstamt =
+                                        ROUND (((c4.netamt / (100 + (v_igstrate + v_sgstrate + v_cgstrate + v_cessrate))) * v_cgstrate):: numeric, 2),
+                                  sgstrate = v_sgstrate,
+                                  sgstamt =
+                                        ROUND (((c4.netamt / (100 + (v_igstrate + v_sgstrate + v_cgstrate + v_cessrate))) * v_sgstrate):: numeric, 2),
+                                  cessrate = v_cessrate,
+                                  cessamt =
+                                        ROUND (((c4.netamt / (100 + (v_igstrate + v_sgstrate + v_cgstrate + v_cessrate))) * v_cessrate):: numeric, 2)
+                            WHERE code = c4.code;
+                            UPDATE salssdet
+                            SET  TaxAmt = (coalesce(igstamt,0) + coalesce(cgstamt,0) + coalesce(sgstamt,0) + coalesce(cessamt,0)),
+                                 TaxPercent = IGSTRate + CGSTRate + SGSTRate + CESSRate,
+                                 Taxableamt = netamt - (coalesce(igstamt,0) + coalesce(cgstamt,0) + coalesce(sgstamt,0) + coalesce(cessamt,0))
+                            WHERE code = c4.code;
+                END IF;
+                --End rev : 002
+            ELSIF c4.slabappl = 'Y'
+            THEN
+               BEGIN
+                  SELECT case when c4.fintradegrp_code = 2 then gr.igst_rate
+                              when c4.fintradegrp_code = 3 then 0 else 0 end igst_rate,
+                         case when c4.fintradegrp_code = 1 then gr.cgst_rate else 0 end cgst_rate,
+                         case when c4.fintradegrp_code = 1 then gr.cgst_rate else 0 end sgst_rate,
+                        --START REV : 003
+                         gr.cess_rate + coalesce(get_gstadd_cessrate(
+                                    gr.code,
+                                    c4.ssdate,
+                                    c4.gst_state_code,
+                                    c4.fintradegrp_code,
+                                    c4.gstin_no
+                                ),0) cess_rate,
+                         --END REV : 003
+                         gr.Tax_name
+                    INTO STRICT v_slab_igstrate,  v_slab_cgstrate,  v_slab_sgstrate, v_slab_cessrate, v_slab_taxname
+                    FROM v_recalcgst_slab hslab,
+                         invgstrate gr
+                   WHERE  hslab.invgstrate_code = gr.code
+                   AND  hslab.invhsnsacdet_code = c4.invhsnsacdet_code
+                   AND (   (    c4.slabbasis = 'N'
+                              AND c4.netprice BETWEEN hslab.amount_from
+                                                  AND coalesce(hslab.amount_to, 99999999)
+                             )
+                   OR (    c4.slabbasis = 'R'
+                              AND c4.rate BETWEEN hslab.amount_from
+                                                  AND coalesce(hslab.amount_to, 99999999)
+                             )
+                         );
+                  -- START REV : 005  
+                   --Start rev : 002
+                  --IF c4.isdynamictax = 0
+                  IF c4.issecondarysupply = 0
+                  -- END REV : 005
+                  THEN
+                  IF (coalesce(v_igstrate,0) < v_slab_igstrate) OR (coalesce(v_sgstrate,0) < v_slab_sgstrate)
+                  THEN 
+                       v_igstrate := v_slab_igstrate;
+                       v_sgstrate := v_slab_sgstrate;
+                       v_cgstrate := v_slab_cgstrate;
+                       v_cessrate := v_slab_cessrate;
+                       v_taxdescription := v_slab_taxname;
+                       --START REV : 004
+                       v_hsn_sac_code := coalesce(c4.govt_identifier,c4.hsn_sac_code);
+                       --END REV : 004
+                  END IF;
+                  --End rev : 002  
+                  UPDATE salssdet pbi
+                  SET taxdescription = v_slab_taxname,
+                      taxdetcode  = NULL,
+                      igstrate = v_slab_igstrate,
+                      igstamt =
+                            ROUND (((c4.netamt / (100 + (v_slab_igstrate + v_slab_sgstrate + v_slab_cgstrate + v_slab_cessrate))) * v_slab_igstrate):: numeric, 2),
+                      cgstrate = v_slab_cgstrate,
+                      cgstamt =
+                            ROUND (((c4.netamt / (100 + (v_slab_igstrate + v_slab_sgstrate + v_slab_cgstrate + v_slab_cessrate))) * v_slab_cgstrate):: numeric, 2),
+                      sgstrate = v_slab_sgstrate,
+                      sgstamt =
+                            ROUND (((c4.netamt / (100 + (v_slab_igstrate + v_slab_sgstrate + v_slab_cgstrate + v_slab_cessrate))) * v_slab_sgstrate):: numeric, 2),
+                      cessrate = v_slab_cessrate,
+                      cessamt =
+                            ROUND (((c4.netamt / (100 + (v_slab_igstrate + v_slab_sgstrate + v_slab_cgstrate + v_slab_cessrate))) * v_slab_cessrate):: numeric, 2)
+                WHERE code = c4.code;
+                UPDATE salssdet
+			    SET     TaxAmt = (coalesce(igstamt,0) + coalesce(cgstamt,0) + coalesce(sgstamt,0) + coalesce(cessamt,0)),
+                        TaxPercent = IGSTRate + CGSTRate + SGSTRate + CESSRate,
+                        Taxableamt = netamt - (coalesce(igstamt,0) + coalesce(cgstamt,0) + coalesce(sgstamt,0) + coalesce(cessamt,0))
+				WHERE code = c4.code;
+                -- start rev : 005
+				--Start Rev : 002
+				--ELSIF c4.isdynamictax = 1
+				ELSIF c4.issecondarysupply = 1 AND c4.secondarysupplytaxpolicy = 'M'
+				-- end rev : 005
+				THEN
+				UPDATE salssdet pbi
+                  SET taxdescription = v_taxdescription,
+                      taxdetcode  = NULL,
+                      --START REV : 004
+                      hsn_sac_code = v_hsn_sac_code,
+                      --END REV : 004
+                      igstrate = v_igstrate,
+                      igstamt =
+                            ROUND (((c4.netamt / (100 + (v_igstrate + v_sgstrate + v_cgstrate + v_cessrate))) * v_igstrate):: numeric, 2),
+                      cgstrate = v_cgstrate,
+                      cgstamt =
+                            ROUND (((c4.netamt / (100 + (v_igstrate + v_sgstrate + v_cgstrate + v_cessrate))) * v_cgstrate):: numeric, 2),
+                      sgstrate = v_sgstrate,
+                      sgstamt =
+                            ROUND (((c4.netamt / (100 + (v_igstrate + v_sgstrate + v_cgstrate + v_cessrate))) * v_sgstrate):: numeric, 2),
+                      cessrate = v_cessrate,
+                      cessamt =
+                            ROUND (((c4.netamt / (100 + (v_igstrate + v_sgstrate + v_cgstrate + v_cessrate))) * v_cessrate):: numeric, 2)
+                WHERE code = c4.code;
+                UPDATE salssdet
+			    SET     TaxAmt = (coalesce(igstamt,0) + coalesce(cgstamt,0) + coalesce(sgstamt,0) + coalesce(cessamt,0)),
+                        TaxPercent = IGSTRate + CGSTRate + SGSTRate + CESSRate,
+                        Taxableamt = netamt - (coalesce(igstamt,0) + coalesce(cgstamt,0) + coalesce(sgstamt,0) + coalesce(cessamt,0))
+				WHERE code = c4.code;
+				END IF;
+                --End Rev : 002
+               EXCEPTION
+                  WHEN no_data_found
+                  THEN
+                     UPDATE salssdet pbi
+                        SET taxdescription = 'GST Slab Not Defined',
+                            taxpercent = 0,
+                            taxamt = 0,
+                            taxableamt = c4.netamt
+                      WHERE code = c4.code;
+               END;
+            END IF;
+         END LOOP;
+END;
+"""
+  arguments = <
+    {
+      name = p_sscode
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

@@ -1,0 +1,173 @@
+function "main"."t_aud2_module_aud2$aud2_module()" {
+  text = """
+
+
+DECLARE
+    V_RECORD_OLD AUD2_AUD2_MODULE%ROWTYPE;
+	V_RECORD_NEW AUD2_AUD2_MODULE%ROWTYPE;
+    V_SID DOUBLE PRECISION;
+    V_TRNID CHARACTER VARYING(50);
+    V_ACTION CHARACTER VARYING(10);
+	Client_Info CHARACTER VARYING(500);
+    I RECORD;    
+	V_AUDIT_USER CHARACTER VARYING (100);
+	V_LOGINUSER  CHARACTER VARYING (100);
+	V_PROGRAM    CHARACTER VARYING (100);
+	V_REC_COUNT  BIGINT; 
+	v_last_action CHARACTER VARYING(20);
+	v_app_info CHARACTER VARYING(500);
+BEGIN
+
+	   select application_name
+	   INTO   Client_Info
+	   from pg_stat_activity where pid = pg_backend_pid();
+	   
+       SELECT current_setting('audit.AUDIT_USER', true) INTO v_app_info;
+	   
+	   IF NULLIF(v_app_info,'') IS NULL THEN
+	   		BEGIN
+				SELECT  VALUE
+       			INTO V_AUDIT_USER FROM parse_userinfo(Client_Info) where key = 'USERID';
+			END;
+		ELSE
+			SELECT  VALUE
+       		INTO V_AUDIT_USER FROM parse_userinfo(v_app_info) where key = 'USERID';
+		END IF;
+		
+	   IF NULLIF(V_AUDIT_USER,'') IS NOT NULL THEN  
+		   BEGIN
+				SELECT FULLNAME
+				INTO   STRICT V_LOGINUSER
+				FROM   APPUSER
+				WHERE  ID =  V_AUDIT_USER::NUMERIC; --??
+		   EXCEPTION
+				WHEN no_data_found
+				THEN
+					V_LOGINUSER := 'System';
+			END;			
+		ELSE
+			V_LOGINUSER := 'SYSTEM';
+		END IF;
+	   
+       -- Initialize V_Program
+	   select application_name
+	   INTO   V_PROGRAM
+	   from pg_stat_activity where pid = pg_backend_pid();
+
+       V_ACTION:=TG_OP;
+	   
+	   SELECT TXID_CURRENT() INTO V_TRNID;
+		 
+		 -- define the action (will be saved as the 'audit action')
+         -- ----------------------------------------------------------
+         --IF INSERTING
+         --THEN
+            --v_action := 'INSERT';
+         --END IF;
+
+         --IF DELETING
+         --THEN
+            --v_action := 'DELETE';
+         --END IF;
+
+         -- ----------------------------------------------------------
+
+         -- insert the transaction id into the cursor which is tracking
+         -- the inserted/deleted/updated rows
+         -- ----------------------------------------------------------
+         --v_index := v_index + 1;
+
+	   
+	     IF TG_OP = 'INSERT'
+		 THEN 		 
+		  V_RECORD_NEW.ACTION := V_ACTION;
+          V_RECORD_NEW.TRANSACTION_ID := V_TRNID::TEXT;	
+		  
+		 END IF;		  
+		  
+		 IF TG_OP = 'DELETE' 
+		 THEN 
+		  V_RECORD_OLD.ACTION := V_ACTION;
+          V_RECORD_OLD.TRANSACTION_ID := V_TRNID::TEXT;	
+		 END IF;
+
+      -- ----------------------------------------------------------
+
+      -- define the action for insert, update and delete. dynamic
+      -- INSERT / UPDATE / DELETE SQL against
+      -- and audited table will be built and supplied when audit
+      -- activation for a module is done and we have the table
+      -- names for the module from the metadata
+      -- ----------------------------------------------------------
+      IF TG_OP = 'INSERT'
+      THEN
+         V_RECORD_NEW.SHORTCODE := NEW.SHORTCODE;
+      END IF;
+
+      IF TG_OP = 'DELETE'
+      THEN
+         V_RECORD_OLD.SHORTCODE := OLD.SHORTCODE;
+      END IF;
+
+      -- ----------------------------------------------------------		
+     IF TG_OP = 'INSERT' THEN
+	    V_REC_COUNT := 1;
+        INSERT INTO AUD2_AUD2_MODULE SELECT V_RECORD_NEW.*;
+     END IF;	  
+		 
+    IF TG_OP = 'DELETE' THEN
+		V_REC_COUNT := 1;
+		INSERT INTO AUD2_AUD2_MODULE SELECT V_RECORD_OLD.*;
+    END IF;
+	
+	--
+		IF V_REC_COUNT >  0
+	THEN
+	   BEGIN
+             INSERT INTO AUD2_TRANSACTION (TRANSACTION_ID,
+                                    TRANSACTION_DATE,
+                                    LOGIN_USER,
+                                    PROGRAM,
+                                    MODULE_TYPE,
+                                    MODULE_SHORTCODE,
+                                    HEADER_KEY_VALUE)
+           VALUES (V_TRNID,
+                   CURRENT_TIMESTAMP,
+                   V_LOGINUSER,
+                   v_program,
+                   'AUD_CONFIG',
+                   'AUDCONFIG',
+                   coalesce (NEW.SHORTCODE, OLD.SHORTCODE));
+       EXCEPTION WHEN unique_violation THEN
+            NULL;
+       END;  
+
+       BEGIN  
+           INSERT INTO AUD2_TRANSACTION_TABLE (TRANSACTION_ID, TABLE_NAME)
+           VALUES (V_TRNID, 'AUD2_ACTIVE_MODULE');
+       EXCEPTION WHEN unique_violation THEN
+             NULL;
+       END; 
+	END IF;   
+    
+
+    IF TG_OP = 'INSERT' THEN
+        RETURN NEW;
+    ELSIF TG_OP = 'UPDATE' THEN
+        RETURN NEW;
+    ELSIF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    EXCEPTION
+        WHEN others THEN
+            CALL main.erraudit(SESSION_USER::text, 't_aud2_module_aud'::CHARACTER, SQLSTATE::text, SQLERRM);
+			RAISE;
+			RETURN NULL;
+END;
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

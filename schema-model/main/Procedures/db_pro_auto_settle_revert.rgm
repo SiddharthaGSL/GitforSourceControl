@@ -1,0 +1,182 @@
+procedure "main"."db_pro_auto_settle_revert(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+   V_STATUS           char(1) := NULL;
+
+   V_RECLC_CNT        bigint := 0;
+
+BEGIN
+   /*  DECLARE CURSOR C_UNPOST
+     IS
+         SELECT DISTINCT ADMSITE_CODE,STLMFOR--,CODE
+         FROM   PSITE_POSSTLM
+         WHERE  STATUS = 'U'
+         ORDER BY 1,2 DESC;
+
+     BEGIN
+     FOR C2 IN C_UNPOST
+     LOOP*/
+   BEGIN
+      SELECT STATUS
+        INTO STRICT V_STATUS
+        FROM PSITE_POSSTLM
+       WHERE     date_trunc('day', STLMFOR) = date_trunc('day', P_REF_DATE) + '1 days'::interval
+             AND ADMSITE_CODE = P_ADMSITE_CODE
+             AND STATUS <> 'R';
+      CALL ERRAUDIT(
+         USER,
+         'DB_PRO_AUTO_SETTLE_REVERT',
+         'Autosettlement',
+         'Next date is in open state. Please revert that date first to proceed. You can revert any date only once it is automatically posted at Head Office. In case there is any error, please resolve the error first and wait for the auto schedule job to process the same.');
+      RAISE EXCEPTION '%', 'Next date is in open state. Please revert that date first to proceed. You can revert any date only once it is automatically posted at Head Office. In case there is any error, please resolve the error first and wait for the auto schedule job to process the same.' USING ERRCODE = '45105';
+      ROLLBACK;
+   EXCEPTION
+      WHEN no_data_found
+      THEN
+         NULL;
+      WHEN OTHERS
+      THEN
+         CALL ERRAUDIT(USER,
+                   'DB_PRO_AUTO_SETTLE_REVERT',
+                   SQLSTATE,
+                   SQLERRM);
+         RAISE EXCEPTION '%', SQLSTATE::varchar || SQLERRM USING ERRCODE = '45105';
+   END;
+   SELECT COUNT(*)
+     INTO STRICT V_RECLC_CNT
+     FROM TAX_RECALC_HISTORY
+    WHERE     date_trunc('day', RECALCDATE) = date_trunc('day', P_REF_DATE)
+          AND ADMSITE_CODE = P_ADMSITE_CODE
+          AND STATUS <> 'PH';
+   IF coalesce(V_RECLC_CNT, 0) > 0
+   THEN
+      CALL ERRAUDIT(USER,
+                'DB_PRO_AUTO_SETTLE_REVERT',
+                'Autosettlement',
+                'Recalculate tax request pending.');
+      RAISE EXCEPTION '%', 'Recalculate tax request pending.' USING ERRCODE = '45105';
+   -- RAISE VALIDATION_ERROR;
+      ROLLBACK;
+   END IF;
+   BEGIN
+      CALL DB_PRO_p_psite_remove_stlm_doc(P_ADMSITE_CODE, date_trunc('day', P_REF_DATE));
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         CALL ERRAUDIT(USER,
+                   'DB_PRO_p_psite_remove_stlm_doc',
+                   SQLSTATE,
+                   SQLERRM);
+         RAISE EXCEPTION '%', SQLSTATE::varchar || SQLERRM USING ERRCODE = '45105';
+         ROLLBACK;
+   END;
+   BEGIN
+      SELECT STATUS
+        INTO STRICT V_STATUS
+        FROM PSITE_POSSTLM
+       WHERE     date_trunc('day', STLMFOR) = date_trunc('day', P_REF_DATE) + '1 days'::interval
+             AND ADMSITE_CODE = P_ADMSITE_CODE
+             AND STATUS <> 'R';
+      CALL ERRAUDIT(
+         USER,
+         'DB_PRO_AUTO_SETTLE_REVERT',
+         'Autosettlement',
+         'Next date is in open state. Please revert that date first to proceed. You can revert any date only once it is automatically posted at Head Office. In case there is any error, please resolve the error first and wait for the auto schedule job to process the same.');
+      RAISE EXCEPTION '%', 'Next date is in open state. Please revert that date first to proceed. You can revert any date only once it is automatically posted at Head Office. In case there is any error, please resolve the error first and wait for the auto schedule job to process the same.' USING ERRCODE = '45105';
+      ROLLBACK;
+   EXCEPTION
+      WHEN no_data_found
+      THEN
+         NULL;
+      WHEN OTHERS
+      THEN
+         CALL ERRAUDIT(USER,
+                   'DB_PRO_AUTO_SETTLE_REVERT',
+                   SQLSTATE,
+                   SQLERRM);
+         RAISE EXCEPTION '%', SQLSTATE::varchar || SQLERRM USING ERRCODE = '45105';
+   END;
+   UPDATE PSITE_POSSTLM
+      SET STATUS = 'R', COMMENTS  = NULL, DATAVERSION = coalesce(P_DATAVERSION, DATAVERSION)
+    WHERE     date_trunc('day', STLMFOR) = date_trunc('day', P_REF_DATE)
+          AND ADMSITE_CODE = P_ADMSITE_CODE;
+   DELETE FROM psite_posstlmaudit_ho
+         WHERE PSITE_POSSTLM_CODE IN (SELECT code
+                     FROM psite_posstlm
+                    WHERE     admsite_code = p_admsite_code
+                          AND date_trunc('day', stlmfor) >= date_trunc('day', P_REF_DATE));
+   DELETE FROM psite_posstlmaudit_pos
+         WHERE PSITE_POSSTLM_CODE IN (SELECT code
+                     FROM psite_posstlm
+                    WHERE     admsite_code = p_admsite_code
+                          AND date_trunc('day', stlmfor) >= date_trunc('day', P_REF_DATE));
+   DELETE FROM psite_posstlmstockinfo_ho
+         WHERE PSITE_POSSTLM_CODE IN (SELECT code
+                     FROM psite_posstlm
+                    WHERE     admsite_code = p_admsite_code
+                          AND date_trunc('day', stlmfor) >= date_trunc('day', P_REF_DATE));
+   DELETE FROM psite_posstlmstockinfo_pos
+         WHERE PSITE_POSSTLM_CODE IN (SELECT code
+                     FROM psite_posstlm
+                    WHERE     admsite_code = p_admsite_code
+                          AND date_trunc('day', stlmfor) >= date_trunc('day', P_REF_DATE));
+   DELETE FROM psite_posstlmstockreco_pos
+         WHERE PSITE_POSSTLM_CODE IN (SELECT code
+                     FROM psite_posstlm
+                    WHERE     admsite_code = p_admsite_code
+                          AND date_trunc('day', stlmfor) >= date_trunc('day', P_REF_DATE));
+   --CALL db_pkg_npos_event$track(p_admsite_code, 'STLMREMOVE', date_trunc('day', P_REF_DATE)::text);
+   CALL db_pkg_npos_event$track(p_admsite_code, 'STLMREMOVE', TO_CHAR(P_REF_DATE, 'DD-Mon-YY') :: text);
+   INSERT INTO PSITE_POSSTLM_REVERTLOG(REVERTEDBY,
+                                        STLMFOR,
+                                        ADMSITE_CODE,
+                                        REVERTEDON)
+        VALUES (P_USER_ID,
+                P_REF_DATE,
+                P_ADMSITE_CODE,
+                clock_timestamp());
+   --COMMIT;
+--END LOOP;
+EXCEPTION
+   WHEN OTHERS
+   THEN
+      CALL ERRAUDIT(USER,
+                'DB_PRO_AUTO_SETTLE_REVERT',
+                SQLSTATE,
+                SQLERRM);
+      RAISE EXCEPTION '%', SQLSTATE::varchar || SQLERRM USING ERRCODE = '45105';
+      ROLLBACK;
+END;
+"""
+  arguments = <
+    {
+      name = p_admsite_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_user_id
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_ref_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_dataversion
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+  >
+  language = plpgsql
+}
+

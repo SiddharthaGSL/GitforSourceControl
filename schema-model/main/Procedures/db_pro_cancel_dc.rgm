@@ -1,0 +1,338 @@
+procedure "main"."db_pro_cancel_dc(numeric, numeric, numeric, character varying, timestamp without time zone, numeric, numeric, numeric, numeric, numeric, numeric)" {
+  text = """
+
+DECLARE
+
+    C1 CURSOR FOR
+    SELECT  S.DETAIL_CODE,
+            S.STOCKCODE,
+            S.ENTCODE,
+            S.ENTNO,
+            S.SCHEME_DOCNO,
+            S.ENTDT,
+            S.ENTTYPE,
+            S.LOCCODE,
+            S.REFLOCCODE,
+            S.YCODE,
+            S.ICODE,
+            S.QTY,
+            S.RATE,
+            S.AMOUNT,
+            S.REFPCODE,
+            S.SUBENTTYPE,
+            S.ADMSITE_CODE,
+            S.INVBIN_CODE,
+            S.RESERVE_QTY,
+            S.ADMOU_CODE,
+            -- START REV : 003
+            S.INVBATCH_SERIAL_CODE
+            -- END REV : 003
+    FROM    INVSTOCK S
+    WHERE   S.ENTCODE = P_OLD_DCCODE::varchar
+    AND     S.ENTTYPE IN ('DCI','DCO')
+    AND     coalesce(S.SUBENTTYPE,'NA') <> 'DCL';
+BEGIN
+/**************************************************************************************************************************************************
+      PURPOSE: Cost Calculation
+
+     REV NO         OWNER           DATE            DESCRIPTION
+     ------------   ----------      -----------     ---------------------------------------------------------------------------------------------
+     REV : 000      MANASH          13-JUN-2017     (TFS ID : 29959) Stock not get reverted after DC cancel.
+     REV : 001      PRASANTA        03-JAN-2018     (TFS ID : 36444) Delivery Challan Cancellation is not posting in Invstock table
+                                                                     when Delivery Challan date is closed.
+     REV : 002      MANASH          01-JUN-2018     (TFS ID : 35306) User unable to create Delivery Challan against Reservation.
+     REV : 003      ANINDYA         08-SEP-2022     (TFS ID : BATCH SERIAL) Batch serial related changes.
+*************************************************************************************************************************************************/
+    
+    --DELETE OLD DATA
+    DELETE
+    FROM    INVSTOCK
+    WHERE   ENTTYPE IN ('DCI','DCO')
+    AND     SUBENTTYPE  = 'DCL'
+    AND     ENTCODE = P_OLD_DCCODE::varchar;
+    FOR CUR_DET IN C1
+    LOOP
+        -- START REV : 002
+        /*IF  CUR_DET.ENTTYPE ='DCI' AND NVL(CUR_DET.SUBENTTYPE,'NA') <> 'DCL' THEN
+            -- INSERT FOR INLOC
+            INSERT
+            INTO    INVSTOCK
+                    (
+                        DETAIL_CODE,
+                        STOCKCODE,
+                        ENTCODE,
+                        ENTNO,
+                        SCHEME_DOCNO,
+                        ENTDT,
+                        ENTTYPE,
+                        LOCCODE,
+                        REFLOCCODE,
+                        YCODE,
+                        ICODE,
+                        QTY,
+                        RATE,
+                        AMOUNT,
+                        REFPCODE,
+                        SUBENTTYPE,
+                        ADMSITE_CODE,
+                        INVBIN_CODE,
+                        RESERVE_QTY,
+                        ADMOU_CODE
+                    )
+            VALUES  (
+                        CUR_DET.DETAIL_CODE,
+                        ERPSTOCK.NEXTVAL,
+                        TO_CHAR(P_NEW_DCCODE),
+                        P_NEW_DCNO,
+                        P_NEW_SCHEME_DOCNO,
+                        P_NEW_CNLDT,
+                        'DCI',
+                        P_NEW_OUTLOCCODE,
+                        P_NEW_INLOCCODE,
+                        P_NEW_YCODE,
+                        CUR_DET.ICODE,
+                        CUR_DET.QTY,
+                        CUR_DET.RATE,
+                        CUR_DET.AMOUNT,
+                        P_NEW_PCODE,
+                        'DCL',
+                        P_NEW_ADMSITE_CODE_OWNER,
+                        CUR_DET.INVBIN_CODE,
+                        -- START REV : 001
+                        -- CUR_DET.QTY,
+                        DECODE(CUR_DET.INVBIN_CODE,NULL,0,CUR_DET.QTY),
+                        -- END REV : 001
+                        P_NEW_ADMOU_CODE
+                    );
+        END IF;
+
+        IF  CUR_DET.ENTTYPE ='DCO' AND NVL(CUR_DET.SUBENTTYPE,'NA') <> 'DCL' THEN
+            INSERT
+            INTO    INVSTOCK
+                    (
+                        DETAIL_CODE,
+                        STOCKCODE,
+                        ENTCODE,
+                        ENTNO,
+                        SCHEME_DOCNO,
+                        ENTDT,
+                        ENTTYPE,
+                        LOCCODE,
+                        REFLOCCODE,
+                        YCODE,
+                        ICODE,
+                        QTY,
+                        RATE,
+                        AMOUNT,
+                        REFPCODE,
+                        SUBENTTYPE,
+                        ADMSITE_CODE,
+                        ADMOU_CODE
+                    )
+            VALUES  (
+                        CUR_DET.DETAIL_CODE,
+                        ERPSTOCK.NEXTVAL,
+                        TO_CHAR(P_NEW_DCCODE),
+                        P_NEW_DCNO,
+                        P_NEW_SCHEME_DOCNO,
+                        P_NEW_CNLDT,
+                        'DCO',
+                        P_NEW_INLOCCODE,
+                        P_NEW_OUTLOCCODE,
+                        P_NEW_YCODE,
+                        CUR_DET.ICODE,
+                        CUR_DET.QTY,
+                        CUR_DET.RATE,
+                        CUR_DET.AMOUNT,
+                        P_NEW_PCODE,
+                        'DCL',
+                        P_NEW_ADMSITE_CODE_OWNER,
+                        P_NEW_ADMOU_CODE
+                    );
+            END IF;
+            */
+            IF  CUR_DET.ENTTYPE ='DCO' AND coalesce(CUR_DET.SUBENTTYPE,'NA') <> 'DCL' THEN
+                -- INSERT FOR INLOC
+                INSERT
+                INTO    INVSTOCK(
+                            DETAIL_CODE,
+                            STOCKCODE,
+                            ENTCODE,
+                            ENTNO,
+                            SCHEME_DOCNO,
+                            ENTDT,
+                            ENTTYPE,
+                            LOCCODE,
+                            REFLOCCODE,
+                            YCODE,
+                            ICODE,
+                            QTY,
+                            RATE,
+                            AMOUNT,
+                            REFPCODE,
+                            SUBENTTYPE,
+                            ADMSITE_CODE,
+                            INVBIN_CODE,
+                            RESERVE_QTY,
+                            ADMOU_CODE,
+                            -- START REV : 003
+                            INVBATCH_SERIAL_CODE
+                            -- END REV : 003
+                        )
+                VALUES (
+                            CUR_DET.DETAIL_CODE,
+                            nextval('erpstock'),
+                            P_NEW_DCCODE::varchar,
+                            P_NEW_DCNO,
+                            P_NEW_SCHEME_DOCNO,
+                            P_NEW_CNLDT,
+                            'DCI',
+                            P_NEW_OUTLOCCODE,
+                            P_NEW_INLOCCODE,
+                            P_NEW_YCODE,
+                            CUR_DET.ICODE,
+                            ABS(CUR_DET.QTY),
+                            CUR_DET.RATE,
+                            ABS(CUR_DET.AMOUNT),
+                            P_NEW_PCODE,
+                            'DCL',
+                            P_NEW_ADMSITE_CODE_OWNER,
+                            CUR_DET.INVBIN_CODE,
+                            --NULL,
+                            CASE WHEN CUR_DET.INVBIN_CODE IS NULL THEN 0  ELSE ABS(CUR_DET.QTY) END ,
+                            P_NEW_ADMOU_CODE,
+                            -- START REV : 003
+                            CUR_DET.INVBATCH_SERIAL_CODE
+                            -- END REV : 003
+                        );
+        END IF;
+        IF  CUR_DET.ENTTYPE ='DCI' AND coalesce(CUR_DET.SUBENTTYPE,'NA') <> 'DCL' THEN
+            INSERT
+            INTO    INVSTOCK(
+                        DETAIL_CODE,
+                        STOCKCODE,
+                        ENTCODE,
+                        ENTNO,
+                        SCHEME_DOCNO,
+                        ENTDT,
+                        ENTTYPE,
+                        LOCCODE,
+                        REFLOCCODE,
+                        YCODE,
+                        ICODE,
+                        QTY,
+                        RATE,
+                        AMOUNT,
+                        REFPCODE,
+                        SUBENTTYPE,
+                        ADMSITE_CODE,
+                        RESERVE_QTY,
+                        ADMOU_CODE,
+                        -- START REV : 003
+                        INVBATCH_SERIAL_CODE
+                        -- END REV :  003
+                    )
+            VALUES (
+                        CUR_DET.DETAIL_CODE,
+                        nextval('erpstock'),
+                        P_NEW_DCCODE::varchar,
+                        P_NEW_DCNO,
+                        P_NEW_SCHEME_DOCNO,
+                        P_NEW_CNLDT,
+                        'DCO',
+                        P_NEW_INLOCCODE,
+                        P_NEW_OUTLOCCODE,
+                        P_NEW_YCODE,
+                        CUR_DET.ICODE,
+                        0-CUR_DET.QTY,
+                        CUR_DET.RATE,
+                        0-CUR_DET.AMOUNT,
+                        P_NEW_PCODE,
+                        'DCL',
+                        P_NEW_ADMSITE_CODE_OWNER,
+                        0,
+                        P_NEW_ADMOU_CODE,
+                        -- START REV : 003
+                        CUR_DET.INVBATCH_SERIAL_CODE
+                        -- END REV : 003
+                    );
+            END IF;
+            -- END REV : 002
+    END LOOP;
+EXCEPTION
+    WHEN OTHERS THEN
+    CALL ERRAUDIT(USER,'DB_PRO_CANCEL_DC',SQLSTATE,SQLERRM);
+    RAISE EXCEPTION '%', 'DB_PRO_CANCEL_DC == >> Internal error occured. Unable to update Stock.' USING ERRCODE = '45111';
+END;
+"""
+  arguments = <
+    {
+      name = p_old_dccode
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_new_dccode
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_new_dcno
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_new_scheme_docno
+      type = character varying
+      mode = IN
+    }
+
+    {
+      name = p_new_cnldt
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_new_outloccode
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_new_inloccode
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_new_ycode
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_new_pcode
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_new_admsite_code_owner
+      type = numeric
+      mode = IN
+    }
+
+    {
+      name = p_new_admou_code
+      type = numeric
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

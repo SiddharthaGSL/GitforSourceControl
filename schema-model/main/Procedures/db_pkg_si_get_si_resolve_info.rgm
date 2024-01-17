@@ -1,0 +1,350 @@
+procedure "main"."db_pkg_si_get_si_resolve_info(character, timestamp without time zone, bigint, bigint, character, bigint, bigint, timestamp without time zone, timestamp without time zone)" {
+  text = """
+
+DECLARE
+
+    VCICODE             varchar(9);
+    VNDIVISIONGRPCODE   bigint;
+    VNSECTIONGRPCODE    bigint;
+    VNDEPARTMENTGRPCODE bigint;
+    VNINVARTICLECODE    bigint;
+    VNCCODE1            bigint;
+    VNCCODE2            bigint;
+    VNCCODE3            bigint;
+    VNCCODE4            bigint;
+    VNCCODE5            bigint;
+    VNCCODE6            bigint;
+    -- START REV : 002
+    VSDESC1             varchar(500);
+    VSDESC2             varchar(500);
+    VSDESC3             varchar(500);
+    VSDESC4             varchar(500);
+    VSDESC5             varchar(500);
+    VSDESC6             varchar(500);
+    -- END REV : 002
+    VNMRP               bigint;
+    VNRSP               bigint;
+    VDCREATIONDATE      timestamp;
+    VNAPPLICABLE_CODE   bigint;
+    VNASSORTMENT_CODE   bigint;
+    VCBASIS             char(1);
+    VNFACTOR            double precision;
+    VCDOMAIN            char(1);
+    VCPRIORITY          char(1);
+    V_TRACK_REC         char(1) := 'N';
+    V_STARTDATE         timestamp;
+    V_ENDDATE           timestamp;
+
+BEGIN
+      PCBASIS  := NULL;
+      PNFACTOR := NULL;
+
+      CREATE TEMP TABLE GLOBAL_PROMO_INVITEM
+	  AS SELECT * FROM GLOBAL_PROMO_INVITEM;
+	  
+	  DELETE FROM GLOBAL_PROMO_INVITEM;
+	  
+	  IF  coalesce(V_TRACK_REC,'N') = 'Y' THEN
+          CALL ERRAUDIT('1','1','1',
+                              'vcICODE                => '||vcICODE             ||', '||CHR(10)||
+                              'vnDIVISIONGRPCODE      => '||vnDIVISIONGRPCODE   ||', '||CHR(10)||
+                              'vnSECTIONGRPCODE       => '||vnSECTIONGRPCODE    ||', '||CHR(10)||
+                              'vnDEPARTMENTGRPCODE    => '||vnDEPARTMENTGRPCODE ||', '||CHR(10)||
+                              'vnINVARTICLECODE       => '||vnINVARTICLECODE    ||', '||CHR(10)||
+                              'vnCCODE1               => '||vnCCODE1            ||', '||CHR(10)||
+                              'vnCCODE2               => '||vnCCODE2            ||', '||CHR(10)||
+                              'vnCCODE3               => '||vnCCODE3            ||', '||CHR(10)||
+                              'vnCCODE4               => '||vnCCODE4            ||', '||CHR(10)||
+                              'vnCCODE5               => '||vnCCODE5            ||', '||CHR(10)||
+                              'vnCCODE6               => '||vnCCODE6            ||', '||CHR(10)||
+                              'vsDESC1                => '||vsDESC1             ||', '||CHR(10)||
+                              'vsDESC2                => '||vsDESC2             ||', '||CHR(10)||
+                              'vsDESC3                => '||vsDESC3             ||', '||CHR(10)||
+                              'vsDESC4                => '||vsDESC4             ||', '||CHR(10)||
+                              'vsDESC5                => '||vsDESC5             ||', '||CHR(10)||
+                              'vsDESC6                => '||vsDESC6             ||', '||CHR(10)||
+                              'vnMRP                  => '||vnMRP               ||', '||CHR(10)||
+                              'vnRSP                  => '||vnRSP               ||', '||CHR(10)||
+                              'vdCREATIONDATE         => '||vdCREATIONDATE
+                  );
+      END IF;
+
+      SELECT  ICODE,DIVISION_GRPCODE,SECTION_GRPCODE,DEPARTMENT_GRPCODE,INVARTICLE_CODE,
+              CCODE1,CCODE2,CCODE3,CCODE4,CCODE5,CCODE6,
+              -- START REV : 002
+              DESC1, DESC2, DESC3, DESC4, DESC5, DESC6,
+              -- END REV : 002
+              MRP,LISTED_MRP,STOCKINDATE
+      INTO STRICT    VCICODE,VNDIVISIONGRPCODE,VNSECTIONGRPCODE,VNDEPARTMENTGRPCODE,VNINVARTICLECODE,
+              VNCCODE1,VNCCODE2,VNCCODE3,VNCCODE4,VNCCODE5,VNCCODE6,
+              -- START REV : 002
+              VSDESC1, VSDESC2, VSDESC3, VSDESC4, VSDESC5, VSDESC6,
+              -- END REV : 002
+              VNMRP,VNRSP,VDCREATIONDATE
+      FROM    GLOBAL_PROMO_INVITEM
+      WHERE   ICODE = PCICODE
+      AND     MRP = PNMRP;
+
+      SELECT  SI_RESOLVE.CODE,SI_RESOLVE.ASSORTMENT_CODE,SI_RESOLVE.BASIS,SI_RESOLVE.FACTOR,
+              SI_RESOLVE.STARTDATE,SI_RESOLVE.ENDDATE
+      INTO STRICT    VNAPPLICABLE_CODE,VNASSORTMENT_CODE,VCBASIS,VNFACTOR,V_STARTDATE,V_ENDDATE
+      FROM    (
+                   SELECT  APPL_FINAL.CODE,
+                           APPL_FINAL.ASSORTMENT_CODE,
+                           APPL_FINAL.ICODE,
+                           APPL_FINAL.PRIORITY,
+                           APPL_FINAL.BASIS,
+                           APPL_FINAL.FACTOR,
+                           APPL_FINAL.STARTDATE,
+                           APPL_FINAL.ENDDATE,
+                           RANK() OVER (PARTITION BY APPL_FINAL.ICODE ORDER BY PRIORITY DESC) RANK
+                   FROM   (
+                                ----------- START PROMO_FINAL
+                                SELECT  APPL_SATISFY.CODE,
+                                        APPL_SATISFY.ASSORTMENT_CODE,
+                                        APPL_SATISFY.ICODE,
+                                        APPL_SATISFY.PRIORITY,
+                                        APPL_SATISFY.BASIS,
+                                        APPL_SATISFY.FACTOR,
+                                        APPL_SATISFY.STARTDATE,
+                                        APPL_SATISFY.ENDDATE
+                                FROM (
+                                        -------- START SATISFY
+                                        SELECT  ALLOC.CODE,
+                                                ASSORTMENT.ASSORTMENT_CODE,
+                                                ASSORTMENT.ICODE ICODE,
+                                                ALLOC.PRIORITY,
+                                                ALLOC.BASIS,
+                                                ALLOC.FACTOR,
+                                                ALLOC.STARTDATE,
+                                                ALLOC.ENDDATE
+                                        FROM     (
+                                                    ---------------- START  ASSORTMENT
+                                                    SELECT AI.ASSORTMENT_CODE, PCICODE ICODE
+                                                    FROM   SI_ASSORTMENT A, SI_ASSORTMENT_INCLUDE AI
+                                                    WHERE  A.CODE = AI.ASSORTMENT_CODE
+                                                    AND    (
+                                                              (
+                                                                  ( AI.ICODE IS NOT NULL AND AI.ICODE = VCICODE )
+                                                            OR AI.ICODE IS NULL
+                                                        ) AND (
+                                                            (AI.DIVISION_GRPCODE IS NOT NULL AND AI.DIVISION_GRPCODE = VNDIVISIONGRPCODE)
+                                                            OR AI.DIVISION_GRPCODE IS NULL
+                                                        ) AND (
+                                                            (AI.SECTION_GRPCODE IS NOT NULL AND AI.SECTION_GRPCODE = VNSECTIONGRPCODE )
+                                                            OR AI.SECTION_GRPCODE IS NULL
+                                                        ) AND (
+                                                            (AI.DEPARTMENT_GRPCODE IS NOT NULL AND AI.DEPARTMENT_GRPCODE = VNDEPARTMENTGRPCODE )
+                                                            OR AI.DEPARTMENT_GRPCODE IS NULL
+                                                        ) AND (
+                                                            (AI.INVARTICLE_CODE IS NOT NULL AND AI.INVARTICLE_CODE = VNINVARTICLECODE)
+                                                            OR AI.INVARTICLE_CODE IS NULL
+                                                        ) AND (
+                                                            (AI.CCODE1 IS NOT NULL AND AI.CCODE1 = VNCCODE1)
+                                                            OR AI.CCODE1 IS NULL
+                                                        ) AND (
+                                                            (AI.CCODE2 IS NOT NULL AND AI.CCODE2 = VNCCODE2)
+                                                            OR AI.CCODE2 IS NULL
+                                                        ) AND (
+                                                            (AI.CCODE3 IS NOT NULL AND AI.CCODE3 = VNCCODE3)
+                                                            OR AI.CCODE3 IS NULL
+                                                        ) AND (
+                                                            (AI.CCODE4 IS NOT NULL AND AI.CCODE4 = VNCCODE4)
+                                                            OR AI.CCODE4 IS NULL
+                                                        ) AND (
+                                                            (AI.CCODE5 IS NOT NULL AND AI.CCODE5 = VNCCODE5)
+                                                            OR AI.CCODE5 IS NULL
+                                                        ) AND (
+                                                            (AI.CCODE6 IS NOT NULL AND AI.CCODE6 = VNCCODE6)
+                                                            OR AI.CCODE6 IS NULL
+                                                        ) AND (
+                                                            (AI.DESC1 IS NOT NULL AND AI.DESC1 = VSDESC1)
+                                                            OR AI.DESC1 IS NULL
+                                                        ) AND (
+                                                            (AI.DESC2 IS NOT NULL AND AI.DESC2 = VSDESC2)
+                                                            OR AI.DESC2 IS NULL
+                                                        ) AND (
+                                                            (AI.DESC3 IS NOT NULL AND AI.DESC3 = VSDESC3)
+                                                            OR AI.DESC3 IS NULL
+                                                        ) AND (
+                                                            (AI.DESC4 IS NOT NULL AND AI.DESC4 = VSDESC4)
+                                                            OR AI.DESC4 IS NULL
+                                                        ) AND (
+                                                            (AI.DESC5 IS NOT NULL AND AI.DESC5 = VSDESC5)
+                                                            OR AI.DESC5 IS NULL
+                                                        ) AND (
+                                                            (AI.DESC6 IS NOT NULL AND AI.DESC6 = VSDESC6)
+                                                            OR AI.DESC6 IS NULL
+                                                        ) AND (
+                                                            (AI.PRICE_RANGE_BASIS IS NOT NULL AND '1' =
+                                                                CASE
+                                                                    WHEN AI.PRICE_RANGE_BASIS = 'M' AND VNRSP BETWEEN AI.PRICE_RANGE_FROM AND AI.PRICE_RANGE_TO THEN '1'
+                                                                    WHEN AI.PRICE_RANGE_BASIS = 'L' AND VNMRP BETWEEN AI.PRICE_RANGE_FROM AND AI.PRICE_RANGE_TO THEN '1'
+                                                                END
+                                                            )
+                                                            OR AI.PRICE_RANGE_BASIS IS NULL
+                                                        ) AND (
+                                                            (AI.CREATIONDATE_FROM IS NOT NULL AND VDCREATIONDATE BETWEEN AI.CREATIONDATE_FROM AND AI.CREATIONDATE_TO)
+                                                            OR AI.CREATIONDATE_FROM IS NULL
+                                                        )
+                                                    )
+                                                    EXCEPT
+                                                    SELECT     AE.ASSORTMENT_CODE, PCICODE
+                                                    FROM     SI_ASSORTMENT A, SI_ASSORTMENT_EXCLUDE AE
+                                                    WHERE     A.CODE = AE.ASSORTMENT_CODE
+                                                    AND
+                                                    (
+                                                        (
+                                                            (AE.ICODE IS NOT NULL AND AE.ICODE = VCICODE)
+                                                            OR AE.ICODE IS NULL
+                                                        ) AND (
+                                                            (AE.DIVISION_GRPCODE IS NOT NULL AND AE.DIVISION_GRPCODE = VNDIVISIONGRPCODE)
+                                                            OR AE.DIVISION_GRPCODE IS NULL
+                                                        ) AND (
+                                                            (AE.SECTION_GRPCODE IS NOT NULL AND AE.SECTION_GRPCODE = VNSECTIONGRPCODE)
+                                                            OR AE.SECTION_GRPCODE IS NULL
+                                                        ) AND (
+                                                            (AE.DEPARTMENT_GRPCODE IS NOT NULL AND AE.DEPARTMENT_GRPCODE = VNDEPARTMENTGRPCODE)
+                                                            OR AE.DEPARTMENT_GRPCODE IS NULL
+                                                        ) AND (
+                                                            (AE.INVARTICLE_CODE IS NOT NULL AND AE.INVARTICLE_CODE = VNINVARTICLECODE)
+                                                            OR AE.INVARTICLE_CODE IS NULL
+                                                        ) AND (
+                                                            (AE.CCODE1 IS NOT NULL AND AE.CCODE1 = VNCCODE1)
+                                                            OR AE.CCODE1 IS NULL
+                                                        ) AND (
+                                                            (AE.CCODE2 IS NOT NULL AND AE.CCODE2 = VNCCODE2)
+                                                            OR AE.CCODE2 IS NULL
+                                                        ) AND (
+                                                            (AE.CCODE3 IS NOT NULL AND AE.CCODE3 = VNCCODE3)
+                                                            OR AE.CCODE3 IS NULL
+                                                        ) AND (
+                                                            (AE.CCODE4 IS NOT NULL AND AE.CCODE4 = VNCCODE4)
+                                                            OR AE.CCODE4 IS NULL
+                                                        ) AND (
+                                                            (AE.CCODE5 IS NOT NULL AND AE.CCODE5 = VNCCODE5)
+                                                            OR AE.CCODE5 IS NULL
+                                                        ) AND (
+                                                            (AE.CCODE6 IS NOT NULL AND AE.CCODE6 = VNCCODE6)
+                                                            OR AE.CCODE6 IS NULL
+                                                        ) AND (
+                                                            (AE.DESC1 IS NOT NULL AND AE.DESC1 = VSDESC1)
+                                                            OR AE.DESC1 IS NULL
+                                                        ) AND (
+                                                            (AE.DESC2 IS NOT NULL AND AE.DESC2 = VSDESC2)
+                                                            OR AE.DESC2 IS NULL
+                                                        ) AND (
+                                                            (AE.DESC3 IS NOT NULL AND AE.DESC3 = VSDESC3)
+                                                            OR AE.DESC3 IS NULL
+                                                        ) AND (
+                                                            (AE.DESC4 IS NOT NULL AND AE.DESC4 = VSDESC4)
+                                                            OR AE.DESC4 IS NULL
+                                                        ) AND (
+                                                            (AE.DESC5 IS NOT NULL AND AE.DESC5 = VSDESC5)
+                                                            OR AE.DESC5 IS NULL
+                                                        ) AND (
+                                                            (AE.DESC6 IS NOT NULL AND AE.DESC6 = VSDESC6)
+                                                            OR AE.DESC6 IS NULL
+                                                        ) AND (
+                                                            (AE.PRICE_RANGE_BASIS IS NOT NULL AND '1' =
+                                                                CASE
+                                                                    WHEN AE.PRICE_RANGE_BASIS = 'M' AND VNRSP BETWEEN AE.PRICE_RANGE_FROM AND AE.PRICE_RANGE_TO THEN '1'
+                                                                    WHEN AE.PRICE_RANGE_BASIS = 'L' AND VNMRP BETWEEN AE.PRICE_RANGE_FROM AND AE.PRICE_RANGE_TO THEN '1'
+                                                                END
+                                                            )
+                                                            OR AE.PRICE_RANGE_BASIS IS NULL
+                                                        ) AND (
+                                                            (AE.CREATIONDATE_FROM IS NOT NULL AND VDCREATIONDATE BETWEEN AE.CREATIONDATE_FROM AND AE.CREATIONDATE_TO)
+                                                            OR AE.CREATIONDATE_FROM IS NULL
+                                                        )
+                                                    )
+                                                    -------------- END ASSORTMENT
+                                                )     ASSORTMENT, SI_ALLOCATION_DET ALLOC
+                                        WHERE   ASSORTMENT.ASSORTMENT_CODE = ALLOC.ASSORTMENT_CODE
+                                        AND     ALLOC.CLOSEDON IS NULL
+                                        AND     ALLOC.APPROVED = 'Y'
+                                        AND     date_trunc('day', PDLOGINDT) BETWEEN ALLOC.STARTDATE AND ALLOC.ENDDATE
+                                        AND     ALLOC.ALLOCATION_CODE IN (
+                                                                            SELECT  PSITE_SI_ALLOCATION_CODE
+                                                                            FROM    ADMSITE S
+                                                                            WHERE   CODE = PNADMSITECODE
+                                                                        )
+                                        -------------------- END SATISFY
+                                     ) APPL_SATISFY
+                            ) APPL_FINAL
+                ) SI_RESOLVE
+                WHERE     SI_RESOLVE.RANK = 1;
+
+        PNASSORTMENT_CODE   := VNASSORTMENT_CODE;
+        PCBASIS             := VCBASIS;
+        PNFACTOR            := VNFACTOR;
+        PDSTARTDATE         := V_STARTDATE;
+        PDENDDATE           := V_ENDDATE;
+
+  EXCEPTION
+    WHEN no_data_found THEN
+         NULL;
+    WHEN OTHERS THEN
+         CALL ERRAUDIT(USER, 'DB_PKG_SI_GET_SI_RESOLVE_INFO()', SQLSTATE, SQLERRM);
+  END;
+
+"""
+  arguments = <
+    {
+      name = pcicode
+      type = character
+      mode = IN
+    }
+
+    {
+      name = pdlogindt
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = pnmrp
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = pnadmsitecode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = pcbasis
+      type = character
+      mode = INOUT
+    }
+
+    {
+      name = pnfactor
+      type = bigint
+      mode = INOUT
+    }
+
+    {
+      name = pnassortment_code
+      type = bigint
+      mode = INOUT
+    }
+
+    {
+      name = pdstartdate
+      type = timestamp without time zone
+      mode = INOUT
+    }
+
+    {
+      name = pdenddate
+      type = timestamp without time zone
+      mode = INOUT
+    }
+
+  >
+  language = plpgsql
+}
+

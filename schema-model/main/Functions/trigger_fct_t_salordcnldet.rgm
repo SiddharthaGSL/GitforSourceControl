@@ -1,0 +1,113 @@
+function "main"."trigger_fct_t_salordcnldet()" {
+  text = """
+
+/*******************************************************************************************************************
+     Created By : ABHI 21/12/2007
+
+     REVISIONS:
+     No.   Date        Author                   Description
+     --------- ----------  ----------------------   ------------------------------------------------------------------
+     REV : 001 21/12/2007  ABHI                   (BUG ID : 413) Rate and Amount columns in form to be rounded off
+                          to 2 decimal place.
+     REV : 002 06/08/2009  SUJOY                   (BUG ID : 1120) POS Lite integration Phase I
+     REV : 003 21/02/2020  MOUSUMI                  (BUG ID : XXX) Sales Order Cancel Migration
+     REV : 004 21/05/2020  MOUSUMI                  (BUG ID : XXX) Sales Order Cancel Migration
+   *********************************************************************************************************************/
+DECLARE
+   V_ENTRY_SOURCE   SALORDCNLMAIN.ENTRY_SOURCE%TYPE;
+BEGIN
+  BEGIN
+   -- START REV : 003
+   BEGIN
+      SELECT ENTRY_SOURCE
+        INTO STRICT V_ENTRY_SOURCE
+        FROM SALORDCNLMAIN
+       WHERE CNLCODE = coalesce(NEW.CNLCODE, OLD.CNLCODE);
+   EXCEPTION
+      WHEN no_data_found
+      THEN
+         V_ENTRY_SOURCE := NULL;
+   END;
+
+   -- END REV : 003
+   -- START REV : 003
+   -- Considering :NEW Instead of :OLD because we are trying to restrict the
+   -- execution of this dependent table update from trigger when update is done
+   -- from web application even if the document was created from any other source
+   -- like (Import Excel, D2K etc.)
+   IF TG_OP = 'UPDATE'
+   THEN                                                           -- REV : 004
+      IF coalesce(V_ENTRY_SOURCE, 'XX') NOT IN ('WEB', 'API')
+      THEN
+         -- END REV : 003
+         IF OLD.SALORDDET_CODE                       -- REV : 002:OLD.CNLCODE
+                               IS NOT NULL
+         THEN
+            UPDATE SALORDDET
+               SET CNLQTY = coalesce(CNLQTY, 0) - coalesce(OLD.CNLQTY, 0)
+             -- START REV : 002
+             WHERE CODE = OLD.SALORDDET_CODE;
+         /*
+         WHERE  ORDCODE = :OLD.ORDCODE
+ AND  ICODE = :OLD.ICODE
+ -- START REV : 001
+ --AND  NVL(RATE,0)  = NVL(:OLD.RATE,0);
+ AND  ROUND(NVL(RATE,0),2)  = ROUND(NVL(:OLD.RATE,0),2);
+ -- END REV : 001
+         */
+         -- END REV : 002
+         END IF;
+
+         IF NEW.SALORDDET_CODE                       -- REV : 002:NEW.CNLCODE
+                               IS NOT NULL
+         THEN
+            UPDATE SALORDDET
+               SET CNLQTY = coalesce(CNLQTY, 0) + coalesce(NEW.CNLQTY, 0)
+             -- START REV : 001
+             WHERE CODE = NEW.SALORDDET_CODE;
+         /*
+         WHERE  ORDCODE = :NEW.ORDCODE
+ AND  ICODE = :NEW.ICODE
+ -- START REV : 001
+ --AND  NVL(RATE,0) = NVL(:NEW.RATE,0);
+ AND  ROUND(NVL(RATE,0),2) = ROUND(NVL(:NEW.RATE,0),2);
+ -- END REV : 001
+         */
+         -- END REV : 002
+         END IF;
+      END IF;
+   END IF;
+
+   IF TG_OP = 'INSERT'
+   THEN                                                           -- REV : 004
+      IF coalesce(V_ENTRY_SOURCE, 'XX') NOT IN ('WEB', 'API')
+      THEN
+         IF NEW.SALORDDET_CODE IS NOT NULL
+         THEN
+            UPDATE SALORDDET
+               SET CNLQTY = coalesce(CNLQTY, 0) + coalesce(NEW.CNLQTY, 0)
+             WHERE CODE = NEW.SALORDDET_CODE;
+         END IF;
+      END IF;
+   END IF;
+
+   -- END REV : 004
+   IF TG_OP = 'DELETE'
+   THEN
+      NULL;
+   END IF;
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

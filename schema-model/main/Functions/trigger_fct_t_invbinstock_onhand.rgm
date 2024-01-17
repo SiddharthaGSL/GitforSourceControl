@@ -1,0 +1,335 @@
+function "main"."trigger_fct_t_invbinstock_onhand()" {
+  text = """
+
+DECLARE
+    V_ITEM_MANAGEMENT_MODE  char(1);
+    V_OLD_INVBATCH_SERIAL_CODE  bigint;
+    V_NEW_INVBATCH_SERIAL_CODE  bigint;
+    V_INVBINSTOCK_ONHAND_CODE      bigint;
+BEGIN
+  BEGIN
+/*******************************************************************************************************************
+  No.            Date          Author                  Description
+  ---------   ----------    ----------------------  ------------------------------------------------------------------
+  REV : 001   13/05/2022    ANINDYA                 (TFS ID : Batch Serial) Batch Serial related stock posting change
+*******************************************************************************************************************/
+   SELECT ITEM_MANAGEMENT_MODE
+   INTO STRICT   V_ITEM_MANAGEMENT_MODE
+   FROM   INVITEM
+   WHERE  ICODE = coalesce(NEW.ICODE,OLD.ICODE);
+
+   
+   IF  coalesce(V_ITEM_MANAGEMENT_MODE,'X') = 'S'
+   THEN
+       V_NEW_INVBATCH_SERIAL_CODE  := NULL;
+       V_OLD_INVBATCH_SERIAL_CODE  := NULL;
+   ELSE
+       V_NEW_INVBATCH_SERIAL_CODE := NEW.INVBATCH_SERIAL_CODE;
+       V_OLD_INVBATCH_SERIAL_CODE := OLD.INVBATCH_SERIAL_CODE;
+   END IF;
+
+   IF TG_OP = 'INSERT'
+   THEN
+      IF NEW.INVBIN_CODE IS NOT NULL
+      THEN
+         UPDATE INVBINSTOCK_ONHAND
+            SET STOCK_ON_HAND = coalesce(STOCK_ON_HAND, 0) + coalesce(NEW.QTY, 0),
+                RESERVED_STOCK =
+                   coalesce(RESERVED_STOCK, 0) + coalesce(NEW.RESERVE_QTY, 0),
+                EFFECTIVE_STOCK =
+                     coalesce(EFFECTIVE_STOCK, 0)
+                   + (coalesce(NEW.QTY, 0) - coalesce(NEW.RESERVE_QTY, 0)),
+                LASTMODIFIEDON = NEW.TIME,
+                --INVBATCH_SERIAL_CODE = :NEW.INVBATCH_SERIAL_CODE
+                INVBATCH_SERIAL_CODE = V_NEW_INVBATCH_SERIAL_CODE
+          WHERE     ADMSITE_CODE = NEW.ADMSITE_CODE
+                AND LOCCODE = NEW.LOCCODE
+                AND INVBIN_CODE = NEW.INVBIN_CODE
+                AND ICODE = NEW.ICODE
+                -- START REV :  001
+                --AND ( INVBATCH_SERIAL_CODE IS NULL OR INVBATCH_SERIAL_CODE = :NEW.INVBATCH_SERIAL_CODE);
+                AND ( V_NEW_INVBATCH_SERIAL_CODE IS NULL OR INVBATCH_SERIAL_CODE = V_NEW_INVBATCH_SERIAL_CODE)
+                RETURNING CODE INTO V_INVBINSTOCK_ONHAND_CODE;
+                -- END REV :  001
+         IF NOT FOUND
+         THEN
+            INSERT INTO INVBINSTOCK_ONHAND(ADMSITE_CODE,
+                                            LOCCODE,
+                                            INVBIN_CODE,
+                                            ICODE,
+                                            STOCK_ON_HAND,
+                                            RESERVED_STOCK,
+                                            EFFECTIVE_STOCK,
+                                            LASTMODIFIEDON,
+                                            INVBATCH_SERIAL_CODE)
+                 VALUES (NEW.ADMSITE_CODE,
+                         '6',
+                         NEW.INVBIN_CODE,
+                         NEW.ICODE,
+                         coalesce(NEW.QTY,0),
+                         coalesce(NEW.RESERVE_QTY,0),
+                         (coalesce(NEW.QTY,0) - coalesce(NEW.RESERVE_QTY,0)),
+                         NEW.TIME,
+                         -- START REV : 001
+                         --:NEW.INVBATCH_SERIAL_CODE
+                         V_NEW_INVBATCH_SERIAL_CODE
+                         -- END REV : 001
+                         )
+                  RETURNING CODE INTO V_INVBINSTOCK_ONHAND_CODE;
+
+         END IF;
+      END IF;
+
+      -- This is only for Serial Item
+      IF NEW.INVBIN_CODE IS NOT NULL  AND V_ITEM_MANAGEMENT_MODE = 'S' AND NEW.INVBATCH_SERIAL_CODE IS NOT NULL 
+      THEN
+         UPDATE INVBINSTOCK_ONHAND_SERIAL
+            SET STOCK_ON_HAND = coalesce(STOCK_ON_HAND, 0) + coalesce(NEW.QTY, 0),
+                --RESERVED_STOCK =
+                --   NVL (RESERVED_STOCK, 0) + NVL (:NEW.RESERVE_QTY, 0),
+                EFFECTIVE_STOCK =
+                     coalesce(EFFECTIVE_STOCK, 0)
+                   + coalesce(NEW.QTY, 0),
+                LASTMODIFIEDON = NEW.TIME,
+                INVBATCH_SERIAL_CODE = NEW.INVBATCH_SERIAL_CODE
+          WHERE     ADMSITE_CODE = NEW.ADMSITE_CODE
+                AND LOCCODE = NEW.LOCCODE
+                AND INVBIN_CODE = NEW.INVBIN_CODE
+                AND ICODE = NEW.ICODE
+                -- START REV :  001
+                AND ( NEW.INVBATCH_SERIAL_CODE IS NULL OR INVBATCH_SERIAL_CODE = NEW.INVBATCH_SERIAL_CODE);
+                -- END REV :  001
+         IF NOT FOUND
+         THEN
+            INSERT INTO INVBINSTOCK_ONHAND_SERIAL(ADMSITE_CODE,
+                                                    LOCCODE,
+                                                    INVBIN_CODE,
+                                                    ICODE,
+                                                    STOCK_ON_HAND,
+                                                    RESERVED_STOCK,
+                                                    EFFECTIVE_STOCK,
+                                                    LASTMODIFIEDON,
+                                                    INVBATCH_SERIAL_CODE,
+                                                    INVBINSTOCK_ONHAND_CODE)
+                 VALUES (NEW.ADMSITE_CODE,
+                         '6',
+                         NEW.INVBIN_CODE,
+                         NEW.ICODE,
+                         coalesce(NEW.QTY,0),
+                         --(:NEW.RESERVE_QTY,0),
+                         0,
+                         --(NVL(:NEW.QTY,0) - NVL(:NEW.RESERVE_QTY,0)),
+                         coalesce(NEW.QTY,0),
+                         NEW.TIME,
+                         -- START REV : 001
+                         NEW.INVBATCH_SERIAL_CODE,
+                         -- END REV : 001
+                         V_INVBINSTOCK_ONHAND_CODE
+                         );
+
+         END IF;
+      END IF;
+      -- This is only for Serial Item
+   END IF;
+
+   IF TG_OP = 'UPDATE'
+   THEN
+      IF NEW.INVBIN_CODE IS NULL AND OLD.INVBIN_CODE IS NOT NULL
+       THEN
+          RAISE EXCEPTION '%', '#Bin Modification is not allowed#' USING ERRCODE = '45200';
+       END IF;
+      IF NEW.INVBIN_CODE IS NOT NULL
+      THEN
+         UPDATE INVBINSTOCK_ONHAND
+            SET STOCK_ON_HAND = coalesce(STOCK_ON_HAND, 0) - coalesce(OLD.QTY, 0),
+                RESERVED_STOCK =
+                   coalesce(RESERVED_STOCK, 0) - coalesce(OLD.RESERVE_QTY, 0),
+                EFFECTIVE_STOCK =
+                     coalesce(EFFECTIVE_STOCK, 0)
+                   - (coalesce(OLD.QTY, 0) - coalesce(OLD.RESERVE_QTY, 0)),
+                LASTMODIFIEDON = OLD.TIME,
+                --INVBATCH_SERIAL_CODE = :NEW.INVBATCH_SERIAL_CODE
+                INVBATCH_SERIAL_CODE = V_OLD_INVBATCH_SERIAL_CODE
+          WHERE     ADMSITE_CODE = OLD.ADMSITE_CODE
+                AND LOCCODE = OLD.LOCCODE
+                AND INVBIN_CODE = OLD.INVBIN_CODE
+                AND ICODE = OLD.ICODE
+                -- START REV : 001
+                --AND ( INVBATCH_SERIAL_CODE IS NULL OR INVBATCH_SERIAL_CODE = :NEW.INVBATCH_SERIAL_CODE);
+                AND ( V_OLD_INVBATCH_SERIAL_CODE IS NULL OR INVBATCH_SERIAL_CODE = V_OLD_INVBATCH_SERIAL_CODE)
+                RETURNING CODE INTO V_INVBINSTOCK_ONHAND_CODE;
+                -- END REV : 001
+         UPDATE INVBINSTOCK_ONHAND
+            SET STOCK_ON_HAND = coalesce(STOCK_ON_HAND, 0) + coalesce(NEW.QTY, 0),
+                RESERVED_STOCK =
+                   coalesce(RESERVED_STOCK, 0) + coalesce(NEW.RESERVE_QTY, 0),
+                EFFECTIVE_STOCK =
+                     coalesce(EFFECTIVE_STOCK, 0)
+                   + (coalesce(NEW.QTY, 0) - coalesce(NEW.RESERVE_QTY, 0)),
+                LASTMODIFIEDON = NEW.TIME,
+                --INVBATCH_SERIAL_CODE = :NEW.INVBATCH_SERIAL_CODE
+                INVBATCH_SERIAL_CODE = V_NEW_INVBATCH_SERIAL_CODE
+          WHERE     ADMSITE_CODE = NEW.ADMSITE_CODE
+                AND LOCCODE = NEW.LOCCODE
+                AND INVBIN_CODE = NEW.INVBIN_CODE
+                AND ICODE = NEW.ICODE
+                -- START REV : 001
+                --AND (INVBATCH_SERIAL_CODE IS NULL OR INVBATCH_SERIAL_CODE = :NEW.INVBATCH_SERIAL_CODE);
+                AND (V_NEW_INVBATCH_SERIAL_CODE IS NULL OR INVBATCH_SERIAL_CODE = V_NEW_INVBATCH_SERIAL_CODE)
+                RETURNING CODE INTO V_INVBINSTOCK_ONHAND_CODE;
+                -- END REV : 001
+         IF NOT FOUND
+         THEN
+            INSERT INTO INVBINSTOCK_ONHAND(ADMSITE_CODE,
+                                            LOCCODE,
+                                            INVBIN_CODE,
+                                            ICODE,
+                                            STOCK_ON_HAND,
+                                            RESERVED_STOCK,
+                                            EFFECTIVE_STOCK,
+                                            LASTMODIFIEDON,
+                                            INVBATCH_SERIAL_CODE)
+                 VALUES (NEW.ADMSITE_CODE,
+                         '6',
+                         NEW.INVBIN_CODE,
+                         NEW.ICODE,
+                         coalesce(NEW.QTY,0),
+                         coalesce(NEW.RESERVE_QTY,0),
+                         (coalesce(NEW.QTY,0) - coalesce(NEW.RESERVE_QTY,0)),
+                         NEW.TIME,
+                         -- START REV : 001
+                         --:NEW.INVBATCH_SERIAL_CODE
+                         V_NEW_INVBATCH_SERIAL_CODE
+                         -- END REV : 001
+                         ) RETURNING CODE INTO V_INVBINSTOCK_ONHAND_CODE;
+         END IF;
+      END IF;
+      -- This is only for Serial Item
+      IF NEW.INVBIN_CODE IS NOT NULL AND V_ITEM_MANAGEMENT_MODE = 'S' AND NEW.INVBATCH_SERIAL_CODE IS NOT NULL
+      THEN
+         UPDATE INVBINSTOCK_ONHAND_SERIAL
+            SET STOCK_ON_HAND = coalesce(STOCK_ON_HAND, 0) - coalesce(OLD.QTY, 0),
+                --RESERVED_STOCK =
+                  -- NVL (RESERVED_STOCK, 0) - NVL (:OLD.RESERVE_QTY, 0),
+                EFFECTIVE_STOCK =
+                     coalesce(EFFECTIVE_STOCK, 0)
+                   - (coalesce(OLD.QTY, 0) - coalesce(OLD.RESERVE_QTY, 0)),
+                LASTMODIFIEDON = OLD.TIME,
+                INVBATCH_SERIAL_CODE = NEW.INVBATCH_SERIAL_CODE
+          WHERE     ADMSITE_CODE = OLD.ADMSITE_CODE
+                AND LOCCODE = OLD.LOCCODE
+                AND INVBIN_CODE = OLD.INVBIN_CODE
+                AND ICODE = OLD.ICODE
+                -- START REV : 001
+                AND ( NEW.INVBATCH_SERIAL_CODE IS NULL OR INVBATCH_SERIAL_CODE = NEW.INVBATCH_SERIAL_CODE);
+                -- END REV : 001
+         UPDATE INVBINSTOCK_ONHAND_SERIAL
+            SET STOCK_ON_HAND = coalesce(STOCK_ON_HAND, 0) + coalesce(NEW.QTY, 0),
+               -- RESERVED_STOCK =
+                --   NVL (RESERVED_STOCK, 0) + NVL (:NEW.RESERVE_QTY, 0),
+                EFFECTIVE_STOCK =
+                     coalesce(EFFECTIVE_STOCK, 0)
+                   + coalesce(NEW.QTY, 0),
+                LASTMODIFIEDON = NEW.TIME,
+                INVBATCH_SERIAL_CODE = NEW.INVBATCH_SERIAL_CODE
+          WHERE     ADMSITE_CODE = NEW.ADMSITE_CODE
+                AND LOCCODE = NEW.LOCCODE
+                AND INVBIN_CODE = NEW.INVBIN_CODE
+                AND ICODE = NEW.ICODE
+                -- START REV : 001
+                AND (NEW.INVBATCH_SERIAL_CODE IS NULL OR INVBATCH_SERIAL_CODE = NEW.INVBATCH_SERIAL_CODE);
+                -- END REV : 001
+         IF NOT FOUND
+         THEN
+            INSERT INTO INVBINSTOCK_ONHAND_SERIAL(ADMSITE_CODE,
+                                            LOCCODE,
+                                            INVBIN_CODE,
+                                            ICODE,
+                                            STOCK_ON_HAND,
+                                            RESERVED_STOCK,
+                                            EFFECTIVE_STOCK,
+                                            LASTMODIFIEDON,
+                                            INVBATCH_SERIAL_CODE,
+                                            INVBINSTOCK_ONHAND_CODE)
+                 VALUES (NEW.ADMSITE_CODE,
+                         '6',
+                         NEW.INVBIN_CODE,
+                         NEW.ICODE,
+                         coalesce(NEW.QTY,0),
+                         --NVL(:NEW.RESERVE_QTY,0),
+                         0,
+                         --(NVL(:NEW.QTY,0) - NVL(:NEW.RESERVE_QTY,0)),
+                         coalesce(NEW.QTY,0),
+                         NEW.TIME,
+                         -- START REV : 001
+                         NEW.INVBATCH_SERIAL_CODE,
+                         -- END REV : 001
+                         V_INVBINSTOCK_ONHAND_CODE
+                         );
+         END IF;
+      END IF;
+      -- This is only for Serial Item
+   END IF;
+
+   IF TG_OP = 'DELETE'
+   THEN
+      IF OLD.INVBIN_CODE IS NOT NULL AND OLD.ENTTYPE <>  'RES'
+      THEN
+         UPDATE INVBINSTOCK_ONHAND
+            SET STOCK_ON_HAND = coalesce(STOCK_ON_HAND, 0) - coalesce(OLD.QTY, 0),
+                RESERVED_STOCK =
+                   coalesce(RESERVED_STOCK, 0) - coalesce(OLD.RESERVE_QTY, 0),
+                EFFECTIVE_STOCK =
+                     coalesce(EFFECTIVE_STOCK, 0)
+                   - (coalesce(OLD.QTY, 0) - coalesce(OLD.RESERVE_QTY, 0)),
+                LASTMODIFIEDON = OLD.TIME,
+                --INVBATCH_SERIAL_CODE = :OLD.INVBATCH_SERIAL_CODE
+                INVBATCH_SERIAL_CODE = V_OLD_INVBATCH_SERIAL_CODE
+          WHERE     ADMSITE_CODE = OLD.ADMSITE_CODE
+                AND LOCCODE = OLD.LOCCODE
+                AND INVBIN_CODE = OLD.INVBIN_CODE
+                AND ICODE = OLD.ICODE
+                -- START REV : 001
+                --AND ( INVBATCH_SERIAL_CODE IS NULL OR INVBATCH_SERIAL_CODE = :OLD.INVBATCH_SERIAL_CODE);
+                AND ( V_OLD_INVBATCH_SERIAL_CODE IS NULL OR INVBATCH_SERIAL_CODE = V_OLD_INVBATCH_SERIAL_CODE);
+                -- END REV : 001
+      END IF;
+
+      -- Tiis is only for Serial Item
+      IF OLD.INVBIN_CODE IS NOT NULL AND OLD.ENTTYPE <>  'RES' AND V_ITEM_MANAGEMENT_MODE = 'S' AND OLD.INVBATCH_SERIAL_CODE IS NOT NULL 
+      THEN
+         UPDATE INVBINSTOCK_ONHAND_SERIAL
+            SET STOCK_ON_HAND = coalesce(STOCK_ON_HAND, 0) - coalesce(OLD.QTY, 0),
+                --RESERVED_STOCK =
+                   --NVL (RESERVED_STOCK, 0) - NVL (:OLD.RESERVE_QTY, 0),
+                EFFECTIVE_STOCK =
+                     coalesce(EFFECTIVE_STOCK, 0)
+                   - coalesce(OLD.QTY, 0),
+                LASTMODIFIEDON = OLD.TIME,
+                INVBATCH_SERIAL_CODE = OLD.INVBATCH_SERIAL_CODE
+          WHERE     ADMSITE_CODE = OLD.ADMSITE_CODE
+                AND LOCCODE = OLD.LOCCODE
+                AND INVBIN_CODE = OLD.INVBIN_CODE
+                AND ICODE = OLD.ICODE
+                -- START REV : 001
+                AND ( OLD.INVBATCH_SERIAL_CODE IS NULL OR INVBATCH_SERIAL_CODE = OLD.INVBATCH_SERIAL_CODE);
+                -- END REV : 001
+      END IF;
+      -- Tiis is only for Serial Item
+   END IF;
+
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

@@ -1,0 +1,219 @@
+view "main"."mlv_purchase_order_gstsum" {
+  text = """-
+SELECT z.hsn_sac_code,
+    sum(z.taxable) AS taxable_amount,
+    z.cgst_rate,
+    sum(z.cgst_amt) AS cgst_amt,
+    z.sgst_rate,
+    sum(z.sgst_amt) AS sgst_amt,
+    z.igst_rate,
+    sum(z.igst_amt) AS igst_amt,
+    z.cess_rate,
+    sum(z.cess_amt) AS cess_amt,
+    z.ordcode AS grp_ordcode,
+    sum(COALESCE(z.qty, (0)::numeric)) AS sum_qty,
+    z.unit,
+    z.cgst_isrev,
+    z.sgst_isrev,
+    z.igst_isrev,
+    z.cess_isrev
+   FROM ( SELECT d.code AS detcode,
+            it.hsn_sac_code,
+            COALESCE(cgst.taxable, COALESCE(sgst.taxable, COALESCE(igst.taxable, cess.taxable))) AS taxable,
+            COALESCE(cgst.rate, (0)::numeric) AS cgst_rate,
+            COALESCE(cgst.taxamt, (0)::numeric) AS cgst_amt,
+            COALESCE(sgst.rate, (0)::numeric) AS sgst_rate,
+            COALESCE(sgst.taxamt, (0)::numeric) AS sgst_amt,
+            COALESCE(igst.rate, (0)::numeric) AS igst_rate,
+            COALESCE(igst.taxamt, (0)::numeric) AS igst_amt,
+            COALESCE(cess.rate, (0)::numeric) AS cess_rate,
+            COALESCE(cess.taxamt, (0)::numeric) AS cess_amt,
+            d.ordcode,
+            d.ordqty AS qty,
+            it.unitname AS unit,
+            cgst.isreverse AS cgst_isrev,
+            sgst.isreverse AS sgst_isrev,
+            igst.isreverse AS igst_isrev,
+            cess.isreverse AS cess_isrev
+           FROM main.v_item it,
+            ((((main.purorddet d
+             LEFT JOIN ( SELECT ci.purorddet_code AS detcode,
+                    ci.appamt AS taxable,
+                    ci.gst_component AS component,
+                    ci.rate,
+                    sum(ci.chgamt) AS taxamt,
+                    ci.isreverse
+                   FROM main.purordchg_item ci,
+                    main.purorddet i
+                  WHERE ((i.code = ci.purorddet_code) AND (ci.gst_component IS NOT NULL) AND (ci.gst_component = 'CGST'::bpchar) AND (COALESCE(ci.isreverse, 'N'::bpchar) = 'N'::bpchar))
+                  GROUP BY ci.purorddet_code, ci.appamt, ci.rate, ci.gst_component, COALESCE(ci.isreverse, 'N'::bpchar), ci.isreverse) cgst ON ((d.code = cgst.detcode)))
+             LEFT JOIN ( SELECT ci.purorddet_code AS detcode,
+                    ci.appamt AS taxable,
+                    ci.gst_component AS component,
+                    ci.rate,
+                    sum(ci.chgamt) AS taxamt,
+                    ci.isreverse
+                   FROM main.purordchg_item ci,
+                    main.purorddet i
+                  WHERE ((i.code = ci.purorddet_code) AND (ci.gst_component IS NOT NULL) AND (ci.gst_component = 'SGST'::bpchar) AND (COALESCE(ci.isreverse, 'N'::bpchar) = 'N'::bpchar))
+                  GROUP BY ci.purorddet_code, ci.appamt, ci.rate, ci.gst_component, COALESCE(ci.isreverse, 'N'::bpchar), ci.isreverse) sgst ON ((d.code = sgst.detcode)))
+             LEFT JOIN ( SELECT ci.purorddet_code AS detcode,
+                    ci.appamt AS taxable,
+                    ci.gst_component AS component,
+                    ci.rate,
+                    sum(ci.chgamt) AS taxamt,
+                    ci.isreverse
+                   FROM main.purordchg_item ci,
+                    main.purorddet i
+                  WHERE ((i.code = ci.purorddet_code) AND (ci.gst_component IS NOT NULL) AND (ci.gst_component = 'IGST'::bpchar) AND (COALESCE(ci.isreverse, 'N'::bpchar) = 'N'::bpchar))
+                  GROUP BY ci.purorddet_code, ci.appamt, ci.rate, ci.gst_component, COALESCE(ci.isreverse, 'N'::bpchar), ci.isreverse) igst ON ((d.code = igst.detcode)))
+             LEFT JOIN ( SELECT ci.purorddet_code AS detcode,
+                    ci.appamt AS taxable,
+                    ci.gst_component AS component,
+                    ci.rate,
+                    sum(ci.chgamt) AS taxamt,
+                    ci.isreverse
+                   FROM main.purordchg_item ci,
+                    main.purorddet i
+                  WHERE ((i.code = ci.purorddet_code) AND (ci.gst_component IS NOT NULL) AND (ci.gst_component = 'CESS'::bpchar) AND (COALESCE(ci.isreverse, 'N'::bpchar) = 'N'::bpchar))
+                  GROUP BY ci.purorddet_code, ci.appamt, ci.rate, ci.gst_component, COALESCE(ci.isreverse, 'N'::bpchar), ci.isreverse) cess ON ((d.code = cess.detcode)))
+          WHERE ((d.icode)::text = (it.icode)::text)) z
+  GROUP BY z.hsn_sac_code, z.cgst_rate, z.sgst_rate, z.cess_rate, z.igst_rate, z.ordcode, z.unit, z.cgst_isrev, z.sgst_isrev, z.igst_isrev, z.cess_isrev
+UNION ALL
+ SELECT z.hsn_sac_code,
+    (sum(z.taxable) * ('-1'::integer)::numeric) AS taxable_amount,
+    z.cgst_rate,
+    sum(z.cgst_amt) AS cgst_amt,
+    z.sgst_rate,
+    sum(COALESCE(z.sgst_amt, (1)::numeric)) AS sgst_amt,
+    z.igst_rate,
+    sum(z.igst_amt) AS igst_amt,
+    z.cess_rate,
+    sum(z.cess_amt) AS cess_amt,
+    z.ordcode AS grp_ordcode,
+    sum(COALESCE(z.qty, (0)::numeric)) AS sum_qty,
+    z.unit,
+    z.cgst_isrev,
+    z.sgst_isrev,
+    z.igst_isrev,
+    z.cess_isrev
+   FROM ( SELECT d.code AS detcode,
+            it.hsn_sac_code,
+            COALESCE(cgst.taxable, COALESCE(sgst.taxable, COALESCE(igst.taxable, cess.taxable))) AS taxable,
+            COALESCE(cgst.rate, (0)::numeric) AS cgst_rate,
+            COALESCE(cgst.taxamt, (0)::numeric) AS cgst_amt,
+            COALESCE(sgst.rate, (0)::numeric) AS sgst_rate,
+            COALESCE(sgst.taxamt, (0)::numeric) AS sgst_amt,
+            COALESCE(igst.rate, (0)::numeric) AS igst_rate,
+            COALESCE(igst.taxamt, (0)::numeric) AS igst_amt,
+            COALESCE(cess.rate, (0)::numeric) AS cess_rate,
+            COALESCE(cess.taxamt, (0)::numeric) AS cess_amt,
+            i.ordcode,
+            d.ordqty AS qty,
+            it.unitname AS unit,
+            cgst.isreverse AS cgst_isrev,
+            sgst.isreverse AS sgst_isrev,
+            igst.isreverse AS igst_isrev,
+            cess.isreverse AS cess_isrev
+           FROM main.v_item it,
+            main.purordchg_item i,
+            ((((main.purorddet d
+             LEFT JOIN ( SELECT ci.purorddet_code AS detcode,
+                    ci.appamt AS taxable,
+                    ci.gst_component AS component,
+                    ci.rate,
+                    sum(ci.chgamt) AS taxamt,
+                    ci.isreverse
+                   FROM main.purordchg_item ci,
+                    main.purorddet i_1
+                  WHERE ((i_1.code = ci.purorddet_code) AND (ci.gst_component IS NOT NULL) AND (ci.gst_component = 'CGST'::bpchar) AND (COALESCE(ci.isreverse, 'N'::bpchar) = 'Y'::bpchar))
+                  GROUP BY ci.purorddet_code, ci.appamt, ci.rate, ci.gst_component, COALESCE(ci.isreverse, 'N'::bpchar), ci.isreverse) cgst ON ((d.code = cgst.detcode)))
+             LEFT JOIN ( SELECT ci.purorddet_code AS detcode,
+                    ci.appamt AS taxable,
+                    ci.gst_component AS component,
+                    ci.rate,
+                    sum(ci.chgamt) AS taxamt,
+                    ci.isreverse
+                   FROM main.purordchg_item ci,
+                    main.purorddet i_1
+                  WHERE ((i_1.code = ci.purorddet_code) AND (ci.gst_component IS NOT NULL) AND (ci.gst_component = 'SGST'::bpchar) AND (COALESCE(ci.isreverse, 'N'::bpchar) = 'Y'::bpchar))
+                  GROUP BY ci.purorddet_code, ci.appamt, ci.rate, ci.gst_component, COALESCE(ci.isreverse, 'N'::bpchar), ci.isreverse) sgst ON ((d.code = sgst.detcode)))
+             LEFT JOIN ( SELECT ci.purorddet_code AS detcode,
+                    ci.appamt AS taxable,
+                    ci.gst_component AS component,
+                    ci.rate,
+                    sum(ci.chgamt) AS taxamt,
+                    ci.isreverse
+                   FROM main.purordchg_item ci,
+                    main.purorddet i_1
+                  WHERE ((i_1.code = ci.purorddet_code) AND (ci.gst_component IS NOT NULL) AND (ci.gst_component = 'IGST'::bpchar) AND (COALESCE(ci.isreverse, 'N'::bpchar) = 'Y'::bpchar))
+                  GROUP BY ci.purorddet_code, ci.appamt, ci.rate, ci.gst_component, COALESCE(ci.isreverse, 'N'::bpchar), ci.isreverse) igst ON ((d.code = igst.detcode)))
+             LEFT JOIN ( SELECT ci.purorddet_code AS detcode,
+                    ci.appamt AS taxable,
+                    ci.gst_component AS component,
+                    ci.rate,
+                    sum(ci.chgamt) AS taxamt,
+                    ci.isreverse
+                   FROM main.purordchg_item ci,
+                    main.purorddet i_1
+                  WHERE ((i_1.code = ci.purorddet_code) AND (ci.gst_component IS NOT NULL) AND (ci.gst_component = 'CESS'::bpchar) AND (COALESCE(ci.isreverse, 'N'::bpchar) = 'Y'::bpchar))
+                  GROUP BY ci.purorddet_code, ci.appamt, ci.rate, ci.gst_component, COALESCE(ci.isreverse, 'N'::bpchar), ci.isreverse) cess ON ((d.code = cess.detcode)))
+          WHERE (((d.icode)::text = (it.icode)::text) AND (d.ordcode = i.ordcode) AND ((COALESCE(cgst.taxable, COALESCE(sgst.taxable, COALESCE(igst.taxable, cess.taxable))) <> (0)::numeric) OR (COALESCE(cgst.taxamt, (0)::numeric) <> (0)::numeric) OR (COALESCE(sgst.taxamt, (0)::numeric) <> (0)::numeric) OR (COALESCE(igst.taxamt, (0)::numeric) <> (0)::numeric) OR (COALESCE(cess.taxamt, (0)::numeric) <> (0)::numeric)))) z
+  GROUP BY z.hsn_sac_code, z.cgst_rate, z.sgst_rate, z.cess_rate, z.igst_rate, z.ordcode, z.unit, z.cgst_isrev, z.sgst_isrev, z.igst_isrev, z.cess_isrev
+  ORDER BY 1, 2;
+"""
+  columns = (
+    column "hsn_sac_code" {
+      type = "character varying(20)"
+    }
+    column "taxable_amount" {
+      type = "numeric"
+    }
+    column "cgst_rate" {
+      type = "numeric"
+    }
+    column "cgst_amt" {
+      type = "numeric"
+    }
+    column "sgst_rate" {
+      type = "numeric"
+    }
+    column "sgst_amt" {
+      type = "numeric"
+    }
+    column "igst_rate" {
+      type = "numeric"
+    }
+    column "igst_amt" {
+      type = "numeric"
+    }
+    column "cess_rate" {
+      type = "numeric"
+    }
+    column "cess_amt" {
+      type = "numeric"
+    }
+    column "grp_ordcode" {
+      type = "bigint"
+    }
+    column "sum_qty" {
+      type = "numeric"
+    }
+    column "unit" {
+      type = "character varying(100)"
+    }
+    column "cgst_isrev" {
+      type = "character(1)"
+    }
+    column "sgst_isrev" {
+      type = "character(1)"
+    }
+    column "igst_isrev" {
+      type = "character(1)"
+    }
+    column "cess_isrev" {
+      type = "character(1)"
+    }
+  )
+}
+

@@ -1,0 +1,283 @@
+procedure "main"."p_psite_grcitem_ins(bigint, text, bigint, bigint, text, text, text, double, double, double, double, double, double, double, text, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+   v_sitetype             varchar(25);
+   v_dccode               bigint;
+   v_salinvdet_code       bigint;
+   v_psite_packet_code    varchar(100);
+   v_psite_grtitem_code   varchar(100);
+   v_saletype             char(1);
+   v_costrate             double precision;
+   v_slcode               bigint;
+   v_admou_code           bigint;
+   v_docdt                timestamp;
+   -- START REV : 001
+   v_ref_family_code      bigint;
+   -- END REV : 001
+   -- START REV : 002
+   V_ITM_GLCODE           double precision;
+   V_ITM_SLCODE           double precision;
+   V_GL_CC_APPL           char(1) := NULL;
+-- END REV : 002
+/********************************************************************************************************************************
+ REV NO         OWNER         DATE           DESCRIPTION
+ ---------     -----------    -----------    ---------------------------------------------------------------------
+ REV : 001     DIPTIMAN       10-OCT-2017    (TFS ID : 32259) Reference family code introduced.
+ REV : 002     MOUSUMI        14-MAR-2018    (TFS ID : 37820) NON TRADING CHANGES
+ REV : 003     SIDDHARTHA     02-MAR-2022    (TFS ID : XXXXX) BATCH SERIAL
+*********************************************************************************************************************************/
+BEGIN
+   SELECT s.sitetype
+     INTO STRICT v_sitetype
+     FROM admsite s
+    WHERE s.code = p_storereplnsourceid;
+   SELECT MAX(saletype)
+     INTO STRICT v_saletype
+     FROM finsl
+    WHERE slcode = (SELECT slcode
+                      FROM admsite
+                     WHERE code = p_admsite_code);
+   IF v_sitetype = 'OS-OO-CM'
+   THEN
+      v_dccode := p_grcadvicepacketid;
+      v_salinvdet_code := p_grcadviceitemid;
+      v_psite_packet_code := NULL;
+      v_psite_grtitem_code := NULL;
+      -- START REV : 001
+      SELECT ref_family_code
+        INTO STRICT v_ref_family_code
+        FROM salinvdet
+       WHERE code = v_salinvdet_code;
+   -- END REV : 001
+   ELSIF v_sitetype IN ('MS-OO-CM', 'MS-CO-CM', 'MS-CO-OM-TS')
+   THEN
+      v_dccode := NULL;
+      v_salinvdet_code := NULL;
+      v_psite_packet_code := p_grcadvicepacketid;
+      v_psite_grtitem_code := p_grcadviceitemid;
+      -- START REV : 001
+      SELECT ref_family_code
+        INTO STRICT v_ref_family_code
+        FROM psite_grtitem
+       WHERE code = v_psite_grtitem_code;
+   -- END REV : 001
+   END IF;
+   -- for Excess receive shortexcessqty will be -ve and qty will be posted in stock
+   -- in +ve. That's why we are calculating costrate in fifo basis where shortexcessqty < 0
+   IF coalesce(v_saletype, 'X') = 'C' AND coalesce(p_shortexcessqty, 0) < 0
+   THEN
+      SELECT s.slcode, l.admou_code
+        INTO STRICT v_slcode, v_admou_code
+        FROM admsite s, invloc l
+       WHERE s.code = p_admsite_code AND s.store_loccode = l.loccode;
+      SELECT docdt
+        INTO STRICT v_docdt
+        FROM psite_grc
+       WHERE code = p_sitecuid || '-' || p_grcdocid :: text;
+   -- START REV : 001
+   /*
+   SELECT db_pkg_cost_calculation.get_item_fifo_value (v_admou_code,
+                                                     p_itemid,
+                                                     v_docdt,
+                                                     'C',
+                                                     abs(p_shortexcessqty),
+                                                     NULL,
+                                                     p_admsite_code,
+                                                     v_slcode
+                                                    )
+   INTO v_costrate
+   FROM DUAL;
+   */
+   -- END REV : 001
+   /*
+   SELECT costrate
+    INTO v_costrate
+    FROM invitem
+   WHERE icode = p_itemid;
+   */
+   END IF;
+   -- START REV : 002
+   BEGIN
+      SELECT I.GLCODE, I.SLCODE, COSTAPP
+        INTO STRICT V_ITM_GLCODE, V_ITM_SLCODE, V_GL_CC_APPL
+        FROM invitem i
+LEFT OUTER JOIN fingl gl ON (I.GLCODE = GL.GLCODE)
+WHERE I.ICODE = p_itemid;
+   EXCEPTION
+      WHEN no_data_found
+      THEN
+         V_ITM_GLCODE := NULL;
+         V_ITM_SLCODE := NULL;
+         V_GL_CC_APPL := NULL;
+   END;
+   -- END REV : 002
+   INSERT INTO psite_grcitem(code,
+                              psite_grc_code,
+                              dccode,
+                              salinvdet_code,
+                              psite_packet_code,
+                              psite_grtitem_code,
+                              icode,
+                              admsite_code,
+                              receiveqty,
+                              damageqty,
+                              shortexcessqty,
+                              rate,
+                              receiveamt,
+                              damageamt,
+                              shortexcessamt,
+                              lineremarks,
+                              costrate                      -- START REV : 001
+                                      ,
+                              ref_family_code                 -- END REV : 001
+                                                            -- START REV : 002
+                              ,
+                              GLCODE,
+                              SLCODE,
+                              GL_CC_APPL                      -- END REV : 002
+                                                            -- START REV : 003
+                              ,
+                              invbatch_serial_code            -- END REV : 003
+                                                  )
+        VALUES (p_sitecuid || '-' || p_grcitemid :: text,
+                p_sitecuid || '-' || p_grcdocid :: text,
+                v_dccode,
+                v_salinvdet_code,
+                v_psite_packet_code,
+                v_psite_grtitem_code,
+                p_itemid,
+                p_admsite_code,
+                p_receiveqty,
+                p_damageqty,
+                p_shortexcessqty,
+                p_rate,
+                p_receiveamt,
+                p_damageamt,
+                p_shortexcessamt,
+                p_lineremarks,
+                v_costrate                                  -- START REV : 001
+                          ,
+                v_ref_family_code                             -- END REV : 001
+                                                            -- START REV : 002
+                ,
+                V_ITM_GLCODE,
+                V_ITM_SLCODE,
+                V_GL_CC_APPL                                  -- END REV : 002
+                                                            -- START REV : 003
+                ,
+                p_batchserialid                               -- END REV : 003
+                               );
+   UPDATE psite_packet
+      SET isreceived = 'Y'
+    WHERE ID = v_psite_packet_code;
+END;
+"""
+  arguments = <
+    {
+      name = p_admsite_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_sitecuid
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_grcitemid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_grcdocid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_grcadvicepacketid
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_grcadviceitemid
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_itemid
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_receiveqty
+      type = double precision
+      mode = IN
+    }
+
+    {
+      name = p_damageqty
+      type = double precision
+      mode = IN
+    }
+
+    {
+      name = p_shortexcessqty
+      type = double precision
+      mode = IN
+    }
+
+    {
+      name = p_rate
+      type = double precision
+      mode = IN
+    }
+
+    {
+      name = p_receiveamt
+      type = double precision
+      mode = IN
+    }
+
+    {
+      name = p_damageamt
+      type = double precision
+      mode = IN
+    }
+
+    {
+      name = p_shortexcessamt
+      type = double precision
+      mode = IN
+    }
+
+    {
+      name = p_lineremarks
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_storereplnsourceid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_batchserialid
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

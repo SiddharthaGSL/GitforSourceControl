@@ -1,0 +1,175 @@
+function "main"."erpbalance(text, bigint, timestamp without time zone, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+   op_bal                  numeric(12,2) := 0;
+   cur_bal                 numeric(12,2) := 0;
+   ason_bal                numeric(12,2) := 0;
+   errcode                 varchar(50);
+   errmsg                  varchar(2000);
+   -- START REV : 003
+   V_ADMSITE_CODE          ADMSITE.CODE%TYPE;
+   V_ADMOU_CODE            ADMOU.CODE%TYPE;
+   -- END REV : 003
+/***********************************************************************************************************************************************************
+  No.                Date                Author                 Description
+  ---------        ----------           ----------------------     -----------------------------------------------------------------------------------------
+  REV : 001       25/09/2014            MOUSUMI(BUG ID : 1655)     In Customer Information Block, outstanding value is showing wrong   for sorting in report.
+  REV : 002       20/10/2016            SABYASACHI(BUG ID : 21523) Sub Ledger Confirmation report is not showing Opening data if Sub Ledger is tagged with General Type General Ledger.
+  REV : 003       11/01/2018            PRASANTA(TFS ID : 36932)  In Multi OU environment if transaction made to a ledger in all / Mutiple OU then opening balance of this ledger showing
+                                                                   wrong in General Ledger Register (Summary)
+  REV : 004       06/05/2019            DIPTIMAN                   (TFS ID : XXXX) As per nabendu VS ticket 40456 this has been changed.
+***********************************************************************************************************************************************************/
+BEGIN
+   -- START REV : 003
+   --V_ADMSITE_CODE := db_pkg_genentryno$get_sitecode;
+  -- ERRAUDIT('GSL','GSL','GSL','ADMSITE_CODE = '||V_ADMSITE_CODE);
+   IF   V_ADMSITE_CODE IS NOT NULL THEN
+        BEGIN
+            SELECT ADMOU_CODE INTO STRICT V_ADMOU_CODE
+            FROM   ADMSITE
+            WHERE  CODE = V_ADMSITE_CODE;
+        EXCEPTION
+            WHEN no_data_found THEN NULL;
+        END;
+    END IF;
+   -- START REV : 003
+   IF    ledger_type = 'SL' THEN
+         BEGIN
+            SELECT
+            --START REV : 002
+            --DECODE(NVL(opdamt, 0), 0, 0 - NVL(opcamt, 0), NVL(opdamt, 0))
+            SUM(CASE WHEN coalesce(opdamt, 0)=0 THEN   0 - coalesce(opcamt, 0)  ELSE coalesce(opdamt, 0) END )
+            --END REV : 002
+            INTO STRICT   op_bal
+            FROM   finslop
+            WHERE  ycode = year_code
+            -- START REV : 001
+            --START REV : 002
+            --AND    glcode = p_glcode
+            AND (p_glcode=-1 or (p_glcode<>-1 and glcode = p_glcode))
+            /* P_GLCODE=-1 FOR THOSE RECORDS WHERE GLCODE NOT AVAILABLE*/
+
+            -- END REV : 002
+            -- END REV : 001
+            -- START REV : 004
+            /*
+            -- START REV : 003
+            AND ADMOU_CODE = NVL(V_ADMOU_CODE,ADMOU_CODE)
+            -- END REV : 003
+            */
+            -- END REV : 004
+            AND    slcode = party_code;
+         EXCEPTION
+            WHEN OTHERS THEN
+                 op_bal := 0;
+         END;
+   ELSIF ledger_type = 'GL' THEN
+         BEGIN
+            SELECT CASE WHEN coalesce(opdamt, 0)=0 THEN  0 - coalesce(opcamt, 0)  ELSE coalesce(opdamt, 0) END
+            INTO STRICT   op_bal
+            FROM   finglop
+            WHERE  ycode = year_code
+            -- START REV : 004
+            /*
+            -- START REV : 003
+            AND ADMOU_CODE = NVL(V_ADMOU_CODE,ADMOU_CODE)
+            -- END REV : 003
+            */
+            -- END REV : 004
+            AND    glcode = party_code;
+         EXCEPTION
+            WHEN OTHERS THEN
+                 op_bal := 0;
+         END;
+   END IF;
+   IF    ledger_type = 'SL' THEN
+         BEGIN
+            SELECT SUM(CASE WHEN coalesce(damount, 0)=0 THEN  0 - coalesce(camount, 0)  ELSE coalesce(damount, 0) END )
+            INTO STRICT   cur_bal
+            FROM   finpost
+            WHERE  ycode = year_code
+            AND    slcode = party_code
+            -- START REV : 001
+            AND    glcode = p_glcode
+            -- END REV : 001
+            -- START REV : 004
+            /*
+            -- START REV : 003
+            AND ADMOU_CODE = NVL(V_ADMOU_CODE,ADMOU_CODE)
+            -- END REV : 003
+            */
+            -- END REV : 004
+            AND    entdt < ason_dt;
+         EXCEPTION
+            WHEN OTHERS THEN
+               cur_bal := 0;
+         END;
+   ELSIF ledger_type = 'GL' THEN
+         BEGIN
+            SELECT SUM(CASE WHEN coalesce(damount, 0)=0 THEN  0 - coalesce(camount, 0)  ELSE coalesce(damount, 0) END )
+            INTO STRICT   cur_bal
+            FROM   finpost
+            WHERE  ycode = year_code
+            AND    glcode = party_code
+            -- START REV : 004
+            /*
+            -- START REV : 003
+            AND ADMOU_CODE = NVL(V_ADMOU_CODE,ADMOU_CODE)
+            -- END REV : 003
+            */
+            -- END REV : 004
+            AND    entdt < ason_dt;
+         EXCEPTION
+            WHEN OTHERS THEN
+               cur_bal := 0;
+         END;
+   END IF;
+   ason_bal := coalesce(op_bal, 0) + coalesce(cur_bal, 0);
+   RETURN(ason_bal);
+EXCEPTION
+   WHEN OTHERS THEN
+      errcode := SQLSTATE;
+      errmsg  := SQLERRM;
+      CALL erraudit('CLIENT', 'ERPBALANCE', errcode, errmsg);
+      RETURN(NULL);
+END;
+"""
+  returnType = double precision
+  arguments = <
+    {
+      name = ledger_type
+      type = text
+      mode = IN
+    }
+
+    {
+      name = party_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = ason_dt
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = year_code
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_glcode
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+  >
+  language = plpgsql
+}
+

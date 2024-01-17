@@ -1,0 +1,195 @@
+function "main"."erpcreatebatch(text, text, timestamp without time zone, timestamp without time zone, bigint, bigint, bigint, bigint, bigint, text, bigint, bigint)" {
+  text = """
+
+DECLARE
+
+   dicode                        varchar(9);
+   dbatchserialno                varchar(100);
+   dmfgdate                      timestamp;
+   dvalidupto                    timestamp;
+   dmrp                          double precision;
+   dwsp                          double precision;
+   drsp                          double precision;
+   dcostrate                     double precision;
+   duser                         bigint;
+   dqty                          double precision;
+   ddoccode                      bigint;
+   dinventorymanagementmode      char(1);
+   errcode                       varchar(50);
+   errmsg                        varchar(2000);
+   return_string                 varchar(1000);
+   dcode                         bigint;
+   dbarunit                      double precision;
+   dclassname                    varchar(50);
+   v_loop_cnt                    bigint;
+   ddocumentcode                 bigint;
+BEGIN
+/********************************************************************************************************************************
+      PURPOSE: Creation of Batch Serial Import Excel
+
+     REV NO     OWNER       DATE            DESCRIPTION
+     ---------  ---------   -----------     -----------------------------------------------------------------------------------
+     REV : 000  SIDDHARTHA  26-OCT-2022    (TFS ID : 6307)  Introduction of Batch Serial
+*********************************************************************************************************************************/
+   
+--========================ASSIGNING VALUES TO VARIABLES=========================
+    
+                --dicode := argicode;                               
+                dbatchserialno := argbatchserialno;
+                dmfgdate := argmfgdate;
+                dvalidupto := argvalidupto;
+                dmrp := argmrp;
+                dwsp := argwsp;
+                drsp := argrsp;
+                dcostrate := argcostrate;
+                dqty  := argqty;
+                duser := arguser;
+                dclassname := argclassname;
+                ddocumentcode := argdocumentcode;
+    SELECT i.icode, barunit, coalesce(i.item_management_mode, 'I') into STRICT dicode, dbarunit, dinventorymanagementmode
+      FROM invitem i
+    WHERE UPPER(icode) = UPPER(argicode) or UPPER(barcode) = UPPER(argicode);
+        IF dbatchserialno IS NULL and dinventorymanagementmode = 'B'
+            THEN
+                SELECT distinct g.doccode into STRICT ddoccode
+                       FROM invitem i, invgrp g
+                       where i.grpcode = g.grpcode
+                       --and   g.iscreatebatchdocumentwise = 'Y'
+                       and   i.icode = dicode;
+                return_string := db_fun_document_number_batch(ddoccode, clock_timestamp());
+                INSERT INTO invbatch_serial(icode, batch_serial_no, mfg_date, exp_date, listed_mrp, wsp, mrp, costrate, createdon, lastmodifiedon, lastmodifiedby, doccode, batch_serial_mode)
+                VALUES (dicode, return_string, dmfgdate, dvalidupto, dmrp, dwsp, drsp, dcostrate, clock_timestamp(), clock_timestamp(), duser, ddoccode, dinventorymanagementmode)
+                returning code into dcode;
+                return_string := return_string||'~'||dcode::text;
+        ELSIF dbatchserialno IS NULL and dinventorymanagementmode = 'S'
+            THEN
+                SELECT distinct g.doccode into STRICT ddoccode
+                       FROM invitem i, invgrp g
+                       where i.grpcode = g.grpcode
+                       --and   g.iscreatebatchdocumentwise = 'Y'
+                       and   i.icode = dicode;
+                v_loop_cnt  := coalesce(dqty,1)/coalesce(dbarunit,1);
+                FOR c1 IN 1..v_loop_cnt LOOP
+                return_string := db_fun_document_number_batch(ddoccode, clock_timestamp());
+                INSERT INTO invbatch_serial(icode, batch_serial_no, mfg_date, exp_date, listed_mrp, wsp, mrp, costrate, createdon, lastmodifiedon, lastmodifiedby, doccode, batch_serial_mode)
+                VALUES (dicode, return_string, dmfgdate, dvalidupto, dmrp, dwsp, drsp, dcostrate, clock_timestamp(), clock_timestamp(), duser, ddoccode, dinventorymanagementmode)
+                returning code into dcode;
+                    IF dclassname in ('GRCADHOC', 'GRCORD')
+                      THEN
+                      INSERT INTO int$stg_grcadhoc_temp(grccode,icode_barcode, invbatch_serial_code, qty, userid)
+                      VALUES (ddocumentcode, dicode, dcode, dbarunit, duser);
+                    END IF;
+                return_string := return_string||'~'||dcode::text;
+                END LOOP;
+        ELSIF dbatchserialno IS NOT NULL
+            THEN
+                INSERT INTO invbatch_serial(icode, batch_serial_no, mfg_date, exp_date, listed_mrp, wsp, mrp, costrate, createdon, lastmodifiedon, lastmodifiedby, doccode, batch_serial_mode)
+                VALUES (dicode, dbatchserialno, dmfgdate, dvalidupto, dmrp, dwsp, drsp, dcostrate, clock_timestamp(), clock_timestamp(), duser, ddoccode, dinventorymanagementmode)
+                returning code into dcode;
+                return_string := dbatchserialno||'~'||dcode::text;
+        END IF;
+RETURN(return_string);
+EXCEPTION
+   WHEN OTHERS
+   THEN
+      errcode := SQLSTATE;
+      errmsg := 'Unable to create Batch Serial. Please check error log.';--||(substr(substr(errmsg, 1, position(' : ' in errmsg)), 31));
+      CALL erraudit(USER,
+                'new_erpbatch',
+                errcode,
+                errmsg);
+      insert into int$error_log(code, lineno, classname, userid, errortype, errordesc, createdon)
+      values (nextval('int$error_log_code'), 0, dclassname, duser, errcode, errmsg, clock_timestamp());
+      commit;
+      RETURN(NULL);
+END;
+"""
+  returnType = character
+  arguments = <
+    {
+      name = argicode
+      type = text
+      mode = IN
+    }
+
+    {
+      name = argbatchserialno
+      type = text
+      mode = IN
+      default = NULL::text
+    }
+
+    {
+      name = argmfgdate
+      type = timestamp without time zone
+      mode = IN
+      default = NULL::timestamp without time zone
+    }
+
+    {
+      name = argvalidupto
+      type = timestamp without time zone
+      mode = IN
+      default = NULL::timestamp without time zone
+    }
+
+    {
+      name = argmrp
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = argwsp
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = argrsp
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = argcostrate
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = argqty
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = argclassname
+      type = text
+      mode = IN
+      default = NULL::text
+    }
+
+    {
+      name = arguser
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+    {
+      name = argdocumentcode
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+  >
+  language = plpgsql
+}
+

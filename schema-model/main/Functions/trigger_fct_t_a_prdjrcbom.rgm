@@ -1,0 +1,264 @@
+function "main"."trigger_fct_t_a_prdjrcbom()" {
+  text = """
+
+/******************************************************************************
+   NAME: T_A_PRDJRCBOM
+   PURPOSE:
+   REVISIONS:
+   No.          Date        Author      Description
+   ---------    ----------  ----------  ---------------------------------------
+    REV : 000   02/07/2013  MANASH     (BUG ID : 825)   V11 Production.
+    REV : 001   07/12/2013  DIPTIMAN   (BUG ID : 924)   Advance production related changes.
+    REV : 002   03/04/2014  DIPTIMAN   (BUG ID : 1268) REC-COM not inserted for reprocess.
+    REV : 003   01/09/2014  MANASH     (BUG ID : 1567) Alternate item receive.
+    REV : 004   16/07/2015  MANASH     (BUG ID : XXX)  Generic production release.
+    REV : 005   28/08/2020  MOUSUMI    (TFS ID : MIGRATION) MIGRATION related changes.
+    REV : 006   12/05/2022  SIDDHARTHA  (TFS ID : XXXX) Introduction of Batch Serial Code
+******************************************************************************/
+DECLARE
+   V_TYPE                varchar(100);
+   V_REFPRCODE           INVSTOCK.REFPRCODE%TYPE;
+   V_REFPCODE            INVSTOCK.REFPCODE%TYPE;
+   V_OP_SEQ              PRDWIPTRANS.OPERATION_SEQ%TYPE;
+   V_ADMSITE_CODE        PRDJRCMAIN.ADMSITE_CODE%TYPE;
+   V_JRCDATE             PRDJRCMAIN.JRC_DATE%TYPE;
+   V_JOBTYPE             PRDJOBMAIN.JOBTYPE%TYPE;
+   V_JOBASSEMBLY_ICODE   PRDJOBDET.ASSEMBLY_ICODE%TYPE;
+   -- START REV : 004
+   V_PRV_PRCODE          PRDJRCMAIN.PRCODE%TYPE;
+   V_PRV_OPSEQ           PRDLOTOPERATION.OPERATION_SEQ%TYPE;
+   -- END REV : 004
+   -- START REV : 005
+   V_ENTRY_SOURCE        varchar(25) := NULL;
+   V_SID                 bigint;
+   V_PROGRAM             varchar(50);
+-- END REV : 005
+BEGIN
+  BEGIN
+   IF TG_OP = 'INSERT'
+   THEN
+      V_TYPE := 'INSERTING';
+   ELSIF TG_OP = 'UPDATE'
+   THEN
+      V_TYPE := 'UPDATING';
+   ELSIF TG_OP = 'DELETE'
+   THEN
+      V_TYPE := 'DELETING';
+   END IF;
+
+   SELECT PCODE,
+          PRCODE,
+          JRC_DATE,
+          ADMSITE_CODE,
+          ENTRY_SOURCE
+     INTO STRICT V_REFPCODE,
+          V_REFPRCODE,
+          V_JRCDATE,
+          V_ADMSITE_CODE,
+          V_ENTRY_SOURCE
+     FROM PRDJRCMAIN
+    WHERE CODE = coalesce(NEW.JRCCODE, OLD.JRCCODE);
+
+   SELECT OPERATION_SEQ, ASSEMBLY_ICODE
+     INTO STRICT V_OP_SEQ, V_JOBASSEMBLY_ICODE
+     FROM PRDJOBDET
+    WHERE CODE = coalesce(NEW.JOBDET_CODE, OLD.JOBDET_CODE);
+
+   SELECT JOBTYPE
+     INTO STRICT V_JOBTYPE
+     FROM PRDJOBMAIN
+    WHERE CODE = coalesce(NEW.JOBCODE, OLD.JOBCODE);
+
+   -- START REV : 004
+   /*
+   IF  (V_JOBTYPE = 'AN') OR (NVL(:NEW.ASSEMBLY_ICODE,:OLD.ASSEMBLY_ICODE) <> NVL(:NEW.COMPONENT_ICODE,:OLD.COMPONENT_ICODE)) THEN
+       DB_PKG_PRODUCTION.POST_WIP_TRANSACTION
+           (
+               V_ADMSITE_CODE,
+               V_TYPE,
+               'REC',
+               NVL(:OLD.CODE,:NEW.CODE),
+               NVL(:NEW.CODE,:OLD.CODE),
+               NVL(:NEW.LOTCODE,:OLD.LOTCODE),
+               NVL(:NEW.JOBCODE,:OLD.JOBCODE),
+               NULL,
+               NVL(:NEW.JRCCODE,:OLD.JRCCODE),
+               V_OP_SEQ,
+               V_REFPCODE,
+               V_REFPRCODE,
+               NVL(:NEW.ASSEMBLY_ICODE,:OLD.ASSEMBLY_ICODE),
+               NVL(:NEW.COMPONENT_ICODE,:OLD.COMPONENT_ICODE),
+               'COM',
+               NULL,
+               0-NVL(:NEW.CONSUME_QTY,NVL(:OLD.CONSUME_QTY,0)),
+               NVL(:NEW.CONSUME_RATE,NVL(:OLD.CONSUME_RATE,0))
+               ,NULL
+               ,V_JRCDATE
+               ,:NEW.ASS_SAITEM_CODE
+               ,:NEW.COM_SAITEM_CODE
+               ,V_JOBASSEMBLY_ICODE
+           );
+   END IF;
+   */
+   IF (V_JOBTYPE = 'AN')
+   THEN
+      CALL DB_PKG_PRODUCTION$POST_WIP_TRANSACTION(
+         V_ADMSITE_CODE,
+         V_TYPE,
+         'REC',
+         coalesce(OLD.CODE, NEW.CODE),
+         coalesce(NEW.CODE, OLD.CODE),
+         coalesce(NEW.LOTCODE, OLD.LOTCODE),
+         coalesce(NEW.JOBCODE, OLD.JOBCODE),
+         NULL,
+         coalesce(NEW.JRCCODE, OLD.JRCCODE),
+         V_OP_SEQ,
+         V_REFPCODE,
+         V_REFPRCODE,
+         coalesce(NEW.ASSEMBLY_ICODE, OLD.ASSEMBLY_ICODE),
+         coalesce(NEW.COMPONENT_ICODE, OLD.COMPONENT_ICODE),
+         'COM',
+         NULL,
+         0 - coalesce(NEW.CONSUME_QTY, coalesce(OLD.CONSUME_QTY, 0)),
+         coalesce(NEW.CONSUME_RATE, coalesce(OLD.CONSUME_RATE, 0)),
+         NULL,
+         V_JRCDATE,
+         NEW.ASS_SAITEM_CODE,
+         NEW.COM_SAITEM_CODE,
+         V_JOBASSEMBLY_ICODE,
+         -- START REV : 006
+         NULL,
+         coalesce(NEW.INVBATCH_SERIAL_CODE, OLD.INVBATCH_SERIAL_CODE)
+         -- END REV : 006
+         );
+   ELSE
+      CALL DB_PKG_PRODUCTION$POST_WIP_TRANSACTION(
+         V_ADMSITE_CODE,
+         V_TYPE,
+         'REC',
+         coalesce(OLD.CODE, NEW.CODE),
+         coalesce(NEW.CODE, OLD.CODE),
+         coalesce(NEW.LOTCODE, OLD.LOTCODE),
+         coalesce(NEW.JOBCODE, OLD.JOBCODE),
+         NULL,
+         coalesce(NEW.JRCCODE, OLD.JRCCODE),
+         V_OP_SEQ,
+         V_REFPCODE,
+         V_REFPRCODE,
+         coalesce(NEW.ASSEMBLY_ICODE, OLD.ASSEMBLY_ICODE),
+         coalesce(NEW.COMPONENT_ICODE, OLD.COMPONENT_ICODE),
+         CASE
+            WHEN coalesce(NEW.JOB_ASSEMBLY_ICODE, OLD.JOB_ASSEMBLY_ICODE) =
+                    coalesce(NEW.COMPONENT_ICODE, OLD.COMPONENT_ICODE)
+            THEN
+               'ASS'
+            ELSE
+               'COM'
+         END,
+         NULL,
+         0 - coalesce(NEW.CONSUME_QTY, coalesce(OLD.CONSUME_QTY, 0)),
+         coalesce(NEW.CONSUME_RATE, coalesce(OLD.CONSUME_RATE, 0)),
+         NULL,
+         V_JRCDATE,
+         NEW.ASS_SAITEM_CODE,
+         NEW.COM_SAITEM_CODE,
+         V_JOBASSEMBLY_ICODE,
+         -- START REV : 006
+         NULL,
+         coalesce(NEW.INVBATCH_SERIAL_CODE, OLD.INVBATCH_SERIAL_CODE)
+         -- END REV : 006
+         );
+
+      IF coalesce(NEW.ASSEMBLY_ICODE, OLD.ASSEMBLY_ICODE) =
+            coalesce(NEW.COMPONENT_ICODE, OLD.COMPONENT_ICODE)
+      THEN
+         BEGIN
+            SELECT JD.PREV_OPERATION_SEQ, JD.PREV_PRCODE
+              INTO STRICT V_PRV_OPSEQ, V_PRV_PRCODE
+              FROM PRDJOBDET JD
+             WHERE JD.CODE = coalesce(NEW.JOBDET_CODE, OLD.JOBDET_CODE);
+         EXCEPTION
+            WHEN no_data_found
+            THEN
+               NULL;
+         END;
+      END IF;
+   END IF;
+
+   -- END REV : 004
+   -- START REV : 005
+SELECT PG_BACKEND_PID() INTO V_SID;
+
+SELECT APPLICATION_NAME INTO V_PROGRAM FROM PG_STAT_ACTIVITY WHERE PID=V_SID;
+
+   IF     coalesce(V_ENTRY_SOURCE, 'XX') <> 'WEB'
+AND not coalesce(V_PROGRAM,'XX') ILIKE '%w3wp.exe%'
+   THEN
+      -- END REV : 005
+      IF TG_OP = 'UPDATE' OR TG_OP = 'DELETE'
+      THEN
+         UPDATE PRDJOBBOM B
+            SET CONSUMED_QTY =
+                   coalesce(CONSUMED_QTY, 0) - coalesce(OLD.CONSUME_QTY, 0)
+          WHERE CODE = OLD.JOBBOM_CODE;
+      END IF;
+
+      IF TG_OP = 'INSERT' OR TG_OP = 'UPDATE'
+      THEN
+         UPDATE PRDJOBBOM B
+            SET CONSUMED_QTY =
+                   coalesce(CONSUMED_QTY, 0) + coalesce(NEW.CONSUME_QTY, 0)
+          WHERE CODE = NEW.JOBBOM_CODE;
+      END IF;
+   END IF;                                                        -- REV : 005
+   INSERT INTO PRD_RATE_STAGING(TRANMAIN_CODE,
+                                 TYPE,
+                                 JOBCODE,
+                                 LOTCODE,
+                                 ASSEMBLY_ICODE,
+                                 ASS_SAITEM_CODE,
+                                 TXN_TYPE,
+                                 PRCODE,
+                                 OPERATION_SEQ,
+                                 TXN_DATE,
+                                 -- START REV : 006
+                                INVBATCH_SERIAL_CODE
+                                -- END REV : 006
+                                 )
+        VALUES (coalesce(NEW.JRCCODE, OLD.JRCCODE),
+                V_TYPE,
+                coalesce(NEW.JOBCODE, OLD.JOBCODE),
+                coalesce(NEW.LOTCODE, OLD.LOTCODE),
+                coalesce(NEW.ASSEMBLY_ICODE, OLD.ASSEMBLY_ICODE),
+                coalesce(NEW.ASS_SAITEM_CODE, OLD.ASS_SAITEM_CODE),
+                'REC',
+                V_REFPRCODE,
+                V_OP_SEQ,
+                V_JRCDATE,
+                -- START REV : 006
+                coalesce(NEW.INVBATCH_SERIAL_CODE, OLD.INVBATCH_SERIAL_CODE)
+                -- END REV : 006
+                );
+EXCEPTION
+   WHEN OTHERS
+   THEN
+      CALL ERRAUDIT(USER,
+                'T_A_PRDJRCBOM',
+                SQLSTATE::varchar,
+                SQLERRM);
+      RAISE EXCEPTION '%', 'ERROR ENCOUNTERED  ' || SQLSTATE::varchar || '  ' || SQLERRM USING ERRCODE = '45001';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

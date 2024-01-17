@@ -1,0 +1,275 @@
+function "main"."db_fun_get_docno_seq(bigint, bigint, timestamp without time zone, text, bigint)" {
+  text = """
+
+DECLARE
+   lv_docdtl         lv_docdtlrec;
+   lv_mcode          bigint;
+   lv_entdt          timestamp;
+   lv_admou_code     bigint;
+   lv_admsite_code   bigint;
+   lv_v1             varchar(10);
+   lv_v2             varchar(10);
+   lv_scheme_docno   varchar(50) := pv_scheme_docno;
+   lv_prefix         varchar(30);
+   lv_suffix         varchar(30);
+   lv_prefill        varchar(30);
+   lv_ret_no         varchar(50);
+   lv_gstappl        salinvmain.gstappl%TYPE;
+   lv_sitedocin      admsite.sitedocin%TYPE;
+   lv_gen_basis      admdocscheme.generation_basis%type;
+   v_show_param_val  char(1) := 'N';
+   v_len_prefix      bigint;
+   v_len_suffix      bigint;
+   -- START REV : 002
+   lv_main_prefix    varchar(500);
+   lv_main_suffix    varchar(500);
+   lv_sitetype       admsite.sitetype%type;
+   -- END REV : 002
+   -- START REV : 003
+   lv_prefixsuffix   varchar(100);
+   -- END REV : 003
+   v_SQLERRM		varchar(500);
+BEGIN
+   /********************************************************************************************************************************************************************
+      Created By : SOUMYADIP 19/03/2008
+      REVISIONS:
+      No.          Date          Author             Description
+      ---------    ----------    ----------------   ---------------------------------------------------------------------------------------------------------------------
+      REV : 000    11/07/2017    DIPTIMAN           (TFS ID : 30869) Document sequence.
+      REV : 001    28/07/2017    DIPTIMAN           (TFS ID : 31422) Code rectified.
+      REV : 002    11/09/2017    DIPTIMAN           (TFS ID : 32764) Document numbering scheme changes impact implies.
+      REV : 003    16/08/2018    MOUSUMI            (TFS ID : 41982) [SDI] placeholder work missing
+    *********************************************************************************************************************************************************************/
+   IF coalesce(v_show_param_val,'N') = 'Y' THEN
+      CALL ERRAUDIT('F','F','1', 'pv_doccode = '||pv_doccode||CHR(10)||
+                            'pv_ycode = '||pv_ycode||CHR(10)||
+                            'pv_entdt = '||pv_entdt||CHR(10)||
+                            'pv_scheme_docno = '||pv_scheme_docno||CHR(10)||
+                            'pv_admsite_code_owner = '||pv_admsite_code_owner);
+   END IF;
+   IF UPPER(pv_scheme_docno) <> 'AUTOMATIC' AND pv_scheme_docno IS NOT NULL AND pv_doccode NOT IN (1, 169) THEN
+      BEGIN
+         -- START REV : 002
+         -- SELECT code, admou_code
+           -- INTO lv_admsite_code, lv_admou_code
+         SELECT code, admou_code, sitetype
+                -- START REV : 003
+                , sitedocin
+                -- END REV : 003
+           INTO STRICT lv_admsite_code, lv_admou_code, lv_sitetype
+                -- START REV : 003
+                , lv_sitedocin
+                -- END REV : 003
+           -- END REV : 002
+           FROM admsite
+          WHERE code = pv_admsite_code_owner;
+      EXCEPTION
+         WHEN no_data_found THEN NULL;
+      END;
+      BEGIN
+         SELECT coalesce(d.gstappl, 'N'), d.generation_basis
+            -- START REV : 003
+            , d.PREFIX||d.SUFFIX
+            -- END REV : 003
+           INTO STRICT lv_gstappl, lv_gen_basis
+            -- START REV : 003
+            , lv_prefixsuffix
+            -- END REV : 003
+           FROM admdocscheme d
+          WHERE d.doccode = pv_doccode;
+        -- START REV : 003
+        /*
+         IF lv_gstappl <> 'N' THEN
+            SELECT s.sitedocin
+              INTO lv_sitedocin
+              FROM admsite s
+             WHERE s.code = lv_admsite_code;
+        */
+        IF position('[SDI]' in UPPER(lv_prefixsuffix)) > 0 THEN
+        -- END REV : 003
+            IF lv_sitedocin IS NULL THEN
+               RAISE EXCEPTION 'e_sitedocin' USING ERRCODE = '50001';
+            END IF;
+         END IF;
+      EXCEPTION
+         WHEN no_data_found THEN NULL;
+      END;
+      
+	  SELECT MCODE INTO lv_mcode
+	  FROM   ADMMONTH 
+	  WHERE  pv_entdt::date
+	  BETWEEN MONSTDT AND LAST_DAY(MONSTDT) 
+	  AND    YCODE = PV_YCODE;
+		 
+      IF pv_doccode IS NOT NULL THEN
+         EXECUTE
+                'SELECT  MANUAL, WIDTH,COALESCE(STARTING,0) STARTING, '
+             || 'PREFILL, PREFIX, '
+             || 'SUFFIX, GENERATION_INTERVAL, DOCCODE_WISE, '
+             || 'BASEDON, GENERATION_BASIS '
+             || 'FROM ADMDOCSCHEME '
+             || 'WHERE DOCCODE = $1 '
+             INTO STRICT lv_docdtl
+             USING pv_doccode;
+			 
+         IF lv_docdtl.lv_generation_interval = 'D' THEN
+            -- START REV : 002
+            -- NULL;
+            lv_entdt := pv_entdt::date;
+            -- END REV : 002
+         ELSIF lv_docdtl.lv_generation_interval = 'M' THEN
+            lv_entdt := NULL;
+         ELSIF lv_docdtl.lv_generation_interval = 'Y' THEN
+            lv_mcode := NULL;
+            lv_entdt := NULL;
+         END IF;
+      END IF;
+      -- START REV : 002
+      IF lv_sitetype = 'MS-CO-OM-TS' THEN
+          lv_docdtl.lv_generation_basis := 'S';
+          --lv_cmpcode := NULL;
+          --lv_admoucode := NULL;
+          --lv_admsitecode := lv_admsite_code;
+       END IF;
+      lv_prefill := lv_docdtl.lv_prefill;
+      lv_ret_no := lv_scheme_docno;
+	  
+      -- START REV : 002
+      -- FOR PREFIX PORTIONS
+          --===========================
+      IF  lv_docdtl.lv_prefix IS NOT NULL THEN
+		EXECUTE
+			'SELECT
+                REPLACE (
+                    REPLACE (
+                        REPLACE (
+                            REPLACE (
+                                REPLACE (
+                                    REPLACE (
+                                        REPLACE (
+                                            REPLACE (
+                                                REPLACE (
+                                                    REPLACE (
+                                                        REPLACE (
+                                                            REPLACE (
+                                                                REPLACE ( $1, ''[DD]'', TO_CHAR($2::date,''DD''))
+                                                            , ''[MM]''    ,TO_CHAR($3::date,''MM'') )
+                                                        , ''[YY]''    ,TO_CHAR($4::date,''YY'') )
+                                                    , ''[YYYY]''  ,TO_CHAR($5::date,''YYYY''))
+                                                    , ''[MON]''   , TO_CHAR($6::date,''MON''))
+                                            , ''[DAY]''   , TO_CHAR($7::date,''DY''))
+                                            , ''[FYYYY]'' ,(EXTRACT ( YEAR FROM DTFR)::TEXT || ''-'' || EXTRACT ( YEAR FROM DTTO )::TEXT))
+                                        , ''[FYY1]''  ,(substring(EXTRACT ( YEAR FROM DTFR) ,3)) || (substring(EXTRACT ( YEAR FROM DTTO) ,3)))
+                                    , ''[FYY]''   ,(substring(EXTRACT ( YEAR FROM DTFR) ,3))::TEXT || ''-'' || (substring(EXTRACT ( YEAR FROM DTTO) ,3)::TEXT))
+                                , ''[FMMYY]''   ,(TO_CHAR(DTFR,''MMYY'')|| ''-'' || TO_CHAR(DTTO,''MMYY'')))
+                            , ''[FMMYYYY]''   ,(TO_CHAR(DTFR,''MMYYYY'')|| ''-'' || TO_CHAR(DTTO,''MMYYYY'')))
+                        , ''[FDDMMYY]''   ,(TO_CHAR(DTFR,''DDMMYY'')|| ''-'' || TO_CHAR(DTTO,''DDMMYY'')))
+                    , ''[FDDMMYYYY]''   ,(TO_CHAR(DTFR,''DDMMYYYY'')|| ''-'' || TO_CHAR(DTTO,''DDMMYYYY'')))
+					FROM ADMYEAR
+                	WHERE YCODE = $8 '
+                INTO STRICT lv_main_prefix
+                USING lv_docdtl.lv_prefix , pv_entdt, pv_entdt, pv_entdt, pv_entdt, pv_entdt, pv_entdt, pv_ycode;
+        END IF;
+          -- FOR SUFFIX PORTIONS
+          --===========================
+        IF  lv_docdtl.lv_suffix IS NOT NULL THEN
+			EXECUTE
+              'SELECT
+                REPLACE (
+                    REPLACE (
+                        REPLACE (
+                            REPLACE (
+                                REPLACE (
+                                    REPLACE (
+                                        REPLACE (
+                                            REPLACE (
+                                                REPLACE (
+                                                    REPLACE (
+                                                        REPLACE (
+                                                            REPLACE (
+                                                                REPLACE ( $1, ''[DD]'', TO_CHAR($2::date,''DD''))
+                                                            , ''[MM]''    ,TO_CHAR($3::date,''MM'') )
+                                                        , ''[YY]''    ,TO_CHAR($4::date,''YY'') )
+                                                    , ''[YYYY]''  ,TO_CHAR($5::date,''YYYY''))
+                                                    , ''[MON]''   , TO_CHAR($6::date,''MON''))
+                                            , ''[DAY]''   , TO_CHAR($7::date,''DY''))
+                                            , ''[FYYYY]'' ,(EXTRACT ( YEAR FROM DTFR)::TEXT || ''-'' || EXTRACT ( YEAR FROM DTTO )::TEXT))
+                                        , ''[FYY1]''  ,(substring(EXTRACT ( YEAR FROM DTFR) ,3))::TEXT || (substring(EXTRACT ( YEAR FROM DTTO) ,3)::TEXT))
+                                    , ''[FYY]''   ,(substring(EXTRACT ( YEAR FROM DTFR) ,3))::TEXT || ''-'' || (substring(EXTRACT ( YEAR FROM DTTO) ,3)::TEXT))
+                                , ''[FMMYY]''   ,(TO_CHAR(DTFR,''MMYY'')|| ''-'' || TO_CHAR(DTTO,''MMYY'')))
+                            , ''[FMMYYYY]''   ,(TO_CHAR(DTFR,''MMYYYY'')|| ''-'' || TO_CHAR(DTTO,''MMYYYY'')))
+                        , ''[FDDMMYY]''   ,(TO_CHAR(DTFR,''DDMMYY'')|| ''-'' || TO_CHAR(DTTO,''DDMMYY'')))
+                    , ''[FDDMMYYYY]''   ,(TO_CHAR(DTFR,''DDMMYYYY'')|| ''-'' || TO_CHAR(DTTO,''DDMMYYYY'')))
+                FROM ADMYEAR
+                WHERE YCODE = $8'
+                INTO STRICT lv_main_suffix
+                USING lv_docdtl.lv_suffix , pv_entdt, pv_entdt, pv_entdt, pv_entdt, pv_entdt, pv_entdt, pv_ycode;
+      END IF;
+      IF  lv_main_prefix IS NOT NULL THEN
+          -- START REV : 003
+          lv_main_prefix := Replace(lv_main_prefix,'[SDI]',COALESCE(lv_sitedocin,'XXX'));
+          -- END REV : 003
+          v_len_prefix := length(lv_main_prefix);
+      -- END REV : 002
+         lv_ret_no := substr(lv_ret_no, (v_len_prefix + 1)::integer);
+      END IF;
+      IF lv_main_suffix IS NOT NULL THEN
+          -- START REV : 003
+          lv_main_suffix := Replace(lv_main_suffix,'[SDI]',COALESCE(lv_sitedocin,'XXX'));
+          -- END REV : 003
+         v_len_suffix := length(lv_main_suffix);
+         lv_ret_no := substr(lv_ret_no, 1, (length(lv_ret_no) - v_len_suffix)::integer);
+      -- END REV : 002
+      END IF;
+      --lv_ret_no :=
+      lv_ret_no := LTRIM(lv_ret_no, lv_prefill);
+      RETURN (lv_ret_no)::numeric;
+   ELSE
+      RETURN NULL;
+   END IF;
+EXCEPTION
+   WHEN SQLSTATE '50001' THEN
+      CALL erraudit(USER, 'db_fun_get_docno_seq', SQLSTATE::varchar, SQLERRM);
+      CALL erraudit(user, 'db_fun_get_docno_seq', '1', 'Error encountered -  Site Document Identification Number is mandatory for the selected document numbering scheme.'|| ' : '|| lv_admsite_code);
+   WHEN OTHERS THEN
+   		v_SQLERRM := SQLERRM;
+      CALL erraudit(USER, 'db_fun_get_docno_seq', SQLSTATE::varchar, SQLERRM);
+      CALL erraudit(user, 'db_fun_get_docno_seq', '2', 'ERROR ENCOUNTERED '|| SQLSTATE|| '-'|| SQLERRM|| ' : '|| ','|| pv_doccode::TEXT|| ','|| pv_ycode::TEXT|| ','|| pv_entdt);
+END;
+"""
+  returnType = character
+  arguments = <
+    {
+      name = pv_doccode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = pv_ycode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = pv_entdt
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = pv_scheme_docno
+      type = text
+      mode = IN
+    }
+
+    {
+      name = pv_admsite_code_owner
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

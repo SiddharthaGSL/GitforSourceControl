@@ -1,0 +1,178 @@
+procedure "main"."int$pkg_sales_cr_note_pro_scn_perchg_roundoff(bigint, bigint, bigint, character, bigint, bigint, character, character, character, character, character)" {
+  text = """
+
+DECLARE
+
+      V_TOTCHGAMT   SALINVJRNCHG.CHGAMT%TYPE;
+      V_MAXCODE     SALINVJRNCHG_ITEM.CODE%TYPE := 0;
+      V_ADJAMT      SALINVJRNCHG_ITEM.CHGAMT%TYPE;
+      V_ACTAMT      SALINVJRNCHG_ITEM.CHGAMT%TYPE;
+
+  C6_LOOP RECORD;
+
+BEGIN
+      FOR C6_LOOP
+         IN (  SELECT A.CHGCODE                   CHGCODE,
+                      coalesce(A.RATE, 0)             RATE,
+                      coalesce(B.ROUNDOFF, 'N')       ROUNDOFF,
+                      SUM(coalesce(A.APPAMT, 0))     APPAMT,
+                      ABS(SUM(coalesce(A.CHGAMT, 0))) CHGAMT
+                 FROM SALINVJRNCHG_ITEM A, SALCHG B
+                WHERE     A.JRNCODE = ARINVCODE
+                      AND A.CHGCODE = B.SALCHGCODE
+                      AND A.BASIS = 'P'
+                      AND A.CHGCODE = ARGCHGCODE
+                      AND A.RATE = ARGRATE
+                      AND A.SIGN = ARGSIGN
+                      AND (   (ARGGLCODE IS NULL AND A.GLCODE IS NULL)
+                           OR (ARGGLCODE IS NOT NULL AND A.GLCODE = ARGGLCODE))
+                      AND (   (ARGSLCODE IS NULL OR A.SLCODE IS NULL)
+                           OR (ARGSLCODE IS NOT NULL OR A.SLCODE = ARGSLCODE))
+                      AND A.BASIS = ARGBASIS
+                      AND A.ISTAX = ARGISTAX
+                      AND A.SOURCE = ARGSOURCE
+                      AND A.FORMULAE = ARGFORMULAE
+                      AND (   (    ARGGST_COMPONENT IS NULL
+                               AND A.GST_COMPONENT IS NULL)
+                           OR (   ARGGST_COMPONENT IS NOT NULL
+                               OR A.GST_COMPONENT = ARGGST_COMPONENT))
+                      AND A.SOURCE <> 'E'
+             GROUP BY A.CHGCODE,
+                      coalesce(A.RATE, 0),
+                      coalesce(B.ROUNDOFF, 'N'),
+                      B.ISTAX)
+      LOOP
+         SELECT MAX(CODE)
+           INTO STRICT V_MAXCODE
+           FROM SALINVJRNCHG_ITEM SI
+          WHERE     SI.JRNCODE = ARINVCODE
+                AND SI.BASIS = 'P'
+                AND SI.CHGCODE = ARGCHGCODE
+                AND SI.RATE = ARGRATE
+                AND SI.SIGN = ARGSIGN
+                AND (   (ARGGLCODE IS NULL AND SI.GLCODE IS NULL)
+                     OR (ARGGLCODE IS NOT NULL AND SI.GLCODE = ARGGLCODE))
+                AND (   (ARGSLCODE IS NULL OR SI.SLCODE IS NULL)
+                     OR (ARGSLCODE IS NOT NULL OR SI.SLCODE = ARGSLCODE))
+                AND SI.BASIS = ARGBASIS
+                AND SI.ISTAX = ARGISTAX
+                AND SI.SOURCE = ARGSOURCE
+                AND SI.FORMULAE = ARGFORMULAE
+                AND (   (    ARGGST_COMPONENT IS NULL
+                         AND SI.GST_COMPONENT IS NULL)
+                     OR (   ARGGST_COMPONENT IS NOT NULL
+                         OR SI.GST_COMPONENT = ARGGST_COMPONENT))
+                AND SI.SOURCE <> 'E'
+                AND coalesce(SI.APPAMT, 0) <> 0;
+
+         IF C6_LOOP.ROUNDOFF = 'N'
+         THEN
+            V_ACTAMT :=
+               ROUND (
+                  ( (coalesce(C6_LOOP.APPAMT, 0) * coalesce(C6_LOOP.RATE, 0)) / 100),
+                  2);
+         ELSE
+            V_ACTAMT :=
+               ROUND (
+                  ( (coalesce(C6_LOOP.APPAMT, 0) * coalesce(C6_LOOP.RATE, 0)) / 100),
+                  0);
+         END IF;
+
+         V_ADJAMT := V_ACTAMT - C6_LOOP.CHGAMT;
+
+         IF coalesce(V_ADJAMT, 0) <> 0
+         THEN
+            IF ARGSIGN = '-'
+            THEN
+               V_ADJAMT := V_ADJAMT * -1;
+            END IF;
+
+            UPDATE SALINVJRNCHG_ITEM SI
+               SET SI.CHGAMT = coalesce(SI.CHGAMT, 0) + coalesce(V_ADJAMT, 0),
+                   SI.ROUNDOFF_ADJ_AMT =
+                      coalesce(SI.ROUNDOFF_ADJ_AMT, 0) + coalesce(V_ADJAMT, 0)
+             WHERE SI.CODE = V_MAXCODE AND SI.JRNCODE = ARINVCODE;
+         END IF;
+      END LOOP;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         CALL ERRAUDIT(USER,
+                   'PRO_SCN_PERCHG_ROUNDOFF',
+                   SQLSTATE::varchar,
+                   SQLERRM);
+         RAISE EXCEPTION '%', 'ERROR ENCOUNTERED ' || SQLSTATE::varchar || '  ' || SQLERRM USING ERRCODE = '45104';
+   END;
+
+"""
+  arguments = <
+    {
+      name = arinvcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = argchgcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = argrate
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = argsign
+      type = character
+      mode = IN
+    }
+
+    {
+      name = argglcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = argslcode
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = argbasis
+      type = character
+      mode = IN
+    }
+
+    {
+      name = argistax
+      type = character
+      mode = IN
+    }
+
+    {
+      name = argsource
+      type = character
+      mode = IN
+    }
+
+    {
+      name = argformulae
+      type = character
+      mode = IN
+    }
+
+    {
+      name = arggst_component
+      type = character
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

@@ -1,0 +1,78 @@
+procedure "main"."db_pkg_gds2_event$track(text, text, bigint)" {
+  text = """
+
+DECLARE
+
+      TMPVAR   bigint;
+
+BEGIN
+      IF P_EVENTID IN ( 'INVENTORY_SITE', 
+                        'INVENTORY_ARTICLE',
+                        'INVENTORY_BIN',
+                        'site.inventory.item.updated',
+                        'site.bininventory.item.updated'
+                        )
+      THEN
+         SELECT nextval('seq_gds2_event_track_inv') INTO STRICT TMPVAR;
+      ELSE
+         SELECT nextval('seq_gds2_event_track') INTO STRICT TMPVAR;
+      END IF;
+
+      IF P_EVENTID NOT  IN ( 'INVENTORY_SITE', 
+                             'INVENTORY_ARTICLE',
+                             'INVENTORY_BIN',
+                             'site.inventory.item.updated',
+                             'site.bininventory.item.updated'
+                            )
+      THEN
+          INSERT INTO GDS2_EVENT_TRACK(ID,
+                                        REFCODE,
+                                        EVENT_ID,
+                                        EVENT_TIME,
+                                        CONNECTED_APP_CODE)
+               VALUES (TMPVAR,
+                       P_REFCODE,
+                       P_EVENTID,
+                       clock_timestamp(),
+                       P_CONNECTED_APP_CODE);
+      ELSE
+           INSERT INTO GDS2_EVENT_TRACK_INV(ID,
+                                        REFCODE,
+                                        EVENT_ID,
+                                        EVENT_TIME)
+               VALUES (TMPVAR,
+                       P_REFCODE,
+                       P_EVENTID,
+                       clock_timestamp());
+      END IF;
+   EXCEPTION
+      WHEN unique_violation
+      THEN
+         NULL;
+   END;
+
+"""
+  arguments = <
+    {
+      name = p_eventid
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_refcode
+      type = text
+      mode = IN
+    }
+
+    {
+      name = p_connected_app_code
+      type = bigint
+      mode = IN
+      default = NULL::bigint
+    }
+
+  >
+  language = plpgsql
+}
+

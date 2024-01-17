@@ -1,0 +1,111 @@
+function "main"."t_admsite_sitetype()" {
+  text = """
+
+/*******************************************************************************************************************
+  REV NO      DATE           OWNER            DESCRIPTION
+  ---------   -----------    -----------      ---------------------------------------------------------------------
+  REV : 000   06/02/2012     DIPTIMAN         (BUG ID : 216)  Site related changes, CREATED.
+  REV : 001   27/06/2017     SIDDHARTHA SEN   (BUG ID : 216)  Site Doc In related changes, CREATED.
+*******************************************************************************************************************/
+DECLARE
+   V_SITETYPE   ADMSITE.SITETYPE%TYPE;
+   V_SALETYPE   FINSL.SALETYPE%TYPE;
+   V_NUMBER1    bigint;
+   V_NUMBER2    bigint;
+   V_CHAR       varchar(800);
+   V_CHAR1      varchar(800);
+BEGIN
+   IF NEW.SLCODE IS NULL
+   THEN
+      -- Organization site or Managed Organization site.
+      IF NEW.ISPOS = 'N'
+      THEN
+         V_SITETYPE := 'OS-OO-CM';
+      ELSE
+         V_SITETYPE := 'MS-OO-CM';
+      END IF;
+   ELSE
+      SELECT SALETYPE
+        INTO STRICT V_SALETYPE
+        FROM FINSL
+       WHERE SLCODE = NEW.SLCODE;
+
+      -- Other Manage and unmanage sites
+      IF NEW.ISPOS = 'Y'
+      THEN
+         -- Managed Site, Now all manage sites are customer owned
+         IF V_SALETYPE = 'C'
+         THEN
+            -- Consignment customer
+            V_SITETYPE := 'MS-CO-CM';
+         ELSE
+            -- Outright customer
+            IF NEW.ISSECONDARY = 'Y'
+            THEN
+               -- Track Secondary
+               V_SITETYPE := 'MS-CO-OM-TS';
+            END IF;
+         END IF;
+      ELSE
+         -- Unmanaged Site, Now all manage sites are customer owned
+         IF V_SALETYPE = 'C'
+         THEN
+            -- Consignment customer
+            V_SITETYPE := 'US-CO-CM';
+         ELSE
+            -- Outright customer
+            IF NEW.ISSECONDARY = 'Y'
+            THEN
+               -- Track Secondary
+               V_SITETYPE := 'US-CO-OM-TS';
+            ELSE
+               -- Track Secondary
+               V_SITETYPE := 'US-CO-OM';
+            END IF;
+         END IF;
+      END IF;
+   END IF;
+
+   NEW.SITETYPE := V_SITETYPE;
+--REV : 001
+IF TG_OP = 'INSERT'
+       THEN
+       IF NEW.SITETYPE LIKE 'MS-%'
+       THEN
+          SELECT MAX(SITEDOCIN::varchar)
+            INTO STRICT V_CHAR
+            FROM ADMSITE
+           WHERE SITEDOCIN IS NOT NULL
+           AND SUBSTR(SITEDOCIN, 1, 1)::varchar BETWEEN 'A' AND 'Z'
+           AND SUBSTR(SITEDOCIN, 2, 2) BETWEEN '01' AND '99'
+           AND SITETYPE LIKE 'MS-%';
+
+          V_CHAR1 := SUBSTRING(V_CHAR, 1, 1);
+          V_NUMBER1 := (SUBSTRING(V_CHAR, 2, 2))::bigint;
+
+          IF V_NUMBER1 < 99
+          THEN
+             NEW.SITEDOCIN := V_CHAR1 || LPAD(V_NUMBER1 + 1, 2, '0');
+          ELSIF V_NUMBER1 = 99
+          THEN
+             V_NUMBER2 := ASCII(V_CHAR1);
+             V_CHAR1 := CHR(V_NUMBER2 + 1);
+             V_NUMBER2 := 0;
+             NEW.SITEDOCIN := V_CHAR1 || LPAD(V_NUMBER2 + 1, 2, '0');
+          ELSIF V_NUMBER1 IS NULL THEN
+             V_CHAR1 := CHR(65);
+             V_NUMBER2 := 0;
+             NEW.SITEDOCIN := V_CHAR1 || LPAD(V_NUMBER2 + 1, 2, '0');
+          END IF;
+    --End of REV : 001
+      END IF;
+ END IF;
+RETURN NEW;
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

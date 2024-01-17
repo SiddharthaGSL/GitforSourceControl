@@ -1,0 +1,690 @@
+function "main"."int$pkg_dc_agnst_ord_int$pkg_dc_agnst_ord_process_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_site_initial     varchar(15);
+      errmsg             varchar(500);
+      vsession           varchar(100);
+      vdetailtbl         varchar(5000);
+      vdetailrec         varchar(500);
+      errcode            bigint;
+      vcount             bigint;
+      v_scheme_docno     varchar(25)   := NULL;-- Populate INVDCMAIN Table
+      c_main CURSOR FOR
+         SELECT nextval('erp01') DCcode, t1.DC_DATE DC_DATE, t2.doccode doccode,
+                'AUTOMATIC' scheme_docno, t1.pcode pcode,
+                -- START REV : 004
+                --1 admou_code,
+                 p_connect_ou   admou_code,
+                -- END REV : 004
+                 t1.ycode,
+                clock_timestamp() TIME, p_userid ecode, clock_timestamp() last_access_time,
+                p_userid last_access_ecode,
+                p_connect_site admsite_code_owner,
+                t1.fintradegrp_code fintradegrp_code, t1.formcode formcode,
+              --  T1.termcode,
+                l.loccode STOCK_POINT_CODE,
+                stock_point_name,
+                s.admcmptax_code,
+               --  t1.ordcode, order_no,
+                 tot_item_qty,
+                 ST.CODE ADMSITE_CODE,
+                 ST.SITETYPE,
+                 s.saletype  SALETYPE,
+                 ORD_ADMSITE_CODE ORD_ADMSITE_CODE,
+                 UPPER(t1.document_scheme)  document_scheme,
+                 SITE_SHORT_NAME,
+                 SITE_CODE  -- REV : 002
+                -- UPPER (t1.document_scheme)
+                -- START REV : 011
+                ,T1.AGCODE
+                -- END REV : 011
+           FROM admdocscheme t2, admsite st, invloc l, (SELECT    UPPER(document_scheme) document_scheme, dc_date,
+                         -- UPPER (order_no) order_no,
+                          UPPER(a.stock_point_name) stock_point_name,
+                          p.pcode pcode,-- p.ordcode ordcode,
+                         -- p.SALTERMCODE termcode,
+                          p.SALTRADEGRP_CODE fintradegrp_code,
+                          p.formcode formcode,
+                          SUM(coalesce(item_qty, 0)) tot_item_qty,
+                          (SELECT ycode
+                             FROM admyear
+                            WHERE DC_DATE BETWEEN dtfr AND dtto) ycode,
+                          SITE_SHORT_NAME ,
+                          SITE_CODE,     -- REV : 002
+                          ADMSITE_CODE ORD_ADMSITE_CODE,SALETYPE,
+                          -- START REV : 011
+                          AGCODE
+                          -- END REV : 011
+                     FROM int$stg_DC_AGNST_ORD a, SALORDMAIN p
+                    WHERE UPPER(order_no) = UPPER(p.scheme_docno)
+                      AND p.admsite_code_OWNER = p_connect_site
+                      AND coalesce(p.stat, 'N') <> 'T'
+                      AND p.authorcode IS NOT NULL
+                      AND coalesce(ISHOLD, 'N') = 'N'
+                    -- START REV : 002
+                      AND coalesce(P.RESERVE_INV,'N') = 'N'
+                    -- END REV : 002
+                      AND EXISTS (  SELECT NULL
+                                    FROM SALORDDET D
+                                    WHERE D.ORDCODE = P.ORDCODE
+                                    AND coalesce(d.ordqty, 0) - coalesce(d.cnlqty, 0) - coalesce(d.Dqty, 0) > 0
+                                 )
+                      AND p.orddt <= DATE_TRUNC('day',a.DC_DATE)
+                      AND a.userid = p_userid
+                 GROUP BY UPPER(document_scheme) , dc_date,
+                         -- UPPER (order_no) ,
+                          UPPER(a.stock_point_name) ,
+                          p.pcode ,-- p.ordcode ,
+                         -- p.SALTERMCODE ,
+                          p.SALTRADEGRP_CODE ,
+                          p.formcode ,
+                          SITE_SHORT_NAME ,
+                          SITE_CODE,
+                          ADMSITE_CODE ,SALETYPE,
+                         -- START REV : 012
+                          AGCODE
+	           -- END REV : 012
+                          ) t1
+LEFT OUTER JOIN finsl s ON (t1.pcode = s.slcode)
+WHERE UPPER(t1.document_scheme) = UPPER(t2.docname) AND UPPER(t1.stock_point_name) = UPPER(l.locname) -- START REV  : 002
+           --AND UPPER (t1.SITE_SHORT_NAME) = UPPER (ST.SHRTNAME)
+  AND ((
+                        UPPER(T1.SITE_SHORT_NAME) = UPPER(ST.SHRTNAME)
+                        AND
+                        T1.SITE_SHORT_NAME IS NOT NULL
+                )
+                OR (
+                        UPPER(T1.SITE_CODE) = UPPER(ST.CODE)
+                        AND
+                        T1.SITE_CODE IS NOT NULL
+                )
+                ) -- END REV : 002
+  AND (
+                       (
+                          ST.SITETYPE IN ('MS-CO-OM-TS','US-CO-OM-TS','US-CO-OM')
+                          AND ( ORD_ADMSITE_CODE        = ST.CODE OR ADMSITE_CODE IS NULL)
+                       )
+                       OR (
+                          ST.SITETYPE IN ('US-CO-CM','OS-OO-CM','MS-OO-CM','MS-CO-CM')
+                          AND
+                          ORD_ADMSITE_CODE           = ST.CODE
+                       )
+                ) AND (
+                    ( ST.SITETYPE NOT IN ('OS-OO-CM','MS-OO-CM')
+                        AND T1.SALETYPE = S.SALETYPE
+                    )
+                    OR (ST.SITETYPE IN ('OS-OO-CM','MS-OO-CM')
+                        AND T1.SALETYPE = 'C')
+                    );
+
+      v_det_grsamt       double precision  := 0;
+      v_det_chgamt       double precision  := 0;
+      v_grcno            numeric(20)     := 0;
+     -- v_tot_qty          NUMBER (20, 3)  := 0;
+      V_TERMCODE         bigint;
+      V_TRADEGRP_CODE    bigint;
+      V_FORMCODE         bigint;
+      V_PRICELISTCODE    bigint;
+      V_PRICETYPE        char(1) := NULL;
+      V_DISCOUNT_FACTOR     double precision := 0;
+      V_INCL_VAT_IN_DIST    char(1);
+      V_DISCOUNT_MODE       char(1) := NULL;
+      V_DISCOUNT_BASIS      char(1) := NULL;
+      V_PRICE_ROUNDOFF      double precision :=0;
+      V_ROUNDOFF_LIMIT      char(1) := NULL;
+      V_CMPTAX_CODE_BASIS   char(1) := NULL;
+      V_TRPCODE             bigint;
+      V_FLAG                record;
+      V_DCBARCODE           varchar(25);
+      v_tempno              bigint;
+      v_DCCODE              bigint;
+      V_INLOCCODE             bigint;
+      V_SALETYPE            char(1) := NULL;
+      V_DISCOUNT            double precision := 0;
+      v_cnt_det         bigint;
+
+BEGIN
+      -- START REV : 010
+      DELETE FROM DC_AGAINST_ORD WHERE USERID = P_USERID;
+      -- END REV : 010
+      FOR r IN c_main
+      LOOP
+         -- Populate INVGRCMAIN Table
+         V_SCHEME_DOCNO :=
+            db_fun_document_number_web(NULL,
+                                        R.doccode,
+                                        R.ycode,
+                                        TO_CHAR(R.DC_DATE,'DD-MM-YYYY'),
+                                        NULL,
+                                        p_connect_site,
+                                        P_CONNECT_OU,
+                                        'DcOrder'
+                                       );
+-- END REV : 007
+v_DCCODE := r.DCCODE;  --  REV : 008
+    IF R.PCODE IS NOT NULL THEN
+            BEGIN
+                SELECT    ADMSITE.TRPCODE
+                INTO STRICT      V_TRPCODE
+                FROM      ADMSITE
+                WHERE     CODE                 = R.ADMSITE_CODE
+                AND     ADMOU_CODE = P_CONNECT_OU -- REV : 004
+                AND       ADMSITE.SLCODE    = R.PCODE;
+            EXCEPTION
+                WHEN no_data_found THEN
+                    BEGIN
+                    SELECT    FINSL.TRPCODE
+                    INTO STRICT      V_TRPCODE
+                    FROM      FINSL
+                    WHERE     FINSL.SLCODE      = R.PCODE;
+                    EXCEPTION
+                        WHEN no_data_found THEN
+                            NULL;
+                    END;
+            END;
+     END IF;
+
+          --V_FLAG := 
+		  CALL DB_PKG_GET_DATA_SND$GET_TRADEGRP_TERM(
+                                    -- in parameters
+                                    -- START REV : 004
+                                  --  1,
+                                    P_CONNECT_OU,
+                                    -- END REV : 004
+                                    p_connect_site,
+                                    r.ADMSITE_CODE,
+                                    r.SITETYPE,
+                                    r.PCODE,
+                                    -- out parameters
+                                    V_TERMCODE,
+                                    V_TRADEGRP_CODE,
+                                    V_FORMCODE,
+                                    V_PRICELISTCODE
+                                );
+
+                  IF     V_PRICELISTCODE IS NOT NULL THEN
+                        SELECT
+                                        PRICE_TYPE,
+                                  DISCOUNT_FACTOR,
+                                  INCLUDE_VAT_IN_DISCOUNT,
+                                  DISCOUNT_MODE,
+                                  DISCOUNT_BASIS,
+                                  NET_PRICE_MULTIPLES_OF,
+                                  NET_PRICE_ROUND_LIMIT
+                                  ,CMPTAX_CODE_BASIS
+                    INTO STRICT
+                            V_PRICETYPE,
+                            V_DISCOUNT_FACTOR,
+                            V_INCL_VAT_IN_DIST,
+                            V_DISCOUNT_MODE,
+                            V_DISCOUNT_BASIS,
+                            V_PRICE_ROUNDOFF,
+                            V_ROUNDOFF_LIMIT,
+                            V_CMPTAX_CODE_BASIS
+                    FROM    SALPRICELISTMAIN
+                    WHERE   PRICELISTCODE = V_PRICELISTCODE;
+
+            END IF;
+
+            BEGIN
+                SELECT    LOCCODE
+                INTO STRICT     V_INLOCCODE
+                FROM     INVLOC
+                WHERE     LOCTYPE     = 'L'
+                AND     coalesce(EXT,'N') = 'N';
+            EXCEPTION
+            WHEN OTHERS THEN
+                 V_INLOCCODE := NULL;
+            END;
+
+            IF    R.SITETYPE IN ('OS-OO-CM','MS-OO-CM') THEN
+                V_SALETYPE := 'C';
+            ELSE
+                V_SALETYPE := r.saletype;
+            END IF;
+
+         V_DCBARCODE :=  LPAD(1, 3, '0')||V_DCCODE::text;
+
+         INSERT INTO INVDCMAIN(  YCODE,
+                        TRPCODE,
+                        TIME,
+                        STATUS,
+                        SCHEME_DOCNO,
+                        SALTRADEGRP_CODE,
+                        SALETYPE,
+                        ROUNDOFF_LIMIT,
+                        REM,
+                        PRICETYPE,
+                        PRICELISTCODE,
+                        PRICE_ROUNDOFF,
+                        PCODE,
+                        OUTLOCCODE,
+                        ORDCODE,
+                        INLOCCODE,
+                        INCL_VAT_IN_DIST,
+                        FORMCODE,ECODE,
+                        DOCNO,
+                        DOCCODE,
+                        DOC_STATUS,
+                        DISCOUNT_MODE,
+                        DISCOUNT_FACTOR,
+                        DISCOUNT_BASIS,
+                        DCNO,
+                        DCDT,
+                        DCCODE,
+                        DCBARCODE,
+                        CNLECODE,
+                        CNLDT,
+                        CMPTAX_CODE_BASIS,
+                        CMPCODE,
+                        AGCODE,
+                        AGAINST_SO,
+                        ADMSITE_CODE_OWNER,
+                        ADMSITE_CODE,
+                        ADMOU_CODE
+                        -- START REV : 007
+                        ,ENTRY_SOURCE
+                        ,ENTRY_MODE
+                        -- END REV :007
+                      )
+              VALUES (  R.YCODE,
+                        v_TRPCODE,
+                        R.TIME,
+                        'P',
+                        v_scheme_docno,
+                        R.FINTRADEGRP_CODE,
+                        V_SALETYPE,
+                        V_ROUNDOFF_LIMIT,
+                        'Imported from excel',
+                        v_PRICETYPE,
+                        v_PRICELISTCODE,
+                        v_PRICE_ROUNDOFF,
+                        r.pcode,
+                        r.stock_point_code,
+                        NULL,
+                        v_INloccode,
+                        v_INCL_VAT_IN_DIST,
+                        R.formcode,
+                        r.ecode,
+                        null,
+                        r.doccode,
+                        'C',
+                        V_DISCOUNT_MODE,
+                        V_DISCOUNT_FACTOR,
+                        V_DISCOUNT_BASIS,
+                        v_tempno,
+                        R.DC_DATE,
+                        V_DCCODE,
+                        V_DCBARCODE,
+                        NULL,
+                        NULL,
+                        V_CMPTAX_CODE_BASIS,
+                        1,
+                        -- START REV : 011
+                        --NULL,
+                        R.AGCODE,
+                        -- END REV : 011
+                        'Y',
+                        P_CONNECT_SITE,
+                        R.ADMSITE_CODE,
+                        -- START REV : 004
+                        --1
+                         p_connect_ou
+                        -- END REV : 004
+                        -- START REV : 007
+                        ,'EXCEL'
+                        ,'O'
+                        -- END REV :007
+                     );
+
+    -- ERRAUDIT(26,26,26,v_DCCODE);
+ -- erraudit('m','m','m',P_USERID||'*'||r.DC_DATE||'*'||r.document_scheme||'*'||r.SITE_SHORT_NAME||'*'||p_connect_site||'*'||R.FINTRADEGRP_CODE||'*'||V_SALETYPE||'*'||r.formcode);
+         DECLARE
+            C_ORD_DET CURSOR FOR
+               SELECT DISTINCT  UPPER(order_no) order_no,ORDDT,
+                                p.pcode pcode, p.ordcode ordcode,
+                                -- START REV : 011
+                                P.AGCODE,
+                                -- END REV : 011
+                                SUM(coalesce(ITEM_QTY,0))   ITEM_QTY,
+                                ITEM            ITEM,
+                                BATCH_SERIAL_NO
+                                FROM int$stg_DC_AGNST_ORD a1,
+                                     SALORDMAIN p
+                                WHERE UPPER(order_no) = UPPER(p.scheme_docno)
+                                AND  UPPER(a1.document_scheme) = UPPER(r.document_scheme)
+                                            -- START REV  : 002
+                               -- AND UPPER (a1.SITE_SHORT_NAME) = UPPER (r.SITE_SHORT_NAME)
+                               AND ((
+                                            UPPER(A1.SITE_SHORT_NAME) = UPPER(R.SITE_SHORT_NAME)
+                                            AND
+                                            A1.SITE_SHORT_NAME IS NOT NULL
+                                    )
+                                    OR (
+                                            UPPER(A1.SITE_CODE) = UPPER(R.SITE_CODE)
+                                            AND
+                                            A1.SITE_CODE IS NOT NULL
+                                    )
+                                    )
+                               -- END REV : 002
+                                AND p.admsite_code_OWNER = p_connect_site
+                                AND coalesce(p.stat, 'N') <> 'T'
+                                AND p.authorcode IS NOT NULL
+                                AND coalesce(ISHOLD, 'N') = 'N'
+                                -- START REV : 002
+                                AND coalesce(P.RESERVE_INV,'N') = 'N'
+                                -- END REV : 002
+                                AND EXISTS (  SELECT NULL
+                                            FROM SALORDDET D
+                                            WHERE D.ORDCODE = P.ORDCODE
+                                            AND coalesce(d.ordqty, 0) - coalesce(d.cnlqty, 0) - coalesce(d.Dqty, 0) > 0
+                                            )
+                                AND   coalesce(p.SALTRADEGRP_CODE,0) = coalesce(R.FINTRADEGRP_CODE,0)
+                                AND   coalesce(p.FORMCODE,0) = coalesce(R.FORMCODE,0)
+                                AND   p.SALETYPE        = V_SALETYPE
+                                AND   P.ADMSITE_CODE = R.ORD_ADMSITE_CODE
+                                AND   UPPER(a1.stock_point_name) = UPPER(r.stock_point_name)
+                                AND   P.ORDDT <= R.DC_DATE
+                                -- START REV : 009
+                                -- AND YCODE = R.YCODE
+                                AND   YCODE <= R.YCODE
+                                -- END REV : 009
+                                -- START REV : 011
+                                AND (
+                                      (
+                                       R.AGCODE IS NOT NULL
+                                       AND  P.AGCODE  = R.AGCODE
+                                      )
+                                      OR
+                                      R.AGCODE IS NULL
+                                    )
+                                -- END REV : 011 
+                                AND   A1.USERID = P_USERID
+                                GROUP BY UPPER(order_no),
+                                                ORDDT,
+                                                p.pcode,
+                                                p.ordcode,
+                                                item,
+                                                -- START REV : 011
+                                                P.AGCODE,
+                                                BATCH_SERIAL_NO;
+                                                -- END REV : 011
+             V_ORD_XCL_QTY double precision := 0;
+         BEGIN
+            FOR CORD IN C_ORD_DET
+            LOOP
+
+             V_ORD_XCL_QTY := coalesce(CORD.item_qty,0);
+
+                DECLARE
+                            c_det CURSOR
+                            FOR
+                               SELECT DISTINCT 
+				   I.ICODE,
+                   (  coalesce(D.ORDQTY, 0)
+                         - coalesce(D.CNLQTY, 0)
+                         - coalesce(D.DQTY, 0)
+                    ) ORDQTY,
+                    D.RATE,
+                    CASE WHEN I.ITEM_MANAGEMENT_MODE = 'I' OR I.PRICE_MANAGEMENT = 'I' THEN I.MRP
+                    ELSE B.MRP
+                    END RSP,
+                    CASE WHEN I.ITEM_MANAGEMENT_MODE = 'I' OR I.PRICE_MANAGEMENT = 'I' THEN I.LISTED_MRP
+                    ELSE B.LISTED_MRP
+                    END  LISTED_MRP,
+                    D.ROUNDOFF,
+                    D.CODE DET_CODE,
+                    D.DISCOUNT,
+                    D.FACTOR,
+                    D.BASIC_RATE BASIC_RATE,
+                    CORD.ORDER_NO,
+                    CORD.ORDCODE ,
+                    CORD.ORDDT,
+                    CASE WHEN I.ITEM_MANAGEMENT_MODE = 'I' OR I.PRICE_MANAGEMENT = 'I' THEN I.WSP
+                    ELSE B.WSP
+                    END  WSP,
+                    B.CODE INVBATCH_SERIAL_CODE
+                    FROM int$stg_dc_agnst_ord a
+					INNER JOIN invitem i ON ((UPPER(a.item) = UPPER(i.icode)) OR (UPPER(a.item) = UPPER(i.barcode)))
+					LEFT OUTER JOIN invbatch_serial bs ON (i.icode = bs.icode)
+				 	LEFT OUTER JOIN invbatch_serial b ON (UPPER(a.batch_serial_no) = UPPER(b.batch_serial_no ))
+				 	--LEFT OUTER JOIN invitem i ON (i.icode = b.icode)
+				 INNER JOIN salorddet d ON i.icode = d.icode
+				 INNER JOIN salordmain e ON e.ordcode = d.ordcode
+WHERE a.dc_date = r.DC_DATE 
+  AND ((CORD.AGCODE IS NOT NULL AND e.agcode  = CORD.AGCODE) OR CORD.AGCODE IS NULL)
+  AND d.ordcode = CORD.ordcode
+  AND a.userid = p_userid
+  AND coalesce(d.ordqty, 0) - coalesce(d.cnlqty, 0) - coalesce(d.Dqty, 0) > 0
+  AND UPPER(a.order_no) = UPPER(CORD.order_no)
+  AND UPPER(a.stock_point_name) = UPPER(r.stock_point_name)
+  --AND ((UPPER(a.item) = UPPER(i.icode)) OR (UPPER(a.item) = UPPER(i.barcode)))
+  AND UPPER(a.item)= UPPER(CORD.item)
+  AND UPPER(a.document_scheme) = UPPER(r.document_scheme)
+  AND (a.batch_serial_no IS NULL OR UPPER(a.batch_serial_no) = UPPER(cord.batch_serial_no));
+                                           -- END REV :015
+                            v_qty        bigint := 0;
+                            curr_qty     bigint := 0;
+                            v_discount   bigint  := 0;
+                            V_DET_CODE   bigint  :=0;
+                         BEGIN
+                            FOR c2 IN C_DET
+                            LOOP
+
+                             IF coalesce(V_ORD_XCL_QTY, 0) > 0
+                               THEN
+                                  SELECT CASE WHEN SIGN(c2.ordqty - V_ORD_XCL_QTY)=1 THEN  V_ORD_XCL_QTY  ELSE c2.ordqty END
+                                    INTO STRICT curr_qty
+;
+
+                             SELECT nextval('invdcdet_code') INTO STRICT V_DET_CODE;
+
+                                INSERT INTO INVDCDET(   BASIC_RATE,
+                                    CODE,
+                                    COSTRATE,
+                                    DCCODE,
+                                    DISCOUNT,
+                                    FACTOR,
+                                    ICODE,
+                                    ISQTY,
+                                    MRP,
+                                    ORDCODE,
+                                    RATE,
+                                    REMARKS,
+                                    ROUNDOFF,
+                                    SALORDDET_CODE,
+                                    SALORDMAIN_ORDDT,
+                                    SALORDMAIN_SCHEME_DOCNO,
+                                    SOICODE,
+                                    -- START REV : 014
+                                    LISTEP_MRP,
+                                    -- END REV : 014
+                                    -- START REV : 015
+                                    WSP,
+                                    INVBATCH_SERIAL_CODE
+                                    -- END REV : 015
+                                    )
+
+                                    VALUES (
+                                    C2.BASIC_RATE,
+                                    V_DET_CODE,
+                                    NULL,
+                                    r.DCCODE,
+                                    c2.discount,
+                                    C2.FACTOR,
+                                    C2.ICODE,
+                                    curr_qty,
+                                    C2.RSP,
+                                    C2.ORDCODE,
+                                    C2.RATE,
+                                    NULL,
+                                    C2.ROUNDOFF,
+                                    C2.DET_CODE,
+                                    C2.ORDDT,
+                                    C2.ORDER_NO,
+                                    NULL,
+                                    -- START REV : 014
+                                    C2.LISTED_MRP,
+                                    -- END REV : 014
+                                    -- START REV : 015
+                                    C2.WSP,
+                                    C2.INVBATCH_SERIAL_CODE
+                                    -- END REV : 015
+                                    );
+
+                                  call update_SALordmain_status(C2.ordcode);
+
+                                  V_ORD_XCL_QTY := coalesce(V_ORD_XCL_QTY, 0) - coalesce(curr_qty, 0);
+
+                               END IF;
+                            END LOOP;
+                         END;
+                    END LOOP;
+             END;
+
+         UPDATE INVDCMAIN
+            SET DCCODE = DCCODE,
+            DCNO = v_tempno
+          WHERE DCCODE = r.DCCODE;
+
+         SELECT DCNO, scheme_docno
+           INTO STRICT v_GRCno, v_scheme_docno
+           FROM INVDCMAIN
+          WHERE DCCODE = r.DCCODE;
+
+          begin
+          select count(*)
+          into STRICT   v_cnt_det
+          from   invdcdet
+          where  DCCODE = r.dccode;
+          end;
+
+         IF coalesce(v_cnt_det,0) = 0
+         THEN
+                 RAISE EXCEPTION 'insert_violation' USING ERRCODE = '50001';
+         END IF;
+
+         IF coalesce(v_scheme_docno, 'AUTOMATIC') = 'AUTOMATIC'
+         THEN
+
+            RAISE EXCEPTION 'insert_violation' USING ERRCODE = '50001';
+         END IF;
+
+         -- START REV : 010
+         INSERT INTO DC_AGAINST_ORD(DCCODE, USERID) VALUES (R.DCCODE, P_USERID);
+         -- END REV : 010
+      END LOOP;
+
+-- log to be added in History table
+      SELECT nextval('int$error_log_code')
+        INTO STRICT vsession
+;
+
+      -- START REV : 010
+      vdetailtbl :=
+            'CREATE TABLE ginarchive.DC_AGNST_ORD_'
+         || vsession::text
+         || ' AS '
+         || ' select m.scheme_docno, m.dcdt, c.shrtname site_short_name, d.locname out_stock_pt_name, m.rem dc_rem '
+         || ' from   invdcmain m, dc_against_ord a, admsite c, invloc d '
+         || ' where  m.dccode = a.dccode '
+         || ' and    m.admsite_code = c.code '
+         || ' and    m.outloccode = d.loccode '
+         || ' and    a.userid = '||p_userid::text
+         || ' order by m.scheme_docno';
+
+        -- END REV : 010
+      EXECUTE vdetailtbl;
+
+      -- start rev : 003
+      --vdetailrec := 'SELECT count(1) FROM DC_AGNST_ORD_' || vsession::text;
+      vdetailrec := 'SELECT count(1) FROM ginarchive.DC_AGNST_ORD_' || vsession::text;
+      -- end rev : 003
+      EXECUTE vdetailrec
+                   INTO STRICT vcount;
+
+      IF coalesce(vcount, 0) = 0
+      THEN
+
+         RAISE EXCEPTION 'insert_violation' USING ERRCODE = '50001';
+      END IF;
+
+      INSERT INTO int$history(code, importedby, importedon, classname,
+                   summary,
+                   history_detail_tablename, history_detail_row_count
+                  )
+           VALUES (nextval('int$history_code'), p_userid, clock_timestamp(), 'DC_AGNST_ORD',
+                   vcount::TEXT || ' Transaction(s) has been created.',
+                   -- start rev : 003
+                   --'DC_AGNST_ORD_' || vsession, vcount
+                   'ginarchive.DC_AGNST_ORD_' || vsession::text, vcount::text
+                   -- end rev : 003
+                  );
+
+      RETURN('1');
+   EXCEPTION
+      WHEN SQLSTATE '50001' THEN
+         errcode := -02222;
+         errmsg := 'Data inconsistency';
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code, lineno, classname, userid,
+                      errortype, errordesc, createdon
+                     )
+              VALUES (nextval('int$error_log_code'), 0, 'DC_AGNST_ORD', p_userid,
+                      errcode, errmsg, clock_timestamp()
+                     );
+
+         --COMMIT;
+         RETURN('0');
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code, lineno, classname, userid,
+                      errortype, errordesc, createdon
+                     )
+              VALUES (nextval('int$error_log_code'), 0, 'DC_AGNST_ORD', p_userid,
+                      errcode, errmsg, clock_timestamp()
+                     );
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+   -- Clear GRC against PO
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

@@ -1,0 +1,127 @@
+procedure "main"."db_pkg_stock$pro_for_new()" {
+  text = """
+
+DECLARE
+
+        V_AMOUNT          INVSTOCK.AMOUNT%TYPE;
+        V_COSTAMOUNT      INVSTOCK.COSTAMOUNT%TYPE;
+        V_COSTRATE        INVSTOCK.COSTRATE%TYPE;
+        V_NONINVENTORY    INVITEM.NONINVENTORY%TYPE;
+        V_STOCKCODE       INVSTOCK.STOCKCODE%TYPE;
+        V_OUCODE          INVSTOCK.ADMOU_CODE%TYPE;
+
+BEGIN
+        PERFORM set_config('db_pkg_stock.l_noninventory', (SELECT  NONINVENTORY
+        FROM    INVITEM
+        WHERE   ICODE = current_setting('db_pkg_stock.l_new_icode')::CHARACTER VARYING(9)), false);
+
+        IF  NULLIF(current_setting('db_pkg_stock.l_noninventory'),'')::char(1) = 'N' THEN
+            IF   NULLIF(current_setting('db_pkg_stock.l_site_upd_cost'),'')::char(1) = 'Y' THEN
+                 PERFORM set_config('db_pkg_stock.l_site_costrate', 
+									coalesce(current_setting('db_pkg_stock.l_site_costrate')::DOUBLE PRECISION,
+									coalesce(current_setting('db_pkg_stock.l_new_rate')::DOUBLE PRECISION,0))::numeric, false);
+                 PERFORM set_config('db_pkg_stock.l_site_costamount', 
+									round((coalesce(current_setting('db_pkg_stock.l_new_qty')::DOUBLE PRECISION,0)*coalesce(current_setting('db_pkg_stock.l_site_costrate')::DOUBLE PRECISION,
+									coalesce(current_setting('db_pkg_stock.l_new_rate')::DOUBLE PRECISION,0)))::numeric,2), false);
+            ELSE
+                 PERFORM set_config('db_pkg_stock.l_site_costamount', 
+									(round((coalesce(current_setting('db_pkg_stock.l_new_qty')::DOUBLE PRECISION,0)*coalesce(current_setting('db_pkg_stock.l_site_costrate')::DOUBLE PRECISION,0))::NUMERIC,2)), false);
+            END IF;
+
+            V_COSTRATE   := coalesce(NULLIF(current_setting('db_pkg_stock.l_costrate'),'')::DOUBLE PRECISION,0);
+            V_COSTAMOUNT := round((coalesce(NULLIF(current_setting('db_pkg_stock.l_new_qty'),'')::DOUBLE PRECISION,0) * coalesce(V_COSTRATE,0))::numeric,8);
+
+            PERFORM set_config('db_pkg_stock.l_site_costrate', 0, false);
+            PERFORM set_config('db_pkg_stock.l_site_costamount', 0, false);
+
+            V_AMOUNT := round((coalesce(NULLIF(current_setting('db_pkg_stock.l_new_qty'),'')::DOUBLE PRECISION,0)*coalesce(current_setting('db_pkg_stock.l_new_rate')::DOUBLE PRECISION,0))::numeric,3);
+
+            IF  current_setting('db_pkg_stock.l_stockcode') = '' THEN
+                PERFORM set_config('db_pkg_stock.l_stockcode', (nextval('erpstock')
+                ), false);
+            END IF;
+
+            SELECT  ADMOU_CODE
+            INTO STRICT    V_OUCODE
+            FROM    ADMSITE
+            WHERE   CODE = NULLIF(current_setting('db_pkg_stock.l_refsitecode'),'')::BIGINT;
+
+            INSERT INTO INVSTOCK(DETAIL_CODE, STOCKCODE,ENTCODE, ENTNO, SCHEME_DOCNO, ENTDT, ENTTYPE, LOCCODE, YCODE, ICODE,
+                    QTY, RATE, AMOUNT, COSTRATE, COSTAMOUNT, REFPCODE, REFLOCCODE, REFCMPCODE, REFGLCODE, REFDEPTCODE,
+                    REFPRCODE, REFDOCNO, REFPKGCODE, REFDCCODE, SUBENTTYPE, UPD_COST,ITEM_REMARKS, ADMSITE_CODE,
+                    ISSECONDARY, SITE_UPD_COST, SITE_COSTRATE, SITE_COSTAMOUNT, ADMOU_CODE,
+                    TRANSIT_SOURCE_ADMSITE_CODE, PSITE_STOCKPOINT_CODE,
+                    --START REV : 004
+                    PROMOAMT,DISCOUNTAMT,EXTAXAMT,TAXAMT,CHANNELTYPE, SHIPCHG, CODCHG, GWCHG,
+                    INVBIN_CODE,
+                    RESERVE_QTY,
+                    REF_FAMILY_CODE,
+                    PROMOCODE,
+                    PROMONO,
+                    PROMONAME,
+                    PROMOSTARTDATE,
+                    PROMOENDDATE,
+                    INVBATCH_SERIAL_CODE
+                    )
+            VALUES (NULLIF(current_setting('db_pkg_stock.l_detail_code'),'')::CHARACTER VARYING(50),
+					NULLIF(current_setting('db_pkg_stock.l_stockcode'),'')::BIGINT,
+					NULLIF(current_setting('db_pkg_stock.l_entcode'),'')::CHARACTER VARYING(50),
+					NULLIF(current_setting('db_pkg_stock.l_entno'),'')::BIGINT,
+					NULLIF(current_setting('db_pkg_stock.l_scheme_docno'),'')::CHARACTER VARYING(25),
+					TO_DATE(NULLIF(current_setting('db_pkg_stock.l_entdt'),''),'YYYY-MM-DD'),
+					NULLIF(current_setting('db_pkg_stock.l_enttype'),'')::CHARACTER VARYING(3),
+					NULLIF(current_setting('db_pkg_stock.l_loccode'),'')::BIGINT,
+					NULLIF(current_setting('db_pkg_stock.l_ycode'),'')::BIGINT,
+                    NULLIF(current_setting('db_pkg_stock.l_new_icode'),'')::CHARACTER VARYING(9),
+					coalesce(current_setting('db_pkg_stock.l_new_qty')::NUMERIC(20,3),0),
+					coalesce(current_setting('db_pkg_stock.l_new_rate')::NUMERIC(20,3),0),
+					V_AMOUNT,
+					V_COSTRATE,
+					V_COSTAMOUNT,
+					NULLIF(current_setting('db_pkg_stock.l_refpcode'),'')::BIGINT,
+                    NULLIF(current_setting('db_pkg_stock.l_refloccode'),'')::BIGINT,
+					NULLIF(current_setting('db_pkg_stock.l_refcmpcode'),'')::BIGINT,
+					NULLIF(current_setting('db_pkg_stock.l_refglcode'),'')::BIGINT,
+					NULLIF(current_setting('db_pkg_stock.l_refdeptcode'),'')::BIGINT,
+					NULLIF(current_setting('db_pkg_stock.l_refprcode'),'')::BIGINT,
+					NULLIF(current_setting('db_pkg_stock.l_refdocno'),'')::CHARACTER VARYING(100),
+					NULLIF(current_setting('db_pkg_stock.l_refpkgcode'),'')::BIGINT,
+                    NULLIF(current_setting('db_pkg_stock.l_refdccode'),'')::BIGINT,
+					NULLIF(current_setting('db_pkg_stock.l_subenttype'),'')::CHARACTER VARYING(3), 
+					NULLIF(current_setting('db_pkg_stock.l_upd_cost'),'')::CHAR(1),
+					NULLIF(current_setting('db_pkg_stock.l_item_remarks'),'')::CHARACTER VARYING(500), 
+					NULLIF(current_setting('db_pkg_stock.l_refsitecode'),'')::BIGINT, 
+					NULLIF(current_setting('db_pkg_stock.l_issecondary'),'')::CHAR(1),
+                    NULLIF(current_setting('db_pkg_stock.l_site_upd_cost'),'')::CHAR(1), 
+					current_setting('db_pkg_stock.l_site_costrate')::NUMERIC(20,3), 
+					current_setting('db_pkg_stock.l_site_costamount')::NUMERIC(20,3),
+					V_OUCODE,
+                    NULLIF(current_setting('db_pkg_stock.l_ts_sitecode'),'')::BIGINT, 
+					NULLIF(current_setting('db_pkg_stock.l_psite_stkpt_code'),'')::CHARACTER VARYING(50),
+                    NULLIF(current_setting('db_pkg_stock.l_promoamt'),'')::NUMERIC(20,2),
+					NULLIF(current_setting('db_pkg_stock.l_discountamt'),'')::NUMERIC(20,2),
+					current_setting('db_pkg_stock.l_extaxamt')::NUMERIC(20,2),
+					current_setting('db_pkg_stock.l_taxamt')::NUMERIC(20,2),
+                    NULLIF(current_setting('db_pkg_stock.l_channeltype'),'')::CHARACTER VARYING(10), 
+					current_setting('db_pkg_stock.l_shipchg')::NUMERIC(20,2), 
+					current_setting('db_pkg_stock.l_codchg')::NUMERIC(20,2), 
+					current_setting('db_pkg_stock.l_gwchg')::NUMERIC(20,2),
+                    NULLIF(current_setting('db_pkg_stock.l_invbin_code'),'')::BIGINT,
+                    current_setting('db_pkg_stock.l_reserve_qty')::NUMERIC(20,3),
+                    NULLIF(current_setting('db_pkg_stock.l_ref_family_code'),'')::BIGINT,
+                    NULLIF(current_setting('db_pkg_stock.l_promocode'),'')::CHARACTER VARYING(50),
+                    NULLIF(current_setting('db_pkg_stock.l_promono'),'')::CHARACTER VARYING(15),
+                    NULLIF(current_setting('db_pkg_stock.l_promoname'),'')::CHARACTER VARYING(200),
+                    TO_DATE(NULLIF(current_setting('db_pkg_stock.l_promostartdate'),''),'YYYY-MM-DD'),
+                    TO_DATE(NULLIF(current_setting('db_pkg_stock.l_promoenddate'),''),'YYYY-MM-DD'),
+                    NULLIF(current_setting('db_pkg_stock.l_batch_serial_code'),'')::BIGINT
+                    );
+
+        END IF;
+    END;
+"""
+  arguments = [
+  ]
+  language = plpgsql
+}
+

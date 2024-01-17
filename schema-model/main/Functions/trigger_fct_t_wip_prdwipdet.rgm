@@ -1,0 +1,481 @@
+function "main"."trigger_fct_t_wip_prdwipdet()" {
+  text = """
+
+/********************************************************************************************************************
+   NAME: T_WIP_PRDWIPDET
+   PURPOSE:
+   REVISIONS:
+   No.          Date            Author      Description
+   ---------    ----------      ------      -------------------------------------------------------------------------
+   REV :000     24-JUL-2013     MANASH      (BUG ID : 825)  V11 Production.
+   REV :001     06-DEC-2013     MANASH      (BUG ID : 925)  V11 ADVANCE Production.
+   REV : 002    12-DEC-2013     DIPTIMAN    (BUG ID : 924)  Advance production related changes.
+   REV : 003    03-APR-2014     DIPTIMAN    (BUG ID : 1268) When route is not defined then component is not showing.
+   REV : 004    11-JUL-2014     MANASH      (BUG ID : 1408) Workbench.
+   REV : 005    01-SEP-2014     MANASH      (BUG ID : 1567) Alternate item receive.
+   REV : 006    05-FEB-2015     MAANSH      (BUG ID : 2075) Issue in Production Cost Calculation identified for AND Design.
+   REV : 007    16-JUL-2015     MANASH      (BUG ID : XXX)  Generic Production release.
+   REV : 008    01-JAN-2019     DIPTIMAN    (TFS ID : 12506) Withdraw costrate from column list for trigger execution.
+   REV : 009    11-APR-2022     SIDDHARTHA  (TFS ID : XXXX) Introduction of Batch Serial Code
+********************************************************************************************************************/
+DECLARE
+    V_WIPTXN_TYPE   PRDWIPMAIN.WIPTXN_TYPE%TYPE;
+    V_TYPE          varchar(100);
+    V_REFPCODE      PRDWIPTRANS.PCODE%TYPE;
+    V_REFPRCODE     PRDWIPTRANS.PRCODE%TYPE;
+    V_OP_SEQ        PRDWIPTRANS.OPERATION_SEQ%TYPE;
+    V_TXN_TYPE      PRDWIPTRANS.TXN_TYPE%TYPE;
+    V_MAX_SEQ       PRDLOTOPERATION.OPERATION_SEQ%TYPE;
+    V_ADMSITE_CODE  PRDWIPMAIN.ADMSITE_CODE%TYPE;
+    V_TXN_DATE      PRDWIPMAIN.WIP_DATE%TYPE;
+    -- START REV : 007
+    --V_OPERATION_SEQ PRDWIPTRANS.OPERATION_SEQ%TYPE;
+    --V_PRCODE        PRDWIPTRANS.PRCODE%TYPE;
+    V_PRV_OPSEQ     PRDWIPTRANS.OPERATION_SEQ%TYPE;
+    V_PRV_PRCODE    PRDWIPTRANS.PRCODE%TYPE;
+    V_JRCCODE       PRDJRCMAIN.CODE%TYPE;
+    -- END REV : 007
+    V_FOUND         char(1) := 'N';
+    V_JOBCODE       PRDWIPTRANS.JOBCODE%TYPE;
+    V_JOBDT         timestamp;
+    
+    V_JOBTYPE       PRDJOBMAIN.JOBTYPE%TYPE := '@';
+BEGIN
+  BEGIN
+    IF    TG_OP = 'INSERT' THEN
+          V_TYPE := 'INSERTING';
+    ELSIF TG_OP = 'UPDATE' THEN
+          V_TYPE := 'UPDATING';
+    ELSIF TG_OP = 'DELETE' THEN
+          V_TYPE := 'DELETING';
+    END IF;
+
+    SELECT  PCODE,
+            PRCODE,
+            WIPTXN_TYPE,
+            ADMSITE_CODE,
+            JOBCODE,
+            WIP_DATE,
+            -- START REV : 007
+            JRCCODE
+            -- END REV : 007
+    INTO STRICT    V_REFPCODE,
+            V_REFPRCODE,
+            V_WIPTXN_TYPE,
+            V_ADMSITE_CODE,
+            V_JOBCODE,
+            V_TXN_DATE,
+            -- START REV : 007
+            V_JRCCODE
+            -- END REV : 007
+    FROM    PRDWIPMAIN
+    WHERE   CODE = coalesce(OLD.WIPTXN_CODE, NEW.WIPTXN_CODE);
+
+    -- For WIP Posting
+    IF    V_WIPTXN_TYPE = 'I' THEN
+          V_TXN_TYPE := 'ISS';
+    ELSIF V_WIPTXN_TYPE = 'R' THEN
+          V_TXN_TYPE := 'RET';
+    END IF;
+
+    SELECT  OPERATION_SEQ
+    INTO STRICT    V_OP_SEQ
+    FROM    PRDJOBBOM
+    WHERE   CODE=coalesce(NEW.JOBBOM_CODE,OLD.JOBBOM_CODE);
+
+    BEGIN
+        SELECT  JOB_DATE,
+                JOBTYPE
+        INTO STRICT
+                V_JOBDT,
+                V_JOBTYPE
+        FROM    PRDJOBMAIN
+        WHERE   CODE = coalesce(NEW.JOBCODE,OLD.JOBCODE);
+    EXCEPTION
+        WHEN no_data_found THEN
+        NULL;
+    END;
+
+    IF  V_WIPTXN_TYPE IN ('I','R') THEN
+        BEGIN
+            -- start rev : 005 
+            /*
+            SELECT  OPERATION_SEQ, PRCODE
+            INTO    V_OPERATION_SEQ, V_PRCODE
+            FROM    PRDLOTOPERATION
+            WHERE   CODE  =
+                            ( SELECT  MAX(CODE)
+                              FROM    PRDLOTOPERATION
+                              WHERE   LOTCODE                = NVL(:NEW.LOTCODE,:OLD.LOTCODE)
+                              AND     OPERATION_SEQ          < V_OP_SEQ
+                              AND     ASSEMBLY_ICODE         = NVL(:NEW.ASSEMBLY_ICODE,:OLD.ASSEMBLY_ICODE)
+                              AND     NVL(ASS_SAITEM_CODE,0) = NVL(:NEW.COM_SAITEM_CODE,NVL(:OLD.COM_SAITEM_CODE,0))
+                              AND     MOD(OPERATION_SEQ,1)   = 0
+                            );
+            */
+            
+            -- START REV : 007
+            /*
+            SELECT  L.OPERATION_SEQ, 
+                    L.PRCODE
+            INTO    
+                    V_OPERATION_SEQ, 
+                    V_PRCODE
+            FROM    
+                    PRDLOTOPERATION L
+            WHERE   
+                    L.LOTCODE               = NVL(:NEW.LOTCODE,:OLD.LOTCODE)
+            AND     L.ASSEMBLY_ICODE        = NVL(:NEW.ASSEMBLY_ICODE,:OLD.ASSEMBLY_ICODE)
+            AND     NVL(L.ASS_SAITEM_CODE,0)= NVL(:NEW.COM_SAITEM_CODE,NVL(:OLD.COM_SAITEM_CODE,0))
+            AND     MOD(L.OPERATION_SEQ,1)  = 0
+            AND     L.IS_STANDARD           = 'Y'
+            AND     L.OPERATION_SEQ         =
+                                            ( SELECT  MAX(L1.OPERATION_SEQ)
+                                              FROM    PRDLOTOPERATION L1
+                                              WHERE   L1.LOTCODE                = NVL(:NEW.LOTCODE,:OLD.LOTCODE)
+                                              AND     L1.OPERATION_SEQ          < V_OP_SEQ
+                                              AND     L1.ASSEMBLY_ICODE         = NVL(:NEW.ASSEMBLY_ICODE,:OLD.ASSEMBLY_ICODE)
+                                              AND     NVL(L1.ASS_SAITEM_CODE,0) = NVL(:NEW.COM_SAITEM_CODE,NVL(:OLD.COM_SAITEM_CODE,0))
+                                              AND     MOD(L1.OPERATION_SEQ,1)   = 0
+                                            );    
+            -- end rev : 005  
+            */
+            
+            V_PRV_OPSEQ := DB_PKG_PRODUCTION$GET_PRV_OPSEQ(
+                                    coalesce(NEW.LOTCODE,OLD.LOTCODE),
+                                    coalesce(NEW.ASSEMBLY_ICODE,OLD.ASSEMBLY_ICODE),
+                                    coalesce(NEW.ASS_SAITEM_CODE,OLD.ASS_SAITEM_CODE),
+                                    coalesce(NEW.COM_SAITEM_CODE,OLD.COM_SAITEM_CODE),
+                                    V_OP_SEQ
+                                );
+
+            V_PRV_PRCODE := DB_PKG_PRODUCTION$GET_PRV_PRCODE(
+                                    coalesce(NEW.LOTCODE,OLD.LOTCODE),
+                                    coalesce(NEW.ASSEMBLY_ICODE,OLD.ASSEMBLY_ICODE),
+                                    coalesce(NEW.ASS_SAITEM_CODE,OLD.ASS_SAITEM_CODE),
+                                    coalesce(NEW.COM_SAITEM_CODE,OLD.COM_SAITEM_CODE),
+                                    V_OP_SEQ
+                                );
+            -- END REV : 007              
+        EXCEPTION
+            WHEN no_data_found THEN 
+            NULL;
+        END;
+
+        IF  coalesce(NEW.LOTCODE, OLD.LOTCODE) IS NOT NULL THEN
+            SELECT  MAX(OPERATION_SEQ)
+            INTO STRICT    V_MAX_SEQ
+            FROM    PRDLOTOPERATION
+            WHERE   LOTCODE = coalesce(NEW.LOTCODE,OLD.LOTCODE);
+        ELSE
+            SELECT  coalesce(MAX(OPERATION_SEQ),0)
+            INTO STRICT    V_MAX_SEQ
+            FROM    PRDROUTEDET D,
+                    INVITEM     I
+            WHERE   I.ICODE         = coalesce(NEW.ASSEMBLY_ICODE, OLD.ASSEMBLY_ICODE)
+            AND     I.ROUTECODE     = D.ROUTECODE;
+        END IF;
+
+        IF (V_OP_SEQ > V_MAX_SEQ) OR V_JOBTYPE = 'AN' THEN
+            CALL DB_PKG_PRODUCTION$POST_WIP_TRANSACTION(
+                V_ADMSITE_CODE,
+                V_TYPE,
+                V_TXN_TYPE,
+                OLD.CODE,
+                NEW.CODE,
+                NEW.LOTCODE,
+                NEW.JOBCODE,
+                -- START REV : 007
+                --:NEW.WIPTXN_CODE,
+                --NULL,
+                coalesce(NEW.WIPTXN_CODE,OLD.WIPTXN_CODE),
+                V_JRCCODE,
+                -- END REV : 007
+                V_OP_SEQ,
+                V_REFPCODE,
+                V_REFPRCODE,
+                NEW.ASSEMBLY_ICODE,
+                NEW.COMPONENT_ICODE,
+                'COM',
+                NULL,
+                CASE WHEN V_TXN_TYPE='ISS' THEN NEW.QTY ELSE 0-NEW.QTY END,
+                NEW.COSTRATE,
+                NULL,
+                V_TXN_DATE,
+                NEW.ASS_SAITEM_CODE,
+                NEW.COM_SAITEM_CODE
+                -- START REV : 005
+                /*
+                -- START REV : 002
+                ,:NEW.ASSEMBLY_ICODE
+                -- END REV : 002
+                */
+                ,coalesce(NEW.JOB_ASSEMBLY_ICODE,OLD.ASSEMBLY_ICODE)
+                -- END REV : 005
+                --START REV : 009
+                ,NULL
+                ,coalesce(NEW.INVBATCH_SERIAL_CODE,OLD.INVBATCH_SERIAL_CODE)
+                --END REV : 009
+            );
+        ELSE
+            CALL DB_PKG_PRODUCTION$POST_WIP_TRANSACTION(
+                V_ADMSITE_CODE,
+                V_TYPE,
+                V_TXN_TYPE,
+                OLD.CODE,
+                NEW.CODE,
+                NEW.LOTCODE,
+                NEW.JOBCODE,
+                -- START REV : 007
+                --:NEW.WIPTXN_CODE,
+                --NULL,
+                coalesce(NEW.WIPTXN_CODE,OLD.WIPTXN_CODE),
+                V_JRCCODE,
+                -- END REV : 007
+                V_OP_SEQ,
+                V_REFPCODE,
+                V_REFPRCODE,
+                NEW.ASSEMBLY_ICODE,
+                NEW.COMPONENT_ICODE,
+                CASE WHEN coalesce(NEW.ASSEMBLY_ICODE,OLD.ASSEMBLY_ICODE) = coalesce(NEW.COMPONENT_ICODE,OLD.COMPONENT_ICODE) THEN
+                            'ASS'
+                     ELSE
+                            'COM'
+                END,
+                NULL,
+                CASE WHEN V_TXN_TYPE='ISS' THEN NEW.QTY ELSE 0-NEW.QTY END,
+                NEW.COSTRATE,
+                NULL,
+                V_TXN_DATE,
+                NEW.ASS_SAITEM_CODE,
+                NEW.COM_SAITEM_CODE
+                -- START REV : 005
+                /*
+                -- START REV : 002
+                ,:NEW.ASSEMBLY_ICODE
+                -- END REV : 002
+                */
+                ,coalesce(NEW.JOB_ASSEMBLY_ICODE,OLD.ASSEMBLY_ICODE)
+                -- END REV : 005
+                --START REV : 009
+                ,NULL
+                ,coalesce(NEW.INVBATCH_SERIAL_CODE, OLD.INVBATCH_SERIAL_CODE)
+                --END REV : 009
+            );
+
+            IF  coalesce(NEW.ASSEMBLY_ICODE,OLD.ASSEMBLY_ICODE) = coalesce(NEW.COMPONENT_ICODE,OLD.COMPONENT_ICODE) THEN
+                IF  V_TXN_TYPE = 'ISS' THEN
+                    BEGIN
+                        SELECT  coalesce(MAX('Y'),'N')
+                        INTO STRICT    V_FOUND
+                        FROM    PRDWIPTRANS
+                        WHERE   JOBCODE                 = NEW.JOBCODE
+                        AND     ASSEMBLY_ICODE          = NEW.ASSEMBLY_ICODE
+                        AND     coalesce(ASS_SAITEM_CODE,0)  = coalesce(NEW.ASS_SAITEM_CODE,0)
+                        AND     TXN_TYPE                = 'ORD'
+                        AND     ITEM_TYPE               = 'ASS';
+                    EXCEPTION
+                        WHEN no_data_found THEN
+                        NULL;
+                    END;
+
+                    IF  V_FOUND = 'N' THEN
+                        CALL DB_PKG_PRODUCTION$POST_WIP_TRANSACTION(
+                            V_ADMSITE_CODE,
+                            V_TYPE,
+                            'ORD',
+                            OLD.CODE,
+                            NEW.CODE,
+                            NEW.LOTCODE,
+                            NEW.JOBCODE,
+                            NULL,
+                            NULL,
+                            V_OP_SEQ,
+                            V_REFPCODE,
+                            V_REFPRCODE,
+                            NEW.ASSEMBLY_ICODE,
+                            NULL,
+                            'ASS',
+                            NEW.QTY,
+                            NULL,
+                            NULL,
+                            NULL,
+                            V_JOBDT,
+                            NEW.ASS_SAITEM_CODE,
+                            NULL,
+                            -- START REV : 005
+                            --:NEW.ASSEMBLY_ICODE
+                            coalesce(NEW.JOB_ASSEMBLY_ICODE,OLD.ASSEMBLY_ICODE)
+                            -- END REV : 005
+                            --START REV : 009
+                            ,NULL
+                            ,coalesce(NEW.INVBATCH_SERIAL_CODE, OLD.INVBATCH_SERIAL_CODE)
+                            --END REV : 009   
+                        );
+                    END IF;
+                END IF;
+
+                -- START REV : 007
+                /*
+                DB_PKG_PRODUCTION.POST_WIP_TRANSACTION
+                    (
+                        V_ADMSITE_CODE,
+                        V_TYPE,
+                        V_TXN_TYPE,
+                        :OLD.CODE,
+                        :NEW.CODE,
+                        :NEW.LOTCODE,
+                        :NEW.JOBCODE,
+                        :NEW.WIPTXN_CODE,
+                        NULL,
+                        NVL(V_OPERATION_SEQ,V_OP_SEQ),
+                        V_REFPCODE,
+                        NVL(V_PRCODE,V_REFPRCODE),
+                        :NEW.ASSEMBLY_ICODE,
+                        :NEW.COMPONENT_ICODE,
+                        CASE WHEN V_JOBTYPE = 'AN' THEN
+                                  'COM'
+                             ELSE
+                                  'PSD'
+                        END,              
+                        CASE WHEN V_TXN_TYPE ='ISS' THEN
+                                0-:NEW.QTY
+                            ELSE :NEW.QTY
+                        END,
+                        CASE WHEN V_TXN_TYPE ='ISS' THEN
+                                0-:NEW.QTY
+                            ELSE :NEW.QTY
+                        END,
+                        :NEW.COSTRATE,
+                        NULL,
+                        V_TXN_DATE,
+                        :NEW.ASS_SAITEM_CODE,
+                        :NEW.COM_SAITEM_CODE
+                        -- START REV : 005
+                        -- START REV : 002
+                        --,:NEW.ASSEMBLY_ICODE
+                        -- END REV : 002
+                        ,NVL(:NEW.JOB_ASSEMBLY_ICODE,:NEW.ASSEMBLY_ICODE)
+                        -- END REV : 005
+                    );
+                    */
+                CALL DB_PKG_PRODUCTION$POST_WIP_TRANSACTION(
+                    V_ADMSITE_CODE,
+                    V_TYPE,
+                    V_TXN_TYPE,
+                    OLD.CODE,
+                    NEW.CODE,
+                    NEW.LOTCODE,
+                    NEW.JOBCODE,
+                    coalesce(NEW.WIPTXN_CODE,OLD.WIPTXN_CODE),
+                    -- START REV : 007
+                    --NULL,
+                    V_JRCCODE,
+                    -- END REV : 007
+                    coalesce(V_PRV_OPSEQ,V_OP_SEQ),
+                    V_REFPCODE,
+                    coalesce(V_PRV_PRCODE,V_REFPRCODE),
+                    NEW.ASSEMBLY_ICODE,
+                    NEW.COMPONENT_ICODE,
+                    'PSD',
+                    NULL,
+                    CASE WHEN V_TXN_TYPE ='ISS' THEN
+                            0-NEW.QTY
+                        ELSE 
+                            NEW.QTY
+                    END,
+                    NEW.COSTRATE,
+                    NULL,
+                    V_TXN_DATE,
+                    NEW.ASS_SAITEM_CODE,
+                    NEW.COM_SAITEM_CODE,
+                    coalesce(NEW.JOB_ASSEMBLY_ICODE,OLD.ASSEMBLY_ICODE),
+                    --START REV : 009
+                    NULL,
+                    coalesce(NEW.INVBATCH_SERIAL_CODE, OLD.INVBATCH_SERIAL_CODE)
+                    --END REV : 009 
+                );
+                -- END REV : 007
+            ELSIF coalesce(NEW.ASSEMBLY_ICODE,OLD.ASSEMBLY_ICODE) <> coalesce(NEW.COMPONENT_ICODE,OLD.COMPONENT_ICODE) AND
+                  coalesce(NEW.COM_SAITEM_CODE,OLD.COM_SAITEM_CODE) IS NOT NULL THEN
+                  RAISE EXCEPTION 'e_saexp' USING ERRCODE = '50001';
+            END IF;
+        END IF;
+
+    ELSIF V_WIPTXN_TYPE = 'W' THEN
+          V_TXN_TYPE := 'WAS';
+          CALL DB_PKG_PRODUCTION$POST_WIP_TRANSACTION(
+                V_ADMSITE_CODE,
+                V_TYPE,
+                V_TXN_TYPE,
+                OLD.CODE,
+                NEW.CODE,
+                NEW.LOTCODE,
+                NEW.JOBCODE,
+                coalesce(NEW.WIPTXN_CODE,OLD.WIPTXN_CODE),
+                NULL,
+                V_OP_SEQ,
+                V_REFPCODE,
+                V_REFPRCODE,
+                NEW.ASSEMBLY_ICODE,
+                NEW.COMPONENT_ICODE,
+                'COM',
+                NULL,
+                0-NEW.QTY,
+                NEW.COSTRATE,
+                NULL,
+                V_TXN_DATE,
+                NEW.ASS_SAITEM_CODE,
+                NEW.COM_SAITEM_CODE,
+                coalesce(NEW.JOB_ASSEMBLY_ICODE,OLD.ASSEMBLY_ICODE),
+                --START REV : 009
+                NULL,
+                coalesce(NEW.INVBATCH_SERIAL_CODE, OLD.INVBATCH_SERIAL_CODE)
+                --END REV : 009
+            );
+    END IF;
+    -- start rev : 007
+    /*
+    IF  V_TXN_TYPE = 'RET' THEN
+        INSERT 
+        INTO PRD_RATE_STAGING 
+                    (
+                        TYPE,JOBCODE,LOTCODE,ASSEMBLY_ICODE,ASS_SAITEM_CODE
+                    )
+        VALUES  ( V_TYPE,NVL(:NEW.JOBCODE,:OLD.JOBCODE),
+                  NVL(:NEW.LOTCODE,:OLD.LOTCODE),
+                  NVL(:NEW.ASSEMBLY_ICODE,:OLD.ASSEMBLY_ICODE),
+                  NVL(:NEW.ASS_SAITEM_CODE,:OLD.ASS_SAITEM_CODE)
+                );
+    END IF;
+    */
+    -- end rev : 007
+EXCEPTION
+    WHEN SQLSTATE '50001' THEN
+        CALL ERRAUDIT(USER, 'T_WIP_PRDWIPDET', '20200',
+                                         'SAI is not allowed where AI <> CI. '||CHR(10)||
+                                         'AI =  '||coalesce(NEW.ASSEMBLY_ICODE,OLD.ASSEMBLY_ICODE)||CHR(10)||
+                                         ', CI = '||coalesce(NEW.COMPONENT_ICODE,OLD.COMPONENT_ICODE)||CHR(10)||
+                                         'and SAI = '||coalesce(NEW.COM_SAITEM_CODE,OLD.COM_SAITEM_CODE));
+        RAISE EXCEPTION '%', 'SAI is not allowed where AI <> CI. '||chr(10)||
+                                         'AI =  '||coalesce(NEW.ASSEMBLY_ICODE,OLD.ASSEMBLY_ICODE)||CHR(10)||
+                                         ', CI = '||coalesce(NEW.COMPONENT_ICODE,OLD.COMPONENT_ICODE)||CHR(10)||
+                                         'and SAI = '||coalesce(NEW.COM_SAITEM_CODE,OLD.COM_SAITEM_CODE) USING ERRCODE = '45200';
+    WHEN OTHERS THEN
+        CALL ERRAUDIT(USER, 'T_WIP_PRDWIPDET', SQLSTATE::varchar, SQLERRM);
+        RAISE EXCEPTION '%', 'ERROR ENCOUNTERED  '|| SQLSTATE::varchar || '  ' || SQLERRM USING ERRCODE = '45002';
+  END;
+IF TG_OP = 'DELETE' THEN
+	RETURN OLD;
+ELSE
+	RETURN NEW;
+END IF;
+
+END
+"""
+  returnType = trigger
+  arguments = [
+  ]
+  language = plpgsql
+}
+

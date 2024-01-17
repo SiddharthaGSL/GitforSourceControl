@@ -1,0 +1,1985 @@
+function "main"."int$pkg_sal_srv_inv_int$pkg_sal_srv_inv_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status         char(1);
+      errmsg           varchar(200);
+      errcode          text;
+      v_icode          varchar(9);
+      v_barcode        varchar(50);
+      v_connected_ou   bigint;
+      v_sitetype       admsite.sitetype%TYPE;
+      v_mark           varchar(100);i RECORD;
+
+BEGIN
+      v_mark := 1;
+
+      -- deleting the base table
+      DELETE FROM int$stg_sal_srv_inv_all_fld
+       WHERE userid = p_userid;
+
+      v_mark := 2;
+
+      -- Insert the input data
+      INSERT INTO int$stg_sal_srv_inv_all_fld(service_date,
+                                               scheme_doc_format,
+                                               scheme_docno,
+                                               site_short_name,
+                                               docno,
+                                               docdt,
+                                               remarks,
+                                               tradegroup_name,
+                                               term_name,
+                                               service,
+                                               qty,
+                                               rate,
+                                               amount,
+                                               service_gl,
+                                               service_slid,
+                                               lineno,
+                                               userid)
+         SELECT service_date,
+                scheme_doc_format,
+                scheme_docno,
+                site_short_name,
+                docno,
+                docdt,
+                remarks,
+                tradegroup_name,
+                term_name,
+                service,
+                LTRIM(qty, '0'),
+                LTRIM(rate, '0'),
+                LTRIM(amount, '0'),
+                service_gl,
+                service_slid,
+                lineno,
+                userid
+           FROM int$stg_SAL_SRV_INV
+          WHERE userid = p_userid;
+
+      --COMMIT;
+
+      v_mark := 3;
+
+      -- Check for OU code is present is not
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'SAL_SRV_INV',
+                0,
+                'Date Validation',
+                'No Organization Unit is available.',
+                clock_timestamp()
+           FROM admsite a
+          WHERE code = p_connect_site AND admou_code IS NULL;
+
+      v_mark := 4;
+
+      -- Check for site type
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'SAL_SRV_INV',
+                0,
+                'Date Validation',
+                'This module is only for Organizational site.',
+                clock_timestamp()
+           FROM admsite a
+          WHERE     code = p_connect_site
+                AND sitetype NOT IN ('OS-OO-CM', 'MS-OO-CM', 'MS-CO-OM-TS');
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'SAL_SRV_INV',
+                0,
+                'Date Validation',
+                'Document Identification No. is mandatory for the connected site.',
+                clock_timestamp()
+           FROM admsite a
+          WHERE code = p_connect_site AND sitedocin IS NULL;
+
+      v_mark := 5;
+
+      -- Check the DC date is valid or not
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Date Validation',
+                'Please enter a valid date.',
+                clock_timestamp()
+           FROM int$stg_SAL_SRV_INV a
+          WHERE db_func_is_date(to_char(a.service_date,'dd-mm-yyyy')) <> 1 AND a.userid = p_userid;
+
+      v_mark := 6;
+
+      -- Future date transaction is not allowed
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Date Validation',
+                'Future date transaction is not allowed.',
+                clock_timestamp()
+           FROM int$stg_SAL_SRV_INV a
+          WHERE     date_trunc('day', service_date) > date_trunc('day', clock_timestamp())
+                AND a.userid = p_userid;
+
+      v_mark := 7;
+
+      DECLARE
+         v_dtfr           timestamp;
+         v_dtto           timestamp;
+         v_yr_ext         char(1);
+         v_day_status     char(1);
+         v_locdays        hrdemp.locdays%TYPE;
+         v_last_dt_lock   char(1);
+
+         c1 CURSOR FOR
+            SELECT DISTINCT date_trunc('day', service_date) srvdt
+              FROM int$stg_SAL_SRV_INV
+             WHERE db_func_is_date(to_char(service_date,'dd-mm-yyyy')) = 1 AND userid = p_userid;
+      BEGIN
+         FOR i IN c1
+         LOOP
+            -- Ycode related checking, min trans date checking, lockday checking, Year exists or not, Day status related checking
+            BEGIN
+               SELECT ext, dtfr, dtto
+                 INTO STRICT v_yr_ext, v_dtfr, v_dtto
+                 FROM admyear
+                WHERE i.srvdt BETWEEN dtfr AND dtto;
+
+               IF coalesce(v_yr_ext, 'N') = 'Y'
+               THEN
+                  INSERT INTO int$error_log(code,
+                                             lineno,
+                                             classname,
+                                             userid,
+                                             errortype,
+                                             errordesc,
+                                             createdon)
+                     SELECT nextval('int$error_log_code'),
+                            lineno,
+                            'SAL_SRV_INV',
+                            userid,
+                            'Data Validation',
+                            'Year of the Date is not open / extinct',
+                            clock_timestamp()
+                       FROM int$stg_SAL_SRV_INV
+                      WHERE     date_trunc('day', service_date) = i.srvdt
+                            AND userid = p_userid;
+               ELSE
+                  IF i.srvdt < v_dtfr
+                  THEN
+                     INSERT INTO int$error_log(code,
+                                                lineno,
+                                                classname,
+                                                userid,
+                                                errortype,
+                                                errordesc,
+                                                createdon)
+                        SELECT nextval('int$error_log_code'),
+                               lineno,
+                               'SAL_SRV_INV',
+                               userid,
+                               'Data Validation',
+                                  'Date can not be less than start date of current accounting year date '
+                               || TO_CHAR(v_dtfr, 'DD/MM/YYYY'),
+                               clock_timestamp()
+                          FROM int$stg_SAL_SRV_INV
+                         WHERE     date_trunc('day', service_date) = i.srvdt
+                               AND userid = p_userid;
+                  ELSE
+                     BEGIN
+                        SELECT locdays
+                          INTO STRICT v_locdays
+                          FROM hrdemp
+                         WHERE ecode = p_userid;
+
+                        IF v_locdays IS NOT NULL
+                        THEN
+                           IF date_trunc('day', i.srvdt) < (CURRENT_DATE - v_locdays :: integer)
+                           THEN
+                              INSERT INTO int$error_log(code,
+                                                         lineno,
+                                                         classname,
+                                                         userid,
+                                                         errortype,
+                                                         errordesc,
+                                                         createdon)
+                                 SELECT nextval('int$error_log_code'),
+                                        lineno,
+                                        'SAL_SRV_INV',
+                                        userid,
+                                        'Data Validation',
+                                        'User lock days setting getting violated',
+                                        clock_timestamp()
+                                   FROM int$stg_SAL_SRV_INV
+                                  WHERE     date_trunc('day', service_date) = i.srvdt
+                                        AND userid = p_userid;
+                           END IF;
+                        END IF;
+                     EXCEPTION
+                        WHEN no_data_found
+                        THEN
+                           INSERT INTO int$error_log(code,
+                                                      lineno,
+                                                      classname,
+                                                      userid,
+                                                      errortype,
+                                                      errordesc,
+                                                      createdon)
+                              SELECT nextval('int$error_log_code'),
+                                     lineno,
+                                     'SAL_SRV_INV',
+                                     userid,
+                                     'Data Validation',
+                                     'User not exists',
+                                     clock_timestamp()
+                                FROM int$stg_SAL_SRV_INV
+                               WHERE     date_trunc('day', service_date) = i.srvdt
+                                     AND userid = p_userid;
+                     END;
+                  END IF;
+               END IF;
+            EXCEPTION
+               WHEN no_data_found
+               THEN
+                  INSERT INTO int$error_log(code,
+                                             lineno,
+                                             classname,
+                                             userid,
+                                             errortype,
+                                             errordesc,
+                                             createdon)
+                     SELECT nextval('int$error_log_code'),
+                            lineno,
+                            'SAL_SRV_INV',
+                            userid,
+                            'Data Validation',
+                            'Year not exists',
+                            clock_timestamp()
+                       FROM int$stg_SAL_SRV_INV
+                      WHERE     date_trunc('day', service_date) = i.srvdt
+                            AND userid = p_userid;
+            END;
+
+            -- day status related c77hecking
+            -- Day check
+            INSERT INTO int$error_log(code,
+                                       lineno,
+                                       classname,
+                                       userid,
+                                       errortype,
+                                       errordesc,
+                                       createdon)
+               SELECT nextval('int$error_log_code'),
+                      0,
+                      'SAL_SRV_INV',
+                      p_userid,
+                      'Mandatory Validation',
+                      'Finance Month is Closed no entry is possible for the date',
+                      clock_timestamp()
+                 FROM admmonth a, admou_month b
+                WHERE     a.mcode = b.admmonth_code
+                      AND i.srvdt BETWEEN dtfr AND dtto
+                      AND b.admou_code = p_connect_ou
+                      AND b.fin_month_status = 'C';
+         END LOOP;
+      END;
+
+      v_mark := 8;
+
+      -- DOCNAME valodation
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Scheme doc format should be valid and non-extinct.',
+                clock_timestamp()
+           FROM int$stg_SAL_SRV_INV a
+          WHERE     UPPER(a.scheme_doc_format) NOT IN
+                       (SELECT UPPER(d.docname)
+                          FROM admdocscheme d, admmenu_docscheme m
+                         WHERE     d.doccode = m.doccode
+                         -- START REV : 001
+                               --AND m.menucode = 959
+                               AND   M.MDMENUSHORTCODE = 'SaleServInv'
+                         -- END REV : 001
+                               AND coalesce(d.ext, 'N') = 'N'
+                               AND (   0 =
+                                          (SELECT COUNT(*)
+                                             FROM admdocscheme    d,
+                                                  admou_docscheme m
+                                            WHERE     d.doccode = m.doccode
+                                                  AND m.admsite_code =
+                                                         p_connect_site
+                                                  AND coalesce(d.ext, 'N') = 'N')
+                                    OR d.doccode IN (SELECT d.doccode
+                                             FROM admdocscheme    d,
+                                                  admou_docscheme m
+                                            WHERE     d.doccode = m.doccode
+                                                  AND m.admsite_code =
+                                                         p_connect_site
+                                                  AND coalesce(d.ext, 'N') = 'N')))
+                AND a.userid = p_userid;
+
+      v_mark := 9;
+
+      -- scheme_docno chking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Scheme Docno can not be blank in Manual type Doc Scheme',
+                clock_timestamp()
+           FROM int$stg_SAL_SRV_INV a
+          WHERE (    UPPER(a.scheme_doc_format) IN ('MANUAL (GENERAL)', 'MANUAL (EXCISE)')
+                     AND a.scheme_docno IS NULL)
+                AND a.userid = p_userid;
+
+      v_mark := 10;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Scheme Doc No should be null, as it would be auto generated',
+                clock_timestamp()
+           FROM int$stg_SAL_SRV_INV a
+          WHERE (    UPPER(a.scheme_doc_format) NOT IN ('MANUAL (GENERAL)', 'MANUAL (EXCISE)')
+                     AND a.scheme_docno IS NOT NULL)
+                AND a.userid = p_userid;
+
+      v_mark := 11;
+
+      -- scheme_docno unique chking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'SAL_SRV_INV',
+                p_userid,
+                'Data Validation',
+                'Scheme Doc No already exists',
+                clock_timestamp()
+           FROM int$stg_SAL_SRV_INV a, salsrvmain b
+          WHERE     UPPER(a.scheme_docno) = UPPER(b.scheme_docno)
+                AND b.ycode = (SELECT ycode
+                                 FROM admyear
+                                WHERE service_date BETWEEN dtfr AND dtto)
+                AND a.userid = p_userid;
+
+      DECLARE
+         c1 CURSOR FOR
+            SELECT DISTINCT a.scheme_docno
+              FROM int$stg_SAL_SRV_INV a
+             WHERE     UPPER(a.scheme_doc_format) IN ('MANUAL (GENERAL)', 'MANUAL (EXCISE)')
+                   AND a.scheme_docno IS NOT NULL
+                   AND a.userid = p_userid;
+      BEGIN
+         FOR i IN c1
+         LOOP
+            INSERT INTO int$error_log(code,
+                                       lineno,
+                                       classname,
+                                       userid,
+                                       errortype,
+                                       errordesc,
+                                       createdon)
+               SELECT nextval('int$error_log_code'),
+                      0,
+                      'SAL_SRV_INV',
+                      p_userid,
+                      'Data Validation',
+                         'Duplicate Scheme Doc No('
+                      || i.scheme_docno
+                      || ') for Manual doc scheme',
+                      clock_timestamp()
+
+                WHERE EXISTS (SELECT COUNT(*)
+                            FROM (SELECT DISTINCT service_date,
+                                                  site_short_name,
+                                                  docno,
+                                                  docdt,
+                                                  remarks
+                                    FROM int$stg_SAL_SRV_INV a
+                                   WHERE     a.scheme_docno = i.scheme_docno
+                                         AND a.userid = p_userid) a
+                          HAVING COUNT(*) > 1);
+         END LOOP;
+      END;
+
+      BEGIN
+         FOR i
+            IN (SELECT DISTINCT a.doccode, b.scheme_doc_format, a.gstappl
+                  FROM admdocscheme a, int$stg_sal_srv_inv_all_fld b
+                 WHERE     UPPER(a.docname) = UPPER(b.scheme_doc_format)
+                       AND b.userid = p_userid)
+         LOOP
+            UPDATE int$stg_sal_srv_inv_all_fld
+               SET doccode = i.doccode, gstappl = i.gstappl
+             WHERE     userid = p_userid
+                   AND scheme_doc_format = i.scheme_doc_format;
+         END LOOP;
+
+         --COMMIT;
+      END;
+
+      v_mark := 12;
+
+      -- Check for valid SITE
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                p_userid,
+                'Data Validation',
+                'Document site and owner site could not be same',
+                clock_timestamp()
+           FROM int$stg_SAL_SRV_INV a, admsite b
+          WHERE     UPPER(a.site_short_name) = UPPER(b.shrtname)
+                AND b.code = p_connect_site
+                AND a.userid = p_userid;
+
+      -- Check for valid SITE
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Site should be valid and non-extinct',
+                clock_timestamp()
+           FROM int$stg_SAL_SRV_INV a
+          WHERE UPPER(site_short_name) NOT IN
+                   (SELECT DISTINCT
+                   -- START REV : 002
+                   -- s.shrtname site_short_name
+                   UPPER(s.shrtname) site_short_name
+                   -- END REV : 002
+                      FROM admsite s, finsl p, fingl g
+                     WHERE     s.slcode = p.slcode
+                           AND p.glcode = g.glcode
+                           AND p.saletype = 'O'
+                           AND coalesce(p.ext, 'N') = 'N'
+                           AND coalesce(s.ext, 'N') = 'N'
+                           AND g.srctype = 'R'
+                           AND s.sitetype IN ('MS-CO-OM-TS', 'US-CO-OM', 'US-CO-OM-TS')
+                           AND (   (       s.ispos = 'N'
+                                       AND (s.code IN (SELECT site_code
+                                                  FROM finsl_ou_site a,
+                                                       finsl_ou      b
+                                                 WHERE     a.finsl_ou_code =
+                                                              b.code
+                                                       AND b.admsite_code =
+                                                              p_connect_site
+                                                       AND coalesce(
+                                                              a.strictly_follow_transit_route,
+                                                              0) = 0))
+                                    OR (    s.slcode NOT IN (SELECT slcode
+                                                               FROM finsl_ou)
+                                        AND s.sitetype <> 'MS-CO-OM-TS')
+                                    OR (    s.slcode IN (SELECT DISTINCT slcode
+                                                  FROM finsl_ou
+                                                 WHERE     admsite_code =
+                                                              p_connect_site
+                                                       AND s.code NOT IN (SELECT DISTINCT
+                                                                      a.site_code
+                                                                 FROM finsl_ou_site
+                                                                      a,
+                                                                      finsl_ou
+                                                                      b
+                                                                WHERE     a.finsl_ou_code =
+                                                                             b.code
+                                                                      AND b.admsite_code =
+                                                                             p_connect_site))
+                                        AND s.sitetype <> 'MS-CO-OM-TS'))
+                                OR (    s.ispos = 'Y'
+                                    AND s.code IN (SELECT admsite_code
+                                              FROM admsite_ou
+                                             WHERE     repln_admsite_code =
+                                                          p_connect_site
+                                                   AND strictly_follow_transit_route =
+                                                          0
+                                                   AND ext = 'N')))
+                           AND (   s.sitetype = 'MS-CO-OM-TS'
+                                OR (       s.sitetype IN ('US-CO-OM', 'US-CO-OM-TS')
+                                       AND (   (s.slcode IN (SELECT slcode
+                                                      FROM finsl_ou
+                                                     WHERE admsite_code =
+                                                              p_connect_site))
+                                            OR (s.slcode NOT IN (SELECT slcode
+                                                      FROM finsl_ou)))
+                                    OR (s.code NOT IN (SELECT site_code
+                                                         FROM finsl_ou_site)))))
+                                                         -- START REV : 001
+                                                         and a.userid = p_userid;
+                                                         -- END REV : 001
+      UPDATE int$stg_sal_srv_inv_all_fld
+         SET admsite_code_owner = p_connect_site,
+             admou_code_in = p_connect_ou
+       WHERE userid = p_userid;
+
+      BEGIN
+         FOR i
+            IN (SELECT DISTINCT
+                       a.admsite_code_owner, c.gstin_no, c.admgststate_code
+                  FROM int$stg_sal_srv_inv_all_fld a, admsite b, admgstin c
+                 WHERE     a.admsite_code_owner = b.code
+						AND a.userid = p_userid
+                        AND b.admgstin_code = c.code)
+         LOOP
+            UPDATE int$stg_sal_srv_inv_all_fld
+               SET owner_gstin_no = i.gstin_no,
+                   owner_gstin_state_code = i.admgststate_code
+             WHERE userid = p_userid AND admsite_code_owner = p_connect_site;
+         END LOOP;
+      END;
+
+      v_mark := 17;
+
+      DECLARE
+         c1 CURSOR FOR
+SELECT DISTINCT
+       s.code                admsite_code,
+       s.shrtname            site_shrtname,
+       CASE
+          WHEN s.ispos = 'N' THEN s.store_loccode
+          ELSE s.psite_transit_loccode
+       END
+          inloccode,
+       s.transit_days        transit_days,
+       s.sitetype            sitetype,
+       p.slcode              party_code,
+       t1.slcode             agent_code,
+       p.agrate              agent_rate,
+       COALESCE (p.cramt, 0) cramt,
+       p.crdays              crdays,
+       t.trpcode             transporter_code,
+       p.saletype            saletype,
+       p.pricetype           pricetype,
+       g.glcode              pglcode,
+       g.costapp,
+       s.psite_admcmptax_code,
+       s.cp_gstin_no,
+       s.cp_gstin_state_code
+  FROM int$stg_sal_srv_inv a
+       INNER JOIN admsite s ON LOWER (s.shrtname) = LOWER (a.site_short_name)
+       LEFT OUTER JOIN admcity c ON (s.ctname = c.ctname)
+       LEFT OUTER JOIN admcity cs ON (s.ctname = cs.ctname)
+       INNER JOIN finsl p ON s.slcode = p.slcode
+       LEFT OUTER JOIN finsl t ON (p.trpcode = t.slcode)
+       LEFT OUTER JOIN admcls ON (p.clscode = admcls.clscode)
+       LEFT OUTER JOIN finsl t1 ON (p.agcode = t1.slcode)
+       INNER JOIN fingl g ON (p.glcode = g.glcode)
+ WHERE     p.saletype = 'O'
+       AND COALESCE (p.ext, 'N') = 'N'
+       AND COALESCE (s.ext, 'N') = 'N'
+       AND g.srctype = 'R'
+       AND s.sitetype IN ('MS-CO-OM-TS', 'US-CO-OM', 'US-CO-OM-TS')
+       AND (   (       s.ispos = 'N'
+                   AND (s.code IN
+                           (SELECT site_code
+                              FROM finsl_ou_site a, finsl_ou b
+                             WHERE     a.finsl_ou_code = b.code
+                                   AND b.admsite_code = 1
+                                   AND COALESCE (
+                                          a.strictly_follow_transit_route,
+                                          0) = 0))
+                OR (    s.slcode NOT IN (SELECT slcode
+                                           FROM finsl_ou)
+                    AND s.sitetype <> 'MS-CO-OM-TS')
+                OR (    s.slcode IN
+                           (SELECT DISTINCT slcode
+                              FROM finsl_ou
+                             WHERE     admsite_code = 1
+                                   AND s.code NOT IN
+                                          (SELECT DISTINCT a.site_code
+                                             FROM finsl_ou_site a, finsl_ou b
+                                            WHERE     a.finsl_ou_code =
+                                                         b.code
+                                                  AND b.admsite_code = 1))
+                    AND s.sitetype <> 'MS-CO-OM-TS'))
+            OR (    s.ispos = 'Y'
+                AND s.code IN
+                       (SELECT admsite_code
+                          FROM admsite_ou
+                         WHERE     repln_admsite_code = 1
+                               AND strictly_follow_transit_route = 0
+                               AND ext = 'N')))
+       AND (   s.sitetype = 'MS-CO-OM-TS'
+            OR (       s.sitetype IN ('US-CO-OM', 'US-CO-OM-TS')
+                   AND (   (s.slcode IN (SELECT slcode
+                                           FROM finsl_ou
+                                          WHERE admsite_code = 1))
+                        OR (s.slcode NOT IN (SELECT slcode
+                                               FROM finsl_ou)))
+                OR (s.code NOT IN (SELECT site_code
+                                     FROM finsl_ou_site))));
+      BEGIN
+         FOR i IN c1
+         LOOP
+            UPDATE int$stg_sal_srv_inv_all_fld
+               SET admsite_code = i.admsite_code,
+                   sitetype = i.sitetype,
+                   pcode = i.party_code,
+                   pglcode = i.pglcode,
+                   pglcode_gl_cc_appl = i.costapp,
+                   crdays = i.crdays,
+                   duedt =
+                      CASE
+                         WHEN COALESCE(docdt, service_date) + COALESCE(i.crdays * INTERVAL '1 day', INTERVAL '0 day') < service_date
+                         THEN
+                            service_date
+                         ELSE
+                            COALESCE(docdt, service_date) + COALESCE(i.crdays * INTERVAL '1 day', INTERVAL '0 day')
+                      END,
+                   cp_gstin_no = i.cp_gstin_no,
+                   cp_gstin_state_code = i.cp_gstin_state_code
+             WHERE LOWER(site_short_name) = LOWER(i.site_shrtname);
+         END LOOP;
+
+         --COMMIT;
+      END;
+
+      -- population of fields from site
+      DECLARE
+        v_psite_admcmptax_code      admsite.psite_admcmptax_code%TYPE;
+         v_pricelistcode             salpricelistmain.pricelistcode%TYPE;
+         v_termcode                  saltermmain.saltermcode%TYPE;
+         v_termname                  saltermmain.saltermname%TYPE;
+         v_tradegrp_code             fintradegrp.code%TYPE;
+         v_tradegrp_name             fintradegrp.name%TYPE;
+         v_glcode                    fingl.glcode%TYPE;
+         v_slcode                    finsl.slcode%TYPE;
+         v_chng_hdr                  saltermmain.header_level_ischangeable%TYPE;
+         v_chng_line                 saltermmain.line_level_ischangeable%TYPE;
+         v_formcode                  finform.formcode%TYPE;
+         v_flag                      record;
+
+         v_price_type                salpricelistmain.price_type%TYPE;
+         v_discount_factor           salpricelistmain.discount_factor%TYPE;
+         v_include_vat_in_discount   salpricelistmain.include_vat_in_discount%TYPE;
+         v_discount_mode             salpricelistmain.discount_mode%TYPE;
+         v_discount_basis            salpricelistmain.discount_basis%TYPE;
+         v_net_price_multiples_of    salpricelistmain.net_price_multiples_of%TYPE;
+         v_net_price_round_limit     salpricelistmain.net_price_round_limit%TYPE;
+         v_cmptax_code_basis         salpricelistmain.cmptax_code_basis%TYPE;
+
+         v_saletype                  finsl.saletype%TYPE;
+         v_agcode                    finsl.slcode%TYPE;
+         v_pricetype                 finsl.pricetype%TYPE;
+         v_price_roundoff            salpricelistmain.net_price_round_limit%TYPE;
+         v_roundoff_limit            finsl.markup_selling_limit%TYPE;
+      BEGIN
+         FOR i IN (SELECT DISTINCT admsite_code, sitetype, pcode
+                     FROM int$stg_sal_srv_inv_all_fld
+                    WHERE admsite_code IS NOT NULL AND userid = p_userid)
+         LOOP
+            --v_tradegrp_code := NULL::bigint;
+            --v_termcode := NULL::bigint;
+            --v_formcode := NULL;
+            --v_pricelistcode := NULL::bigint;
+--function db_pkg_get_data_snd$get_tradegrp_term(bigint, bigint, bigint, character varying, bigint, bigint, bigint, bigint, bigint) is not unique
+            --v_flag :=
+              CALL db_pkg_get_data_snd$get_tradegrp_term(-- in parameters
+                                                      p_connect_ou,
+                                                      p_connect_site,
+                                                      i.admsite_code,
+                                                      i.sitetype,
+                                                      i.pcode,
+                                                      -- out parameters
+                                                      v_termcode,
+                                                      v_tradegrp_code,
+                                                      v_formcode,
+                                                      v_pricelistcode);
+
+            UPDATE int$stg_sal_srv_inv_all_fld
+               SET saltradegrp_code = v_tradegrp_code,
+                   saltermcode = v_termcode,
+                   formcode = v_formcode,
+                   pricelistcode = v_pricelistcode
+             WHERE     admsite_code = i.admsite_code
+                   AND (pcode IS NULL OR pcode = i.pcode)
+                   AND userid = p_userid;
+         END LOOP;
+
+         --COMMIT;
+      END;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                p_userid,
+                'Data Validation',
+                'No Trade Group is associated with this customer/ site',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE userid = p_userid AND saltradegrp_code IS NULL;
+
+      DECLARE
+         v_allow_sales_term_change   admprof.allow_sales_term_change%TYPE;
+      BEGIN
+         SELECT allow_sales_term_change
+           INTO STRICT v_allow_sales_term_change
+           FROM admprof
+          WHERE profcode = (SELECT profcode
+                              FROM hrdemp
+                             WHERE ecode = p_userid);
+
+         UPDATE int$stg_sal_srv_inv_all_fld a
+            SET term_editable = coalesce(v_allow_sales_term_change, 'N')
+          WHERE userid = p_userid AND saltermcode IS NULL;
+
+         --COMMIT;
+      END;
+
+      BEGIN
+         FOR i
+            IN (SELECT DISTINCT
+                       a.saltermcode,
+                       b.header_level_ischangeable,
+                       b.line_level_ischangeable
+                  FROM saltermmain a, int$stg_sal_srv_inv_all_fld b
+                 WHERE a.saltermcode = b.saltermcode AND b.userid = p_userid)
+         LOOP
+            UPDATE int$stg_sal_srv_inv_all_fld a
+               SET header_level_ischangeable = i.header_level_ischangeable,
+                   line_level_ischangeable = i.line_level_ischangeable
+             WHERE userid = p_userid AND saltermcode = i.saltermcode;
+         END LOOP;
+
+         --COMMIT;
+      END;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                p_userid,
+                'Data Validation',
+                'Document No and Document date both shoud be null or present',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE     userid = p_userid
+                AND (   (docno IS NOT NULL AND docdt IS NULL)
+                     OR (docno IS NULL AND docdt IS NOT NULL));
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                p_userid,
+                'Data Validation',
+                'Document date should be less or equals to service date',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE     userid = p_userid
+                AND docdt > service_date
+                AND docdt IS NOT NULL;
+
+      v_mark := 19;
+
+      -- Service is present or not
+      -- Checking for Service
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Service is missing',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE a.service IS NULL AND a.userid = p_userid;
+
+      -- Service exist or is extinct.
+      -- Checking for Service
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Service should be valid and non-extinct',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE     a.lineno NOT IN (SELECT coalesce(a.lineno, 0) lineno
+                          FROM int$stg_sal_srv_inv a,fingl c, purservice b
+LEFT OUTER JOIN finsl d ON (b.slcode = d.slcode)
+LEFT OUTER JOIN invhsnsacmain h ON (b.invhsnsacmain_code = h.code)
+WHERE UPPER(a.service) = UPPER(servicename) AND b.glcode = c.glcode   AND coalesce(b.ext, 'N') = 'N' AND a.userid = p_userid )
+                AND service IS NOT NULL
+                AND a.userid = p_userid;
+
+      v_mark := 20;
+
+      -- Derive values from services
+      DECLARE
+         c1 CURSOR FOR
+              SELECT a.servicecode,
+                     b.glcode,
+                     b.costapp,
+                     b.slapp,
+                     b.srctype,
+                     c.slcode,
+                     a.taxcode,
+                     coalesce(a.track_qty, 'N') track_qty,
+                     --h.hsn_sac_code,
+                     coalesce(h.govt_identifier,h.hsn_sac_code) hsn_sac_code,
+                     x.lineno
+                FROM int$stg_sal_srv_inv_all_fld x, fingl b, purservice a
+LEFT OUTER JOIN finsl c ON (a.slcode = c.slcode)
+LEFT OUTER JOIN invhsnsacmain h ON (a.invhsnsacmain_code = h.code)
+WHERE a.glcode = b.glcode   AND coalesce(a.ext, 'N') = 'N' AND UPPER(x.service) = UPPER(a.servicename) AND x.userid = p_userid ORDER BY x.lineno;
+      BEGIN
+         FOR i IN c1
+         LOOP
+            UPDATE int$stg_sal_srv_inv_all_fld a
+               SET servicecode = i.servicecode,
+                   hsn_sac_code = i.hsn_sac_code,
+                   det_glcode = i.glcode,
+                   det_slcode = i.slcode,
+                   det_gl_cc_appl = coalesce(i.costapp, 'N'),
+                   det_gl_sl_appl = coalesce(i.slapp, 'N'),
+                   det_taxcode = i.taxcode,
+                   track_qty = i.track_qty
+             WHERE lineno = i.lineno;
+         END LOOP;
+      END;
+
+      v_mark := 21;
+
+      -- Item quantity cannot be 0.
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Quantity can be provided up to 3 decimal places only',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE     SCALE(qty) > 3
+                --AND qty < 0
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Maximum length 10 character allowed in Qty.',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE LENGTH(qty::TEXT) > 10 AND a.userid = p_userid;
+
+      -- Check qty and amount based on track_qty
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Quantity is missing or zero for tracking applicable service',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE     coalesce(a.track_qty, 'N') = 'Y'
+                AND coalesce(a.qty, 0) = 0
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Quantity should be greater than zero',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE     coalesce(a.track_qty, 'N') = 'Y'
+                AND coalesce(a.qty, 0) <= 0
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Quantity is not allowed because Item wise tracking is not applicable for the service',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE     coalesce(a.track_qty, 'N') = 'N'
+                AND coalesce(a.qty, 0) <> 0
+                AND a.userid = p_userid;
+
+      v_mark := 22;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Rate can be provided up to 2 decimal places only',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE     SCALE(rate) > 2
+                AND position('.' in rate) > 0
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Maximum length 12 character allowed in rate.',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE LENGTH(rate::TEXT) > 12 AND a.userid = p_userid;
+
+      -- Check rate and amount based on track_qty
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Rate is missing or zero for tracking applicable service',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE     coalesce(a.track_qty, 'N') = 'Y'
+                AND coalesce(a.rate, 0) = 0
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Rate should be greater than zero',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE     coalesce(a.track_qty, 'N') = 'Y'
+                AND coalesce(a.rate, 0) <= 0
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Rate is not allowed because Item wise tracking is not applicable for the service',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE     coalesce(a.track_qty, 'N') = 'N'
+                AND coalesce(a.rate, 0) <> 0
+                AND a.userid = p_userid;
+
+      v_mark := 23;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Amount can be provided up to 2 decimal places only',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE     SCALE(RTRIM(amount,0)) > 2
+                AND position('.' in amount) > 0
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Maximum length 12 character allowed in Amount.',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE LENGTH(amount::TEXT) > 12 AND a.userid = p_userid;
+
+      -- Check amount and amount based on track_qty
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Amount is not allowed for tracking applicable service',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE     coalesce(a.track_qty, 'N') = 'Y'
+                AND coalesce(a.amount, 0) <> 0
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Either Amount is missing or it should be greater than zero for service(s) where tracking is not applicable',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE     coalesce(a.track_qty, 'N') = 'N'
+                AND coalesce(a.amount, 0) <= 0
+                AND a.userid = p_userid;
+
+      v_mark := 24;
+
+      -- Check for SERVICE_GL
+      -- Provided sevice GL
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Service GL should be valid and non-extinct',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE     a.lineno NOT IN (SELECT coalesce(a.lineno, 0) lineno
+                          FROM int$stg_SAL_SRV_INV a, fingl b
+                         WHERE     UPPER(a.service_gl) = UPPER(b.glname)
+                               AND coalesce(b.ext, 'N') = 'N'
+                               AND a.userid = p_userid)
+                AND a.service_gl IS NOT NULL
+                AND a.userid = p_userid;
+
+      -- Provided sevice GL should be general type
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Only General type ledger allowed',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a, fingl b
+          WHERE     UPPER(a.service_gl) = UPPER(b.glname)
+                AND b.srctype <> 'G'
+                AND a.userid = p_userid;
+
+      -- Provided sevice GL should be Asset/Income/Expense in nature
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Service GL should be Asset/Income/Expense type',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a, fingl b
+          WHERE     UPPER(a.service_gl) = UPPER(b.glname)
+                AND b.TYPE NOT IN ('I', 'A', 'E')
+                AND a.userid = p_userid;
+
+      -- Service GL set in master should be non extinct
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Ledger tagged in the service master is extinct',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a, fingl b
+          WHERE     a.det_glcode = b.glcode -- Previously populated from Service
+                AND coalesce(b.ext, 'N') = 'Y'
+                AND a.userid = p_userid;
+
+      -- Provided sevice GL should be general type
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Service GL in master is not General type',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a, fingl b
+          WHERE     a.det_glcode = b.glcode -- Previously populated from Service
+                AND b.srctype <> 'G'
+                AND a.userid = p_userid;
+
+      -- Provided sevice GL should be Asset/Income/Expense in nature
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Service GL should be Asset/Income/Expense type',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a, fingl b
+          WHERE     a.det_glcode = b.glcode -- Previously populated from Service
+                AND b.TYPE NOT IN ('I', 'A', 'E')
+                AND a.userid = p_userid;
+
+      --## Site GL tagging have to be incorporated
+      v_mark := 20;
+
+      -- Derive values from Services GL
+      DECLARE
+         c1 CURSOR
+         FOR
+            SELECT b.glcode,
+                   b.costapp,
+                   b.slapp,
+                   a.lineno
+              FROM int$stg_sal_srv_inv_all_fld a, fingl b
+             WHERE     UPPER(a.service_gl) = UPPER(b.glname)
+                   AND a.userid = p_userid;
+      BEGIN
+         FOR i IN c1
+         LOOP
+            UPDATE int$stg_sal_srv_inv_all_fld a
+               SET det_glcode = i.glcode,
+                   det_slcode  = NULL,     -- On change of GL SL should be null
+                   det_gl_sl_appl = i.slapp,
+                   det_gl_cc_appl = coalesce(i.costapp, 'N')
+             WHERE lineno = i.lineno;
+         END LOOP;
+
+         --COMMIT;
+      END;
+
+      v_mark := 25;
+
+      -- Check for SERVICE_SL
+      -- Provided sevice SL
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Service SL should be valid and non-extinct',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE     a.lineno NOT IN (SELECT coalesce(a.lineno, 0) lineno
+                          FROM int$stg_SAL_SRV_INV a1, finsl b, finsl_gl c
+                         WHERE     UPPER(a.service_slid) = UPPER(b.slid)
+                               AND b.slcode = c.slcode
+                               AND c.glcode = a.det_glcode
+                               AND coalesce(b.ext, 'N') = 'N'
+                               AND coalesce(c.ext, 'N') = 'N'
+                               AND a1.userid = p_userid)
+                AND a.service_slid IS NOT NULL
+                AND a.userid = p_userid;
+
+      -- Derive values from Services SLID
+      DECLARE
+         c1 CURSOR FOR
+              SELECT b.slcode, a.lineno
+                FROM int$stg_sal_srv_inv_all_fld a, finsl b
+               WHERE     UPPER(a.service_slid) = UPPER(b.slid)
+                     AND a.userid = p_userid
+            ORDER BY a.lineno;
+      BEGIN
+         FOR i IN c1
+         LOOP
+            UPDATE int$stg_sal_srv_inv_all_fld a
+               SET det_slcode = i.slcode
+             WHERE lineno = i.lineno;
+         END LOOP;
+
+         --COMMIT;
+      END;
+
+      -- Provide sevice SL if applicable only
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Service SL is missing for SL applicable GL',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE     coalesce(det_gl_sl_appl, 'N') = 'Y'
+                AND a.det_slcode IS NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                userid,
+                'Data Validation',
+                'Service SL should not be there for NON SL applicable GL',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE     coalesce(det_gl_sl_appl, 'N') = 'N'
+                AND a.det_slcode IS NOT NULL
+                AND a.userid = p_userid;
+
+      --COMMIT;
+
+      v_mark := 'D1048';
+
+      -- fintradegrp_name checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                p_userid,
+                'Data Validation',
+                'Invalid trade group',
+                clock_timestamp()
+           FROM int$stg_SAL_SRV_INV a
+          WHERE     UPPER(coalesce(a.tradegroup_name, 'LOCAL')) NOT IN (SELECT b.name
+                          FROM fintradegrp b
+                         WHERE coalesce(b.ext, 'N') = 'N')
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'SAL_SRV_INV',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'Same service, GL, SL combination not allowed in one document - '
+                        || CHR(13)
+                        || 'Date='
+                        || a.service_date
+                        || ','
+                        || CHR(13)
+                        || 'Site='
+                        || a.site_short_name
+                        || ','
+                        || CHR(13)
+                        || 'Document No='
+                        || a.docno
+                        || ','
+                        || CHR(13)
+                        || 'Remarks='
+                        || a.remarks
+                        || ','
+                        || CHR(13)
+                        || 'Scheme Doc No='
+                        || a.scheme_docno
+                        || ','
+                        || CHR(13)
+                        || 'Service='
+                        || a.service
+                        || ','
+                        || CHR(13)
+                        || 'Service GL='
+                        || a.service_gl
+                        || ','
+                        || CHR(13)
+                        || 'Service SLID='
+                        || a.service_slid
+                           dup_fld
+                   FROM int$stg_sal_srv_inv_all_fld a
+                  WHERE     a.userid = p_userid
+                        AND    a.service_date
+                            || ','
+                            || a.site_short_name
+                            || ','
+                            || a.docno
+                            || ','
+                            || a.docdt
+                            || ','
+                            || a.remarks
+                            || ','
+                            || a.scheme_docno
+                            || ','
+                            || a.service
+                            || ','
+                            || a.det_glcode::text
+                            || ','
+                            || a.det_slcode::text IN (SELECT x.combined_fld
+                                  FROM (  SELECT    service_date
+                                                 || ','
+                                                 || site_short_name
+                                                 || ','
+                                                 || docno
+                                                 || ','
+                                                 || docdt
+                                                 || ','
+                                                 || remarks
+                                                 || ','
+                                                 || scheme_docno
+                                                 || ','
+                                                 || m.service
+                                                 || ','
+                                                 || m.det_glcode::text
+                                                 || ','
+                                                 || m.det_slcode::text
+                                                    combined_fld,
+                                                 COUNT(1)
+                                            FROM int$stg_sal_srv_inv_all_fld m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY    service_date
+                                                 || ','
+                                                 || site_short_name
+                                                 || ','
+                                                 || docno
+                                                 || ','
+                                                 || docdt
+                                                 || ','
+                                                 || remarks
+                                                 || ','
+                                                 || scheme_docno
+                                                 || ','
+                                                 || m.service
+                                                 || ','
+                                                 || m.det_glcode::text
+                                                 || ','
+                                                 || m.det_slcode::text
+                                          HAVING COUNT(1) > 1) x)) alias15;
+
+      v_mark := 'D1049';
+
+      UPDATE int$stg_sal_srv_inv_all_fld a
+         SET saltradegrp_code =
+                (SELECT code
+                   FROM fintradegrp b
+                  WHERE (UPPER(b.name) = UPPER(a.tradegroup_name)))
+       WHERE a.tradegroup_name IS NOT NULL AND a.userid = p_userid;
+
+      UPDATE int$stg_sal_srv_inv_all_fld a
+         SET amount = round((coalesce(qty, 0) * coalesce(rate, 0))::numeric, 2)
+       WHERE a.amount IS NULL AND a.userid = p_userid;
+
+      v_mark := 'D1049';
+
+      -- fintradegrp_name checking
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'SAL_SRV_INV',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'Trade group should be same for single document - '
+                        || CHR(13)
+                        || 'Date='
+                        || a.service_date
+                        || ','
+                        || CHR(13)
+                        || 'Site='
+                        || a.site_short_name
+                        || ','
+                        || CHR(13)
+                        || 'Document No='
+                        || a.docno
+                        || ','
+                        || CHR(13)
+                        || 'Document Date='
+                        || a.docdt
+                        || ','
+                        || CHR(13)
+                        || 'Remarks='
+                        || a.remarks
+                        || ','
+                        || CHR(13)
+                        || 'Scheme Doc No='
+                        || a.scheme_docno
+                           dup_fld
+                   FROM int$stg_sal_srv_inv_all_fld a
+                  WHERE     a.userid = p_userid
+                        AND    a.service_date
+                            || ','
+                            || a.site_short_name
+                            || ','
+                            || a.docno
+                            || ','
+                            || a.docdt
+                            || ','
+                            || a.remarks
+                            || ','
+                            || a.scheme_docno IN (SELECT x.combined_fld
+                                  FROM (  SELECT    service_date
+                                                 || ','
+                                                 || site_short_name
+                                                 || ','
+                                                 || docno
+                                                 || ','
+                                                 || docdt
+                                                 || ','
+                                                 || remarks
+                                                 || ','
+                                                 || scheme_docno
+                                                    combined_fld,
+                                                 COUNT(
+                                                    DISTINCT m.tradegroup_name)
+                                            FROM int$stg_sal_srv_inv_all_fld m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY    service_date
+                                                 || ','
+                                                 || site_short_name
+                                                 || ','
+                                                 || docno
+                                                 || ','
+                                                 || docdt
+                                                 || ','
+                                                 || remarks
+                                                 || ','
+                                                 || scheme_docno
+                                          HAVING COUNT(
+                                                    DISTINCT m.saltradegrp_code) >
+                                                    1) x)) alias13;
+
+      v_mark := 'D1051';
+
+      -- salterm_name checking (3)
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                p_userid,
+                'Data Validation',
+                'Given term name is extinct',
+                clock_timestamp()
+           FROM int$stg_SAL_SRV_INV a
+          WHERE     a.term_name IS NOT NULL
+                AND a.term_name IN (SELECT b.saltermname
+                                      FROM saltermmain b
+                                     WHERE coalesce(b.ext, 'N') = 'Y')
+                AND a.userid = p_userid;
+
+      v_mark := 'D1052';
+
+      -- salterm_name checking (4)
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                p_userid,
+                'Data Validation',
+                'Term name does not belong to the given Trade Group',
+                clock_timestamp()
+           FROM int$stg_SAL_SRV_INV a
+          WHERE     a.term_name IS NOT NULL
+                AND UPPER(a.term_name) NOT IN
+                       (SELECT UPPER(b.saltermname)
+                          FROM saltermmain b
+                         WHERE     coalesce(b.ext, 'N') = 'N'
+                               AND b.fintradegrp_code =
+                                      (SELECT c.code
+                                         FROM fintradegrp c
+                                        WHERE     UPPER(c.name) =
+                                                     UPPER(
+                                                        a.tradegroup_name)
+                                              AND coalesce(c.ext, 'N') = 'N'))
+                AND a.userid = p_userid;
+
+      v_mark := 'D1053';
+
+      -- salterm_name checking (5)
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                p_userid,
+                'Data Validation',
+                'Trade Group defined in the excel file hence ''Term Name'' can not be null',
+                clock_timestamp()
+           FROM int$stg_SAL_SRV_INV a
+          WHERE tradegroup_name IS NOT NULL AND term_name IS NULL;
+
+      v_mark := 'D1055';
+
+      UPDATE int$stg_sal_srv_inv_all_fld a
+         SET saltermcode =
+                (SELECT saltermcode
+                   FROM saltermmain b
+                  WHERE (UPPER(b.saltermname) = UPPER(a.term_name)))
+       WHERE a.term_name IS NOT NULL AND a.userid = p_userid;
+
+      v_mark := 'D1054';
+
+      -- purterm_name checking (7)
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                0,
+                'SAL_SRV_INV',
+                p_userid,
+                'Data Validation',
+                dup_fld,
+                clock_timestamp()
+           FROM (SELECT DISTINCT
+                           'Term name should be same for single document - '
+                        || CHR(13)
+                        || 'Date='
+                        || a.service_date
+                        || ','
+                        || CHR(13)
+                        || 'Site='
+                        || a.site_short_name
+                        || ','
+                        || CHR(13)
+                        || 'Document No='
+                        || a.docno
+                        || ','
+                        || CHR(13)
+                        || 'Document Date='
+                        || a.docdt
+                        || ','
+                        || CHR(13)
+                        || 'Remarks='
+                        || a.remarks
+                        || ','
+                        || CHR(13)
+                        || 'Scheme Doc No='
+                        || a.scheme_docno
+                           dup_fld
+                   FROM int$stg_sal_srv_inv_all_fld a
+                  WHERE     a.userid = p_userid
+                        AND    a.service_date
+                            || ','
+                            || a.site_short_name
+                            || ','
+                            || a.docno
+                            || ','
+                            || a.docdt
+                            || ','
+                            || a.remarks
+                            || ','
+                            || a.scheme_docno IN (SELECT x.combined_fld
+                                  FROM (  SELECT    service_date
+                                                 || ','
+                                                 || site_short_name
+                                                 || ','
+                                                 || docno
+                                                 || ','
+                                                 || docdt
+                                                 || ','
+                                                 || remarks
+                                                 || ','
+                                                 || scheme_docno
+                                                    combined_fld,
+                                                 COUNT(DISTINCT m.term_name)
+                                            FROM int$stg_sal_srv_inv_all_fld m
+                                           WHERE m.userid = p_userid
+                                        GROUP BY    service_date
+                                                 || ','
+                                                 || site_short_name
+                                                 || ','
+                                                 || docno
+                                                 || ','
+                                                 || docdt
+                                                 || ','
+                                                 || remarks
+                                                 || ','
+                                                 || scheme_docno
+                                          HAVING COUNT(
+                                                    DISTINCT m.saltermcode) >
+                                                    1) x)) alias13;
+
+      -- check whether any GST charges are there in term
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                a.lineno,
+                'SAL_SRV_INV',
+                p_userid,
+                'Data Validation',
+                'GST charges are allowed only for GST applicable document scheme',
+                clock_timestamp()
+           FROM int$stg_sal_srv_inv_all_fld a
+          WHERE     coalesce(gstappl, 'N') <>
+                       (SELECT CASE
+                                  WHEN(SELECT DISTINCT
+                                               c.source
+                                          FROM salchg c,
+                                               saltermdet
+                                               d
+                                         WHERE     c.salchgcode =
+                                                      d.chgcode
+                                               AND d.saltermcode =
+                                                      a.saltermcode
+                                               AND c.source =
+                                                      'G') = 'G'
+                                  THEN
+                                     'Y'
+                                  ELSE
+                                     'N'
+                               END
+                          )
+                AND a.userid = p_userid;
+
+      --COMMIT;
+
+      -- check whether records are valid or not
+      BEGIN
+         SELECT 'S'
+           INTO STRICT v_status
+
+          WHERE EXISTS (SELECT 'S'
+                      FROM int$error_log
+                     WHERE userid = p_userid);
+
+         RETURN('0');
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            RETURN('1');
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'SAL_SRV_INV',
+                      p_userid,
+                      errcode,
+                      errmsg || ',' || v_mark,
+                      clock_timestamp());
+
+         --COMMIT;
+
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

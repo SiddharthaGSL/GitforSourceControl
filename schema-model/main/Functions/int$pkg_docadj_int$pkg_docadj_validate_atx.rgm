@@ -1,0 +1,558 @@
+function "main"."int$pkg_docadj_int$pkg_docadj_validate_atx(bigint, bigint, timestamp without time zone, bigint)" {
+  text = """
+
+DECLARE
+
+      v_status   char(1);
+      errmsg     varchar(200);
+      errcode    bigint;
+BEGIN
+      -- UPDATING SLCODE
+      UPDATE int$stg_DOCADJ a
+	  SET DERIVED_SLCODE = b.SLCODE, DERIVED_GLCODE = b.GLCODE
+           FROM(SELECT coalesce(a.lineno, 0) lineno, sl.SLCODE, sl.GLCODE
+                    FROM int$stg_DOCADJ a, FINSL sl
+                   WHERE     UPPER(a.SLID) = UPPER(sl.SLID)
+                         AND a.userid = p_userid) b
+              WHERE (a.lineno = b.lineno);
+
+      -- UPDATING MAIN DOC POST CODE
+      UPDATE int$stg_DOCADJ a
+	  SET DERIVED_MAINDOC_POSTCODE = b.postcode,
+                    DERIVED_MAINDOC_DAMT = b.DAMOUNT,
+                    DERIVED_MAINDOC_CAMT = b.CAMOUNT,
+                    DERIVED_MAINDOC_ADJAMT = b.ADJAMT,
+                    DERIVED_MAINDOC_ENTDT = b.ENTDT,
+                    DERIVED_MAINDOC_ENTTYPE = b.ENTTYPE,
+                    DERIVED_MAINDOC_ENTCODE = b.ENTCODE
+           FROM (SELECT coalesce(a.lineno, 0)  lineno,
+                         p.postcode,
+                         coalesce(p.DAMOUNT, 0) DAMOUNT,
+                         coalesce(p.CAMOUNT, 0) CAMOUNT,
+                         coalesce(p.ADJAMT, 0)  ADJAMT,
+                         date_trunc('day', p.ENTDT)    ENTDT,
+                         p.ENTTYPE,
+                         p.ENTCODE
+                    FROM int$stg_DOCADJ a,
+                         (  SELECT coalesce(a.lineno, 0) lineno
+                              FROM FINPOST p, int$stg_DOCADJ a
+                             WHERE     p.slcode = a.DERIVED_SLCODE
+                                   AND p.glcode = a.DERIVED_GLCODE
+                                   AND UPPER(p.SCHEME_DOCNO) =
+                                          UPPER(a.MAIN_DOC_SCHEME_NO)
+                                   AND p.ADMOU_CODE = p_connect_ou
+                                   AND coalesce(p.ADJAMT, 0) <>
+                                          ABS(
+                                               coalesce(p.DAMOUNT, 0)
+                                             - coalesce(p.CAMOUNT, 0))
+                                   AND p.ENTTYPE = 'VDP'
+                                   AND coalesce(p.CAMOUNT, 0) > 0
+                                   AND a.userid = p_userid
+                          GROUP BY coalesce(a.lineno, 0)
+                            HAVING COUNT(*) < 2) X,
+                         finpost        p
+                   WHERE     a.LINENO = X.lineno
+                         AND p.slcode = a.DERIVED_SLCODE
+                         AND p.glcode = a.DERIVED_GLCODE
+                         AND UPPER(p.SCHEME_DOCNO) =
+                                UPPER(a.MAIN_DOC_SCHEME_NO)
+                         AND p.ADMOU_CODE = p_connect_ou
+                         AND coalesce(p.ADJAMT, 0) <>
+                                ABS(coalesce(p.DAMOUNT, 0) - coalesce(p.CAMOUNT, 0))
+                         AND p.ENTTYPE = 'VDP'
+                         AND coalesce(p.CAMOUNT, 0) > 0
+                         AND a.userid = p_userid) b
+              WHERE (a.lineno = b.lineno);
+
+      -- UPDATING REF DOC POST CODE
+UPDATE int$stg_DOCADJ a
+SET DERIVED_ADJDOC_POSTCODE = b.postcode,
+                    DERIVED_ADJDOC_DAMT = b.DAMOUNT,
+                    DERIVED_ADJDOC_CAMT = b.CAMOUNT,
+                    DERIVED_ADJDOC_ADJAMT = b.ADJAMT,
+                    DERIVED_ADJDOC_ENTDT = b.ENTDT,
+                    DERIVED_ADJDOC_ENTTYPE = b.ENTTYPE,
+                    DERIVED_ADJDOC_ENTCODE = b.ENTCODE
+           FROM (SELECT coalesce(a.lineno, 0)  lineno,
+                         p.postcode,
+                         coalesce(p.DAMOUNT, 0) DAMOUNT,
+                         coalesce(p.CAMOUNT, 0) CAMOUNT,
+                         coalesce(p.ADJAMT, 0)  ADJAMT,
+                         date_trunc('day', p.ENTDT)    ENTDT,
+                         p.ENTTYPE,
+                         p.ENTCODE
+                    FROM int$stg_DOCADJ a,
+                         (  SELECT coalesce(y.lineno, 0) lineno
+                              FROM FINPOST p, int$stg_DOCADJ y
+                             WHERE     p.slcode = y.DERIVED_SLCODE
+                                   AND p.glcode = y.DERIVED_GLCODE
+                                   AND UPPER(p.SCHEME_DOCNO) =
+                                          UPPER(y.ADJ_DOC_SCHEME_REF_NO)
+                                   AND p.ADMOU_CODE = p_connect_ou
+                                   AND coalesce(p.ADJAMT, 0) <>
+                                          ABS(
+                                               coalesce(p.DAMOUNT, 0)
+                                             - coalesce(p.CAMOUNT, 0))
+                                   AND coalesce(p.RELEASE_STATUS, 'U') = 'P'
+                                   AND y.ADJ_DOC_SCHEME_REF_NO IS NOT NULL
+                                   AND y.userid = p_userid
+                          GROUP BY coalesce(y.lineno, 0)
+                            HAVING COUNT(*) < 2) X,
+                         FINPOST        p
+                   WHERE     a.lineno = X.lineno
+                         AND p.SLCODE = a.DERIVED_SLCODE
+                         AND p.GLCODE = a.DERIVED_GLCODE
+                         AND UPPER(p.SCHEME_DOCNO) =
+                                UPPER(a.ADJ_DOC_SCHEME_REF_NO)
+                         AND p.ADMOU_CODE = p_connect_ou
+                         AND coalesce(p.ADJAMT, 0) <>
+                                ABS(coalesce(p.DAMOUNT, 0) - coalesce(p.CAMOUNT, 0))
+                         AND coalesce(p.RELEASE_STATUS, 'U') = 'P'
+                         AND a.ADJ_DOC_SCHEME_REF_NO IS NOT NULL
+                         AND a.userid = p_userid) b
+              WHERE (a.lineno = b.lineno);
+
+      UPDATE int$stg_DOCADJ a
+	  SET DERIVED_ADJDOC_POSTCODE = b.postcode,
+                    DERIVED_ADJDOC_DAMT = b.DAMOUNT,
+                    DERIVED_ADJDOC_CAMT = b.CAMOUNT,
+                    DERIVED_ADJDOC_ADJAMT = b.ADJAMT,
+                    DERIVED_ADJDOC_ENTDT = b.ENTDT,
+                    DERIVED_ADJDOC_ENTTYPE = b.ENTTYPE,
+                    DERIVED_ADJDOC_ENTCODE = b.ENTCODE
+           FROM (SELECT coalesce(a.lineno, 0)  lineno,
+                         p.postcode,
+                         coalesce(p.DAMOUNT, 0) DAMOUNT,
+                         coalesce(p.CAMOUNT, 0) CAMOUNT,
+                         coalesce(p.ADJAMT, 0)  ADJAMT,
+                         date_trunc('day', p.ENTDT)    ENTDT,
+                         p.ENTTYPE,
+                         p.ENTCODE
+                    FROM int$stg_DOCADJ a,
+                         (  SELECT coalesce(y.lineno, 0) lineno
+                              FROM FINPOST p, int$stg_DOCADJ y
+                             WHERE     p.slcode = y.DERIVED_SLCODE
+                                   AND p.glcode = y.DERIVED_GLCODE
+                                   AND UPPER(p.DOCNO) =  UPPER(y.ADJ_DOC_SCHEME_REF_NO)
+                                   AND p.ADMOU_CODE = p_connect_ou
+                                   AND coalesce(p.ADJAMT, 0) <>
+                                          ABS(
+                                               coalesce(p.DAMOUNT, 0)
+                                             - coalesce(p.CAMOUNT, 0))
+                                   AND coalesce(p.RELEASE_STATUS, 'U') = 'P'
+                                   AND y.DERIVED_ADJDOC_POSTCODE IS NULL
+                                   AND y.userid = p_userid
+                          GROUP BY coalesce(y.lineno, 0)
+                            HAVING COUNT(*) < 2) X,
+                         FINPOST        p
+                   WHERE     a.lineno = X.lineno
+                         AND p.SLCODE = a.DERIVED_SLCODE
+                         AND p.GLCODE = a.DERIVED_GLCODE
+                         AND UPPER(p.DOCNO) =
+                                UPPER(a.ADJ_DOC_SCHEME_REF_NO)
+                         AND p.ADMOU_CODE = p_connect_ou
+                         AND coalesce(p.ADJAMT, 0) <>
+                                ABS(coalesce(p.DAMOUNT, 0) - coalesce(p.CAMOUNT, 0))
+                         AND coalesce(p.RELEASE_STATUS, 'U') = 'P'
+                         AND a.DERIVED_ADJDOC_POSTCODE IS NULL
+                         AND a.userid = p_userid) b
+              WHERE (a.lineno = b.lineno);
+      -- Validing SLID
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'DOCADJ',
+                userid,
+                'Data Validation',
+                'Sub-ledger not found as per the specified SLID.',
+                clock_timestamp()
+           FROM int$stg_DOCADJ a
+          WHERE a.DERIVED_SLCODE IS NULL AND a.userid = p_userid;
+
+      -- Validating Main Doc
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'DOCADJ',
+                userid,
+                'Data Validation',
+                'MAIN_DOC_SCHEME_NO: No pending document found in the connected OU for the specified SL or multiple pending doc. exists or document specified is other than AR Voucher.',
+                clock_timestamp()
+           FROM int$stg_DOCADJ a
+          WHERE a.DERIVED_MAINDOC_POSTCODE IS NULL AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'DOCADJ',
+                userid,
+                'Data Validation',
+                'MAIN_DOC_SCHEME_NO is already adjusted. Adjusted from this utility is allowed only when entire document is pending.',
+                clock_timestamp()
+           FROM int$stg_DOCADJ a
+          WHERE     a.DERIVED_MAINDOC_POSTCODE IS NOT NULL
+                AND coalesce(a.DERIVED_MAINDOC_ADJAMT, 0) <> 0
+                AND a.userid = p_userid;
+
+      -- Validating Ref Doc
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'DOCADJ',
+                userid,
+                'Data Validation',
+                'ADJ_DOC_SCHEME_REF_NO: No pending POSTED document found in the connected OU for the specified SL or multiple pending doc. exists.',
+                clock_timestamp()
+           FROM int$stg_DOCADJ a
+          WHERE a.DERIVED_ADJDOC_POSTCODE IS NULL AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'DOCADJ',
+                userid,
+                'Data Validation',
+                'Main document and adjustment document cannot be same.',
+                clock_timestamp()
+           FROM int$stg_DOCADJ a
+          WHERE     a.DERIVED_MAINDOC_POSTCODE = a.DERIVED_ADJDOC_POSTCODE
+                AND a.userid = p_userid;
+
+      -- Validating Adj Amt
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'DOCADJ',
+                userid,
+                'Data Validation',
+                'ADJAMT can not be Zero.',
+                clock_timestamp()
+           FROM int$stg_DOCADJ a
+          WHERE a.ADJAMT = 0 AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'DOCADJ',
+                userid,
+                'Data Validation',
+                'ADJAMT can be provided up to 2 decimal places only.',
+                clock_timestamp()
+           FROM int$stg_DOCADJ a
+          WHERE     LENGTH(LTRIM(ABS((ADJAMT) - ROUND(ADJAMT)),0)::TEXT) > 3
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'DOCADJ',
+                userid,
+                'Data Validation',
+                'Pending amount for ADJ_DOC_SCHEME_REF_NO is lesser than the specified ADJAMT.',
+                clock_timestamp()
+           FROM int$stg_DOCADJ a
+          WHERE       ABS(
+                           coalesce(a.DERIVED_ADJDOC_DAMT, 0)
+                         - coalesce(a.DERIVED_ADJDOC_CAMT, 0))
+                    - coalesce(a.DERIVED_ADJDOC_ADJAMT, 0) <
+                       ABS(coalesce(a.ADJAMT, 0))
+                AND a.DERIVED_ADJDOC_POSTCODE IS NOT NULL
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'DOCADJ',
+                userid,
+                'Data Validation',
+                'MAIN_DOC_SCHEME_NO is a debit document. Adjustment amount should be positive for credit documents being adjusted or negative for debit documents being adjusted.',
+                clock_timestamp()
+           FROM int$stg_DOCADJ a
+          WHERE     coalesce(a.DERIVED_MAINDOC_DAMT, 0) > 0
+                AND (   (coalesce(a.DERIVED_ADJDOC_DAMT, 0) > 0 AND ADJAMT > 0)
+                     OR (coalesce(a.DERIVED_ADJDOC_CAMT, 0) > 0 AND ADJAMT < 0))
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'DOCADJ',
+                userid,
+                'Data Validation',
+                'MAIN_DOC_SCHEME_NO is a credit document. Adjustment amount should be positive for debit documents being adjusted or negative for credit documents being adjusted.',
+                clock_timestamp()
+           FROM int$stg_DOCADJ a
+          WHERE     coalesce(a.DERIVED_MAINDOC_CAMT, 0) > 0
+                AND (   (coalesce(a.DERIVED_ADJDOC_DAMT, 0) > 0 AND ADJAMT < 0)
+                     OR (coalesce(a.DERIVED_ADJDOC_CAMT, 0) > 0 AND ADJAMT > 0))
+                AND a.userid = p_userid;
+
+      -- COMMON VALIDATIONS
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'DOCADJ',
+                userid,
+                'Data Validation',
+                'Same ADJ_DOC_SCHEME_REF_NO found in multiple rows against SLID, MAIN_DOC_SCHEME_NO combination.',
+                clock_timestamp()
+           FROM int$stg_DOCADJ a
+          WHERE     a.lineno IN
+                       (SELECT coalesce(b.lineno, 0) lineno
+                          FROM int$stg_DOCADJ b,
+                               (  SELECT DERIVED_MAINDOC_POSTCODE,
+                                         DERIVED_ADJDOC_POSTCODE
+                                    FROM int$stg_DOCADJ
+                                   WHERE userid = p_userid
+                                GROUP BY DERIVED_MAINDOC_POSTCODE,
+                                         DERIVED_ADJDOC_POSTCODE
+                                  HAVING COUNT(*) > 1) y
+                         WHERE     b.DERIVED_MAINDOC_POSTCODE =
+                                      y.DERIVED_MAINDOC_POSTCODE
+                               AND b.DERIVED_ADJDOC_POSTCODE =
+                                      y.DERIVED_ADJDOC_POSTCODE
+                               AND b.userid = p_userid)
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'DOCADJ',
+                userid,
+                'Data Validation',
+                'Total adjustment amount cannot be 0 or more than pending amount for MAIN_DOC_SCHEME_NO.',
+                clock_timestamp()
+           FROM int$stg_DOCADJ a
+          WHERE     a.lineno IN
+                       (SELECT coalesce(b.lineno, 0) lineno
+                          FROM int$stg_DOCADJ b,
+                               (  SELECT DERIVED_MAINDOC_POSTCODE,
+                                           ABS(
+                                                coalesce(DERIVED_MAINDOC_DAMT, 0)
+                                              - coalesce(DERIVED_MAINDOC_CAMT, 0))
+                                         - coalesce(DERIVED_MAINDOC_ADJAMT, 0)
+                                            PENDINGAMT,
+                                         SUM(coalesce(ADJAMT, 0))
+                                            ADJUSTMENT_REQ_AMT
+                                    FROM int$stg_DOCADJ
+                                   WHERE userid = p_userid
+                                GROUP BY DERIVED_MAINDOC_POSTCODE,
+                                           ABS(
+                                                coalesce(DERIVED_MAINDOC_DAMT, 0)
+                                              - coalesce(DERIVED_MAINDOC_CAMT, 0))
+                                         - coalesce(DERIVED_MAINDOC_ADJAMT, 0)) y
+                         WHERE     b.DERIVED_MAINDOC_POSTCODE =
+                                      y.DERIVED_MAINDOC_POSTCODE
+                               AND (   (y.PENDINGAMT < y.ADJUSTMENT_REQ_AMT)
+                                    OR ADJUSTMENT_REQ_AMT = 0)
+                               AND b.userid = p_userid)
+                AND a.userid = p_userid;
+
+      -- Validating total pending amount of adjustment documents (same adj. doc can exist in multiple main doc)
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'DOCADJ',
+                userid,
+                'Data Validation',
+                'Total adjustment amount cannot be more than pending amount for ADJ_DOC_SCHEME_REF_NO.',
+                clock_timestamp()
+           FROM int$stg_DOCADJ a
+          WHERE     a.lineno IN
+                       (SELECT coalesce(b.lineno, 0) lineno
+                          FROM int$stg_DOCADJ b,
+                               (  SELECT DERIVED_ADJDOC_POSTCODE,
+                                           ABS(
+                                                coalesce(DERIVED_ADJDOC_DAMT, 0)
+                                              - coalesce(DERIVED_ADJDOC_CAMT, 0))
+                                         - coalesce(DERIVED_ADJDOC_ADJAMT, 0)
+                                            PENDINGAMT,
+                                         SUM(coalesce(ADJAMT, 0))
+                                            ADJUSTMENT_REQ_AMT
+                                    FROM int$stg_DOCADJ
+                                   WHERE userid = p_userid
+                                GROUP BY DERIVED_ADJDOC_POSTCODE,
+                                           ABS(
+                                                coalesce(DERIVED_ADJDOC_DAMT, 0)
+                                              - coalesce(DERIVED_ADJDOC_CAMT, 0))
+                                         - coalesce(DERIVED_ADJDOC_ADJAMT, 0)) y
+                         WHERE     b.DERIVED_ADJDOC_POSTCODE =
+                                      y.DERIVED_ADJDOC_POSTCODE
+                               AND (   (y.PENDINGAMT < y.ADJUSTMENT_REQ_AMT)
+                                    OR ADJUSTMENT_REQ_AMT = 0)
+                               AND b.userid = p_userid)
+                AND a.userid = p_userid;
+
+      INSERT INTO int$error_log(code,
+                                 lineno,
+                                 classname,
+                                 userid,
+                                 errortype,
+                                 errordesc,
+                                 createdon)
+         SELECT nextval('int$error_log_code'),
+                lineno,
+                'DOCADJ',
+                userid,
+                'Data Validation',
+                'ADJ_DOC_SCHEME_REF_NO cannot be have any MAIN_DOC_SCHEME_NO document in the same excel. Do multiple imports.',
+                clock_timestamp()
+           FROM int$stg_DOCADJ a
+          WHERE     a.lineno IN (SELECT coalesce(b.lineno, 0) lineno
+                          FROM int$stg_DOCADJ b
+                         WHERE     b.DERIVED_ADJDOC_POSTCODE IN (SELECT r.DERIVED_MAINDOC_POSTCODE
+                                         FROM int$stg_DOCADJ r
+                                        WHERE r.userid = p_userid)
+                               AND b.userid = p_userid)
+                AND a.userid = p_userid;
+
+      -- Check whether records are valid or not
+      BEGIN
+         SELECT 'S'
+           INTO STRICT v_status
+           
+          WHERE EXISTS (SELECT 'S'
+                      FROM int$error_log
+                     WHERE userid = p_userid);
+
+         RETURN('0');
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            RETURN('1');
+      END;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         errcode := SQLSTATE;
+         errmsg := SQLERRM;
+
+         --Error log for Oracle Internal Error
+         INSERT INTO int$error_log(code,
+                                    lineno,
+                                    classname,
+                                    userid,
+                                    errortype,
+                                    errordesc,
+                                    createdon)
+              VALUES (nextval('int$error_log_code'),
+                      0,
+                      'DOCADJ',
+                      p_userid,
+                      errcode,
+                      errmsg,
+                      clock_timestamp());
+
+         --COMMIT;
+         RETURN('0');
+   END;
+
+"""
+  returnType = character
+  arguments = <
+    {
+      name = p_userid
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_connect_site
+      type = bigint
+      mode = IN
+    }
+
+    {
+      name = p_logging_date
+      type = timestamp without time zone
+      mode = IN
+    }
+
+    {
+      name = p_connect_ou
+      type = bigint
+      mode = IN
+    }
+
+  >
+  language = plpgsql
+}
+

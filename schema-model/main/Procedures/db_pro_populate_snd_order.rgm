@@ -1,0 +1,946 @@
+procedure "main"."db_pro_populate_snd_order()" {
+  text = """
+
+DECLARE
+
+   /*****************************************************************************************************************
+      NAME: Db_Pro_Populate_SnD_Order
+
+      PURPOSE:
+
+      REVISIONS:
+      No.          Date        Author          Description
+      ---------    ----------  --------------  --------------------------------------------------------------
+      REV : 000    31/07/2014   DIPTIMAN         (BUG ID : 1489) Creation of SO or TO from POS Order.
+      REV : 001    09/10/2014   MOUSUMI          (BUG ID : 1672) Sales Order site change to be item wise - quantity wise
+      REV : 002    18/11/2014   PRASANTA         (BUG ID : 1793) Price List related changes.
+      REV : 003    10/12/2014   DIPTIMAN         (BUG ID : 1931) Wrong rate in POS Order.
+      REV : 004    26/12/2014   DIPTIMAN         (BUG ID : 2016) Document scheme added in checking.
+      REV : 005    29/12/2014   MOUSUMI         (BUG ID : 2016) Document scheme added in checking.
+      REV : 006    29/12/2014   MOUSUMI         (BUG ID : LWY-310-82425) .
+      REV : 007    13/01/2016   MANASH          (TFS ID : 13460) Sometiems auto Sales Order is not generated for POS Order.
+      REV : 008    17/04/2017   MOUSUMI         (TFS ID : 26844) Multiou
+      REV : 009    07/JUL/2017  MOUSUMI         (TICKET ID : UHM-260-98878) G_MARK INITIALIZATION
+      REV : 010    17/06/2020   MOUSUMI         (TICKET ID : MIGRATION) MIGRATION
+      NOTES:
+   *****************************************************************************************************************/
+   v_ordcode                salordmain.ordcode%TYPE;
+   v_ycode                  salordmain.ycode%TYPE;
+   v_ordno                  salordmain.ordno%TYPE;
+   v_pcode                  salordmain.pcode%TYPE;
+   v_agcode                 salordmain.pcode%TYPE;
+   v_trpcode                salordmain.pcode%TYPE;
+   v_saletype               salordmain.saletype%TYPE;
+   v_admou_code             admou.code%TYPE;
+   v_admsite_code_owner     salordmain.admsite_code_owner%TYPE;
+   v_psite_posorder_code    salordmain.psite_posorder_code%TYPE;
+   --v_salorddet_code              salorddet.code%TYPE;
+   v_ho_cnlqty              salorddet.cnlqty%TYPE;
+   v_menucode               admmenu.menucode%TYPE;
+   v_sitetype               admsite.sitetype%TYPE;
+   v_psite_initial          admsite.psite_initial%TYPE;
+   -- START REV : 003
+   -- v_psite_admcmptax_code        admsite.psite_admcmptax_code%TYPE;
+   v_admcmptax_code_ou      admsite.psite_admcmptax_code%TYPE;
+   -- END REV : 003
+   -- start rev : 002
+   v_admcmptax_code_site    admsite.psite_admcmptax_code%TYPE;
+   -- end rev : 002
+   v_pricelistcode          salpricelistmain.pricelistcode%TYPE;
+   v_termcode               saltermmain.saltermcode%TYPE;
+   v_tradegrp_code          fintradegrp.code%TYPE;
+   v_tradegrp_name          fintradegrp.name%TYPE;
+   v_formcode               finform.formcode%TYPE;
+   v_flag                   bigint;
+   v_pricetype              salpricelistmain.price_type%TYPE;
+   v_discount_factor_det    salpricelistmain.discount_factor%TYPE;
+   v_incl_vat_in_dist       salpricelistmain.include_vat_in_discount%TYPE;
+   v_discount_mode          salpricelistmain.discount_mode%TYPE;
+   v_discount_basis         salpricelistmain.discount_basis%TYPE;
+   v_price_roundoff         salpricelistmain.net_price_multiples_of%TYPE;
+   v_roundoff_limit         salpricelistmain.net_price_round_limit%TYPE;
+   -- start rev : 002
+   v_cmptax_code_basis      salpricelistmain.cmptax_code_basis%TYPE;
+   -- end rev : 002
+   v_barunit                invitem.barunit%TYPE;
+   v_mrp                    invitem.mrp%TYPE;
+   v_rate                   bigint;
+   v_taxrate                fintaxdet.rate%TYPE;
+   v_taxamt                 double precision;
+   v_net_rate               double precision;
+   v_discount               double precision;
+   v_roundoff               double precision;
+   v_basic_rate             double precision;
+   v_discount_factor_main   bigint;
+   g_mark                   varchar(2000) := NULL;
+   vcerrcode                varchar(50);
+   vcerrmsg                 varchar(2000);
+
+   -- START REV : 001
+   v_pos_cnl_qty_to_adj     salorddet.cnlqty%TYPE;
+   v_pos_cnl_qty            salorddet.cnlqty%TYPE;
+   v_netamt                 double precision;
+   -- END REV : 001
+   -- START REV : 004
+   v_pos_ord_gen_status     varchar(500);
+   v_cnt_itm_in_posord      bigint;
+   v_cnt_itm_in_so          bigint;
+   v_socode                 bigint;
+   v_soicode                varchar(9);
+   v_soqty                  double precision;
+   v_msg_itm_qty            varchar(50);
+   -- END REV : 004
+   V_SO_CONN_SITE           bigint;                          -- REV : 009
+   V_RESERVE_INV            char(1) := NULL;                     -- REV : 008
+   V_CNT_REPLN              bigint := 0;                     -- REV : 008
+   V_CNT_SITE               bigint := 0; 
+   c1 CURSOR FOR
+      SELECT *
+        FROM psite_posorder m
+       WHERE m.salordmain_ordcode IS NULL                    -- START REV : 004
+                                         AND m.auto_so_remarks IS NULL;
+   -- END REV : 004
+   c2 CURSOR(p_code text)
+   FOR
+      SELECT *
+        FROM psite_posorderitem d
+       WHERE d.psite_posorder_code = p_code;
+  k RECORD;
+BEGIN
+   -- START REV : 009
+   -- END REV : 004
+   -- END REV : 009
+   FOR i IN c1
+   LOOP
+      g_mark := NULL;                                             -- REV : 009
+      BEGIN
+         -- START REV : 001
+         SELECT MIN(ordcode)
+           -- SELECT ORDCODE
+           -- END REV : 001
+           INTO STRICT v_ordcode
+           FROM salordmain
+          WHERE psite_posorder_code = i.code;
+         -- START REV : 001
+         -- To raise No_Data_Found
+         IF v_ordcode IS NULL
+         THEN
+            SELECT ordcode
+              INTO STRICT v_ordcode
+              FROM salordmain
+             WHERE ordcode = -1;
+         END IF;
+         -- END REV : 001
+         -- START REV : 008
+         BEGIN
+            SELECT ADMSITE_CODE_OWNER
+              INTO STRICT V_SO_CONN_SITE
+              FROM SALORDMAIN
+             WHERE ORDCODE = V_ORDCODE;
+         EXCEPTION
+            WHEN no_data_found
+            THEN
+               V_SO_CONN_SITE := NULL;
+         END;
+         IF coalesce(V_SO_CONN_SITE, 0) = 0
+         THEN
+            g_mark := 'Document owner site is missing';
+            RAISE EXCEPTION 'e_usr_exp' USING ERRCODE = '50001';
+         END IF;
+         BEGIN
+            /* IF INSTR(DB_FUN_GET_SITETYPE(V_SO_CONN_SITE) ,'OM') = 0 THEN
+                SELECT code, default_ho_site
+                INTO   v_admou_code, v_admsite_code_owner
+                FROM   ADMOU
+                WHERE  CODE = ( SELECT ADMOU_CODE FROM ADMSITE S WHERE S.CODE = V_SO_CONN_SITE);
+             ELSE
+                SELECT code, default_ho_site
+                INTO   v_admou_code, v_admsite_code_owner
+                FROM   ADMOU
+                WHERE  CODE = ( SELECT DEFAULT_ADMOU_CODE FROM ADMCMP C);
+
+             END IF;*/
+            SELECT COUNT (repln_admsite_code) INTO V_CNT_SITE 
+               FROM ADMSITE_OU 
+              WHERE ADMSITE_CODE = i.admsite_code
+              AND EXT = 'N'
+              AND ISDEFAULT = 1;
+			
+            SELECT COUNT(DISTINCT DB_FUNC_GET_OU_CODE(REPLN_ADMSITE_CODE))
+              INTO STRICT V_CNT_REPLN
+              FROM ADMSITE_OU SOU
+             WHERE     position('OS' in DB_FUN_GET_SITETYPE(REPLN_ADMSITE_CODE)) >
+                          0
+                   AND ADMSITE_CODE = V_SO_CONN_SITE
+                   AND EXT = 'N';
+				   
+IF COALESCE(V_CNT_SITE,0) = 1
+                              THEN 
+                                BEGIN
+                                SELECT admou_code, repln_admsite_code
+                                        INTO v_admou_code, v_admsite_code_owner
+                                    FROM ADMSITE_OU 
+                                    WHERE   ADMSITE_CODE = i.admsite_code
+                                        AND EXT = 'N'
+                                        AND ISDEFAULT = 1;
+                                    EXCEPTION
+                                        WHEN NO_DATA_FOUND
+                                        THEN
+                                        v_admsite_code_owner := NULL;
+                                        v_admou_code := NULL;
+                                END;
+				   
+            ELSIF coalesce(V_CNT_SITE,0) = 0 AND coalesce(V_CNT_REPLN, 0) = 1
+            THEN
+               BEGIN
+                  SELECT code, default_ho_site
+                    INTO STRICT v_admou_code, v_admsite_code_owner
+                    FROM ADMOU
+                   WHERE CODE =
+                            (SELECT DISTINCT
+                                    DB_FUNC_GET_OU_CODE(REPLN_ADMSITE_CODE)
+                               FROM ADMSITE_OU SOU
+                              WHERE     position('OS' in DB_FUN_GET_SITETYPE(
+                                              REPLN_ADMSITE_CODE)) > 0
+                                    AND ADMSITE_CODE = V_SO_CONN_SITE
+                                    AND EXT = 'N');
+               EXCEPTION
+                  WHEN no_data_found
+                  THEN
+                     v_admsite_code_owner := NULL;
+                     v_admou_code := NULL;
+               END;
+            ELSE
+               BEGIN
+                  SELECT code, default_ho_site
+                    INTO STRICT v_admou_code, v_admsite_code_owner
+                    FROM ADMOU
+                   WHERE CODE = (SELECT DEFAULT_ADMOU_CODE
+                                   FROM ADMCMP C);
+               EXCEPTION
+                  WHEN no_data_found
+                  THEN
+                     v_admsite_code_owner := NULL;
+                     v_admou_code := NULL;
+               END;
+            END IF;
+            -- START REV : 003
+            SELECT psite_admcmptax_code, RESERVE_INV              -- REV : 008
+              INTO STRICT v_admcmptax_code_ou, V_RESERVE_INV             -- REV : 008
+              FROM admsite
+             WHERE code = v_admsite_code_owner;
+            -- END REV : 003
+            IF coalesce(v_admsite_code_owner, 0) = 0
+            THEN
+               g_mark := 'Document owner site is missing';
+               RAISE EXCEPTION 'e_usr_exp' USING ERRCODE = '50001';
+            END IF;
+         EXCEPTION
+            WHEN no_data_found
+            THEN
+               g_mark := 'Operating Unit not found.';
+            WHEN too_many_rows
+            THEN
+               g_mark := 'Multiple Operating Unit found.';
+         END;
+         -- START REV : 004
+         IF g_mark IS NOT NULL
+         THEN
+            RAISE EXCEPTION 'e_usr_exp' USING ERRCODE = '50001';
+         END IF;
+         -- END REV : 004
+         -- END REV : 008
+         UPDATE psite_posorder
+            SET salordmain_ordcode = v_ordcode
+          WHERE code = i.code;
+         FOR j IN c2(i.code)
+         LOOP
+            -- START REV : 001
+            
+            IF coalesce(j.cancelledqty, 0) > 0
+            THEN
+               BEGIN
+                  SELECT SUM(coalesce(POS_CNLQTY, 0))
+                    INTO STRICT v_pos_cnl_qty
+                    FROM SALORDDET D
+                   WHERE psite_posorderitem_code = j.code AND ICODE = J.ICODE;
+               EXCEPTION
+                  WHEN no_data_found
+                  THEN
+                     v_pos_cnl_qty := 0;
+               END;
+               v_pos_cnl_qty_to_adj :=
+                  coalesce(j.cancelledqty, 0) - coalesce(v_pos_cnl_qty, 0);
+               IF coalesce(v_pos_cnl_qty_to_adj, 0) > 0
+               THEN
+                  DECLARE
+                     v_ordcnl_qty   double precision := 0;
+                     v_cnl_qty      double precision := v_pos_cnl_qty_to_adj;
+                     C_DET CURSOR FOR
+                          SELECT DISTINCT
+                                 m.ordcode,
+                                 orddt,
+                                 (  coalesce(d.ordqty, 0)
+                                  - coalesce(d.dqty, 0)
+                                  - coalesce(d.cnlqty, 0))
+                                    ord_qty,
+                                 code  det_code,
+                                 d.icode icode
+                            FROM salorddet d, salordmain m
+                           WHERE     psite_posorderitem_code = j.code
+                                 AND icode = j.icode
+                                 AND d.ordcode = m.ordcode
+                                 AND (  coalesce(d.ordqty, 0)
+                                      - coalesce(d.dqty, 0)
+                                      - coalesce(d.cnlqty, 0)) <> 0
+                        ORDER BY 2, 1;
+                  BEGIN
+                     FOR c2 IN c_det
+                     LOOP
+                        IF coalesce(v_cnl_qty, 0) > 0
+                        THEN
+                           IF coalesce(v_cnl_qty, 0) >= coalesce(c2.ord_qty, 0)
+                           THEN
+                              UPDATE salorddet d
+                                 SET cnlqty =
+                                        coalesce(cnlqty, 0) + coalesce(c2.ord_qty, 0),
+                                     pos_cnlqty =
+                                          coalesce(pos_cnlqty, 0)
+                                        + coalesce(c2.ord_qty, 0)
+                               WHERE code = c2.det_code AND icode = c2.ICODE;
+                              V_CNL_QTY :=
+                                 coalesce(V_CNL_QTY, 0) - coalesce(C2.ORD_QTY, 0);
+                           ELSE
+                              UPDATE salorddet d
+                                 SET cnlqty =
+                                        coalesce(cnlqty, 0) + coalesce(v_cnl_qty, 0),
+                                     pos_cnlqty =
+                                          coalesce(pos_cnlqty, 0)
+                                        + coalesce(c2.ord_qty, 0)
+                               WHERE code = c2.det_code AND icode = c2.ICODE;
+                              v_cnl_qty := 0;
+                           END IF;
+                        END IF;
+                     END LOOP;
+                  EXCEPTION
+                     WHEN no_data_found
+                     THEN
+                        NULL;
+                  END;
+               END IF;
+            END IF;
+            -- END REV : 002
+            UPDATE salorddet d
+               SET pos_remarks = j.remarks
+             WHERE ordcode = v_ordcode AND icode = j.icode;
+         END LOOP;
+         UPDATE salordmain
+            SET docno = i.refdocno,
+                docdt = i.refdocdt,
+                duedt = i.duedate,
+                pos_remarks = i.remarks
+          WHERE ordcode = v_ordcode;
+         CALL update_salordmain_status(v_ordcode);
+      EXCEPTION
+         WHEN no_data_found
+         THEN
+            IF i.status = 'P'
+            THEN
+               -- START REV : 004
+               v_pos_ord_gen_status := NULL;
+               IF LENGTH(v_psite_initial || '-' || i.orderno) > 25
+               THEN
+                  v_pos_ord_gen_status :=
+                        'Length of '
+                     || v_psite_initial
+                     || '-'
+                     || i.orderno
+                     || ' is greater than 25. SO not generated.';
+               ELSE
+                  BEGIN
+                     v_socode := NULL;
+                     -- START REV : 005
+                     SELECT sitetype,
+                            SUBSTR(psite_initial, 5),
+                            psite_admcmptax_code,
+                            CASE
+                               WHEN sitetype IN ('MS-CO-CM', 'MS-CO-OM-TS')
+                               THEN
+                                  slcode
+                               WHEN sitetype IN ('MS-OO-CM')
+                               THEN
+                                  NULL
+                            END
+                       INTO STRICT v_sitetype,
+                            v_psite_initial,
+                            v_admcmptax_code_site,
+                            v_pcode
+                       FROM admsite
+                      WHERE code = i.admsite_code;
+                     -- END REV : 005
+                     SELECT ordcode
+                       INTO STRICT v_socode
+                       FROM salordmain
+
+                      WHERE     scheme_docno =
+                                   v_psite_initial || '-' || i.orderno     --;
+                            -- END REV : 005
+                            -- START REV : 006
+                            AND ORDDT = i.orderdate;
+                     -- END REV : 006
+                     v_pos_ord_gen_status :=
+                           'Document no '
+                        || v_psite_initial
+                        || '-'
+                        || i.orderno
+                        || ' already exists.';
+                     v_cnt_itm_in_posord := NULL;
+                     v_cnt_itm_in_so := NULL;
+                     SELECT COUNT(1)
+                       INTO STRICT v_cnt_itm_in_posord
+                       FROM psite_posorderitem
+                      WHERE psite_posorder_code = i.code;
+                     SELECT COUNT(1)
+                       INTO STRICT v_cnt_itm_in_so
+                       FROM salorddet
+                      WHERE ordcode = v_socode;
+                     IF coalesce(v_cnt_itm_in_posord, 0) =
+                           coalesce(v_cnt_itm_in_so, 0)
+                     THEN
+                        v_msg_itm_qty := 'Y';
+                        FOR k IN (SELECT *
+                                    FROM psite_posorderitem
+                                   WHERE psite_posorder_code = i.code)
+                        LOOP
+                           BEGIN
+                              v_soicode := NULL;
+                              v_soqty := NULL;
+                                SELECT icode, SUM(ordqty)
+                                  INTO STRICT v_soicode, v_soqty
+                                  FROM salorddet
+                                 WHERE ordcode = v_socode AND icode = k.icode
+                              GROUP BY icode;
+                              IF coalesce(v_soqty, 0) <> k.qty
+                              THEN
+                                 v_msg_itm_qty := 'N';
+                                 EXIT;
+                              ELSE
+                                 UPDATE salorddet d
+                                    SET pos_remarks = k.remarks
+                                  WHERE     ordcode = v_socode
+                                        AND icode = k.icode;
+                              END IF;
+                           END;
+                        END LOOP;
+                        IF v_msg_itm_qty = 'N'
+                        THEN
+                           UPDATE psite_posorder
+                              SET auto_so_remarks =
+                                     'POS order qty is not matching with sales order qty'
+                            WHERE code = i.code;
+                        ELSE
+                           UPDATE psite_posorder
+                              SET salordmain_ordcode = v_socode,
+                                  auto_so_remarks =
+                                        'SO generated successfully. Order no is '
+                                     || v_psite_initial
+                                     || '-'
+                                     || i.orderno
+                            WHERE code = i.code;
+                           UPDATE salordmain
+                              SET psite_posorder_code = i.code,
+                                  POS_REMARKS = i.remarks
+                            WHERE ordcode = v_socode;
+                        END IF;
+                     ELSE
+                        v_pos_ord_gen_status :=
+                              'Total no of items are not matching in posorder ('
+                           || i.orderno
+                           || ') and sales order ('
+                           || v_psite_initial
+                           || '-'
+                           || i.orderno
+                           || ')';
+                        UPDATE psite_posorder
+                           SET auto_so_remarks = v_pos_ord_gen_status
+                         WHERE code = i.code;
+                     END IF;
+                  EXCEPTION
+                     WHEN no_data_found
+                     THEN
+                        g_mark := 'Selecting ycode';
+                        BEGIN
+                           SELECT ycode
+                             INTO STRICT v_ycode
+                             FROM admyear
+                            WHERE i.orderdate BETWEEN dtfr AND dtto;
+                        END;
+                        g_mark := 'Selecting sitetype';
+                        BEGIN
+                           SELECT sitetype,
+                                  SUBSTR(psite_initial, 5),
+                                  psite_admcmptax_code,
+                                  CASE
+                                     WHEN sitetype IN ('MS-CO-CM', 'MS-CO-OM-TS')
+                                     THEN
+                                        slcode
+                                     WHEN sitetype IN ('MS-OO-CM')
+                                     THEN
+                                        NULL
+                                  END
+                             -- START REV : 003
+                             -- INTO   v_sitetype, v_psite_initial, v_psite_admcmptax_code, v_pcode
+                             INTO STRICT v_sitetype,
+                                  v_psite_initial,
+                                  v_admcmptax_code_site,
+                                  v_pcode
+                             -- END REV : 003
+                             FROM admsite
+                            WHERE code = i.admsite_code;
+                           BEGIN
+                              SELECT agcode, trpcode
+                                INTO STRICT v_agcode, v_trpcode
+                                FROM finsl
+                               WHERE slcode = v_pcode;
+                           EXCEPTION
+                              WHEN no_data_found
+                              THEN
+                                 NULL;
+                           END;
+                           -- START REV : 008
+                           BEGIN
+                              IF coalesce(i.admsite_code, 0) = 0
+                              THEN
+                                 g_mark := 'Document owner site is missing';
+                                 RAISE EXCEPTION 'e_usr_exp' USING ERRCODE = '50001';
+                              END IF;
+                              /* IF INSTR(DB_FUN_GET_SITETYPE(i.admsite_code) ,'OM') = 0 THEN
+                                   BEGIN
+                                      SELECT code, default_ho_site
+                                      INTO   v_admou_code, v_admsite_code_owner
+                                      FROM   ADMOU
+                                      WHERE  CODE = ( SELECT ADMOU_CODE FROM ADMSITE S WHERE S.CODE = i.admsite_code);
+                                   EXCEPTION WHEN NO_DATA_FOUND THEN
+                                      g_mark := 'Document owner site is missing';
+                                      RAISE e_usr_exp;
+                                   END;
+                               ELSE
+                                  BEGIN
+                                      SELECT code, default_ho_site
+                                      INTO   v_admou_code, v_admsite_code_owner
+                                      FROM   ADMOU
+                                      WHERE  CODE = ( SELECT DEFAULT_ADMOU_CODE FROM ADMCMP C);
+                                  EXCEPTION WHEN NO_DATA_FOUND THEN
+                                      g_mark := 'Document owner site is missing';
+                                      RAISE e_usr_exp;
+                                  END;
+                               END IF;*/
+                              SELECT COUNT(
+                                        DISTINCT DB_FUNC_GET_OU_CODE(
+                                                    REPLN_ADMSITE_CODE))
+                                INTO STRICT V_CNT_REPLN
+                                FROM ADMSITE_OU SOU
+                               WHERE     position('OS' in DB_FUN_GET_SITETYPE(
+                                               REPLN_ADMSITE_CODE)) > 0
+                                     AND EXT = 'N'
+                                     AND ADMSITE_CODE = i.admsite_code;
+                              IF coalesce(V_CNT_REPLN, 0) = 1
+                              THEN
+                                 BEGIN
+                                    SELECT code, default_ho_site
+                                      INTO STRICT v_admou_code, v_admsite_code_owner
+                                      FROM ADMOU
+                                     WHERE CODE =
+                                              (SELECT DISTINCT
+                                                      DB_FUNC_GET_OU_CODE(
+                                                         REPLN_ADMSITE_CODE)
+                                                 FROM ADMSITE_OU SOU
+                                                WHERE     position('OS' in DB_FUN_GET_SITETYPE(
+                                                                REPLN_ADMSITE_CODE)) > 0
+                                                      AND ADMSITE_CODE =
+                                                             i.admsite_code
+                                                      AND EXT = 'N');
+                                 EXCEPTION
+                                    WHEN no_data_found
+                                    THEN
+                                       v_admsite_code_owner := NULL;
+                                       v_admou_code := NULL;
+                                 END;
+                              ELSE
+                                 BEGIN
+                                    SELECT code, default_ho_site
+                                      INTO STRICT v_admou_code, v_admsite_code_owner
+                                      FROM ADMOU
+                                     WHERE CODE = (SELECT DEFAULT_ADMOU_CODE
+                                                     FROM ADMCMP C);
+                                 EXCEPTION
+                                    WHEN no_data_found
+                                    THEN
+                                       v_admsite_code_owner := NULL;
+                                       v_admou_code := NULL;
+                                 END;
+                              END IF;
+                              SELECT psite_admcmptax_code, RESERVE_INV -- REV : 008
+                                INTO STRICT v_admcmptax_code_ou, V_RESERVE_INV -- REV : 008
+                                FROM admsite
+                               WHERE code = v_admsite_code_owner;
+                              IF coalesce(v_admsite_code_owner, 0) = 0
+                              THEN
+                                 g_mark := 'Document owner site is missing';
+                                 RAISE EXCEPTION 'e_usr_exp' USING ERRCODE = '50001';
+                              END IF;
+                           EXCEPTION
+                              WHEN no_data_found
+                              THEN
+                                 g_mark := 'Operating Unit not found.';
+                              WHEN too_many_rows
+                              THEN
+                                 g_mark := 'Multiple Operating Unit found.';
+                           END;
+                           -- END REV : 008
+                           IF v_sitetype IN ('MS-CO-CM', 'MS-OO-CM')
+                           THEN
+                              v_saletype := 'C';
+                              v_menucode := 462;
+                           ELSIF v_sitetype = 'MS-CO-OM-TS'
+                           THEN
+                              v_saletype := 'O';
+                              v_menucode := 892;
+                           END IF;
+                        END;
+                        g_mark := 'Selecting pricelist information';
+                        v_flag :=
+                           db_pkg_get_data_snd.get_tradegrp_term(
+                              v_admou_code,
+                              v_admsite_code_owner,
+                              i.admsite_code,
+                              v_sitetype,
+                              v_pcode,
+                              v_termcode,
+                              v_tradegrp_code,
+                              v_formcode,
+                              v_pricelistcode);
+                        IF v_pricelistcode IS NULL
+                        THEN
+                           g_mark := 'Pricelist information is missing';
+                        ELSE
+                           SELECT price_type,
+                                  discount_factor,
+                                  include_vat_in_discount,
+                                  discount_mode,
+                                  discount_basis,
+                                  net_price_multiples_of,
+                                  net_price_round_limit     -- START REV : 002
+                                                       ,
+                                  cmptax_code_basis
+                             -- END REV : 002
+                             INTO STRICT v_pricetype,
+                                  v_discount_factor_main,
+                                  v_incl_vat_in_dist,
+                                  v_discount_mode,
+                                  v_discount_basis,
+                                  v_price_roundoff,
+                                  v_roundoff_limit          -- START REV : 002
+                                                  ,
+                                  v_cmptax_code_basis
+                             -- END REV : 002
+                             FROM salpricelistmain
+                            WHERE pricelistcode = v_pricelistcode;
+                           IF v_saletype = 'O'
+                           THEN
+                              IF v_pricetype = 'F'
+                              THEN
+                                 g_mark :=
+                                    'FIFO price type is not allowed for outright sale.';
+                                 RAISE EXCEPTION 'e_usr_exp' USING ERRCODE = '50001';
+                              END IF;
+                              IF v_tradegrp_code IS NULL
+                              THEN
+                                 g_mark := 'Trade Group is not defined.';
+                                 RAISE EXCEPTION 'e_usr_exp' USING ERRCODE = '50001';
+                              ELSE
+                                 BEGIN
+                                    SELECT name
+                                      INTO STRICT v_tradegrp_name
+                                      FROM fintradegrp
+                                     WHERE code = v_tradegrp_code;
+                                    IF UPPER(V_TRADEGRP_NAME) = 'LOCAL'
+                                    THEN
+                                       v_formcode := 0;
+                                    END IF;
+                                 EXCEPTION
+                                    WHEN no_data_found
+                                    THEN
+                                       NULL;
+                                 END;
+                              END IF;
+                           END IF;
+                        END IF;
+                        IF LENGTH(v_psite_initial || '-' || i.orderno) <= 25
+                        THEN
+                           SELECT nextval('erp01') INTO STRICT v_ordcode;
+                           g_mark :=
+                                 'Inserting data into SALORDMAIN for '
+                              || v_ordcode;
+                           -- START REV : 004
+                           -- END REV : 004
+                           INSERT INTO salordmain(ordcode,
+                                                   ordno,
+                                                   orddt,
+                                                   pcode,
+                                                   docno,
+                                                   docdt,
+                                                   agcode,
+                                                   agrate,
+                                                   trpcode,
+                                                   duedt,
+                                                   stat,
+                                                   authorcode,
+                                                   pos_remarks,
+                                                   ycode,
+                                                   ext,
+                                                   ecode,
+                                                   TIME,
+                                                   saletype,
+                                                   doccode,
+                                                   scheme_docno,
+                                                   admou_code,
+                                                   admsite_code,
+                                                   pricetype,
+                                                   pricelistcode,
+                                                   discount_factor,
+                                                   price_roundoff,
+                                                   roundoff_limit,
+                                                   admsite_code_owner,
+                                                   incl_vat_in_dist,
+                                                   discount_mode,
+                                                   discount_basis,
+                                                   saltermcode,
+                                                   saltradegrp_code,
+                                                   formcode,
+                                                   psite_posorder_code -- START REV : 002
+                                                                      ,
+                                                   cmptax_code_basis -- END REV : 002
+                                                                    ,
+                                                   RESERVE_INV    -- REV : 008
+                                                              ,
+                                                   ENTRY_SOURCE   -- REV : 010
+                                                               )
+                                   VALUES (
+                                             v_ordcode,
+                                             -- START REV : 007
+                                             --v_ordcode,
+                                             erplastno('SALORDMAIN',
+                                                        v_ycode),
+                                             -- END REV : 007
+                                             i.orderdate,
+                                             v_pcode,
+                                             i.refdocno,
+                                             i.refdocdt,
+                                             NULL,
+                                             NULL,
+                                             NULL,
+                                             i.duedate,
+                                             'N',
+                                             1,
+                                             i.remarks,
+                                             v_ycode,
+                                             NULL,
+                                             1,
+                                             clock_timestamp(),
+                                             v_saletype,
+                                             1,
+                                                v_psite_initial
+                                             || '-'
+                                             || i.orderno,
+                                             v_admou_code,
+                                             i.admsite_code,
+                                             v_pricetype,
+                                             v_pricelistcode,
+                                             v_discount_factor_main,
+                                             v_price_roundoff,
+                                             v_roundoff_limit,
+                                             v_admsite_code_owner,
+                                             v_incl_vat_in_dist,
+                                             v_discount_mode,
+                                             v_discount_basis,
+                                             v_termcode,
+                                             v_tradegrp_code,
+                                             v_formcode,
+                                             i.code         -- START REV : 002
+                                                   ,
+                                             v_cmptax_code_basis -- END REV : 002
+                                                                ,
+                                             CASE WHEN V_RESERVE_INV='M' THEN  'Y'  ELSE 'N' END          -- REV : 008
+                                                         ,
+                                             'POSORDER'           -- REV : 010
+                                                       );
+                           g_mark :=
+                                 'Inserting data into SALORDDET for '
+                              || v_ordcode;
+                           FOR j IN c2(i.code)
+                           LOOP
+                              SELECT barunit, mrp
+                                INTO STRICT v_barunit, v_mrp
+                                FROM invitem
+                               WHERE icode = j.icode;
+                              -- START REV : 003
+                              /*
+                              -- start rev : 002
+                              select psite_admcmptax_code
+                              into   v_admcmptax_code_site
+                              from   admsite
+                              where  code = i.admsite_code;
+                              -- end rev : 002
+                              */
+                              -- END REV : 003
+                              CALL db_pro_item_rate_disc_roff(
+                                 j.icode,
+                                 i.orderdate,
+                                 v_pricelistcode,
+                                 -- start rev : 002
+                                 v_admcmptax_code_site,
+                                 -- end rev : 002
+                                 -- START REV : 003
+                                 -- v_psite_admcmptax_code, 'NEW', v_admou_code,
+                                 v_admcmptax_code_ou,
+                                 'NEW',
+                                 v_admou_code,
+                                 -- END REV : 003
+                                 v_barunit,
+                                 -- start rev : 002
+                                 i.admsite_code,
+                                 -- end rev : 002
+                                 v_admsite_code_owner,
+                                 v_pcode,
+                                 'C',
+                                 NULL,
+                                 NULL,
+                                 v_taxrate,
+                                 v_taxamt,
+                                 v_net_rate,
+                                 v_discount,
+                                 v_roundoff,
+                                 v_basic_rate,
+                                 v_discount_factor_det,
+                                 v_tradegrp_code,
+                                 v_formcode);
+                              v_rate := round((v_net_rate)::numeric, 2);
+                              INSERT INTO salorddet(ordcode,
+                                                     icode,
+                                                     ordqty,
+                                                     cnlqty,
+                                                     rate,
+                                                     factor,
+                                                     discount,
+                                                     pos_remarks,
+                                                     basic_rate,
+                                                     roundoff,
+                                                     netamt,
+                                                     rsp,
+                                                     psite_posorderitem_code)
+                                   VALUES (v_ordcode,
+                                           j.icode,
+                                           j.qty,
+                                           j.cancelledqty,
+                                           v_rate,
+                                           NULL,
+                                           v_discount,
+                                           j.remarks,
+                                           v_basic_rate,
+                                           v_roundoff,
+                                           round((j.qty * v_rate)::numeric, 2),
+                                           v_mrp,
+                                           j.code);
+                              UPDATE salorddet
+                                 SET factor =
+                                        coalesce(v_discount_factor_det,
+                                             v_discount_factor_main),
+                                     basic_rate = v_basic_rate
+                               WHERE     ordcode = v_ordcode
+                                     AND icode = j.icode
+                                     AND code = (SELECT MAX(code)
+                                                   FROM SALORDDET
+                                                  WHERE ordcode = v_ordcode);
+                              UPDATE salorddet
+                                 SET roundoff = coalesce(v_roundoff, 0)
+                               WHERE     ordcode = v_ordcode
+                                     AND icode = j.icode
+                                     AND rate NOT IN (SELECT DISTINCT coalesce(value_4, 0)
+                                               FROM global_temp_storage
+                                              WHERE char_1 = j.icode)
+                                     AND code = (SELECT MAX(code)
+                                                   FROM salorddet
+                                                  WHERE ordcode = v_ordcode);
+                           END LOOP;
+                           g_mark :=
+                              'Detail insertion complete for ' || v_ordcode;
+                           UPDATE salordmain
+                              SET time = clock_timestamp(), ycode = v_ycode
+                            -- START REV  : 007
+                            --,ordno = erplastno ('SALORDMAIN',v_ycode)
+                            -- END REV : 007
+                            WHERE ordcode = v_ordcode;
+                           SELECT round((SUM(coalesce(netamt, 0)))::numeric, 2)
+                             INTO STRICT v_netamt
+                             FROM salorddet
+                            WHERE ordcode = v_ordcode;
+                           UPDATE salordmain
+                              SET time = clock_timestamp(),
+                                  ycode = v_ycode,
+                                  -- START REV  : 007
+                                  --ordno  = erplastno ('SALORDMAIN',v_ycode),
+                                  -- END REV  : 007
+                                  grsamt = v_netamt,
+                                  netamt = v_netamt
+                            WHERE ordcode = v_ordcode;
+                           UPDATE psite_posorder
+                              SET salordmain_ordcode = v_ordcode
+                            WHERE code = i.code;
+                        -- START REV : 004
+                        --END IF;
+                        -- END REV : 004
+                        ELSE
+                           CALL erraudit(
+                              USER,
+                              'DB_Pro_Populate_SnD_Order',
+                              '1',
+                                 'SnD order could not be created for POS order no - '
+                              || i.orderno
+                              || ' as document no greater than 25 characters');
+                        END IF;
+                  -- STARRT REV : 004
+                  END;
+               END IF;
+            -- END REV : 004
+            END IF;
+      END;
+      -- V_CNT_REPLN :=0;
+      --  V_ADMOU_CODE := NULL;
+      --  V_ADMSITE_CODE_OWNER := NULL;
+      COMMIT;
+      g_mark := 'Data commited for ' || v_ordcode;
+   END LOOP;
+EXCEPTION
+   WHEN SQLSTATE '50001' THEN
+      CALL erraudit(USER,
+                'DB_Pro_Populate_SnD_Order',
+                vcerrcode,
+                vcerrmsg || ' ==> ' || g_mark);
+      RAISE EXCEPTION '%', 'Unable to generate SnD order - ' || g_mark USING ERRCODE = '45205';
+   WHEN OTHERS
+   THEN
+      vcerrcode := SQLSTATE;
+      vcerrmsg := SQLERRM;
+      CALL erraudit(USER,
+                'DB_Pro_Populate_SnD_Order',
+                vcerrcode,
+                vcerrmsg || ' ==> ' || g_mark);
+      RAISE EXCEPTION '%', 'Unable to generate SnD order - ' || vcerrmsg USING ERRCODE = '45205';
+END;
+"""
+  arguments = [
+  ]
+  language = plpgsql
+}
+
