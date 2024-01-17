@@ -8,3 +8,5 @@ CREATE TABLE main.test_flyway_chk (
 );
 
 SET check_function_bodies = true;
+
+----
